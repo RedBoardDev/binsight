@@ -9,7 +9,6 @@
  */
 import { randomUUID } from 'node:crypto';
 import { Connection } from '@solana/web3.js';
-import { eq } from 'drizzle-orm';
 import { pino } from 'pino';
 import { createAlertWebhookSink } from '@/copybot/alert';
 import { assertBusKey } from '@/copybot/bus-key-guard';

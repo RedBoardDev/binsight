@@ -58,17 +58,17 @@ const solLegLamports = (b: BinLegs, solSide: 'X' | 'Y'): number =>
 const tokenLegRaw = (b: BinLegs, solSide: 'X' | 'Y'): number => Number(solSide === 'Y' ? b.x : b.y);
 
 /**
- * Map a shape to per-offset values via `valueOf`, keyed by offset-from-LOWER (binId − min binId of the shape).
+ * Map a shape to per-offset values via `valueFor`, keyed by offset-from-LOWER (binId − min binId of the shape).
  * This is SHIFT-INVARIANT: the copy re-anchors the leader's shape by a constant bin shift (`ourActive −
  * leaderActive` at open, in reanchorShape), so `copy.binId − copy.lower == leader.binId − leader.lower` for
  * corresponding liquidity. Keying by offset-from-lower cancels that shift exactly — whereas offset-from-ACTIVE
  * depends on the per-read pool active bin (which can differ by a bin between the leader's and copy's reads, or
  * carry a deliberate open-shift), misaligning a sharp shape (e.g. a one-bin spike) and reporting a false divergence.
  */
-function byOffset(shape: PositionShape, valueOf: (b: BinLegs) => number): Map<number, number> {
+function byOffset(shape: PositionShape, valueFor: (b: BinLegs) => number): Map<number, number> {
   const lowerBinId = Math.min(...shape.perBin.map((b) => b.binId));
   const out = new Map<number, number>();
-  for (const b of shape.perBin) out.set(b.binId - lowerBinId, valueOf(b));
+  for (const b of shape.perBin) out.set(b.binId - lowerBinId, valueFor(b));
   return out;
 }
 

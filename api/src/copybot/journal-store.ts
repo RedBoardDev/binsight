@@ -50,7 +50,7 @@ export class CopyJournalStore implements Journal {
   constructor(
     db: Db,
     private readonly log: Logger,
-    private readonly process: JournalProcess,
+    process: JournalProcess,
     /** The COPY wallet (cfg.ownerPubkey) — bound once, back-fills the `wallet` filter column (SPEC §5, §7). */
     wallet: string = UNKNOWN_WALLET,
     /** Tenant FK → users.id; mono-user PoC = SYSTEM_USER_ID. */

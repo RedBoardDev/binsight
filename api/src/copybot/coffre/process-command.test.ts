@@ -296,7 +296,7 @@ describe('process1 — OPEN: position-signer + the #3 Wall-B SOL-spend cap end-t
 // --- BUY (Jupiter SOL→token, funds a two-sided open): validates the #4 fix — a buy that doesn't confirm must NOT
 // publish ev:executed (else the dependent two-sided open builds tokenless and fails).
 const JUP = new PublicKey('JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4');
-function buyReq(confirmable: boolean, outputMint: PublicKey): Record<string, unknown> {
+function buyReq(outputMint: PublicKey): Record<string, unknown> {
   const eventKey = `test:${pool.toBase58()}:buy:${copier.publicKey.toBase58()}:${usedCommandIds.length}:${process.hrtime.bigint()}`;
   const commandId = deriveCommandId(eventKey);
   usedCommandIds.push(commandId);
@@ -347,7 +347,7 @@ describe('process1 — BUY confirm gate (#4: a non-confirmed buy never publishes
   it('a buy that CONFIRMS → landed + ev:executed (the dependent open may proceed)', async () => {
     const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
     const conn = fakeConn(() => ({ value: { confirmationStatus: 'confirmed' } }));
-    const verdict = await process1(buyReq(true, Keypair.generate().publicKey), ctxFor(conn, bus));
+    const verdict = await process1(buyReq(Keypair.generate().publicKey), ctxFor(conn, bus));
     expect(verdict).toEqual({ ok: true, kind: 'buy' });
     expect(bus.publish).toHaveBeenCalledTimes(1);
   });
@@ -355,7 +355,7 @@ describe('process1 — BUY confirm gate (#4: a non-confirmed buy never publishes
   it('a buy that does NOT confirm (timeout) → failed, NO ev:executed (no tokenless two-sided open downstream)', async () => {
     const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
     const conn = fakeConn(() => ({ value: null })); // never confirms
-    const sr = buyReq(false, Keypair.generate().publicKey);
+    const sr = buyReq(Keypair.generate().publicKey);
     const verdict = await process1(sr, ctxFor(conn, bus));
     expect(verdict.ok).toBe(false);
     expect(bus.publish).not.toHaveBeenCalled();
@@ -374,18 +374,16 @@ async function seedSubmitted(
   signature: string | null,
   lastValidBlockHeight: number,
 ): Promise<void> {
-  await db
-    .insert(executions)
-    .values({
-      commandId: sr.commandId as string,
-      eventKey: sr.eventKey as string,
-      state: signature ? 'submitted' : 'claimed',
-      deadlineSlot: 1_000_000,
-      signature,
-      lastValidBlockHeight,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    });
+  await db.insert(executions).values({
+    commandId: sr.commandId as string,
+    eventKey: sr.eventKey as string,
+    state: signature ? 'submitted' : 'claimed',
+    deadlineSlot: 1_000_000,
+    signature,
+    lastValidBlockHeight,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
 }
 
 /** A conn whose getSignatureStatus/getBlockHeight are stubbed to drive the recovery pre-check outcome. */
