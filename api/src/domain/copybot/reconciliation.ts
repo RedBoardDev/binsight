@@ -8,9 +8,6 @@
  * 'open' — closing a position wrongly would be serious. The I/O layer provides the state via `getAccountInfo`
  * (closed position account / rent reclaimed ⇒ nonexistent ⇒ 'closed').
  */
-import type { PaperDecisionRow } from './paper-engine';
-import type { PaperPosition } from './paper-position';
-
 export type LeaderPositionState = 'open' | 'closed' | 'unknown';
 
 /** Translates the result of an on-chain fetch into a state. An RPC error ⇒ 'unknown' (we never close on
@@ -25,7 +22,7 @@ export function leaderStateFromFetch(
 
 /** Sweep A: our open mirrors whose leader position is CONFIRMED closed → to be closed in failsafe.
  *  'open'/'unknown'/absent from the map ⇒ we don't touch (safety). Pure, generic over any type bearing
- *  `leaderPosition` (PaperPosition on the paper side, Mirror on the brain side). */
+ *  `leaderPosition` (the brain's Mirror). */
 export function planFailsafeCloses<T extends { leaderPosition: string }>(
   openMirrors: T[],
   leaderState: Map<string, LeaderPositionState>,
@@ -99,19 +96,4 @@ export function planReconcile(input: ReconcileInput): ReconcilePlan {
     if (!trackedOurs.has(ours)) plan.orphans.push(ours); // on-chain but untracked → stray position
   }
   return plan;
-}
-
-/** Shadow-log row of a failsafe close (no leader close tx → synthetic, idempotent signature). */
-export function failsafeRow(mirror: PaperPosition): PaperDecisionRow {
-  return {
-    signature: `failsafe:${mirror.leaderPosition}`,
-    pool: mirror.pool || null,
-    position: mirror.leaderPosition,
-    eventKind: 'close',
-    outcome: 'failsafe_close',
-    skipReason: null,
-    leaderSizeSol: 0,
-    ourSizeSol: mirror.sizeSol,
-    blockTime: null,
-  };
 }

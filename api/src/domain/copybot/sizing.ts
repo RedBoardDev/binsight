@@ -28,7 +28,7 @@ export interface SizingConfig {
   onInsufficient: 'skip' | 'reduceToFit';
 }
 
-/** State (paper-simulated) of the copier wallet, as seen by the decision. */
+/** State of the copier wallet, as seen by the decision (balance + open-mirror counts). */
 export interface FollowerState {
   /** Copier's free SOL balance. */
   availableBalanceSol: number;

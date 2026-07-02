@@ -1,28 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import type { PaperPosition } from './paper-position';
 import {
-  failsafeRow,
   type LeaderPositionState,
   leaderStateFromFetch,
   planFailsafeCloses,
   planReconcile,
 } from './reconciliation';
 
-function mirror(over: Partial<PaperPosition> = {}): PaperPosition {
-  return {
-    leaderPosition: 'P',
-    pool: 'POOL',
-    nonSolMint: 'MINT',
-    nonSolSymbol: 'TOK',
-    sizeSol: 1,
-    status: 'open',
-    openSignature: 'o',
-    openedAtMs: 1,
-    openedAtBlockTime: 1,
-    closeSignature: null,
-    closedAtBlockTime: null,
-    ...over,
-  };
+/** Minimal mirror fixture — planFailsafeCloses is generic over any `{ leaderPosition }` bearer. */
+type TestMirror = { leaderPosition: string; pool: string; sizeSol: number };
+
+function mirror(over: Partial<TestMirror> = {}): TestMirror {
+  return { leaderPosition: 'P', pool: 'POOL', sizeSol: 1, ...over };
 }
 
 describe('leaderStateFromFetch — on-chain state of the leader position', () => {
@@ -260,26 +248,5 @@ describe('planReconcile — rug-exit-pending re-close (a failed rug-SL close mus
       recentlyOpened: new Set(['oRug']),
     });
     expect(plan).toEqual({ markClosed: [], reClose: [], orphans: [] });
-  });
-});
-
-describe('failsafeRow — shadow-log row of a failsafe close', () => {
-  it('idempotent synthetic signature + outcome failsafe_close + mirror size', () => {
-    const m = mirror({ leaderPosition: 'XYZ', sizeSol: 0.7 });
-    expect(failsafeRow(m)).toEqual({
-      signature: 'failsafe:XYZ',
-      pool: 'POOL',
-      position: 'XYZ',
-      eventKind: 'close',
-      outcome: 'failsafe_close',
-      skipReason: null,
-      leaderSizeSol: 0,
-      ourSizeSol: 0.7,
-      blockTime: null,
-    });
-  });
-
-  it('empty pool → null (defensive branch)', () => {
-    expect(failsafeRow(mirror({ pool: '' })).pool).toBeNull();
   });
 });
