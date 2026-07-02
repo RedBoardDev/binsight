@@ -52,6 +52,7 @@ DerivedData/
 docs/
 TODO.md
 **/TEST-PLAN.md
+/SPEC.md
 
 # spike / validation scripts (scratch + local .secrets.env — NEVER committed), EXCEPT the on-chain bench CLIs the
 # committed bench depends on (the harness execs them, bundled): leader-control (drives the leader-test wallet) and
