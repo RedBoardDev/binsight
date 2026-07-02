@@ -2,19 +2,17 @@ import { SOL_MINT } from '@binsight/shared';
 import type { Logger } from 'pino';
 import type { LoadedPoolMeta, ResidualSell } from '@/domain/dlmm';
 import { binPriceRaw, LAMPORTS_PER_SOL } from '@/domain/dlmm-pnl';
-import type {
-  EnhancedTxGateway,
-  LegRepository,
-  PositionRepository,
-  PriceGateway,
-} from '@/domain/ports';
+import type { LegRepository, PositionRepository, SwapFlowRepository } from '@/domain/ports';
+import { withCodePath } from '@/infrastructure/solana/code-path';
 
 /**
  * Per-position realized PnL via a CHAINED FIFO COST-BASIS engine — 100% on-chain (no Meteora datapi).
  * This is the authoritative `market_pnl_sol` writer for CLOSED positions and the production port of the
  * proven `scripts/fifo-cost-basis.ts` (its `--held current` path): the FIFO math is IDENTICAL, only the
- * I/O is routed through the application ports (leg repository, Helius Enhanced buys/sells, the shared
- * price gateway for the held-residual current mark) instead of raw SQL + DexScreener.
+ * I/O is routed through the application ports (leg repository, the PERSISTED `swap_flows` table for
+ * buys/sells, the shared price gateway for the held-residual current mark) instead of raw SQL +
+ * DexScreener. Reading the persisted swaps (instead of re-paging the Helius Enhanced API) is what makes a
+ * restart/close cost ~0 credits — no re-seed, no re-page.
  *
  * MODEL (per non-SOL mint M, a global FIFO inventory of lots {qty, costPerUnit, origin}):
  *   Merge ALL events of M chronologically — buys (SOL→M), sells (M→SOL), and the wallet's DLMM legs
@@ -34,7 +32,6 @@ import type {
  */
 
 const EPS = 1e-9;
-const DAY_MS = 86_400_000;
 const CAP_WINDOW_SEC = 7 * 86_400;
 
 /** One event on a mint's timeline, all token quantities in HUMAN (decimal-adjusted) units. */
@@ -100,6 +97,10 @@ const KIND_ORDER: Record<Ev['kind'], number> = {
 export type RealizedLegSource = Pick<LegRepository, 'legsByWallet' | 'getPoolMetas'>;
 /** The position repository surface this engine needs (status + closedAt of every position). */
 export type RealizedPositionSource = Pick<PositionRepository, 'positionStatusForWallet'>;
+/** The swap-flow repository surface this engine needs: the persisted FIFO buy/sell inputs + the seed
+ *  cursor (completeness). Reading these (instead of re-paging the Enhanced API) is what makes a
+ *  restart/close cost ~0 credits. */
+export type RealizedSwapSource = Pick<SwapFlowRepository, 'byWallet' | 'getCursor'>;
 
 /**
  * Computes the chained-FIFO realized PnL of a wallet's CLOSED positions, fully on-chain. All inputs come
@@ -109,27 +110,58 @@ export class RealizedPnlEngine {
   constructor(
     private readonly legs: RealizedLegSource,
     private readonly positions: RealizedPositionSource,
-    private readonly enhanced: EnhancedTxGateway,
-    private readonly prices: PriceGateway,
-    private readonly decimalsOf: (mint: string) => Promise<number>,
+    private readonly swaps: RealizedSwapSource,
+    private readonly decimalsOfMany: (mints: string[]) => Promise<Map<string, number>>,
     private readonly logger: Logger,
   ) {}
 
   /**
+   * Load the wallet's buys+sells from the PERSISTED `swap_flows` table (populated by SwapFlowIngest),
+   * NOT the Enhanced API — so a restart/close re-reads cheap local rows instead of re-paging the whole
+   * SWAP history. Completeness comes from the swap-flow cursor: a missing cursor or `complete=false` means
+   * the seed hasn't finished, so the persisted history is partial → return `complete=false` and the caller
+   * skips persist (an under-consumed FIFO would leave too much "held" residual and inflate PnL — exactly
+   * the protection the old incomplete-Enhanced-fetch guard gave).
+   *
+   * Each row maps to the existing ResidualSell shape the FIFO expects: `solReceived = solAmount` (SOL
+   * SPENT for a 'buy', SOL RECEIVED for a 'sell') and `tokenAmount` already in human units.
+   */
+  private async loadFlows(
+    wallet: string,
+  ): Promise<{ buys: ResidualSell[]; sells: ResidualSell[]; complete: boolean }> {
+    const cursor = await this.swaps.getCursor(wallet);
+    if (cursor == null || !cursor.complete) return { buys: [], sells: [], complete: false };
+    const rows = await this.swaps.byWallet(wallet);
+    const buys: ResidualSell[] = [];
+    const sells: ResidualSell[] = [];
+    for (const r of rows) {
+      const flow: ResidualSell = {
+        ts: r.ts,
+        mint: r.mint,
+        tokenAmount: r.tokenAmount,
+        solReceived: r.solAmount,
+      };
+      (r.side === 'buy' ? buys : sells).push(flow);
+    }
+    return { buys, sells, complete: true };
+  }
+
+  /**
    * Realized `market_pnl_sol` per CLOSED position of `wallet` (open positions feed the inventory but are
-   * not reported). Empty map when the Enhanced API is disabled (no api-key) or the wallet has no legs on
-   * a SOL-paired pool — callers leave existing values untouched in that case. Returns `null` when the
-   * buy/sell history came back INCOMPLETE (a Helius page kept failing, or the maxPages cap was hit): an
-   * incomplete buy OR sell history makes FIFO under-consume inventory → too much leftover "held" →
-   * inflation, so the engine must NOT hand back values to persist (it would overwrite good data with
-   * inflated ones). Both legs matter: missing buys lose cost basis, missing sells leave residual unsold.
+   * not reported). Empty map when the wallet has no legs on a SOL-paired pool — callers leave existing
+   * values untouched in that case. Returns `null` when the PERSISTED swap history is INCOMPLETE (the
+   * swap_flow cursor is missing or `complete=false` — the seed hasn't finished): an incomplete buy OR sell
+   * history makes FIFO under-consume inventory → too much leftover "held" → inflation, so the engine must
+   * NOT hand back values to persist (it would overwrite good data with inflated ones). Both legs matter:
+   * missing buys lose cost basis, missing sells leave residual unsold.
    */
   async computeForWallet(wallet: string): Promise<Map<string, number> | null> {
+    // Realized path: tag so the decimals/price RPC issued underneath is attributed to 'realized'.
+    return withCodePath('realized', () => this.computeForWalletInner(wallet));
+  }
+
+  private async computeForWalletInner(wallet: string): Promise<Map<string, number> | null> {
     const out = new Map<string, number>();
-    if (!this.enhanced.enabled) {
-      this.logger.warn({ wallet }, 'realized-pnl: skipped (no Helius api-key for Enhanced API)');
-      return out;
-    }
 
     // 1. ALL legs for the wallet + their pool meta. Only SOL-paired pools (sol_side != null) — non-SOL
     //    pools' SOL economics are ~flat and a two-token FIFO is out of scope (mirrors the script's join
@@ -185,24 +217,15 @@ export class RealizedPnlEngine {
       }
     }
 
-    // 3. Token decimals (decimalsOf is cached upstream).
-    const decMap = new Map<string, number>();
-    for (const mint of mints) decMap.set(mint, await this.decimalsOf(mint));
+    // 3. Token decimals — fetched in ONE batched pass (≤100 mints per getMultipleAccounts), NOT one RPC
+    //    per mint. The per-mint loop cost ~1 getMultipleAccounts × the wallet's mint count (~1600 cold) —
+    //    the residual spend the live validation caught. Decimals are immutable + cached, so re-runs ≈ 0.
+    const decMap = await this.decimalsOfMany([...mints]);
     const dec = (mint: string) => decMap.get(mint) ?? 9;
 
-    // 4. Buys + sells from the wallet's earliest leg minus a day.
-    // O(n) reduce, NOT Math.min(...spread): at ~15k closed × ≥2 legs the spread crosses V8's argument
-    // ceiling (~124k) and throws RangeError, rejecting the whole pass for the heaviest wallets.
-    const oldestLegSec = legRows.reduce(
-      (m, l) => Math.min(m, l.blockTime ?? Number.POSITIVE_INFINITY),
-      Number.POSITIVE_INFINITY,
-    );
-    const sinceMs = (Number.isFinite(oldestLegSec) ? oldestLegSec : 0) * 1000 - DAY_MS;
-    const [{ buys, complete: buysComplete }, { sells, complete: sellsComplete }] =
-      await Promise.all([
-        this.enhanced.fetchBuys(wallet, sinceMs),
-        this.enhanced.fetchSells(wallet, sinceMs),
-      ]);
+    // 4. Buys + sells from the PERSISTED swap_flows table (no Enhanced API, no re-page) — completeness
+    //    comes from the swap-flow cursor (seed finished?), not a per-fetch flag.
+    const { buys, sells, complete } = await this.loadFlows(wallet);
     this.logger.info(
       {
         wallet,
@@ -211,19 +234,20 @@ export class RealizedPnlEngine {
         mints: mints.size,
         buys: buys.length,
         sells: sells.length,
-        buysComplete,
-        sellsComplete,
+        complete,
       },
       'realized-pnl: data loaded',
     );
 
     // Completeness guard: an incomplete buy/sell history makes the FIFO under-consume inventory, leaving
     // too much "held" residual that then gets valued and inflates closed PnL. Returning these to the
-    // caller would PERSIST inflated values over good ones — so skip the whole pass instead.
-    if (!buysComplete || !sellsComplete) {
+    // caller would PERSIST inflated values over good ones — so skip the whole pass instead. Incomplete
+    // here means the swap_flow seed hasn't finished (cursor missing or complete=false); once seeded, the
+    // persisted history is whole and every recompute reads it in full.
+    if (!complete) {
       this.logger.warn(
-        { wallet, buysComplete, sellsComplete },
-        'realized-pnl: incomplete buy/sell history — skipping persist to avoid overwriting with inflated held values',
+        { wallet },
+        'realized-pnl: incomplete persisted swap history (seed unfinished) — skipping persist to avoid overwriting with inflated held values',
       );
       return null;
     }
@@ -387,25 +411,6 @@ export class RealizedPnlEngine {
       return (lamportsPerRaw * 10 ** dec(m.mint)) / LAMPORTS_PER_SOL;
     };
 
-    // Current market price (SOL per human token) of the held bags, via the shared price gateway (Jupiter).
-    const heldMints = [
-      ...new Set(
-        [...leftoverByMint]
-          .filter(([, lots]) => lots.some((l) => l.origin && l.qty > EPS))
-          .map(([mint]) => mint),
-      ),
-    ];
-    const curPrices =
-      heldMints.length > 0 ? await this.prices.getPricesSol(heldMints) : new Map<string, number>();
-    this.logger.info(
-      {
-        wallet,
-        heldMints: heldMints.length,
-        priced: [...curPrices.values()].filter((v) => v > 0).length,
-      },
-      'realized-pnl: current prices fetched',
-    );
-
     const now = Date.now();
     for (const [mint, lots] of leftoverByMint) {
       for (const lot of lots) {
@@ -419,8 +424,12 @@ export class RealizedPnlEngine {
           const localP = priceNearClose(mint, m.closedAt ?? now);
           markPerTok = Math.max(0, Math.min(localP, binTok));
         } else {
-          const cp = curPrices.get(mint);
-          markPerTok = cp != null ? Math.min(cp, binTok) : binTok;
+          // FRESH close: mark the residual at its CLOSE-bin price (binTok = the on-chain price where the
+          // position closed) — mark-to-market-at-close, the model LPAgent shows. The PREVIOUS code capped
+          // this at the CURRENT market price, so a token that DIED after close was marked ~0 → a spurious
+          // full -deposit loss (SOLANGELES showed -13 where LPAgent shows 0.00). The later residual sells
+          // are wallet-level trading, not this position's close PnL.
+          markPerTok = binTok;
         }
         accOf(lot.origin).heldValue += lot.qty * markPerTok;
       }

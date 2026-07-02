@@ -8,7 +8,7 @@
  * BOTH legs via the SDK by-weight (`totalXAmount`/`totalYAmount` + per-bin `xBps`/`yBps`). When the token leg is
  * ≤ dust the position is plain one-sided → `twoSided=false` and the caller keeps the fast SOL-only path.
  */
-import { type BinSol, type ReshapeOp, planReshape } from './position-adjust';
+import { type BinSol, planReshape, type ReshapeOp } from './position-adjust';
 import { type LeaderBinAmount, type ReanchoredShape, reanchorShape } from './reanchor';
 
 /** Per-bin raw legs of the leader's position: SOL side + the non-SOL token side, keyed by ABSOLUTE bin. */
@@ -43,7 +43,12 @@ export interface TwoSidedPlan {
  * Pure, bigint-exact. NB: must scale each leg by the ratio of LEADER legs — NOT decideEntry's sizeSol, which is
  * the COPY_RATIO of the leader's TOTAL value and would over-deploy the SOL leg.
  */
-export function sizeTwoSided(leaderSolRaw: bigint, leaderTokenRaw: bigint, pct: number, maxSolLamports: bigint): { solLamports: bigint; tokenTarget: bigint } {
+export function sizeTwoSided(
+  leaderSolRaw: bigint,
+  leaderTokenRaw: bigint,
+  pct: number,
+  maxSolLamports: bigint,
+): { solLamports: bigint; tokenTarget: bigint } {
   let solLamports = (leaderSolRaw * BigInt(pct)) / 100n;
   let tokenTarget = (leaderTokenRaw * BigInt(pct)) / 100n;
   if (maxSolLamports > 0n && solLamports > maxSolLamports) {
@@ -79,16 +84,33 @@ export function planTwoSidedReshape(
   const leaderSolTotal = leaderSol.reduce((s, b) => s + b.sol, 0);
   const factor = leaderSolTotal > 0 ? Math.min(ratio, maxSol / leaderSolTotal) : ratio;
   const solOps = planReshape(leaderSol, ourSol, factor, Number.POSITIVE_INFINITY, solDeadband);
-  const tokenOps = planReshape(leaderToken, ourToken, factor, Number.POSITIVE_INFINITY, tokenDeadband);
-  const tokenAddOps = tokenOps.filter((o): o is Extract<ReshapeOp, { action: 'add' }> => o.action === 'add');
+  const tokenOps = planReshape(
+    leaderToken,
+    ourToken,
+    factor,
+    Number.POSITIVE_INFINITY,
+    tokenDeadband,
+  );
+  const tokenAddOps = tokenOps.filter(
+    (o): o is Extract<ReshapeOp, { action: 'add' }> => o.action === 'add',
+  );
   // Token REMOVE ops only on bins a SOL-leg remove doesn't already trim (pure-token bins) — else we'd double-trim.
-  const solRemoveOffsets = new Set(solOps.filter((o) => o.action === 'remove').map((o) => o.offset));
-  const tokenRemoveOps = tokenOps.filter((o) => o.action === 'remove' && !solRemoveOffsets.has(o.offset));
+  const solRemoveOffsets = new Set(
+    solOps.filter((o) => o.action === 'remove').map((o) => o.offset),
+  );
+  const tokenRemoveOps = tokenOps.filter(
+    (o) => o.action === 'remove' && !solRemoveOffsets.has(o.offset),
+  );
   return { ops: [...solOps, ...tokenRemoveOps], tokenAddOps };
 }
 
 /** Re-anchor ONE leg, or null when the leg carries no liquidity (avoids reanchorShape throwing on an empty leg). */
-function reanchorLeg(legs: LeaderBinLegs[], pick: (b: LeaderBinLegs) => bigint, leaderActive: number, ourActive: number): ReanchoredShape | null {
+function reanchorLeg(
+  legs: LeaderBinLegs[],
+  pick: (b: LeaderBinLegs) => bigint,
+  leaderActive: number,
+  ourActive: number,
+): ReanchoredShape | null {
   const perBin: LeaderBinAmount[] = legs.map((b) => ({ binId: b.binId, amount: pick(b) }));
   if (perBin.every((b) => b.amount <= 0n)) return null;
   return reanchorShape(leaderActive, ourActive, perBin);
@@ -98,14 +120,21 @@ function reanchorLeg(legs: LeaderBinLegs[], pick: (b: LeaderBinLegs) => bigint, 
  * Plan a two-sided re-anchored copy. Pure. Handles all cases: plain SOL-only (token ≤ dust → twoSided=false),
  * genuine two-sided (both legs), and fully-crossed token-only (no SOL leg). Throws only on an empty position.
  */
-export function planTwoSided(legs: LeaderBinLegs[], leaderActiveBinId: number, ourActiveBinId: number, dustTokenRaw: bigint): TwoSidedPlan {
+export function planTwoSided(
+  legs: LeaderBinLegs[],
+  leaderActiveBinId: number,
+  ourActiveBinId: number,
+  dustTokenRaw: bigint,
+): TwoSidedPlan {
   const leaderSolRaw = legs.reduce((s, b) => s + b.solRaw, 0n);
   const leaderTokenRaw = legs.reduce((s, b) => s + b.tokenRaw, 0n);
   const solShape = reanchorLeg(legs, (b) => b.solRaw, leaderActiveBinId, ourActiveBinId);
   const twoSided = leaderTokenRaw > dustTokenRaw;
 
   const byBin = new Map<number, TwoSidedBin>();
-  if (solShape) for (const w of solShape.weights) byBin.set(w.binId, { binId: w.binId, solBps: w.bps, tokenBps: 0 });
+  if (solShape)
+    for (const w of solShape.weights)
+      byBin.set(w.binId, { binId: w.binId, solBps: w.bps, tokenBps: 0 });
 
   if (twoSided) {
     const tokenShape = reanchorLeg(legs, (b) => b.tokenRaw, leaderActiveBinId, ourActiveBinId);
@@ -119,7 +148,15 @@ export function planTwoSided(legs: LeaderBinLegs[], leaderActiveBinId: number, o
   }
 
   const weights = [...byBin.values()].sort((a, b) => a.binId - b.binId);
-  if (weights.length === 0) throw new Error('planTwoSided: empty position (no SOL and no token liquidity)');
+  if (weights.length === 0)
+    throw new Error('planTwoSided: empty position (no SOL and no token liquidity)');
   const binIds = weights.map((w) => w.binId);
-  return { twoSided, weights, leaderSolRaw, leaderTokenRaw, lowerBinId: Math.min(...binIds), upperBinId: Math.max(...binIds) };
+  return {
+    twoSided,
+    weights,
+    leaderSolRaw,
+    leaderTokenRaw,
+    lowerBinId: Math.min(...binIds),
+    upperBinId: Math.max(...binIds),
+  };
 }

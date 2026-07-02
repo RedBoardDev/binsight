@@ -8,7 +8,17 @@ import { MirrorStore } from './mirror-store';
 // Integration: requires local Postgres (:5435).
 const URL = process.env.DATABASE_URL ?? 'postgres://meteora:meteora@localhost:5435/meteora';
 const LP = '__test_mirror_store__';
-const mirror: Mirror = { leaderPosition: LP, ourPosition: 'OUR', pool: 'POOL', nonSolSymbol: 'TOK', sizeSol: 0.25, lowerBin: -45, upperBin: -42, openedAt: 1_700_000_000_000, status: 'open' };
+const mirror: Mirror = {
+  leaderPosition: LP,
+  ourPosition: 'OUR',
+  pool: 'POOL',
+  nonSolSymbol: 'TOK',
+  sizeSol: 0.25,
+  lowerBin: -45,
+  upperBin: -42,
+  openedAt: 1_700_000_000_000,
+  status: 'open',
+};
 
 const db = openDatabase(URL);
 const store = new MirrorStore(db);
@@ -24,7 +34,11 @@ describe('MirrorStore — no-dormant persistence (integration)', () => {
   it('saveOpen → loadOpen returns the mirror', async () => {
     await store.saveOpen(mirror);
     const open = await store.loadOpen();
-    expect(open.find((m) => m.leaderPosition === LP)).toMatchObject({ ourPosition: 'OUR', lowerBin: -45, status: 'open' });
+    expect(open.find((m) => m.leaderPosition === LP)).toMatchObject({
+      ourPosition: 'OUR',
+      lowerBin: -45,
+      status: 'open',
+    });
   });
 
   it('RESTART SIMULATION: a NEW store reloads the open mirror (survives a restart)', async () => {
@@ -37,7 +51,9 @@ describe('MirrorStore — no-dormant persistence (integration)', () => {
     // WHY: after a proportional add/remove the tracked size changes; if it were not persisted, a restart would
     // reload the STALE open size and mis-size future mirror actions.
     await store.updateSize(LP, 0.5);
-    const reloaded = (await new MirrorStore(openDatabase(URL)).loadOpen()).find((m) => m.leaderPosition === LP);
+    const reloaded = (await new MirrorStore(openDatabase(URL)).loadOpen()).find(
+      (m) => m.leaderPosition === LP,
+    );
     expect(reloaded?.sizeSol).toBe(0.5);
   });
 

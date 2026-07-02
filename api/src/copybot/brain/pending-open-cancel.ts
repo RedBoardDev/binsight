@@ -45,7 +45,12 @@ export function pendingStashesFor(leaderPosition: string, maps: PendingOpenMaps)
 
 /** Total number of stash entries a {@link PendingStashKeys} would drop (observability: how many were cancelled). */
 export function stashCount(keys: PendingStashKeys): number {
-  return keys.twoSidedOpens.length + keys.token2022Deposits.length + keys.token2022Mirrors.length + keys.reshapeAdds.length;
+  return (
+    keys.twoSidedOpens.length +
+    keys.token2022Deposits.length +
+    keys.token2022Mirrors.length +
+    keys.reshapeAdds.length
+  );
 }
 
 /** Distinct leader positions that currently have an in-flight open, mapped to their pool (for the cancel event). Used

@@ -23,7 +23,9 @@ describe('assertBusKey — fail-closed bus HMAC key resolution (money path)', ()
   it('allows the dev default ONLY with the explicit COPYBOT_DEV_BUS_KEY=true escape', () => {
     expect(assertBusKey({ COPYBOT_DEV_BUS_KEY: 'true' })).toEqual({ key: DEV_DEFAULT_BUS_KEY });
     // escape also covers an unset BUS_HMAC_KEY (local dev with no key configured at all)
-    expect(assertBusKey({ BUS_HMAC_KEY: DEV_DEFAULT_BUS_KEY, COPYBOT_DEV_BUS_KEY: 'true' })).toEqual({ key: DEV_DEFAULT_BUS_KEY });
+    expect(
+      assertBusKey({ BUS_HMAC_KEY: DEV_DEFAULT_BUS_KEY, COPYBOT_DEV_BUS_KEY: 'true' }),
+    ).toEqual({ key: DEV_DEFAULT_BUS_KEY });
   });
 
   it('errors on a too-short key (below the min length) without the escape', () => {

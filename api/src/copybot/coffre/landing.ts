@@ -14,12 +14,17 @@ export async function land(conn: Connection, rawSignedTx: Buffer | Uint8Array): 
  * two-sided open must wait for its token-BUY to settle, else the open lands before the token is in the wallet
  * and fails. Returns true only on a successful (no-err) confirmation. Polls cheaply (getSignatureStatus).
  */
-export async function confirmLanded(conn: Connection, signature: string, timeoutMs = 30_000): Promise<boolean> {
+export async function confirmLanded(
+  conn: Connection,
+  signature: string,
+  timeoutMs = 30_000,
+): Promise<boolean> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const { value } = await conn.getSignatureStatus(signature);
     if (value?.err) return false;
-    if (value?.confirmationStatus === 'confirmed' || value?.confirmationStatus === 'finalized') return true;
+    if (value?.confirmationStatus === 'confirmed' || value?.confirmationStatus === 'finalized')
+      return true;
     await new Promise((r) => setTimeout(r, 400));
   }
   return false;

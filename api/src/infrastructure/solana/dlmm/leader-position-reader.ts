@@ -36,7 +36,9 @@ export async function readLeaderPositionShape(
   const dlmm = pair ?? (await DLMM.create(conn, pool));
   const { activeBin, userPositions } = await dlmm.getPositionsByUserAndLbPair(leader);
   const hasLiquidity = (p: (typeof userPositions)[number]): boolean =>
-    p.positionData.positionBinData.some((b) => b.positionXAmount !== '0' || b.positionYAmount !== '0');
+    p.positionData.positionBinData.some(
+      (b) => b.positionXAmount !== '0' || b.positionYAmount !== '0',
+    );
   const chosen = positionPubkey
     ? userPositions.find((p) => p.publicKey.toBase58() === positionPubkey)
     : userPositions.find(hasLiquidity);
@@ -61,7 +63,10 @@ export async function readLeaderPositionShape(
  * ground truth for the anti-dormant reconcile: it never relies on our DB/registry, only on what actually exists
  * on-chain. Heavy RPC (getProgramAccounts) → call on a periodic cadence, not on the hot path.
  */
-export async function readUserPositionPubkeys(conn: Connection, owner: PublicKey): Promise<string[]> {
+export async function readUserPositionPubkeys(
+  conn: Connection,
+  owner: PublicKey,
+): Promise<string[]> {
   const byPair = await DLMM.getAllLbPairPositionsByUser(conn, owner);
   const pubkeys: string[] = [];
   for (const info of byPair.values()) {
@@ -83,7 +88,10 @@ export interface UserPosition {
  * can not only DETECT a stray/untracked position but also build a close for it (orphan auto-close). Heavy RPC
  * (getProgramAccounts) → periodic cadence only, never the hot path.
  */
-export async function readUserPositions(conn: Connection, owner: PublicKey): Promise<UserPosition[]> {
+export async function readUserPositions(
+  conn: Connection,
+  owner: PublicKey,
+): Promise<UserPosition[]> {
   const byPair = await DLMM.getAllLbPairPositionsByUser(conn, owner);
   const out: UserPosition[] = [];
   for (const [pool, info] of byPair.entries()) {

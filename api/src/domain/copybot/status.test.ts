@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   type BrainStatusDetail,
   DETECTION_STALE_FAILURES,
-  HEARTBEAT_STALE_MS,
   detectionHealthy,
+  HEARTBEAT_STALE_MS,
   isOnline,
   shouldAlertDetectionStale,
 } from './status';
@@ -66,7 +66,13 @@ describe('status · BrainStatusDetail detection-liveness fields', () => {
   });
 
   it('the new fields are optional (a legacy row without them is still a valid detail)', () => {
-    const legacy: BrainStatusDetail = { leader: 'L', openPositions: 1, exposureSol: 2, lastActionAt: 1, lastLatencyMs: 2 };
+    const legacy: BrainStatusDetail = {
+      leader: 'L',
+      openPositions: 1,
+      exposureSol: 2,
+      lastActionAt: 1,
+      lastLatencyMs: 2,
+    };
     expect(legacy.wsConnected).toBeUndefined();
     expect(legacy.pollFailures).toBeUndefined();
   });

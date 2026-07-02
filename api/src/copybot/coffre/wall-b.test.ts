@@ -1,8 +1,15 @@
 import { DLMM_PROGRAM_ID } from '@binsight/shared';
-import { ComputeBudgetProgram, Keypair, PublicKey, SystemProgram, Transaction, TransactionInstruction } from '@solana/web3.js';
+import {
+  ComputeBudgetProgram,
+  Keypair,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+  TransactionInstruction,
+} from '@solana/web3.js';
 import { describe, expect, it } from 'vitest';
 import { JITO_TIP_ACCOUNTS } from '@/domain/copybot/jito-tip';
-import { type WallBIntent, verifyTx } from './wall-b';
+import { verifyTx, type WallBIntent } from './wall-b';
 
 const FAKE_BLOCKHASH = Keypair.generate().publicKey.toBase58();
 const DLMM = new PublicKey(DLMM_PROGRAM_ID);
@@ -16,8 +23,11 @@ function buildTx(feePayer: PublicKey, ixs: TransactionInstruction[]): Transactio
   for (const ix of ixs) t.add(ix);
   return Transaction.from(t.serialize({ requireAllSignatures: false, verifySignatures: false }));
 }
-const ix = (programId: PublicKey, keys: { pubkey: PublicKey; isSigner: boolean; isWritable: boolean }[], data = Buffer.alloc(0)) =>
-  new TransactionInstruction({ programId, keys, data });
+const ix = (
+  programId: PublicKey,
+  keys: { pubkey: PublicKey; isSigner: boolean; isWritable: boolean }[],
+  data = Buffer.alloc(0),
+) => new TransactionInstruction({ programId, keys, data });
 
 const owner = pk();
 const position = pk();
@@ -56,7 +66,10 @@ describe('Wall B — verifyTx', () => {
         { pubkey: pool, isSigner: false, isWritable: true },
       ]),
     ]);
-    expect(verifyTx(t, openIntent())).toMatchObject({ ok: false, reason: 'missing_position_signer' });
+    expect(verifyTx(t, openIntent())).toMatchObject({
+      ok: false,
+      reason: 'missing_position_signer',
+    });
   });
 
   it('program not in allowlist → reject program_not_allowed', () => {
@@ -68,7 +81,10 @@ describe('Wall B — verifyTx', () => {
         { pubkey: pool, isSigner: false, isWritable: true },
       ]),
     ]);
-    expect(verifyTx(t, openIntent())).toMatchObject({ ok: false, reason: expect.stringContaining('program_not_allowed') });
+    expect(verifyTx(t, openIntent())).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('program_not_allowed'),
+    });
   });
 
   it('pool not referenced → reject pool_not_referenced', () => {
@@ -92,7 +108,10 @@ describe('Wall B — verifyTx', () => {
       ]),
       transfer,
     ]);
-    expect(verifyTx(t, openIntent())).toMatchObject({ ok: false, reason: 'foreign_sol_destination' });
+    expect(verifyTx(t, openIntent())).toMatchObject({
+      ok: false,
+      reason: 'foreign_sol_destination',
+    });
   });
 
   it('System-Transfer to self (owner) → tolerated', () => {
@@ -119,23 +138,35 @@ describe('Wall B — verifyTx', () => {
     ]);
 
   it('a capped tip to a known Jito tip account → tolerated (the one allowed non-owner SOL destination)', () => {
-    expect(verifyTx(openWithTransfer(JITO_TIP_ACCOUNTS[0]!, 50_000), openIntent())).toEqual({ ok: true });
+    expect(verifyTx(openWithTransfer(JITO_TIP_ACCOUNTS[0]!, 50_000), openIntent())).toEqual({
+      ok: true,
+    });
   });
 
   it('an OVERSIZED tip to a Jito account → reject jito_tip_too_large (defense in depth vs an inflated tip)', () => {
-    expect(verifyTx(openWithTransfer(JITO_TIP_ACCOUNTS[0]!, 20_000_000), openIntent())).toMatchObject({ ok: false, reason: 'jito_tip_too_large' });
+    expect(
+      verifyTx(openWithTransfer(JITO_TIP_ACCOUNTS[0]!, 20_000_000), openIntent()),
+    ).toMatchObject({ ok: false, reason: 'jito_tip_too_large' });
   });
 
   it('a transfer to a NON-Jito third party is still rejected (the allowlist is exactly the Jito accounts)', () => {
-    expect(verifyTx(openWithTransfer(pk(), 50_000), openIntent())).toMatchObject({ ok: false, reason: 'foreign_sol_destination' });
+    expect(verifyTx(openWithTransfer(pk(), 50_000), openIntent())).toMatchObject({
+      ok: false,
+      reason: 'foreign_sol_destination',
+    });
   });
 
   it('tip cap boundary: exactly the max is tolerated, one lamport over is rejected (no off-by-one)', () => {
     // WHY: the cap is a hard security bound — an off-by-one (>= vs >) would either reject every legit max tip or
     // let an over-cap tip through. Pin both sides of the threshold.
     const MAX = 10_000_000; // mirrors wall-b's MAX_JITO_TIP_LAMPORTS
-    expect(verifyTx(openWithTransfer(JITO_TIP_ACCOUNTS[0]!, MAX), openIntent())).toEqual({ ok: true });
-    expect(verifyTx(openWithTransfer(JITO_TIP_ACCOUNTS[0]!, MAX + 1), openIntent())).toMatchObject({ ok: false, reason: 'jito_tip_too_large' });
+    expect(verifyTx(openWithTransfer(JITO_TIP_ACCOUNTS[0]!, MAX), openIntent())).toEqual({
+      ok: true,
+    });
+    expect(verifyTx(openWithTransfer(JITO_TIP_ACCOUNTS[0]!, MAX + 1), openIntent())).toMatchObject({
+      ok: false,
+      reason: 'jito_tip_too_large',
+    });
   });
 
   it('close: no position signer needed', () => {
@@ -162,8 +193,16 @@ describe('Wall B — verifyTx', () => {
   });
 
   it('close referencing NEITHER the pool NOR our position → reject pool_not_referenced', () => {
-    const t = buildTx(owner, [ix(DLMM, [{ pubkey: owner, isSigner: true, isWritable: true }, { pubkey: pk(), isSigner: false, isWritable: true }])]);
-    expect(verifyTx(t, openIntent({ kind: 'close' }))).toMatchObject({ ok: false, reason: 'pool_not_referenced' });
+    const t = buildTx(owner, [
+      ix(DLMM, [
+        { pubkey: owner, isSigner: true, isWritable: true },
+        { pubkey: pk(), isSigner: false, isWritable: true },
+      ]),
+    ]);
+    expect(verifyTx(t, openIntent({ kind: 'close' }))).toMatchObject({
+      ok: false,
+      reason: 'pool_not_referenced',
+    });
   });
 });
 
@@ -173,7 +212,10 @@ const TOKEN_2022_PROGRAM = new PublicKey('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEp
 const ATA_PROGRAM = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
 const inputMint = pk();
 const ownerAtaFor = (mint: PublicKey, tokenProgram: PublicKey): PublicKey =>
-  PublicKey.findProgramAddressSync([owner.toBuffer(), tokenProgram.toBuffer(), mint.toBuffer()], ATA_PROGRAM)[0];
+  PublicKey.findProgramAddressSync(
+    [owner.toBuffer(), tokenProgram.toBuffer(), mint.toBuffer()],
+    ATA_PROGRAM,
+  )[0];
 const ownerAta = (mint: PublicKey): PublicKey => ownerAtaFor(mint, TOKEN_PROGRAM);
 
 const sellIntent = (over: Partial<WallBIntent> = {}): WallBIntent => ({
@@ -199,29 +241,54 @@ describe('Wall B — verifyTx (sell / Jupiter token→SOL)', () => {
   });
 
   it('sell with no inputMint in the intent → reject swap_missing_token_mint', () => {
-    expect(verifyTx(validSell(), sellIntent({ inputMint: undefined }))).toMatchObject({ ok: false, reason: 'swap_missing_token_mint' });
+    expect(verifyTx(validSell(), sellIntent({ inputMint: undefined }))).toMatchObject({
+      ok: false,
+      reason: 'swap_missing_token_mint',
+    });
   });
 
   it('sell not touching owner ATA of the residual token → reject swap_token_not_owner_ata (wrong token)', () => {
     // WHY: binds the swap to the intended residual token, not some other holding of ours.
     const otherMint = pk();
-    const t = buildTx(owner, [ix(JUP, [{ pubkey: owner, isSigner: true, isWritable: true }, { pubkey: ownerAta(otherMint), isSigner: false, isWritable: true }])]);
-    expect(verifyTx(t, sellIntent())).toMatchObject({ ok: false, reason: 'swap_token_not_owner_ata' });
+    const t = buildTx(owner, [
+      ix(JUP, [
+        { pubkey: owner, isSigner: true, isWritable: true },
+        { pubkey: ownerAta(otherMint), isSigner: false, isWritable: true },
+      ]),
+    ]);
+    expect(verifyTx(t, sellIntent())).toMatchObject({
+      ok: false,
+      reason: 'swap_token_not_owner_ata',
+    });
   });
 
   it('sell that tries to send SOL to a third party → reject foreign_sol_destination', () => {
     const attacker = pk();
     const t = buildTx(owner, [
-      ix(JUP, [{ pubkey: owner, isSigner: true, isWritable: true }, { pubkey: ownerAta(inputMint), isSigner: false, isWritable: true }]),
+      ix(JUP, [
+        { pubkey: owner, isSigner: true, isWritable: true },
+        { pubkey: ownerAta(inputMint), isSigner: false, isWritable: true },
+      ]),
       SystemProgram.transfer({ fromPubkey: owner, toPubkey: attacker, lamports: 1 }),
     ]);
-    expect(verifyTx(t, sellIntent())).toMatchObject({ ok: false, reason: 'foreign_sol_destination' });
+    expect(verifyTx(t, sellIntent())).toMatchObject({
+      ok: false,
+      reason: 'foreign_sol_destination',
+    });
   });
 
   it('sell routed through a non-allowlisted program → reject program_not_allowed', () => {
     const evil = pk();
-    const t = buildTx(owner, [ix(evil, [{ pubkey: owner, isSigner: true, isWritable: true }, { pubkey: ownerAta(inputMint), isSigner: false, isWritable: true }])]);
-    expect(verifyTx(t, sellIntent())).toMatchObject({ ok: false, reason: expect.stringContaining('program_not_allowed') });
+    const t = buildTx(owner, [
+      ix(evil, [
+        { pubkey: owner, isSigner: true, isWritable: true },
+        { pubkey: ownerAta(inputMint), isSigner: false, isWritable: true },
+      ]),
+    ]);
+    expect(verifyTx(t, sellIntent())).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('program_not_allowed'),
+    });
   });
 
   it('Token-2022 residual sell (ATA derived under Token-2022) → ok (the dormant-token bug fix)', () => {
@@ -238,7 +305,10 @@ describe('Wall B — verifyTx (sell / Jupiter token→SOL)', () => {
 
   it('Token-2022 program is allowlisted (a sell instruction may invoke it) → not program_not_allowed', () => {
     const t = buildTx(owner, [
-      ix(TOKEN_2022_PROGRAM, [{ pubkey: owner, isSigner: true, isWritable: true }, { pubkey: ownerAtaFor(inputMint, TOKEN_2022_PROGRAM), isSigner: false, isWritable: true }]),
+      ix(TOKEN_2022_PROGRAM, [
+        { pubkey: owner, isSigner: true, isWritable: true },
+        { pubkey: ownerAtaFor(inputMint, TOKEN_2022_PROGRAM), isSigner: false, isWritable: true },
+      ]),
     ]);
     expect(verifyTx(t, sellIntent())).toEqual({ ok: true });
   });
@@ -257,22 +327,41 @@ describe('Wall B — verifyTx (buy / Jupiter SOL→token, two-sided copy)', () =
   });
 
   it('valid buy (owner signer, Jupiter program, owner ATA of the bought token) → ok', () => {
-    const t = buildTx(owner, [ix(JUP, [{ pubkey: owner, isSigner: true, isWritable: true }, { pubkey: ownerAta(buyMint), isSigner: false, isWritable: true }])]);
+    const t = buildTx(owner, [
+      ix(JUP, [
+        { pubkey: owner, isSigner: true, isWritable: true },
+        { pubkey: ownerAta(buyMint), isSigner: false, isWritable: true },
+      ]),
+    ]);
     expect(verifyTx(t, buyIntent())).toEqual({ ok: true });
   });
 
   it('buy not touching owner ATA of the bought token → reject swap_token_not_owner_ata', () => {
-    const t = buildTx(owner, [ix(JUP, [{ pubkey: owner, isSigner: true, isWritable: true }, { pubkey: ownerAta(pk()), isSigner: false, isWritable: true }])]);
-    expect(verifyTx(t, buyIntent())).toMatchObject({ ok: false, reason: 'swap_token_not_owner_ata' });
+    const t = buildTx(owner, [
+      ix(JUP, [
+        { pubkey: owner, isSigner: true, isWritable: true },
+        { pubkey: ownerAta(pk()), isSigner: false, isWritable: true },
+      ]),
+    ]);
+    expect(verifyTx(t, buyIntent())).toMatchObject({
+      ok: false,
+      reason: 'swap_token_not_owner_ata',
+    });
   });
 
   it('buy that tries to send SOL to a third party → reject foreign_sol_destination', () => {
     const attacker = pk();
     const t = buildTx(owner, [
-      ix(JUP, [{ pubkey: owner, isSigner: true, isWritable: true }, { pubkey: ownerAta(buyMint), isSigner: false, isWritable: true }]),
+      ix(JUP, [
+        { pubkey: owner, isSigner: true, isWritable: true },
+        { pubkey: ownerAta(buyMint), isSigner: false, isWritable: true },
+      ]),
       SystemProgram.transfer({ fromPubkey: owner, toPubkey: attacker, lamports: 1 }),
     ]);
-    expect(verifyTx(t, buyIntent())).toMatchObject({ ok: false, reason: 'foreign_sol_destination' });
+    expect(verifyTx(t, buyIntent())).toMatchObject({
+      ok: false,
+      reason: 'foreign_sol_destination',
+    });
   });
 });
 
@@ -297,15 +386,24 @@ describe('Wall B — verifyTx (add / remove: proportional adjustments, no positi
   it('remove that sends SOL to a third party → reject foreign_sol_destination', () => {
     const attacker = pk();
     const t = buildTx(owner, [
-      ix(DLMM, [{ pubkey: owner, isSigner: true, isWritable: true }, { pubkey: pool, isSigner: false, isWritable: true }]),
+      ix(DLMM, [
+        { pubkey: owner, isSigner: true, isWritable: true },
+        { pubkey: pool, isSigner: false, isWritable: true },
+      ]),
       SystemProgram.transfer({ fromPubkey: owner, toPubkey: attacker, lamports: 1 }),
     ]);
-    expect(verifyTx(t, openIntent({ kind: 'remove' }))).toMatchObject({ ok: false, reason: 'foreign_sol_destination' });
+    expect(verifyTx(t, openIntent({ kind: 'remove' }))).toMatchObject({
+      ok: false,
+      reason: 'foreign_sol_destination',
+    });
   });
 
   it('add not referencing the pool → reject pool_not_referenced', () => {
     const t = buildTx(owner, [ix(DLMM, [{ pubkey: owner, isSigner: true, isWritable: true }])]);
-    expect(verifyTx(t, openIntent({ kind: 'add' }))).toMatchObject({ ok: false, reason: 'pool_not_referenced' });
+    expect(verifyTx(t, openIntent({ kind: 'add' }))).toMatchObject({
+      ok: false,
+      reason: 'pool_not_referenced',
+    });
   });
 });
 
@@ -331,7 +429,10 @@ describe('Wall B — SOL-spend cap (the ACTUAL wrapped SOL is bounded, not just 
 
   it('a wrap OVER the cap → reject sol_spend_over_cap (a compromised brain cannot deploy more than the config allows)', () => {
     // WHY: the re-clamp on sr.sizeSol bounds a SELF-REPORTED number; Wall B must bound the tx's REAL SOL movement.
-    expect(verifyTx(openWrapping(CAP + 1), openIntent({ maxLamports: CAP }))).toMatchObject({ ok: false, reason: 'sol_spend_over_cap' });
+    expect(verifyTx(openWrapping(CAP + 1), openIntent({ maxLamports: CAP }))).toMatchObject({
+      ok: false,
+      reason: 'sol_spend_over_cap',
+    });
   });
 
   it('SUMS multiple owner→WSOL-ATA transfers (split-wrap evasion is caught)', () => {
@@ -344,11 +445,19 @@ describe('Wall B — SOL-spend cap (the ACTUAL wrapped SOL is bounded, not just 
       SystemProgram.transfer({ fromPubkey: owner, toPubkey: ownerAta(WSOL), lamports: CAP }),
       SystemProgram.transfer({ fromPubkey: owner, toPubkey: ownerAta(WSOL), lamports: 2 }),
     ]);
-    expect(verifyTx(t, openIntent({ maxLamports: CAP }))).toMatchObject({ ok: false, reason: 'sol_spend_over_cap' });
+    expect(verifyTx(t, openIntent({ maxLamports: CAP }))).toMatchObject({
+      ok: false,
+      reason: 'sol_spend_over_cap',
+    });
   });
 
   it('a close (wraps nothing) is unaffected by the cap → ok', () => {
-    const t = buildTx(owner, [ix(DLMM, [{ pubkey: owner, isSigner: true, isWritable: true }, { pubkey: pool, isSigner: false, isWritable: true }])]);
+    const t = buildTx(owner, [
+      ix(DLMM, [
+        { pubkey: owner, isSigner: true, isWritable: true },
+        { pubkey: pool, isSigner: false, isWritable: true },
+      ]),
+    ]);
     expect(verifyTx(t, openIntent({ kind: 'close', maxLamports: CAP }))).toEqual({ ok: true });
   });
 
@@ -379,19 +488,29 @@ describe('Wall B — priority-fee cap (ComputeBudget price × CU-limit is bounde
   it('an inflated CU price (worst case 0.14 SOL) → reject priority_fee_too_large', () => {
     // WHY: a priority fee is SOL burned to the validator, NOT a System-Transfer, so the wrap-cap can't catch it.
     // Wall B's job is to bound a compromised brain — an inflated setComputeUnitPrice must be rejected.
-    expect(verifyTx(openWithFee(1_400_000, 100_000_000), openIntent())).toMatchObject({ ok: false, reason: 'priority_fee_too_large' });
+    expect(verifyTx(openWithFee(1_400_000, 100_000_000), openIntent())).toMatchObject({
+      ok: false,
+      reason: 'priority_fee_too_large',
+    });
   });
 
   it('cap boundary: exactly the max is tolerated, one lamport over is rejected (no off-by-one)', () => {
     // With CU limit = 1,000,000, worst-case fee (price × limit / 1e6) == price in lamports → easy exact boundary.
-    expect(verifyTx(openWithFee(1_000_000, MAX_PRIORITY_FEE_LAMPORTS), openIntent())).toEqual({ ok: true });
-    expect(verifyTx(openWithFee(1_000_000, MAX_PRIORITY_FEE_LAMPORTS + 1), openIntent())).toMatchObject({ ok: false, reason: 'priority_fee_too_large' });
+    expect(verifyTx(openWithFee(1_000_000, MAX_PRIORITY_FEE_LAMPORTS), openIntent())).toEqual({
+      ok: true,
+    });
+    expect(
+      verifyTx(openWithFee(1_000_000, MAX_PRIORITY_FEE_LAMPORTS + 1), openIntent()),
+    ).toMatchObject({ ok: false, reason: 'priority_fee_too_large' });
   });
 
   it('a huge price with NO explicit CU limit → still rejected (protocol-max CU fallback prevents under-bounding)', () => {
     // WHY: a compromised brain could omit the limit ix hoping the fee escapes the cap; the protocol per-tx ceiling
     // (1.4M CU) is used as the worst-case CU so the drain is still caught.
-    expect(verifyTx(openWithFee(null, 100_000_000), openIntent())).toMatchObject({ ok: false, reason: 'priority_fee_too_large' });
+    expect(verifyTx(openWithFee(null, 100_000_000), openIntent())).toMatchObject({
+      ok: false,
+      reason: 'priority_fee_too_large',
+    });
   });
 
   it('a modest price with no explicit CU limit (worst case ~0.014 SOL) → ok (no false-reject)', () => {
@@ -408,6 +527,9 @@ describe('Wall B — priority-fee cap (ComputeBudget price × CU-limit is bounde
         { pubkey: ownerAta(inputMint), isSigner: false, isWritable: true },
       ]),
     ]);
-    expect(verifyTx(t, sellIntent())).toMatchObject({ ok: false, reason: 'priority_fee_too_large' });
+    expect(verifyTx(t, sellIntent())).toMatchObject({
+      ok: false,
+      reason: 'priority_fee_too_large',
+    });
   });
 });

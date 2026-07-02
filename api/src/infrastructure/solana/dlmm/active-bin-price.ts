@@ -18,7 +18,10 @@ export function activeBinPrice(activeId: number, binStep: number, solSide: 'X' |
 }
 
 /** The pool's current non-SOL token price in SOL, or null (no SOL side / read fails / garbage) — never throws. */
-export async function readActiveTokenPrice(conn: Connection, pool: PublicKey): Promise<number | null> {
+export async function readActiveTokenPrice(
+  conn: Connection,
+  pool: PublicKey,
+): Promise<number | null> {
   let account: Awaited<ReturnType<Connection['getAccountInfo']>>;
   try {
     account = await conn.getAccountInfo(pool);

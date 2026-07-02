@@ -17,7 +17,9 @@ import type { GeckoTerminalGateway } from '@/infrastructure/geckoterminal/geckot
 import type { PresenceTracker } from '@/infrastructure/notifications/presence';
 import type { NetworthSnapshotRepository } from '@/infrastructure/persistence/networth-snapshot-repository';
 import type { PushRepository, PushSub } from '@/infrastructure/persistence/push-repository';
+import type { RpcCreditLedgerRepository } from '@/infrastructure/persistence/rpc-credit-ledger-repository';
 import { renderClosedPnlCard } from '@/infrastructure/share-card/pnl-card';
+import type { CreditMeter } from '@/infrastructure/solana/credit-meter';
 import { TtlCache, VersionedCache } from '@/util/cache';
 import { isValidSolanaAddress } from './auth';
 
@@ -25,6 +27,8 @@ import { isValidSolanaAddress } from './auth';
 const MAX_WALLETS_PER_ACCOUNT = 3;
 /** Global ceiling on distinct monitored wallets — protects the shared Meteora/Helius budget. */
 const GLOBAL_WALLET_CAP = 200;
+/** How many recent UTC days of persisted credit spend /debug/rpc returns (the panel's last-7d window). */
+const DEBUG_RPC_HISTORY_DAYS = 7;
 
 export type RouteDeps = {
   bus: EventBus;
@@ -41,10 +45,16 @@ export type RouteDeps = {
   pushRepo: PushRepository;
   /** Free OHLCV candle source for the position price chart (GeckoTerminal). */
   gecko: GeckoTerminalGateway;
+  /** Shared RPC credit ledger — drives the owner-only /debug/rpc telemetry + the kill-switch view. */
+  meter: CreditMeter;
+  /** Durable RPC-credit rollup — backs the persisted last-7d spend on /debug/rpc (survives restarts). */
+  creditLedger: RpcCreditLedgerRepository;
   /** VAPID public key handed to the browser so it can subscribe ('' when push is disabled). */
   vapidPublicKey: string;
   /** Send a test push to an account's own subscriptions; returns how many were targeted. */
   sendTestPush: (userId: string) => Promise<number>;
+  /** Open-access mode (env OPEN_ACCESS_MODE): single-wallet accounts + notifications disabled. */
+  openAccess: boolean;
 };
 
 /** Owner-only guard for operational/notification routes. Returns false (and replies 403) otherwise. */
@@ -68,8 +78,11 @@ export function registerRoutes(app: FastifyInstance, deps: RouteDeps): void {
     presence,
     pushRepo,
     gecko,
+    meter,
+    creditLedger,
     vapidPublicKey,
     sendTestPush,
+    openAccess,
   } = deps;
 
   // A watchlist changes only on add/remove (which invalidate below), so cache it briefly instead of
@@ -135,6 +148,18 @@ export function registerRoutes(app: FastifyInstance, deps: RouteDeps): void {
     };
   });
 
+  // RPC credit telemetry: the in-memory ledger (totals + by method/codePath/wallet + live tail) and the
+  // pure structural anomaly signals (owner only).
+  app.get('/debug/rpc', async (req, reply) => {
+    if (!requireOwner(req, reply)) return;
+    return {
+      stats: meter.stats(),
+      anomalies: meter.anomalies(),
+      // Durable spend history (per day/method/wallet/codePath) from the rollup — survives restarts.
+      last7d: await creditLedger.since(DEBUG_RPC_HISTORY_DAYS),
+    };
+  });
+
   // ── Watchlist (per account) ──────────────────────────────────────────────────────────────────
   // Enriched with each wallet's onboarding status so the UI can show "indexing…" for a freshly-added
   // wallet still backfilling its history (vs ready = queryable).
@@ -155,8 +180,11 @@ export function registerRoutes(app: FastifyInstance, deps: RouteDeps): void {
     }
     const already = await accounts.isWatching(me.id, address);
     if (!already && !me.isOwner) {
-      if ((await accounts.countWatched(me.id)) >= MAX_WALLETS_PER_ACCOUNT) {
-        return reply.code(409).send({ error: `wallet limit reached (${MAX_WALLETS_PER_ACCOUNT})` });
+      // Open-access accounts are single-wallet (the registration address is auto-watched), so any
+      // second wallet is rejected. The owner is exempt in either mode.
+      const cap = openAccess ? 1 : MAX_WALLETS_PER_ACCOUNT;
+      if ((await accounts.countWatched(me.id)) >= cap) {
+        return reply.code(409).send({ error: `wallet limit reached (${cap})` });
       }
       const monitored = await accounts.monitoredWallets();
       if (!monitored.includes(address) && monitored.length >= GLOBAL_WALLET_CAP) {
@@ -256,6 +284,9 @@ export function registerRoutes(app: FastifyInstance, deps: RouteDeps): void {
   app.post<{ Body: { endpoint?: unknown; keys?: { p256dh?: unknown; auth?: unknown } } }>(
     '/push/subscribe',
     async (req, reply) => {
+      // Open-access mode disables notifications entirely — refuse subscriptions so no web push is ever
+      // routed to these accounts (the UI also hides the toggle; this is the server-side guarantee).
+      if (openAccess) return reply.code(403).send({ error: 'notifications disabled' });
       const b = req.body;
       const endpoint = typeof b?.endpoint === 'string' ? b.endpoint : null;
       const p256dh = typeof b?.keys?.p256dh === 'string' ? b.keys.p256dh : null;

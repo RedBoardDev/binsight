@@ -35,7 +35,11 @@ describe('PaperPositionLedger — state of the paper mirrors we hold', () => {
     const l = new PaperPositionLedger();
     l.openMirror(openArgs());
     const closed = l.closeMirror('P', 'close-sig', 2000);
-    expect(closed).toMatchObject({ status: 'closed', closeSignature: 'close-sig', closedAtBlockTime: 2000 });
+    expect(closed).toMatchObject({
+      status: 'closed',
+      closeSignature: 'close-sig',
+      closedAtBlockTime: 2000,
+    });
     expect(l.openPositions()).toHaveLength(0);
     expect(l.get('P')?.status).toBe('closed');
   });

@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { type FilterConfig, type FilterContext, FILTERS_ALL_OFF } from './filter';
+import { FILTERS_ALL_OFF, type FilterConfig, type FilterContext } from './filter';
 import { FILTER_BRICKS, filtersActive, neededSources, REGISTRY, runFilters } from './index';
 
-const ctx = (over: Partial<FilterContext> = {}): FilterContext => ({ openTokenMints: new Set(), ...over });
+const ctx = (over: Partial<FilterContext> = {}): FilterContext => ({
+  openTokenMints: new Set(),
+  ...over,
+});
 const candidate = { nonSolMint: 'MINT', pool: 'POOL' };
 
 describe('runFilters — registry orchestration (first skip wins, instant-first order)', () => {
@@ -11,27 +14,42 @@ describe('runFilters — registry orchestration (first skip wins, instant-first 
   });
 
   it('ignoredTokens matched → skip ignored_token', () => {
-    expect(runFilters(candidate, ctx(), { ...FILTERS_ALL_OFF, ignoredTokens: ['MINT'] })).toEqual({ action: 'skip', reason: 'ignored_token' });
+    expect(runFilters(candidate, ctx(), { ...FILTERS_ALL_OFF, ignoredTokens: ['MINT'] })).toEqual({
+      action: 'skip',
+      reason: 'ignored_token',
+    });
   });
 
   it('singlePoolPerToken, token already held → skip single_pool_per_token', () => {
     const cfg = { ...FILTERS_ALL_OFF, singlePoolPerToken: true };
-    expect(runFilters(candidate, ctx({ openTokenMints: new Set(['MINT']) }), cfg)).toEqual({ action: 'skip', reason: 'single_pool_per_token' });
+    expect(runFilters(candidate, ctx({ openTokenMints: new Set(['MINT']) }), cfg)).toEqual({
+      action: 'skip',
+      reason: 'single_pool_per_token',
+    });
   });
 
   it('data filter below threshold → skip below_', () => {
     const cfg = { ...FILTERS_ALL_OFF, minMarketCapUsd: 1_000_000 };
-    expect(runFilters(candidate, ctx({ marketCapUsd: 500_000 }), cfg)).toEqual({ action: 'skip', reason: 'below_min_market_cap' });
+    expect(runFilters(candidate, ctx({ marketCapUsd: 500_000 }), cfg)).toEqual({
+      action: 'skip',
+      reason: 'below_min_market_cap',
+    });
   });
 
   it('data filter enabled but data missing → skip _unavailable (no open on unverifiable data)', () => {
     const cfg = { ...FILTERS_ALL_OFF, minJupOrganicScore: 50 };
-    expect(runFilters(candidate, ctx(), cfg)).toEqual({ action: 'skip', reason: 'min_organic_score_unavailable' });
+    expect(runFilters(candidate, ctx(), cfg)).toEqual({
+      action: 'skip',
+      reason: 'min_organic_score_unavailable',
+    });
   });
 
   it('first skip wins: ignoredTokens runs BEFORE singlePool (instant order preserved)', () => {
     const cfg = { ...FILTERS_ALL_OFF, ignoredTokens: ['MINT'], singlePoolPerToken: true };
-    expect(runFilters(candidate, ctx({ openTokenMints: new Set(['MINT']) }), cfg)).toEqual({ action: 'skip', reason: 'ignored_token' });
+    expect(runFilters(candidate, ctx({ openTokenMints: new Set(['MINT']) }), cfg)).toEqual({
+      action: 'skip',
+      reason: 'ignored_token',
+    });
   });
 
   it('ALL filters enabled and satisfied → pass (exercises every activation branch)', () => {
@@ -95,12 +113,22 @@ describe('neededSources — only ENABLED bricks contribute, one shared source (n
   });
 
   it('only local/leader-shape filters on → still no external source', () => {
-    const cfg = { ...FILTERS_ALL_OFF, ignoredTokens: ['X'], singlePoolPerToken: true, minPriceRangePercent: 3 };
+    const cfg = {
+      ...FILTERS_ALL_OFF,
+      ignoredTokens: ['X'],
+      singlePoolPerToken: true,
+      minPriceRangePercent: 3,
+    };
     expect(neededSources(cfg).size).toBe(0);
   });
 
   it('several Jupiter-backed filters on → exactly { jupiter-token } (ONE shared call, not N)', () => {
-    const cfg = { ...FILTERS_ALL_OFF, minMarketCapUsd: 1_000_000, minJupOrganicScore: 50, minHolders: 100 };
+    const cfg = {
+      ...FILTERS_ALL_OFF,
+      minMarketCapUsd: 1_000_000,
+      minJupOrganicScore: 50,
+      minHolders: 100,
+    };
     expect([...neededSources(cfg)]).toEqual(['jupiter-token']);
   });
 });

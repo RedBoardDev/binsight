@@ -12,7 +12,13 @@
  */
 import { eq } from 'drizzle-orm';
 import type { Logger } from 'pino';
-import { CONFIG_DEFAULTS, type CopybotConfig, CopybotConfigSchema, isValidConfigBlob, parseConfig } from '@/domain/copybot/config';
+import {
+  CONFIG_DEFAULTS,
+  type CopybotConfig,
+  CopybotConfigSchema,
+  isValidConfigBlob,
+  parseConfig,
+} from '@/domain/copybot/config';
 import type { openDatabase } from '@/infrastructure/persistence/database';
 import { settings } from '@/infrastructure/persistence/schema';
 
@@ -57,7 +63,10 @@ export class ConfigStore {
       // bot stays halted until an operator repairs the blob.
       // TODO(follow-up): config corruption warrants a PINNED operator alert; the ConfigStore has no CopyEvents emitter
       // wired in yet, so keep the loud error log here and add the pinned alert when the emitter is reachable.
-      this.log.error({ raw }, 'copybot config blob is invalid → FAIL-CLOSED (global kill switch forced ON until repaired)');
+      this.log.error(
+        { raw },
+        'copybot config blob is invalid → FAIL-CLOSED (global kill switch forced ON until repaired)',
+      );
       return withKillSwitchOn(this.lastGood ?? CONFIG_DEFAULTS);
     }
     const cfg = parseConfig(raw); // null/'' ⇒ genuine first-run DEFAULTS; valid/partial ⇒ merged-and-validated config
@@ -69,7 +78,10 @@ export class ConfigStore {
   async save(cfg: CopybotConfig): Promise<void> {
     const valid = CopybotConfigSchema.parse(cfg); // throws ZodError on invalid (loud, caller-facing)
     const value = JSON.stringify(valid);
-    await this.db.insert(settings).values({ key: CONFIG_KEY, value }).onConflictDoUpdate({ target: settings.key, set: { value } });
+    await this.db
+      .insert(settings)
+      .values({ key: CONFIG_KEY, value })
+      .onConflictDoUpdate({ target: settings.key, set: { value } });
   }
 
   /** First-boot seed: write the defaults if absent, then return the effective config. */

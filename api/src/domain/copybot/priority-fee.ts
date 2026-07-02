@@ -32,9 +32,13 @@ export const TIER_MICRO_LAMPORTS_PER_CU: Record<PriorityFeeTier, number> = {
  * raises the fee). A null/invalid estimate falls back to the static floor. The hard SOL cap still bounds the result
  * downstream — this only chooses the pre-cap target. Pure.
  */
-export function effectiveMicroPerCu(tier: PriorityFeeTier, liveMicroPerCu: number | null = null): number {
+export function effectiveMicroPerCu(
+  tier: PriorityFeeTier,
+  liveMicroPerCu: number | null = null,
+): number {
   const floor = TIER_MICRO_LAMPORTS_PER_CU[tier];
-  if (liveMicroPerCu == null || !Number.isFinite(liveMicroPerCu) || liveMicroPerCu <= 0) return floor;
+  if (liveMicroPerCu == null || !Number.isFinite(liveMicroPerCu) || liveMicroPerCu <= 0)
+    return floor;
   return Math.max(floor, Math.floor(liveMicroPerCu));
 }
 
@@ -42,7 +46,12 @@ export function effectiveMicroPerCu(tier: PriorityFeeTier, liveMicroPerCu: numbe
  * The compute-unit price (µLamports/CU) to set, given the tx's CU limit and the user cap. Capped so the worst-case
  * fee (`price × cuLimit`) stays under `maxCapSol`. Returns 0 when there's nothing to set (no CU, or a zero cap).
  */
-export function computeUnitPriceMicroLamports(tier: PriorityFeeTier, cuLimit: number, maxCapSol: number, liveMicroPerCu: number | null = null): number {
+export function computeUnitPriceMicroLamports(
+  tier: PriorityFeeTier,
+  cuLimit: number,
+  maxCapSol: number,
+  liveMicroPerCu: number | null = null,
+): number {
   if (cuLimit <= 0 || maxCapSol <= 0) return 0;
   const base = effectiveMicroPerCu(tier, liveMicroPerCu);
   const capLamports = maxCapSol * LAMPORTS_PER_SOL;

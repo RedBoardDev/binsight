@@ -16,7 +16,10 @@ const fullToken = {
 };
 
 const mockFetch = (impl: typeof fetch) => vi.stubGlobal('fetch', vi.fn(impl));
-const json = (body: unknown, status = 200) => async () => new Response(JSON.stringify(body), { status });
+const json =
+  (body: unknown, status = 200) =>
+  async () =>
+    new Response(JSON.stringify(body), { status });
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -72,7 +75,10 @@ describe('JupiterTokenGateway — Jupiter v2 search → normalized snapshot (one
   });
 
   it('passes the x-api-key header only when an apiKey is configured', async () => {
-    const spy = vi.fn(async (_url: string | URL, _init?: RequestInit) => new Response(JSON.stringify([fullToken]), { status: 200 }));
+    const spy = vi.fn(
+      async (_url: string | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify([fullToken]), { status: 200 }),
+    );
     vi.stubGlobal('fetch', spy);
     await new JupiterTokenGateway({ apiKey: 'KEY' }).getSnapshot(MINT);
     const headers = spy.mock.calls[0]?.[1]?.headers as Record<string, string> | undefined;

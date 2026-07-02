@@ -18,7 +18,10 @@ describe('checkCaps — caps + kill-switch envelope', () => {
   it('global kill-switch ON → block kill_switch_global (absolute priority)', () => {
     const cfg: CapsConfig = { ...CAPS_DEFAULTS, killSwitchGlobal: true };
     // even with a perfect state, the kill-switch wins.
-    expect(checkCaps(cfg, state(), 1, NOW)).toEqual({ action: 'block', reason: 'kill_switch_global' });
+    expect(checkCaps(cfg, state(), 1, NOW)).toEqual({
+      action: 'block',
+      reason: 'kill_switch_global',
+    });
   });
 
   it('leader kill-switch ON (global OFF) → block kill_switch_leader', () => {
@@ -30,23 +33,38 @@ describe('checkCaps — caps + kill-switch envelope', () => {
 
   describe('maxOpenPositions', () => {
     it('at the cap → block', () => {
-      expect(checkCaps({ ...CAPS_DEFAULTS, maxOpenPositions: 8 }, state({ openPositions: 8 }), 1, NOW)).toEqual({
+      expect(
+        checkCaps({ ...CAPS_DEFAULTS, maxOpenPositions: 8 }, state({ openPositions: 8 }), 1, NOW),
+      ).toEqual({
         action: 'block',
         reason: 'max_open_positions',
       });
     });
     it('below the cap → allow', () => {
-      expect(checkCaps({ ...CAPS_DEFAULTS, maxOpenPositions: 8 }, state({ openPositions: 7 }), 1, NOW).action).toBe('allow');
+      expect(
+        checkCaps({ ...CAPS_DEFAULTS, maxOpenPositions: 8 }, state({ openPositions: 7 }), 1, NOW)
+          .action,
+      ).toBe('allow');
     });
     it('null (uncapped) → allow even with many positions', () => {
-      expect(checkCaps({ ...CAPS_DEFAULTS, maxOpenPositions: null }, state({ openPositions: 999 }), 1, NOW).action).toBe('allow');
+      expect(
+        checkCaps(
+          { ...CAPS_DEFAULTS, maxOpenPositions: null },
+          state({ openPositions: 999 }),
+          1,
+          NOW,
+        ).action,
+      ).toBe('allow');
     });
   });
 
   describe('maxConcurrentPerToken', () => {
     it('at the cap for this token → block', () => {
       const cfg = { ...CAPS_DEFAULTS, maxConcurrentPerToken: 1 };
-      expect(checkCaps(cfg, state({ tokenOpenCount: 1 }), 1, NOW)).toEqual({ action: 'block', reason: 'max_concurrent_per_token' });
+      expect(checkCaps(cfg, state({ tokenOpenCount: 1 }), 1, NOW)).toEqual({
+        action: 'block',
+        reason: 'max_concurrent_per_token',
+      });
     });
     it('null (unlimited, default) → allow', () => {
       expect(checkCaps(CAPS_DEFAULTS, state({ tokenOpenCount: 50 }), 1, NOW).action).toBe('allow');
@@ -63,25 +81,39 @@ describe('checkCaps — caps + kill-switch envelope', () => {
     });
     it('opens OUTSIDE the window (older than windowMinutes) do not count → allow', () => {
       const old = Array.from({ length: 20 }, () => NOW - 11 * 60_000); // 20 opens 11 min ago (> 10 min)
-      expect(checkCaps(CAPS_DEFAULTS, state({ openTimestampsMs: old }), 1, NOW).action).toBe('allow');
+      expect(checkCaps(CAPS_DEFAULTS, state({ openTimestampsMs: old }), 1, NOW).action).toBe(
+        'allow',
+      );
     });
     it('window OFF (null) → not enforced', () => {
       const recent = Array.from({ length: 50 }, () => NOW);
-      expect(checkCaps({ ...CAPS_DEFAULTS, maxOpensPerWindow: null }, state({ openTimestampsMs: recent }), 1, NOW).action).toBe('allow');
+      expect(
+        checkCaps(
+          { ...CAPS_DEFAULTS, maxOpensPerWindow: null },
+          state({ openTimestampsMs: recent }),
+          1,
+          NOW,
+        ).action,
+      ).toBe('allow');
     });
   });
 
   describe('maxTotalExposureSol', () => {
     it('exposure + new size > cap → block', () => {
       const cfg = { ...CAPS_DEFAULTS, maxTotalExposureSol: 5 };
-      expect(checkCaps(cfg, state({ totalExposureSol: 4.5 }), 1, NOW)).toEqual({ action: 'block', reason: 'max_total_exposure' });
+      expect(checkCaps(cfg, state({ totalExposureSol: 4.5 }), 1, NOW)).toEqual({
+        action: 'block',
+        reason: 'max_total_exposure',
+      });
     });
     it('exposure + size == cap → allow (boundary included)', () => {
       const cfg = { ...CAPS_DEFAULTS, maxTotalExposureSol: 5 };
       expect(checkCaps(cfg, state({ totalExposureSol: 4 }), 1, NOW).action).toBe('allow');
     });
     it('null (OFF, default) → allow', () => {
-      expect(checkCaps(CAPS_DEFAULTS, state({ totalExposureSol: 9999 }), 100, NOW).action).toBe('allow');
+      expect(checkCaps(CAPS_DEFAULTS, state({ totalExposureSol: 9999 }), 100, NOW).action).toBe(
+        'allow',
+      );
     });
   });
 

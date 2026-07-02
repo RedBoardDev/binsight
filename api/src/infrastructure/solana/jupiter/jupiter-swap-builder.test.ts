@@ -1,21 +1,38 @@
 import { describe, expect, it } from 'vitest';
-import { type HttpFetch, WSOL_MINT, buildJupiterSwapTx, getJupiterBuyQuote, getJupiterBuyQuoteExactIn, getJupiterQuote } from './jupiter-swap-builder';
+import {
+  buildJupiterSwapTx,
+  getJupiterBuyQuote,
+  getJupiterBuyQuoteExactIn,
+  getJupiterQuote,
+  type HttpFetch,
+  WSOL_MINT,
+} from './jupiter-swap-builder';
 
 const BASE = 'https://jup.test/v6';
 const MINT = 'TokenMintXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
 
 // A capturing fake fetch: records the calls and returns a canned response.
-function fakeFetch(response: { ok?: boolean; status?: number; body: unknown }): { fetch: HttpFetch; calls: Array<{ url: string; init?: unknown }> } {
+function fakeFetch(response: { ok?: boolean; status?: number; body: unknown }): {
+  fetch: HttpFetch;
+  calls: Array<{ url: string; init?: unknown }>;
+} {
   const calls: Array<{ url: string; init?: unknown }> = [];
   const fetch: HttpFetch = async (url, init) => {
     calls.push({ url, init });
-    return { ok: response.ok ?? true, status: response.status ?? 200, json: async () => response.body };
+    return {
+      ok: response.ok ?? true,
+      status: response.status ?? 200,
+      json: async () => response.body,
+    };
   };
   return { fetch, calls };
 }
 
 // A fake fetch that returns a SEQUENCE of responses (one per call) — to drive the retry/backoff path.
-function seqFetch(responses: Array<{ ok?: boolean; status?: number; body: unknown }>): { fetch: HttpFetch; count: () => number } {
+function seqFetch(responses: Array<{ ok?: boolean; status?: number; body: unknown }>): {
+  fetch: HttpFetch;
+  count: () => number;
+} {
   let i = 0;
   const fetch: HttpFetch = async () => {
     const r = responses[Math.min(i, responses.length - 1)];
@@ -27,9 +44,16 @@ function seqFetch(responses: Array<{ ok?: boolean; status?: number; body: unknow
 
 describe('getJupiterQuote', () => {
   it('builds the quote URL (output=WSOL, amount, slippage, legacy) and parses out/in amounts', async () => {
-    const { fetch, calls } = fakeFetch({ body: { inAmount: '1000', outAmount: '995', otherJupField: 1 } });
+    const { fetch, calls } = fakeFetch({
+      body: { inAmount: '1000', outAmount: '995', otherJupField: 1 },
+    });
     const q = await getJupiterQuote(BASE, MINT, 1000n, 50, fetch);
-    expect(q).toMatchObject({ inputMint: MINT, outputMint: WSOL_MINT, inAmount: '1000', outAmount: '995' });
+    expect(q).toMatchObject({
+      inputMint: MINT,
+      outputMint: WSOL_MINT,
+      inAmount: '1000',
+      outAmount: '995',
+    });
     expect(calls[0]?.url).toContain(`inputMint=${MINT}`);
     expect(calls[0]?.url).toContain(`outputMint=${WSOL_MINT}`);
     expect(calls[0]?.url).toContain('amount=1000');
@@ -82,7 +106,12 @@ describe('getJupiterBuyQuote — ExactOut SOL→token (two-sided copy)', () => {
   it('builds an ExactOut URL (input=WSOL, output=token, swapMode=ExactOut) for the exact token amount', async () => {
     const { fetch, calls } = fakeFetch({ body: { inAmount: '2010', outAmount: '5000', k: 1 } });
     const q = await getJupiterBuyQuote(BASE, MINT, 5000n, 50, fetch);
-    expect(q).toMatchObject({ inputMint: WSOL_MINT, outputMint: MINT, inAmount: '2010', outAmount: '5000' });
+    expect(q).toMatchObject({
+      inputMint: WSOL_MINT,
+      outputMint: MINT,
+      inAmount: '2010',
+      outAmount: '5000',
+    });
     expect(calls[0]?.url).toContain(`inputMint=${WSOL_MINT}`);
     expect(calls[0]?.url).toContain(`outputMint=${MINT}`);
     expect(calls[0]?.url).toContain('amount=5000');
@@ -105,9 +134,16 @@ describe('getJupiterBuyQuoteExactIn — ExactIn SOL→token (memecoin-routable t
   it('builds an ExactIn URL spending an exact SOL amount (input=WSOL, swapMode=ExactIn) — the token out is variable', async () => {
     // WHY: ExactOut has NO route for most memecoins (NO_ROUTES_FOUND); ExactIn routes fully → the bot deposits the
     // ACTUAL token received. The amount here is the SOL INPUT (not a token target).
-    const { fetch, calls } = fakeFetch({ body: { inAmount: '5000000', outAmount: '3620325', k: 1 } });
+    const { fetch, calls } = fakeFetch({
+      body: { inAmount: '5000000', outAmount: '3620325', k: 1 },
+    });
     const q = await getJupiterBuyQuoteExactIn(BASE, MINT, 5_000_000n, 100, fetch);
-    expect(q).toMatchObject({ inputMint: WSOL_MINT, outputMint: MINT, inAmount: '5000000', outAmount: '3620325' });
+    expect(q).toMatchObject({
+      inputMint: WSOL_MINT,
+      outputMint: MINT,
+      inAmount: '5000000',
+      outAmount: '3620325',
+    });
     expect(calls[0]?.url).toContain(`inputMint=${WSOL_MINT}`);
     expect(calls[0]?.url).toContain(`outputMint=${MINT}`);
     expect(calls[0]?.url).toContain('amount=5000000');
@@ -120,13 +156,21 @@ describe('getJupiterBuyQuoteExactIn — ExactIn SOL→token (memecoin-routable t
       { ok: false, status: 429, body: {} },
       { body: { inAmount: '1000000', outAmount: '700000' } },
     ]);
-    expect((await getJupiterBuyQuoteExactIn(BASE, MINT, 1_000_000n, 100, fetch)).outAmount).toBe('700000');
+    expect((await getJupiterBuyQuoteExactIn(BASE, MINT, 1_000_000n, 100, fetch)).outAmount).toBe(
+      '700000',
+    );
     expect(count()).toBe(2);
   });
 });
 
 describe('buildJupiterSwapTx', () => {
-  const quote = { inputMint: MINT, outputMint: WSOL_MINT, inAmount: '1000', outAmount: '995', raw: { outAmount: '995', k: 1 } };
+  const quote = {
+    inputMint: MINT,
+    outputMint: WSOL_MINT,
+    inAmount: '1000',
+    outAmount: '995',
+    raw: { outAmount: '995', k: 1 },
+  };
 
   it('POSTs the quote + user and returns the base64 swap transaction', async () => {
     const { fetch, calls } = fakeFetch({ body: { swapTransaction: 'BASE64TX' } });
@@ -134,7 +178,11 @@ describe('buildJupiterSwapTx', () => {
     expect(tx).toBe('BASE64TX');
     expect(calls[0]?.url).toBe(`${BASE}/swap`);
     const body = JSON.parse((calls[0]?.init as { body: string }).body);
-    expect(body).toMatchObject({ userPublicKey: 'OWNER', asLegacyTransaction: true, wrapAndUnwrapSol: true });
+    expect(body).toMatchObject({
+      userPublicKey: 'OWNER',
+      asLegacyTransaction: true,
+      wrapAndUnwrapSol: true,
+    });
     expect(body.quoteResponse).toEqual(quote.raw);
   });
 

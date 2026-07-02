@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { type BinSol, type ReshapeOp, type WeightBinShape, chunkBySpan, fillContiguousWeights, lamportsToSol, planReshape, reshapeToCalls } from './position-adjust';
+import {
+  type BinSol,
+  chunkBySpan,
+  fillContiguousWeights,
+  lamportsToSol,
+  planReshape,
+  type ReshapeOp,
+  reshapeToCalls,
+  type WeightBinShape,
+} from './position-adjust';
 
 describe('chunkBySpan — split a wide reshape add into ≤maxSpan-bin chunks (each a single-tx deposit)', () => {
   const adds = (...binIds: number[]) => binIds.map((binId) => ({ binId, addSol: 0.01 }));
@@ -47,23 +56,42 @@ describe('fillContiguousWeights — the SDK by-weight range must be contiguous (
   const w = (binId: number, xBps: number, yBps = 0): WeightBinShape => ({ binId, xBps, yBps });
 
   it('fills an interior gap with a 0/0 bin (the SOL-only reshape-add bug: bins 0 and 2, gap at 1)', () => {
-    expect(fillContiguousWeights([w(0, 5000), w(2, 5000)])).toEqual([w(0, 5000), w(1, 0), w(2, 5000)]);
+    expect(fillContiguousWeights([w(0, 5000), w(2, 5000)])).toEqual([
+      w(0, 5000),
+      w(1, 0),
+      w(2, 5000),
+    ]);
   });
 
   it('fills MULTIPLE interior gaps and preserves the real weights', () => {
-    expect(fillContiguousWeights([w(-2, 3000), w(1, 7000)])).toEqual([w(-2, 3000), w(-1, 0), w(0, 0), w(1, 7000)]);
+    expect(fillContiguousWeights([w(-2, 3000), w(1, 7000)])).toEqual([
+      w(-2, 3000),
+      w(-1, 0),
+      w(0, 0),
+      w(1, 7000),
+    ]);
   });
 
   it('keeps the y-leg orientation when filling (token-side weights)', () => {
-    expect(fillContiguousWeights([w(0, 0, 4000), w(2, 0, 6000)])).toEqual([w(0, 0, 4000), w(1, 0, 0), w(2, 0, 6000)]);
+    expect(fillContiguousWeights([w(0, 0, 4000), w(2, 0, 6000)])).toEqual([
+      w(0, 0, 4000),
+      w(1, 0, 0),
+      w(2, 0, 6000),
+    ]);
   });
 
   it('an already-contiguous list is returned unchanged (ascending)', () => {
-    expect(fillContiguousWeights([w(5, 100), w(6, 200), w(7, 300)])).toEqual([w(5, 100), w(6, 200), w(7, 300)]);
+    expect(fillContiguousWeights([w(5, 100), w(6, 200), w(7, 300)])).toEqual([
+      w(5, 100),
+      w(6, 200),
+      w(7, 300),
+    ]);
   });
 
   it('sorts an unordered contiguous input ascending by binId', () => {
-    expect(fillContiguousWeights([w(7, 300), w(5, 100), w(6, 200)]).map((b) => b.binId)).toEqual([5, 6, 7]);
+    expect(fillContiguousWeights([w(7, 300), w(5, 100), w(6, 200)]).map((b) => b.binId)).toEqual([
+      5, 6, 7,
+    ]);
   });
 
   it('single bin → itself; empty → empty', () => {
@@ -76,7 +104,8 @@ describe('planReshape — SHAPE-EXACT per-bin re-sync (the fix for selective per
   const RATIO = 0.5;
   const MAX = 1.0;
   const DEAD = 0.005;
-  const bins = (...xs: Array<[number, number]>): BinSol[] => xs.map(([offset, sol]) => ({ offset, sol }));
+  const bins = (...xs: Array<[number, number]>): BinSol[] =>
+    xs.map(([offset, sol]) => ({ offset, sol }));
 
   it('ours empty, leader spread over bins → ADD on every bin at factor×leader', () => {
     const ops = planReshape(bins([0, 0.1], [1, 0.1]), [], RATIO, MAX, DEAD);
@@ -89,13 +118,25 @@ describe('planReshape — SHAPE-EXACT per-bin re-sync (the fix for selective per
   it('REGRESSION: leader EMPTIED one bin → remove 100% on THAT bin only (others untouched)', () => {
     // WHY: the size-only planResync would trim every bin uniformly → shape drifts. A selective per-bin leader
     // remove must be mirrored on the exact bin. Leader was [.1,.1,.1] now [.1, 0, .1]; ours = .5× = [.05,.05,.05].
-    const ops = planReshape(bins([0, 0.1], [1, 0], [2, 0.1]), bins([0, 0.05], [1, 0.05], [2, 0.05]), RATIO, MAX, DEAD);
+    const ops = planReshape(
+      bins([0, 0.1], [1, 0], [2, 0.1]),
+      bins([0, 0.05], [1, 0.05], [2, 0.05]),
+      RATIO,
+      MAX,
+      DEAD,
+    );
     expect(ops).toEqual([{ offset: 1, action: 'remove', bps: 10000 }]);
   });
 
   it('leader GREW one bin → ADD the difference on that bin only', () => {
     // leader [.1,.3,.1], ours [.05,.05,.05] → target [.05,.15,.05] → add 0.10 on offset 1 only.
-    const ops = planReshape(bins([0, 0.1], [1, 0.3], [2, 0.1]), bins([0, 0.05], [1, 0.05], [2, 0.05]), RATIO, MAX, DEAD);
+    const ops = planReshape(
+      bins([0, 0.1], [1, 0.3], [2, 0.1]),
+      bins([0, 0.05], [1, 0.05], [2, 0.05]),
+      RATIO,
+      MAX,
+      DEAD,
+    );
     expect(ops).toHaveLength(1);
     const op = ops[0];
     expect(op).toMatchObject({ offset: 1, action: 'add' });
@@ -119,7 +160,9 @@ describe('planReshape — SHAPE-EXACT per-bin re-sync (the fix for selective per
   });
 
   it('alignment is by OFFSET (leader/ours at different active bins, same offsets) → matched, in sync → []', () => {
-    expect(planReshape(bins([-1, 0.1], [0, 0.1]), bins([-1, 0.05], [0, 0.05]), RATIO, MAX, DEAD)).toEqual([]);
+    expect(
+      planReshape(bins([-1, 0.1], [0, 0.1]), bins([-1, 0.05], [0, 0.05]), RATIO, MAX, DEAD),
+    ).toEqual([]);
   });
 
   it('a trim that passes the deadband but rounds to 0 bps → NO remove op (a bps-0 removeLiquidity is a wasted no-op tx)', () => {

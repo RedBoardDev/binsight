@@ -175,7 +175,6 @@ export const copyPositions = pgTable('copy_positions', {
   closedAt: ms('closed_at'),
 });
 
-
 // Copy-bot activity journal — append-only, lifecycle-wide record of every meaningful action across BOTH processes
 // (brain + coffre). Source of truth for the web activity feed. Taxonomy is compositional: (stage, outcome[, reason]).
 // See domain/copybot/journal.ts for the closed enums; `reason` stores the producer's functional code verbatim.
@@ -223,8 +222,7 @@ export const copyJournal = pgTable(
     // collapse to one row even if the in-process LRU was reset (process restart).
     uniqueIndex('uq_copy_journal_wallet_corr_code').on(t.wallet, t.correlationId, t.code),
   ],
-)
-
+);
 
 // Copy-bot process heartbeat + status snapshot (one row per process). Each process upserts its row periodically;
 // the web derives online/offline from the freshness of `ts` (see domain/copybot/status.ts) and renders `detail`.
@@ -232,7 +230,7 @@ export const copybotStatus = pgTable('copybot_status', {
   process: text('process').primaryKey(), // brain | coffre
   ts: ms('ts').notNull(), // last heartbeat (Date.now)
   detail: jsonb('detail'), // process-specific snapshot (positions/exposure/latency for brain; signing for coffre)
-})
+});
 
 // Per-pool DLMM metadata (binStep / SOL side / mints), decoded once from the LbPair account. These are
 // immutable on-chain, so caching them here lets the projection skip the per-pool getAccountInfo on every
@@ -415,4 +413,63 @@ export const notifRules = pgTable(
     // COALESCE(wallet,'') to keep global rules (NULL wallet) unique per event kind.
     uniqueIndex('uq_notif_rules_wallet_kind').on(sql`coalesce(${t.wallet}, '')`, t.eventKind),
   ],
+);
+
+// --- Near-zero-RPC watcher (Step 2): persisted swap FIFO inputs + WS checkpoint + credit telemetry. ---
+
+// Persisted realized-PnL FIFO inputs: one row per (wallet, tx, mint) clean token↔SOL swap leg, decoded
+// once from the unified getTransaction ingest. The FIFO realized-PnL walk reads these from the DB +
+// only the new deltas — never re-paging the Enhanced API — so every row is immutable and the upsert is
+// idempotent (ON CONFLICT DO NOTHING), which is what makes a restart cost ~0 credits.
+export const swapFlows = pgTable(
+  'swap_flows',
+  {
+    wallet: text('wallet').notNull(),
+    signature: text('signature').notNull(),
+    ts: bigint('ts', { mode: 'number' }).notNull(), // unix SECONDS (matches dlmm_legs.block_time)
+    mint: text('mint').notNull(),
+    tokenAmount: doublePrecision('token_amount').notNull(), // human token units (decimal-adjusted)
+    solAmount: doublePrecision('sol_amount').notNull(), // SOL paid (buy) / received (sell) for this leg
+    side: text('side').notNull(), // 'buy' | 'sell'
+  },
+  (t) => [
+    primaryKey({ columns: [t.wallet, t.signature, t.mint] }), // dedup → re-ingest is idempotent
+    index('idx_swap_flows_wallet_ts').on(t.wallet, t.ts),
+  ],
+);
+
+// Per-wallet swap-flow ingest progress — same shape/semantics as wallet_flow_cursor (page newest→genesis,
+// resume from oldestSig, top-up until the previously-seen newestSig).
+export const swapFlowCursor = pgTable('swap_flow_cursor', {
+  wallet: text('wallet').primaryKey(),
+  oldestSig: text('oldest_sig'),
+  newestSig: text('newest_sig'),
+  complete: boolean('complete').notNull().default(false),
+  updatedAt: ms('updated_at').notNull(),
+});
+
+// Durable transactionSubscribe checkpoint: the last signature + slot ingested for a wallet. A WS
+// reconnect/replay resumes from this persisted slot (fromSlot) and dedups by signature, so a crash or a
+// dropped socket never misses a leader open/close — the #1 no-miss guarantee of the watcher.
+export const walletStreamCursor = pgTable('wallet_stream_cursor', {
+  wallet: text('wallet').primaryKey(),
+  lastSignature: text('last_signature'),
+  lastSlot: bigint('last_slot', { mode: 'number' }), // Solana slot (fits a JS number)
+  updatedAt: ms('updated_at').notNull(),
+});
+
+// Persisted RPC-credit telemetry rollup — one row per (UTC-day, exact method, wallet, code path) holding
+// that bucket's summed call count + credit cost. The CreditMeter flushes its since-last-drain deltas here
+// every 60s (ON CONFLICT … += delta), so /debug/rpc shows durable last-7d spend across restarts.
+export const rpcCreditDaily = pgTable(
+  'rpc_credit_daily',
+  {
+    day: integer('day').notNull(), // UTC epoch-day = floor(ms / 86_400_000)
+    method: text('method').notNull(),
+    wallet: text('wallet').notNull().default(''), // '' = call not attributable to a wallet
+    codePath: text('code_path').notNull(),
+    calls: bigint('calls', { mode: 'number' }).notNull().default(0),
+    credits: bigint('credits', { mode: 'number' }).notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.day, t.method, t.wallet, t.codePath] })],
 );

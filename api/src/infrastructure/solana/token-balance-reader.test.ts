@@ -21,21 +21,42 @@ describe('sumTokenAmounts — residual balance summation', () => {
 
 describe('groupTokenBalancesByMint — wallet sweep enumeration', () => {
   it('groups and sums multiple accounts of the same mint into one bigint balance', () => {
-    expect(groupTokenBalancesByMint([{ mint: 'A', amount: '100' }, { mint: 'A', amount: '50' }])).toEqual([{ mint: 'A', amountRaw: 150n }]);
+    expect(
+      groupTokenBalancesByMint([
+        { mint: 'A', amount: '100' },
+        { mint: 'A', amount: '50' },
+      ]),
+    ).toEqual([{ mint: 'A', amountRaw: 150n }]);
   });
 
   it('keeps distinct mints separate (e.g. a classic SPL leg and a Token-2022 leg)', () => {
-    expect(groupTokenBalancesByMint([{ mint: 'A', amount: '10' }, { mint: 'B', amount: '20' }])).toEqual([
+    expect(
+      groupTokenBalancesByMint([
+        { mint: 'A', amount: '10' },
+        { mint: 'B', amount: '20' },
+      ]),
+    ).toEqual([
       { mint: 'A', amountRaw: 10n },
       { mint: 'B', amountRaw: 20n },
     ]);
   });
 
   it('drops zero-balance accounts (a closed/empty ATA must not be reported as a holding)', () => {
-    expect(groupTokenBalancesByMint([{ mint: 'A', amount: '0' }, { mint: 'B', amount: '5' }])).toEqual([{ mint: 'B', amountRaw: 5n }]);
+    expect(
+      groupTokenBalancesByMint([
+        { mint: 'A', amount: '0' },
+        { mint: 'B', amount: '5' },
+      ]),
+    ).toEqual([{ mint: 'B', amountRaw: 5n }]);
   });
 
   it('ignores entries missing a mint or amount', () => {
-    expect(groupTokenBalancesByMint([{ mint: undefined, amount: '5' }, { mint: 'A', amount: undefined }, { mint: 'A', amount: '7' }])).toEqual([{ mint: 'A', amountRaw: 7n }]);
+    expect(
+      groupTokenBalancesByMint([
+        { mint: undefined, amount: '5' },
+        { mint: 'A', amount: undefined },
+        { mint: 'A', amount: '7' },
+      ]),
+    ).toEqual([{ mint: 'A', amountRaw: 7n }]);
   });
 });

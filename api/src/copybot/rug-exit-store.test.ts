@@ -43,7 +43,10 @@ describe('RugExitStore — durable suppression of re-opening a rug-exited leader
   });
 
   it('a corrupt blob loads as empty (fail-safe, never throws)', async () => {
-    await db.insert(settings).values({ key: KEY, value: '}{not json' }).onConflictDoUpdate({ target: settings.key, set: { value: '}{not json' } });
+    await db
+      .insert(settings)
+      .values({ key: KEY, value: '}{not json' })
+      .onConflictDoUpdate({ target: settings.key, set: { value: '}{not json' } });
     expect((await store.load()).size).toBe(0);
   });
 });
@@ -71,7 +74,10 @@ describe('RugExitStore — durable rug-exit-PENDING set (retry a failed rug-SL c
   });
 
   it('a corrupt pending blob loads as empty (fail-safe, never throws)', async () => {
-    await db.insert(settings).values({ key: PENDING_KEY, value: '}{not json' }).onConflictDoUpdate({ target: settings.key, set: { value: '}{not json' } });
+    await db
+      .insert(settings)
+      .values({ key: PENDING_KEY, value: '}{not json' })
+      .onConflictDoUpdate({ target: settings.key, set: { value: '}{not json' } });
     expect((await store.loadPending()).size).toBe(0);
   });
 });

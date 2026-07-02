@@ -121,7 +121,13 @@ export function decodeDlmmLegs(tx: ParsedTransactionWithMeta): DlmmLeg[] {
     // the mirror is looked up BY position, not by pool/bin. PositionClose carries only
     // { position, owner } (no lb_pair), so this leg's `lbPair` may be empty; that is acceptable.
     if (e.name === 'PositionClose') {
-      legs.push({ ...base, kind: 'close', activeBinId: bin ?? CLOSE_MARKER_BIN, amountX: 0n, amountY: 0n });
+      legs.push({
+        ...base,
+        kind: 'close',
+        activeBinId: bin ?? CLOSE_MARKER_BIN,
+        amountX: 0n,
+        amountY: 0n,
+      });
       continue;
     }
     if (bin == null) continue; // no price anchor anywhere in the tx → cannot value; skip

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type PositionShape, compareFidelity } from './shape-fidelity';
+import { compareFidelity, type PositionShape } from './shape-fidelity';
 
 // SOL = Y. Two bins at/below active holding SOL (y), token (x) = 0 → econ == sol-leg.
 const leaderSolOnly: PositionShape = {

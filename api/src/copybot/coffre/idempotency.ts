@@ -41,11 +41,24 @@ export async function claimExecution(
   // open re-signs its DETERMINISTIC keypair → if it had already landed, the account exists and the re-attempt fails
   // harmlessly (no double position).
   const set = { state: 'claimed' as const, updatedAt: nowMs };
-  const reclaimable = recovering ? inArray(executions.state, ['failed', 'claimed', 'submitted']) : eq(executions.state, 'failed');
+  const reclaimable = recovering
+    ? inArray(executions.state, ['failed', 'claimed', 'submitted'])
+    : eq(executions.state, 'failed');
   const claimed = await db
     .insert(executions)
-    .values({ commandId, eventKey, state: 'claimed', deadlineSlot, createdAt: nowMs, updatedAt: nowMs })
-    .onConflictDoUpdate(forceReclaim ? { target: executions.commandId, set } : { target: executions.commandId, set, setWhere: reclaimable })
+    .values({
+      commandId,
+      eventKey,
+      state: 'claimed',
+      deadlineSlot,
+      createdAt: nowMs,
+      updatedAt: nowMs,
+    })
+    .onConflictDoUpdate(
+      forceReclaim
+        ? { target: executions.commandId, set }
+        : { target: executions.commandId, set, setWhere: reclaimable },
+    )
     .returning({ commandId: executions.commandId });
   return claimed.length > 0;
 }

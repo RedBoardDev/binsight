@@ -21,7 +21,10 @@ export type BusKeyResult = { key: string } | { error: string };
  *  - else COPYBOT_DEV_BUS_KEY === 'true' → explicit local-dev escape, allow the public default.
  *  - else → error (missing / insecure key).
  */
-export function assertBusKey(env: { BUS_HMAC_KEY?: string; COPYBOT_DEV_BUS_KEY?: string }): BusKeyResult {
+export function assertBusKey(env: {
+  BUS_HMAC_KEY?: string;
+  COPYBOT_DEV_BUS_KEY?: string;
+}): BusKeyResult {
   const key = env.BUS_HMAC_KEY;
   if (key !== undefined && key !== DEV_DEFAULT_BUS_KEY && key.length >= MIN_BUS_KEY_LENGTH) {
     return { key };
@@ -29,5 +32,7 @@ export function assertBusKey(env: { BUS_HMAC_KEY?: string; COPYBOT_DEV_BUS_KEY?:
   if (env.COPYBOT_DEV_BUS_KEY === 'true') {
     return { key: DEV_DEFAULT_BUS_KEY };
   }
-  return { error: 'BUS_HMAC_KEY missing or insecure — set it, or COPYBOT_DEV_BUS_KEY=true for local dev' };
+  return {
+    error: 'BUS_HMAC_KEY missing or insecure — set it, or COPYBOT_DEV_BUS_KEY=true for local dev',
+  };
 }

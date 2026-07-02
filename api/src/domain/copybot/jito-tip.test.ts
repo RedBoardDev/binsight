@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { CONSERVATIVE_JITO_TIP_LAMPORTS, JITO_TIP_ACCOUNTS, jitoTipFor, jitoTipLamports, pickJitoTipAccount } from './jito-tip';
+import {
+  CONSERVATIVE_JITO_TIP_LAMPORTS,
+  JITO_TIP_ACCOUNTS,
+  jitoTipFor,
+  jitoTipLamports,
+  pickJitoTipAccount,
+} from './jito-tip';
 
 describe('jito-tip · jitoTipLamports (within the shared cap)', () => {
   const CAP = 5_000_000; // 0.005 SOL cap
@@ -30,7 +36,8 @@ describe('jito-tip · jitoTipLamports (within the shared cap)', () => {
 describe('jito-tip · pickJitoTipAccount', () => {
   it('always returns one of the known tip accounts, for any seed (incl. negative)', () => {
     const set = new Set(JITO_TIP_ACCOUNTS.map((a) => a.toBase58()));
-    for (const seed of [0, 1, 7, 8, 99, -3]) expect(set.has(pickJitoTipAccount(seed).toBase58())).toBe(true);
+    for (const seed of [0, 1, 7, 8, 99, -3])
+      expect(set.has(pickJitoTipAccount(seed).toBase58())).toBe(true);
   });
 
   it('rotates across accounts (different seeds hit different accounts)', () => {

@@ -25,7 +25,10 @@ describe('ConfigStore (integration)', () => {
     const store = new ConfigStore(db, log);
     expect(await store.seedIfAbsent()).toEqual(CONFIG_DEFAULTS);
 
-    const custom: CopybotConfig = { ...CONFIG_DEFAULTS, user: { ...CONFIG_DEFAULTS.user, twoSidedMode: 'on' } };
+    const custom: CopybotConfig = {
+      ...CONFIG_DEFAULTS,
+      user: { ...CONFIG_DEFAULTS.user, twoSidedMode: 'on' },
+    };
     await store.save(custom);
     expect(await store.seedIfAbsent()).toEqual(custom);
   });
@@ -35,11 +38,23 @@ describe('ConfigStore (integration)', () => {
     const custom: CopybotConfig = {
       user: {
         ...CONFIG_DEFAULTS.user,
-        sizing: { tradeRatioPct: 33, maxTradeSizeSol: 0.7, minPositionSizeSol: 0.08, solReserveSol: 0.04, onInsufficient: 'skip' },
+        sizing: {
+          tradeRatioPct: 33,
+          maxTradeSizeSol: 0.7,
+          minPositionSizeSol: 0.08,
+          solReserveSol: 0.04,
+          onInsufficient: 'skip',
+        },
         caps: { ...CONFIG_DEFAULTS.user.caps, killSwitchGlobal: true, maxOpenPositions: 2 },
         twoSidedMode: 'shadow',
       },
-      leaders: [{ address: 'AnotherLeaderPubkey222222222222222222222222', enabled: false, overrides: { sizing: { tradeRatioPct: 10 } } }],
+      leaders: [
+        {
+          address: 'AnotherLeaderPubkey222222222222222222222222',
+          enabled: false,
+          overrides: { sizing: { tradeRatioPct: 10 } },
+        },
+      ],
     };
     await store.save(custom);
     expect(await store.load()).toEqual(custom);
@@ -52,7 +67,13 @@ describe('ConfigStore (integration)', () => {
 
   it('save throws on an invalid config (the web caller must never persist junk)', async () => {
     const store = new ConfigStore(db, log);
-    const bad = { ...CONFIG_DEFAULTS, user: { ...CONFIG_DEFAULTS.user, sizing: { ...CONFIG_DEFAULTS.user.sizing, maxTradeSizeSol: -1 } } } as unknown as CopybotConfig;
+    const bad = {
+      ...CONFIG_DEFAULTS,
+      user: {
+        ...CONFIG_DEFAULTS.user,
+        sizing: { ...CONFIG_DEFAULTS.user.sizing, maxTradeSizeSol: -1 },
+      },
+    } as unknown as CopybotConfig;
     await expect(store.save(bad)).rejects.toThrow();
   });
 
@@ -74,8 +95,14 @@ describe('ConfigStore (integration)', () => {
     const store = new ConfigStore(db, errLog);
     // 1) a valid custom config loads cleanly and is cached as last-good (kill switch OFF, custom fields set).
     const custom: CopybotConfig = {
-      user: { ...CONFIG_DEFAULTS.user, twoSidedMode: 'shadow', caps: { ...CONFIG_DEFAULTS.user.caps, killSwitchGlobal: false, maxOpenPositions: 7 } },
-      leaders: [{ address: 'AnotherLeaderPubkey222222222222222222222222', enabled: true, overrides: {} }],
+      user: {
+        ...CONFIG_DEFAULTS.user,
+        twoSidedMode: 'shadow',
+        caps: { ...CONFIG_DEFAULTS.user.caps, killSwitchGlobal: false, maxOpenPositions: 7 },
+      },
+      leaders: [
+        { address: 'AnotherLeaderPubkey222222222222222222222222', enabled: true, overrides: {} },
+      ],
     };
     await store.save(custom);
     expect(await store.load()).toEqual(custom);
@@ -86,7 +113,10 @@ describe('ConfigStore (integration)', () => {
     expect(cfg.user.twoSidedMode).toBe('shadow'); // other last-good fields preserved
     expect(cfg.user.caps.maxOpenPositions).toBe(7);
     expect(cfg.leaders).toEqual(custom.leaders);
-    expect(cfg).toEqual({ ...custom, user: { ...custom.user, caps: { ...custom.user.caps, killSwitchGlobal: true } } });
+    expect(cfg).toEqual({
+      ...custom,
+      user: { ...custom.user, caps: { ...custom.user.caps, killSwitchGlobal: true } },
+    });
     expect(errLog.error).toHaveBeenCalledTimes(1);
   });
 });

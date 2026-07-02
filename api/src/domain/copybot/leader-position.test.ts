@@ -35,7 +35,9 @@ describe('LeaderPositionTracker — per-position lifecycle aggregation', () => {
     const t = new LeaderPositionTracker();
     // capital-open via AddLiquidity (handles the InitializePosition→AddLiquidity split: openSize = 1st deposit,
     // whatever the instruction class).
-    const p = t.apply(ev({ sig: '1', instr: 'AddLiquidityByStrategy2', deposit: 5, blockTime: 1000 }));
+    const p = t.apply(
+      ev({ sig: '1', instr: 'AddLiquidityByStrategy2', deposit: 5, blockTime: 1000 }),
+    );
     expect(p).toMatchObject({
       status: 'open',
       openSizeSol: 5,
@@ -66,7 +68,9 @@ describe('LeaderPositionTracker — per-position lifecycle aggregation', () => {
   it('CLOSE → status closed + closedAt, withdrawal and fees counted', () => {
     const t = new LeaderPositionTracker();
     t.apply(ev({ sig: '1', instr: 'AddLiquidityByStrategy2', deposit: 5 }));
-    const p = t.apply(ev({ sig: '2', instr: 'ClosePosition2', withdraw: 4, claim: 0.5, blockTime: 2000 }));
+    const p = t.apply(
+      ev({ sig: '2', instr: 'ClosePosition2', withdraw: 4, claim: 0.5, blockTime: 2000 }),
+    );
     // WHY: the close is the mirror-close trigger; it must mark the position closed unambiguously.
     expect(p?.status).toBe('closed');
     expect(p?.closedAt).toBe(2000);
@@ -88,7 +92,13 @@ describe('LeaderPositionTracker — per-position lifecycle aggregation', () => {
     // WHY: the cold replay only sees the last 25 sigs → we often join mid-life; we must
     // never crash or mis-key, and we flag that the fraction base is unknown (OQ #3).
     const p = t.apply(ev({ sig: '1', instr: 'RemoveLiquidityByRange2', withdraw: 2 }));
-    expect(p).toMatchObject({ status: 'open', openSizeKnown: false, openSizeSol: 0, withdrawnSol: 2, netSizeSol: -2 });
+    expect(p).toMatchObject({
+      status: 'open',
+      openSizeKnown: false,
+      openSizeSol: 0,
+      withdrawnSol: 2,
+      netSizeSol: -2,
+    });
   });
 
   it('CLOSE for an unknown position → created then closed (we never miss a close, even joined mid-life)', () => {

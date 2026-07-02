@@ -21,25 +21,42 @@ export function sumTokenAmounts(amounts: Array<string | undefined>): bigint {
 }
 
 /** Group raw token amounts by mint into bigints (sums multiple accounts of one mint, drops zero/empty). Pure. */
-export function groupTokenBalancesByMint(entries: Array<{ mint?: string; amount?: string }>): Array<{ mint: string; amountRaw: bigint }> {
+export function groupTokenBalancesByMint(
+  entries: Array<{ mint?: string; amount?: string }>,
+): Array<{ mint: string; amountRaw: bigint }> {
   const byMint = new Map<string, bigint>();
   for (const e of entries) {
     if (!e.mint || !e.amount) continue;
     byMint.set(e.mint, (byMint.get(e.mint) ?? 0n) + BigInt(e.amount));
   }
-  return [...byMint].filter(([, amt]) => amt > 0n).map(([mint, amountRaw]) => ({ mint, amountRaw }));
+  return [...byMint]
+    .filter(([, amt]) => amt > 0n)
+    .map(([mint, amountRaw]) => ({ mint, amountRaw }));
 }
 
 /** Owner's total balance of `mint` in raw units (across every token account). I/O. */
-export async function readOwnerTokenBalance(conn: Connection, owner: PublicKey, mint: PublicKey): Promise<bigint> {
+export async function readOwnerTokenBalance(
+  conn: Connection,
+  owner: PublicKey,
+  mint: PublicKey,
+): Promise<bigint> {
   const res = await conn.getParsedTokenAccountsByOwner(owner, { mint });
-  return sumTokenAmounts(res.value.map(({ account }) => (account.data as ParsedTokenData).parsed?.info?.tokenAmount?.amount));
+  return sumTokenAmounts(
+    res.value.map(
+      ({ account }) => (account.data as ParsedTokenData).parsed?.info?.tokenAmount?.amount,
+    ),
+  );
 }
 
 /** Owner's balances for EVERY SPL token across BOTH token programs (classic + Token-2022), raw units, grouped
  *  by mint, zero-balances dropped. I/O. Backs the no-miss safety sweep: any non-SOL token is found and swept. */
-export async function readAllOwnerTokenBalances(conn: Connection, owner: PublicKey): Promise<Array<{ mint: string; amountRaw: bigint }>> {
-  const perProgram = await Promise.all(TOKEN_PROGRAM_IDS.map((programId) => conn.getParsedTokenAccountsByOwner(owner, { programId })));
+export async function readAllOwnerTokenBalances(
+  conn: Connection,
+  owner: PublicKey,
+): Promise<Array<{ mint: string; amountRaw: bigint }>> {
+  const perProgram = await Promise.all(
+    TOKEN_PROGRAM_IDS.map((programId) => conn.getParsedTokenAccountsByOwner(owner, { programId })),
+  );
   const entries = perProgram.flatMap((res) =>
     res.value.map(({ account }) => {
       const info = (account.data as ParsedTokenData).parsed?.info;

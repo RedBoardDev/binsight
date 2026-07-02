@@ -11,13 +11,13 @@ import { utils } from '@coral-xyz/anchor';
 import { type Connection, type Keypair, Transaction } from '@solana/web3.js';
 import { eq } from 'drizzle-orm';
 import type { Logger } from 'pino';
-import { deriveCommandId } from '@/copybot/command-id';
 import { claimExecution } from '@/copybot/coffre/idempotency';
-import { confirmLanded, land } from '@/copybot/coffre/landing';
 import { landViaJito } from '@/copybot/coffre/jito-landing';
+import { confirmLanded, land } from '@/copybot/coffre/landing';
 import { verifyTx } from '@/copybot/coffre/wall-b';
-import { LOG_MARKER_SUBMITTED } from '@/copybot/log-markers';
+import { deriveCommandId } from '@/copybot/command-id';
 import { derivePositionKeypair } from '@/copybot/ephemeral-position';
+import { LOG_MARKER_SUBMITTED } from '@/copybot/log-markers';
 import type { CopyEvents } from '@/copybot/observability/copy-events';
 import { type SignRequest, SignRequestSchema } from '@/domain/copybot/contracts';
 import { type CopyCode, resolveLegacyReason } from '@/domain/copybot/observability/codes';
@@ -35,7 +35,8 @@ const LAMPORTS_PER_SOL = 1_000_000_000;
 // (a compromised brain moving far more SOL than the config allows, regardless of the self-reported sizeSol).
 const WALL_B_OVERSPEND_FACTOR = 1.1;
 const WALL_B_RENT_MARGIN_LAMPORTS = 5_000_000; // 0.005 SOL: WSOL-ATA rent + buffer
-const wallBMaxLamports = (maxTradeSol: number): number => Math.ceil(maxTradeSol * LAMPORTS_PER_SOL * WALL_B_OVERSPEND_FACTOR) + WALL_B_RENT_MARGIN_LAMPORTS;
+const wallBMaxLamports = (maxTradeSol: number): number =>
+  Math.ceil(maxTradeSol * LAMPORTS_PER_SOL * WALL_B_OVERSPEND_FACTOR) + WALL_B_RENT_MARGIN_LAMPORTS;
 
 /** Everything the critical section needs — all injected so the function has no hidden module state (testable). */
 export interface Ctx {
@@ -62,12 +63,22 @@ export interface Ctx {
  * (all Wall B rejects are a program/signer/destination violation of the same FAILSAFE class). Pure.
  */
 function resolveWallbCode(leaf: string): CopyCode {
-  return resolveLegacyReason(`wallb:${leaf}`) ?? resolveLegacyReason(leaf) ?? 'wallb.program_not_allowed';
+  return (
+    resolveLegacyReason(`wallb:${leaf}`) ?? resolveLegacyReason(leaf) ?? 'wallb.program_not_allowed'
+  );
 }
 
 /** Persist the terminal state of a command (the idempotency record). */
-export async function finalize<T extends { ok: boolean }>(db: Db, commandId: string, state: string, verdict: T): Promise<T> {
-  await db.update(executions).set({ state, updatedAt: Date.now() }).where(eq(executions.commandId, commandId));
+export async function finalize<T extends { ok: boolean }>(
+  db: Db,
+  commandId: string,
+  state: string,
+  verdict: T,
+): Promise<T> {
+  await db
+    .update(executions)
+    .set({ state, updatedAt: Date.now() })
+    .where(eq(executions.commandId, commandId));
   return verdict;
 }
 
@@ -76,8 +87,17 @@ export async function finalize<T extends { ok: boolean }>(db: Db, commandId: str
  * on the wire. If the vault crashes AFTER land() but BEFORE finalize('landed'), boot recovery reads this row and
  * checks the chain — re-signing only when the prior tx is PROVABLY dead (never double-broadcasting an add/buy/sell).
  */
-export async function markSubmitted(db: Db, commandId: string, signature: string, lastValidBlockHeight: number, nowMs: number): Promise<void> {
-  await db.update(executions).set({ state: 'submitted', signature, lastValidBlockHeight, updatedAt: nowMs }).where(eq(executions.commandId, commandId));
+export async function markSubmitted(
+  db: Db,
+  commandId: string,
+  signature: string,
+  lastValidBlockHeight: number,
+  nowMs: number,
+): Promise<void> {
+  await db
+    .update(executions)
+    .set({ state: 'submitted', signature, lastValidBlockHeight, updatedAt: nowMs })
+    .where(eq(executions.commandId, commandId));
 }
 
 /** The fate of a previously-broadcast tx, decided from the chain (exactly-once recovery pre-check). */
@@ -91,11 +111,16 @@ type PriorTxFate = 'landed' | 'dead' | 'in-flight';
  *    (`getBlockHeight > lastValidBlockHeight`), else 'in-flight' (it may still land → do NOT re-sign this pass);
  *  - found but only 'processed' (not yet durable) → 'in-flight'.
  */
-export async function classifyPriorTx(conn: Connection, signature: string, lastValidBlockHeight: number): Promise<PriorTxFate> {
+export async function classifyPriorTx(
+  conn: Connection,
+  signature: string,
+  lastValidBlockHeight: number,
+): Promise<PriorTxFate> {
   const { value } = await conn.getSignatureStatus(signature);
   if (value) {
     if (value.err) return 'dead'; // atomically reverted → nothing applied
-    if (value.confirmationStatus === 'confirmed' || value.confirmationStatus === 'finalized') return 'landed';
+    if (value.confirmationStatus === 'confirmed' || value.confirmationStatus === 'finalized')
+      return 'landed';
     return 'in-flight'; // 'processed' only → not durable yet
   }
   // Not found: dropped (dead) vs. not-yet-indexed (in-flight) is disambiguated by the blockhash's expiry.
@@ -112,31 +137,67 @@ export async function classifyPriorTx(conn: Connection, signature: string, lastV
  * Runs only on the vault boot/PEL recovery path. Not applied to forceReclaim (failsafe/orphan) closes, which keep
  * their existing always-retry semantics (a close re-sign is harmless — the account is either gone or gets re-closed).
  */
-export async function recoveryPreCheck(ctx: Ctx, sr: SignRequest): Promise<{ ok: boolean; reason?: string; kind?: string; retryLater?: boolean } | null> {
+export async function recoveryPreCheck(
+  ctx: Ctx,
+  sr: SignRequest,
+): Promise<{ ok: boolean; reason?: string; kind?: string; retryLater?: boolean } | null> {
   const { conn, db, bus, events, log } = ctx;
   const rows = await db
-    .select({ state: executions.state, signature: executions.signature, lastValidBlockHeight: executions.lastValidBlockHeight })
+    .select({
+      state: executions.state,
+      signature: executions.signature,
+      lastValidBlockHeight: executions.lastValidBlockHeight,
+    })
     .from(executions)
     .where(eq(executions.commandId, sr.commandId));
   const prior = rows[0];
   // Nothing was broadcast (no row, no stored signature, or a terminal state) → safe to (re-)claim + sign normally.
   if (!prior?.signature || (prior.state !== 'submitted' && prior.state !== 'claimed')) return null;
   const fate = await classifyPriorTx(conn, prior.signature, prior.lastValidBlockHeight ?? 0);
-  if (fate === 'in-flight') return { ok: false, reason: 'recover_in_flight', kind: sr.kind, retryLater: true };
+  if (fate === 'in-flight')
+    return { ok: false, reason: 'recover_in_flight', kind: sr.kind, retryLater: true };
   if (fate === 'dead') return null; // provably dead → fall through to re-claim + re-sign
   // 'landed': the money already moved. Re-publish ev:executed (idempotent downstream) and finalize — never re-sign.
   try {
-    await bus.publish('copybot:ev:executed', 'ev:executed', ctx.hmacKey, { commandId: sr.commandId, kind: sr.kind, sig: prior.signature, pool: sr.pool, positionPubkey: sr.positionPubkey, owner: sr.owner });
+    await bus.publish('copybot:ev:executed', 'ev:executed', ctx.hmacKey, {
+      commandId: sr.commandId,
+      kind: sr.kind,
+      sig: prior.signature,
+      pool: sr.pool,
+      positionPubkey: sr.positionPubkey,
+      owner: sr.owner,
+    });
   } catch (e) {
-    log.error({ kind: sr.kind, sig: prior.signature, error: (e as Error).message }, 'ev:executed re-publish failed during recovery — brain will backstop via reconcile/PEL');
+    log.error(
+      { kind: sr.kind, sig: prior.signature, error: (e as Error).message },
+      'ev:executed re-publish failed during recovery — brain will backstop via reconcile/PEL',
+    );
   }
-  events.emit('sign.landed', { stage: 'sign', outcome: 'landed', kind: sr.kind, pool: sr.pool, ourPosition: sr.positionPubkey, commandId: sr.commandId, signature: prior.signature, ourSizeSol: sr.sizeSol, latencyMs: Date.now() - sr.issuedAtMs, adminDetail: { recovering: true, recovered: true } });
-  log.info({ kind: sr.kind, sig: prior.signature }, '🔁 recovery: prior tx already landed — finalized without re-signing');
+  events.emit('sign.landed', {
+    stage: 'sign',
+    outcome: 'landed',
+    kind: sr.kind,
+    pool: sr.pool,
+    ourPosition: sr.positionPubkey,
+    commandId: sr.commandId,
+    signature: prior.signature,
+    ourSizeSol: sr.sizeSol,
+    latencyMs: Date.now() - sr.issuedAtMs,
+    adminDetail: { recovering: true, recovered: true },
+  });
+  log.info(
+    { kind: sr.kind, sig: prior.signature },
+    '🔁 recovery: prior tx already landed — finalized without re-signing',
+  );
   return finalize(db, sr.commandId, 'landed', { ok: true, kind: sr.kind });
 }
 
 /** The critical section 5→13 (1-4 done by the bus). Returns a loggable verdict. Effects = DB + log + (when enabled) sign/land. */
-export async function process1(payload: unknown | null, ctx: Ctx, recovering = false): Promise<{ ok: boolean; reason?: string; kind?: string; retryLater?: boolean }> {
+export async function process1(
+  payload: unknown | null,
+  ctx: Ctx,
+  recovering = false,
+): Promise<{ ok: boolean; reason?: string; kind?: string; retryLater?: boolean }> {
   const { conn, db, bus, copier, blockhashCache, events, maxTradeSol, jitoBundleUrl, log } = ctx;
   const ourOwner = copier.publicKey.toBase58();
   if (payload == null) return { ok: false, reason: 'bad_hmac_or_hop' }; // 1-4 failed (bus)
@@ -159,18 +220,40 @@ export async function process1(payload: unknown | null, ctx: Ctx, recovering = f
   const slot = await conn.getSlot(); // 6 staleness
   if (slot > sr.deadlineSlot) return { ok: false, reason: 'stale', kind: sr.kind };
 
-  if (sr.commandId !== deriveCommandId(sr.eventKey)) return { ok: false, reason: 'commandId_mismatch', kind: sr.kind }; // 7
+  if (sr.commandId !== deriveCommandId(sr.eventKey))
+    return { ok: false, reason: 'commandId_mismatch', kind: sr.kind }; // 7
 
   // 8 idempotency: claim BEFORE signing; only a previously 'failed' command may be re-claimed (retry). EXCEPTION: a
   // reconcile-driven failsafe/orphan CLOSE (eventKey action 'failsafe'/'orphan') is emitted only while the position
   // is PROVABLY still on-chain → it must retry regardless of a stale terminal state, or a phantom is stuck forever.
   const now = Date.now();
-  const owned = await claimExecution(db, sr.commandId, sr.eventKey, sr.deadlineSlot, now, recovering, forceReclaim);
+  const owned = await claimExecution(
+    db,
+    sr.commandId,
+    sr.eventKey,
+    sr.deadlineSlot,
+    now,
+    recovering,
+    forceReclaim,
+  );
   if (!owned) return { ok: false, reason: 'duplicate', kind: sr.kind };
 
   if (sr.sizeSol > maxTradeSol) {
-    events.emit('sign.over_max_trade', { stage: 'sign', outcome: 'rejected', reason: 'over_max_trade', kind: sr.kind, pool: sr.pool, ourPosition: sr.positionPubkey, commandId: sr.commandId, ourSizeSol: sr.sizeSol });
-    return finalize(db, sr.commandId, 'failed', { ok: false, reason: 'over_max_trade', kind: sr.kind }); // 9 re-clamp
+    events.emit('sign.over_max_trade', {
+      stage: 'sign',
+      outcome: 'rejected',
+      reason: 'over_max_trade',
+      kind: sr.kind,
+      pool: sr.pool,
+      ourPosition: sr.positionPubkey,
+      commandId: sr.commandId,
+      ourSizeSol: sr.sizeSol,
+    });
+    return finalize(db, sr.commandId, 'failed', {
+      ok: false,
+      reason: 'over_max_trade',
+      kind: sr.kind,
+    }); // 9 re-clamp
   }
 
   // 10-11 Wall B: decode the tx (WITHOUT the SDK) and re-verify against the intent.
@@ -178,25 +261,59 @@ export async function process1(payload: unknown | null, ctx: Ctx, recovering = f
   try {
     tx = Transaction.from(Buffer.from(sr.txBase64, 'base64'));
   } catch {
-    return finalize(db, sr.commandId, 'failed', { ok: false, reason: 'undecodable_tx', kind: sr.kind });
+    return finalize(db, sr.commandId, 'failed', {
+      ok: false,
+      reason: 'undecodable_tx',
+      kind: sr.kind,
+    });
   }
-  if (sr.owner !== ourOwner) return finalize(db, sr.commandId, 'failed', { ok: false, reason: 'owner_mismatch', kind: sr.kind });
+  if (sr.owner !== ourOwner)
+    return finalize(db, sr.commandId, 'failed', {
+      ok: false,
+      reason: 'owner_mismatch',
+      kind: sr.kind,
+    });
   // Wall B binds a swap to owner's ATA of its non-SOL token: sell = the token sold, buy = the token bought.
-  const wb = verifyTx(tx, { owner: sr.owner, pool: sr.pool, kind: sr.kind, positionPubkey: sr.positionPubkey, inputMint: sr.sell?.inputMint ?? sr.buy?.outputMint, maxLamports: wallBMaxLamports(maxTradeSol) });
+  const wb = verifyTx(tx, {
+    owner: sr.owner,
+    pool: sr.pool,
+    kind: sr.kind,
+    positionPubkey: sr.positionPubkey,
+    inputMint: sr.sell?.inputMint ?? sr.buy?.outputMint,
+    maxLamports: wallBMaxLamports(maxTradeSol),
+  });
   if (!wb.ok) {
     // Wall B reject → its precise `wallb.<leaf>` code. The verbatim journaled reason stays `wallb:<wb.reason>`
     // (a `program_not_allowed:<prog>` carries its dynamic `<prog>` into adminDetail, per SPEC §2.1). The leaf is
     // resolved from the bare wallb reason (the `:<prog>` suffix stripped) — all wallb leaves are internal.
     const leaf = wb.reason.split(':')[0] ?? wb.reason; // strip a dynamic `:${prog}` suffix (program_not_allowed)
     const code = resolveWallbCode(leaf);
-    events.emit(code, { stage: 'sign', outcome: 'rejected', reason: `wallb:${wb.reason}`, kind: sr.kind, pool: sr.pool, ourPosition: sr.positionPubkey, commandId: sr.commandId, adminDetail: wb.reason.includes(':') ? { program: wb.reason.slice(wb.reason.indexOf(':') + 1) } : undefined });
-    return finalize(db, sr.commandId, 'failed', { ok: false, reason: `wallb:${wb.reason}`, kind: sr.kind });
+    events.emit(code, {
+      stage: 'sign',
+      outcome: 'rejected',
+      reason: `wallb:${wb.reason}`,
+      kind: sr.kind,
+      pool: sr.pool,
+      ourPosition: sr.positionPubkey,
+      commandId: sr.commandId,
+      adminDetail: wb.reason.includes(':')
+        ? { program: wb.reason.slice(wb.reason.indexOf(':') + 1) }
+        : undefined,
+    });
+    return finalize(db, sr.commandId, 'failed', {
+      ok: false,
+      reason: `wallb:${wb.reason}`,
+      kind: sr.kind,
+    });
   }
 
   // 12-13 SIGN + LAND
   const busMs = Date.now() - sr.issuedAtMs; // latency publish(brain) → here (bus + critical section)
   if (!ctx.signingEnabled) {
-    log.info({ kind: sr.kind, pool: sr.pool, our: sr.positionPubkey, sizeSol: sr.sizeSol, busMs }, '✍️  (dry-run) I would sign+land');
+    log.info(
+      { kind: sr.kind, pool: sr.pool, our: sr.positionPubkey, sizeSol: sr.sizeSol, busMs },
+      '✍️  (dry-run) I would sign+land',
+    );
     return finalize(db, sr.commandId, 'skipped', { ok: true, reason: 'dry-run', kind: sr.kind });
   }
   // Retry config (fresh blockhash on each attempt), then ALERT "verify/close manually" (Valhalla-style).
@@ -217,7 +334,8 @@ export async function process1(payload: unknown | null, ctx: Ctx, recovering = f
       const bh = attempt === 0 ? blockhashCache.get() : await conn.getLatestBlockhash();
       fresh.feePayer = copier.publicKey;
       fresh.recentBlockhash = bh.blockhash;
-      const signers: Keypair[] = sr.kind === 'open' ? [copier, derivePositionKeypair(sr.commandId)] : [copier];
+      const signers: Keypair[] =
+        sr.kind === 'open' ? [copier, derivePositionKeypair(sr.commandId)] : [copier];
       fresh.sign(...signers);
       const sig = utils.bytes.bs58.encode(fresh.signature as Buffer); // deterministic once signed (== land()'s return)
       // EXACTLY-ONCE (#7): persist signature + blockhash expiry to 'submitted' BEFORE broadcasting. A crash after
@@ -259,14 +377,45 @@ export async function process1(payload: unknown | null, ctx: Ctx, recovering = f
     // failure can trigger a re-sign/re-land (double execution). ev:executed carries the pool/position/owner so the
     // brain can trigger the residual sell on a close.
     try {
-      await bus.publish('copybot:ev:executed', 'ev:executed', ctx.hmacKey, { commandId: sr.commandId, kind: sr.kind, sig: landedSig, pool: sr.pool, positionPubkey: sr.positionPubkey, owner: sr.owner });
+      await bus.publish('copybot:ev:executed', 'ev:executed', ctx.hmacKey, {
+        commandId: sr.commandId,
+        kind: sr.kind,
+        sig: landedSig,
+        pool: sr.pool,
+        positionPubkey: sr.positionPubkey,
+        owner: sr.owner,
+      });
     } catch (e) {
       // A lost ev:executed AFTER a confirmed land is a degraded (reconcile/PEL-backstopped) outcome — strictly better
       // than re-signing, which would DOUBLE-land. ioredis already retries connection blips; do NOT rethrow.
-      log.error({ kind: sr.kind, sig: landedSig, error: (e as Error).message }, 'ev:executed publish failed after a confirmed land — brain will backstop via reconcile/PEL');
+      log.error(
+        { kind: sr.kind, sig: landedSig, error: (e as Error).message },
+        'ev:executed publish failed after a confirmed land — brain will backstop via reconcile/PEL',
+      );
     }
-    events.emit('sign.landed', { stage: 'sign', outcome: 'landed', kind: sr.kind, pool: sr.pool, ourPosition: sr.positionPubkey, commandId: sr.commandId, signature: landedSig, ourSizeSol: sr.sizeSol, latencyMs: Date.now() - sr.issuedAtMs, adminDetail: recovering ? { recovering: true } : undefined });
-    log.info({ kind: sr.kind, sig: landedSig, attempt: landedAttempt, busMs, signLandMs: Date.now() - landedTSign, totalMs: Date.now() - sr.issuedAtMs }, '🚀 signed + landed (confirmed)');
+    events.emit('sign.landed', {
+      stage: 'sign',
+      outcome: 'landed',
+      kind: sr.kind,
+      pool: sr.pool,
+      ourPosition: sr.positionPubkey,
+      commandId: sr.commandId,
+      signature: landedSig,
+      ourSizeSol: sr.sizeSol,
+      latencyMs: Date.now() - sr.issuedAtMs,
+      adminDetail: recovering ? { recovering: true } : undefined,
+    });
+    log.info(
+      {
+        kind: sr.kind,
+        sig: landedSig,
+        attempt: landedAttempt,
+        busMs,
+        signLandMs: Date.now() - landedTSign,
+        totalMs: Date.now() - sr.issuedAtMs,
+      },
+      '🚀 signed + landed (confirmed)',
+    );
     return finalize(db, sr.commandId, 'landed', { ok: true, kind: sr.kind });
   }
   // Definitive failure (land threw after retries, OR landed-but-unconfirmed) → emergency. Two rows: the INTERNAL
@@ -275,8 +424,35 @@ export async function process1(payload: unknown | null, ctx: Ctx, recovering = f
   // any other kind to the generic pinned `failsafe.failed`. `meteoraUrl` carries the "close manually" link.
   // State 'failed' so the reconcile/orphan backstop re-drives it.
   const meteoraUrl = `https://app.meteora.ag/dlmm/${sr.pool}`;
-  events.emit('sign.land_failed', { stage: 'sign', outcome: 'failed', reason: 'sign_land_failed', kind: sr.kind, pool: sr.pool, ourPosition: sr.positionPubkey, commandId: sr.commandId, adminDetail: { error: lastErr?.message } });
-  const failCode: CopyCode = sr.kind === 'close' ? 'lifecycle.close_failed' : sr.kind === 'open' ? 'lifecycle.open_failed' : 'failsafe.failed';
-  events.emit(failCode, { stage: 'sign', outcome: 'failed', reason: 'sign_land_failed', kind: sr.kind, pool: sr.pool, ourPosition: sr.positionPubkey, commandId: sr.commandId, adminDetail: { error: lastErr?.message, meteoraUrl, position: sr.positionPubkey } });
-  return finalize(db, sr.commandId, 'failed', { ok: false, reason: 'sign_land_failed', kind: sr.kind });
+  events.emit('sign.land_failed', {
+    stage: 'sign',
+    outcome: 'failed',
+    reason: 'sign_land_failed',
+    kind: sr.kind,
+    pool: sr.pool,
+    ourPosition: sr.positionPubkey,
+    commandId: sr.commandId,
+    adminDetail: { error: lastErr?.message },
+  });
+  const failCode: CopyCode =
+    sr.kind === 'close'
+      ? 'lifecycle.close_failed'
+      : sr.kind === 'open'
+        ? 'lifecycle.open_failed'
+        : 'failsafe.failed';
+  events.emit(failCode, {
+    stage: 'sign',
+    outcome: 'failed',
+    reason: 'sign_land_failed',
+    kind: sr.kind,
+    pool: sr.pool,
+    ourPosition: sr.positionPubkey,
+    commandId: sr.commandId,
+    adminDetail: { error: lastErr?.message, meteoraUrl, position: sr.positionPubkey },
+  });
+  return finalize(db, sr.commandId, 'failed', {
+    ok: false,
+    reason: 'sign_land_failed',
+    kind: sr.kind,
+  });
 }

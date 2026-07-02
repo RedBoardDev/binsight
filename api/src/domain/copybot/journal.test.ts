@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  formatJournalLine,
   JOURNAL_KINDS,
   JOURNAL_OUTCOMES,
   JOURNAL_STAGES,
   type JournalEntry,
   type JournalOutcome,
-  formatJournalLine,
   requiresReason,
   severityFor,
   stageForKind,
@@ -74,7 +74,12 @@ describe('journal · stageForKind', () => {
 
 describe('journal · formatJournalLine (clean operator log)', () => {
   it('a skipped open shows the stage, outcome AND the reason (the user must see WHY an open did not happen)', () => {
-    const line = formatJournalLine({ stage: 'open', outcome: 'skipped', reason: 'entry_filter', pool: '5rCf1DM8LjKTw4YqhnoLcngyZYeNnQqztScTogYHAS6' });
+    const line = formatJournalLine({
+      stage: 'open',
+      outcome: 'skipped',
+      reason: 'entry_filter',
+      pool: '5rCf1DM8LjKTw4YqhnoLcngyZYeNnQqztScTogYHAS6',
+    });
     expect(line).toContain('OPEN');
     expect(line).toContain('skipped');
     expect(line).toContain('(entry_filter)'); // the WHY is always present
@@ -82,7 +87,13 @@ describe('journal · formatJournalLine (clean operator log)', () => {
   });
 
   it('a landed sign shows the kind, signature and latency', () => {
-    const line = formatJournalLine({ stage: 'sign', outcome: 'landed', kind: 'close', signature: 'abcdefghijklmnopqrstuvwxyz', latencyMs: 1842 });
+    const line = formatJournalLine({
+      stage: 'sign',
+      outcome: 'landed',
+      kind: 'close',
+      signature: 'abcdefghijklmnopqrstuvwxyz',
+      latencyMs: 1842,
+    });
     expect(line).toContain('SIGN landed');
     expect(line).toContain('close');
     expect(line).toContain('sig=abcd…wxyz');
@@ -94,7 +105,12 @@ describe('journal · formatJournalLine (clean operator log)', () => {
   });
 
   it('does not duplicate the kind when it equals the stage', () => {
-    const line = formatJournalLine({ stage: 'open', outcome: 'published', kind: 'open', ourSizeSol: 0.3 });
+    const line = formatJournalLine({
+      stage: 'open',
+      outcome: 'published',
+      kind: 'open',
+      ourSizeSol: 0.3,
+    });
     expect(line).toBe('📤 OPEN published · 0.3 SOL'); // kind 'open' omitted (== stage), size shown
   });
 });

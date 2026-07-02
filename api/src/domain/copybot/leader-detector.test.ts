@@ -28,7 +28,11 @@ function fakeEvent(signature: string, blockTime: number | null = null): Detected
  * Solana's `getSignaturesForAddress({ until })`: a CONTIGUOUS, newest-first slice of everything newer than
  * the cursor. `dlmm` is the subset that are real DLMM events.
  */
-function makeDeps(chronological: string[], dlmm: Set<string>, blockTimes: Record<string, number> = {}) {
+function makeDeps(
+  chronological: string[],
+  dlmm: Set<string>,
+  blockTimes: Record<string, number> = {},
+) {
   const emitted: Array<{ signature: string; source: string }> = [];
   const deps: DetectorDeps = {
     async listSignaturesSince(until: string | undefined): Promise<SigInfo[]> {
@@ -63,7 +67,11 @@ describe('LeaderDetector — "we never miss an event" robustness', () => {
 
   it('emits by blockTime (the RPC signature order is not strictly chronological)', async () => {
     // RPC order = a,b,c; but out-of-order timestamps b=10, a=20, c=30 → expected b, a, c
-    const { deps, emitted } = makeDeps(['a', 'b', 'c'], new Set(['a', 'b', 'c']), { a: 20, b: 10, c: 30 });
+    const { deps, emitted } = makeDeps(['a', 'b', 'c'], new Set(['a', 'b', 'c']), {
+      a: 20,
+      b: 10,
+      c: 30,
+    });
     const det = new LeaderDetector(deps);
 
     await det.poll();
@@ -151,7 +159,10 @@ describe('LeaderDetector — "we never miss an event" robustness', () => {
           .map((signature) => ({ signature }));
       },
       async classify(sigs) {
-        return { events: new Map(sigs.map((s) => [s, fakeEvent(s)])), unresolved: new Set<string>() };
+        return {
+          events: new Map(sigs.map((s) => [s, fakeEvent(s)])),
+          unresolved: new Set<string>(),
+        };
       },
       onEvent(e) {
         emitted.push(e.signature);
@@ -182,7 +193,10 @@ describe('LeaderDetector — "we never miss an event" robustness', () => {
         return until === undefined ? [{ signature: 'a' }] : [];
       },
       async classify(sigs) {
-        return { events: new Map(sigs.map((s) => [s, fakeEvent(s)])), unresolved: new Set<string>() };
+        return {
+          events: new Map(sigs.map((s) => [s, fakeEvent(s)])),
+          unresolved: new Set<string>(),
+        };
       },
       onEvent() {},
       async persist(events) {
@@ -217,7 +231,10 @@ describe('LeaderDetector — "we never miss an event" robustness', () => {
         return [{ signature: 'a' }];
       },
       async classify(sigs) {
-        return { events: new Map(sigs.map((s) => [s, fakeEvent(s)])), unresolved: new Set<string>() };
+        return {
+          events: new Map(sigs.map((s) => [s, fakeEvent(s)])),
+          unresolved: new Set<string>(),
+        };
       },
       onEvent() {},
     };
@@ -256,10 +273,16 @@ describe('LeaderDetector — "we never miss an event" robustness', () => {
     const deps: DetectorDeps = {
       async listSignaturesSince(until) {
         const start = until === undefined ? 0 : available.indexOf(until) + 1;
-        return available.slice(start).reverse().map((signature) => ({ signature }));
+        return available
+          .slice(start)
+          .reverse()
+          .map((signature) => ({ signature }));
       },
       async classify(sigs) {
-        return { events: new Map(sigs.map((s) => [s, fakeEvent(s)])), unresolved: new Set<string>() };
+        return {
+          events: new Map(sigs.map((s) => [s, fakeEvent(s)])),
+          unresolved: new Set<string>(),
+        };
       },
       onEvent(e) {
         emitted.push(e.signature);
@@ -314,7 +337,10 @@ describe('LeaderDetector — cursor race (never advance past an unresolved / in-
       },
       async classify(sigs) {
         if (!resolved) return { events: new Map(), unresolved: new Set(sigs) }; // null tx → unresolved, no throw
-        return { events: new Map(sigs.map((s) => [s, fakeEvent(s, 1)])), unresolved: new Set<string>() };
+        return {
+          events: new Map(sigs.map((s) => [s, fakeEvent(s, 1)])),
+          unresolved: new Set<string>(),
+        };
       },
       onEvent(e) {
         emitted.push(e.signature);
@@ -349,7 +375,10 @@ describe('LeaderDetector — cursor race (never advance past an unresolved / in-
             resolveWs = () => res({ events: new Map(), unresolved: new Set(sigs) }); // WS resolves as unresolved
           });
         }
-        return Promise.resolve({ events: new Map(sigs.map((s) => [s, fakeEvent(s, 1)])), unresolved: new Set<string>() });
+        return Promise.resolve({
+          events: new Map(sigs.map((s) => [s, fakeEvent(s, 1)])),
+          unresolved: new Set<string>(),
+        });
       },
       onEvent(e) {
         emitted.push(e.signature);
@@ -412,7 +441,11 @@ describe('LeaderDetector — cursor race (never advance past an unresolved / in-
       classify(sigs) {
         classifyCalls++;
         return new Promise<ClassifyResult>((res) => {
-          resolve1 = () => res({ events: new Map(sigs.map((s) => [s, fakeEvent(s, 1)])), unresolved: new Set<string>() });
+          resolve1 = () =>
+            res({
+              events: new Map(sigs.map((s) => [s, fakeEvent(s, 1)])),
+              unresolved: new Set<string>(),
+            });
         });
       },
       onEvent(e) {

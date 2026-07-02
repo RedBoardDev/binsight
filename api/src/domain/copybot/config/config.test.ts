@@ -100,7 +100,13 @@ describe('config · parseConfig (fail-safe + migration)', () => {
     // WHY: an existing dev config must not be lost when we restructure — it's transparently upgraded.
     const legacy = JSON.stringify({
       leader: 'LegacyLeader1111111111111111111111111111111',
-      sizing: { tradeRatioPct: 25, maxTradeSizeSol: 0.5, minPositionSizeSol: 0.05, solReserveSol: 0.05, onInsufficient: 'skip' },
+      sizing: {
+        tradeRatioPct: 25,
+        maxTradeSizeSol: 0.5,
+        minPositionSizeSol: 0.05,
+        solReserveSol: 0.05,
+        onInsufficient: 'skip',
+      },
       caps: CONFIG_DEFAULTS.user.caps,
       twoSidedMode: 'on',
     });
@@ -112,7 +118,9 @@ describe('config · parseConfig (fail-safe + migration)', () => {
   });
 
   it('a structurally invalid value → full defaults', () => {
-    expect(parseConfig(JSON.stringify({ user: { sizing: { maxTradeSizeSol: 'huge' } } }))).toEqual(CONFIG_DEFAULTS);
+    expect(parseConfig(JSON.stringify({ user: { sizing: { maxTradeSizeSol: 'huge' } } }))).toEqual(
+      CONFIG_DEFAULTS,
+    );
   });
 
   it('round-trips a full valid two-tier blob', () => {
@@ -126,10 +134,14 @@ describe('config · parseConfig (fail-safe + migration)', () => {
 
 describe('config · isValidConfigBlob', () => {
   it('true for a valid (even partial) blob, false for null/garbage', () => {
-    expect(isValidConfigBlob(JSON.stringify({ user: { caps: { killSwitchGlobal: true } } }))).toBe(true);
+    expect(isValidConfigBlob(JSON.stringify({ user: { caps: { killSwitchGlobal: true } } }))).toBe(
+      true,
+    );
     expect(isValidConfigBlob(null)).toBe(false);
     expect(isValidConfigBlob('nope')).toBe(false);
-    expect(isValidConfigBlob(JSON.stringify({ user: { sizing: { maxTradeSizeSol: 'x' } } }))).toBe(false);
+    expect(isValidConfigBlob(JSON.stringify({ user: { sizing: { maxTradeSizeSol: 'x' } } }))).toBe(
+      false,
+    );
   });
 });
 
@@ -145,7 +157,13 @@ describe('config · effectiveFor', () => {
   it('leader overrides win over user defaults (twoSided + sizing field)', () => {
     const cfg: CopybotConfig = {
       user: CONFIG_DEFAULTS.user,
-      leaders: [{ address: LEADER, enabled: true, overrides: { twoSidedMode: 'on', sizing: { tradeRatioPct: 10 } } }],
+      leaders: [
+        {
+          address: LEADER,
+          enabled: true,
+          overrides: { twoSidedMode: 'on', sizing: { tradeRatioPct: 10 } },
+        },
+      ],
     };
     const eff = effectiveFor(cfg, LEADER);
     expect(eff.twoSidedMode).toBe('on');
@@ -155,22 +173,39 @@ describe('config · effectiveFor', () => {
 
   it('maxTradeSizeSol is LOWER-ONLY — a leader can tighten but never raise the user ceiling', () => {
     // WHY: a per-leader override must never increase risk beyond the account ceiling (a typo or a malicious config).
-    const user = { ...CONFIG_DEFAULTS.user, sizing: { ...CONFIG_DEFAULTS.user.sizing, maxTradeSizeSol: 1.0 } };
-    const raise: CopybotConfig = { user, leaders: [{ address: LEADER, enabled: true, overrides: { sizing: { maxTradeSizeSol: 5 } } }] };
-    const lower: CopybotConfig = { user, leaders: [{ address: LEADER, enabled: true, overrides: { sizing: { maxTradeSizeSol: 0.3 } } }] };
+    const user = {
+      ...CONFIG_DEFAULTS.user,
+      sizing: { ...CONFIG_DEFAULTS.user.sizing, maxTradeSizeSol: 1.0 },
+    };
+    const raise: CopybotConfig = {
+      user,
+      leaders: [{ address: LEADER, enabled: true, overrides: { sizing: { maxTradeSizeSol: 5 } } }],
+    };
+    const lower: CopybotConfig = {
+      user,
+      leaders: [
+        { address: LEADER, enabled: true, overrides: { sizing: { maxTradeSizeSol: 0.3 } } },
+      ],
+    };
     expect(effectiveFor(raise, LEADER).sizing.maxTradeSizeSol).toBe(1.0); // raise rejected → clamped to ceiling
     expect(effectiveFor(lower, LEADER).sizing.maxTradeSizeSol).toBe(0.3); // tighten honored
   });
 
   it('a disabled leader resolves to killSwitchLeader=true (so checkCaps blocks its opens)', () => {
-    const cfg: CopybotConfig = { user: CONFIG_DEFAULTS.user, leaders: [{ address: LEADER, enabled: false, overrides: {} }] };
+    const cfg: CopybotConfig = {
+      user: CONFIG_DEFAULTS.user,
+      leaders: [{ address: LEADER, enabled: false, overrides: {} }],
+    };
     const eff = effectiveFor(cfg, LEADER);
     expect(eff.leaderEnabled).toBe(false);
     expect(eff.caps.killSwitchLeader).toBe(true);
   });
 
   it('the user master switch off ⇒ killSwitchGlobal=true (no opens, exits still run)', () => {
-    const cfg: CopybotConfig = { user: { ...CONFIG_DEFAULTS.user, enabled: false }, leaders: CONFIG_DEFAULTS.leaders };
+    const cfg: CopybotConfig = {
+      user: { ...CONFIG_DEFAULTS.user, enabled: false },
+      leaders: CONFIG_DEFAULTS.leaders,
+    };
     expect(effectiveFor(cfg, LEADER).caps.killSwitchGlobal).toBe(true);
   });
 

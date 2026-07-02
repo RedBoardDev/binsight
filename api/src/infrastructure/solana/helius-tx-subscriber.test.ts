@@ -11,10 +11,14 @@ const TX_NOTIF = {
   params: {
     subscription: 4743323479349712,
     result: {
-      signature: '5moMXe6VW7L7aQZskcAkKGQ1y19qqUT1teQKBNAAmipzdxdqVLAdG47WrsByFYNJSAGa9TByv15oygnqYvP6Hn2p',
+      signature:
+        '5moMXe6VW7L7aQZskcAkKGQ1y19qqUT1teQKBNAAmipzdxdqVLAdG47WrsByFYNJSAGa9TByv15oygnqYvP6Hn2p',
       transaction: {
         transaction: ['...base64...'],
-        meta: { logMessages: ['Program LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo invoke [1]'], postTokenBalances: [] },
+        meta: {
+          logMessages: ['Program LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo invoke [1]'],
+          postTokenBalances: [],
+        },
       },
       slot: 224341380,
     },

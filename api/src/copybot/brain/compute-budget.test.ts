@@ -5,8 +5,12 @@ import { applyPriorityFee, COMPUTE_BUDGET_PROGRAM, withCuLimit } from './compute
 
 const CB_SET_UNIT_LIMIT = 2;
 const CB_SET_UNIT_PRICE = 3;
-const txWithLimit = (units: number): Transaction => new Transaction().add(ComputeBudgetProgram.setComputeUnitLimit({ units }));
-const find = (tx: Transaction, disc: number) => tx.instructions.find((ix) => ix.programId.toBase58() === COMPUTE_BUDGET_PROGRAM && ix.data[0] === disc);
+const txWithLimit = (units: number): Transaction =>
+  new Transaction().add(ComputeBudgetProgram.setComputeUnitLimit({ units }));
+const find = (tx: Transaction, disc: number) =>
+  tx.instructions.find(
+    (ix) => ix.programId.toBase58() === COMPUTE_BUDGET_PROGRAM && ix.data[0] === disc,
+  );
 const priceOf = (tx: Transaction): bigint | null => {
   const ix = find(tx, CB_SET_UNIT_PRICE);
   return ix ? ix.data.readBigUInt64LE(1) : null;
@@ -16,7 +20,10 @@ describe('compute-budget · withCuLimit', () => {
   it('sets the CU limit and replaces any existing one (exactly one limit ix)', () => {
     const tx = txWithLimit(200_000);
     withCuLimit(tx, 1_400_000);
-    const limits = tx.instructions.filter((ix) => ix.programId.toBase58() === COMPUTE_BUDGET_PROGRAM && ix.data[0] === CB_SET_UNIT_LIMIT);
+    const limits = tx.instructions.filter(
+      (ix) =>
+        ix.programId.toBase58() === COMPUTE_BUDGET_PROGRAM && ix.data[0] === CB_SET_UNIT_LIMIT,
+    );
     expect(limits).toHaveLength(1);
     expect(limits[0]!.data.readUInt32LE(1)).toBe(1_400_000);
   });
@@ -34,14 +41,19 @@ describe('compute-budget · applyPriorityFee', () => {
     const tx = txWithLimit(1_400_000);
     applyPriorityFee(tx, { tier: 'high', maxCapSol: 0.00005 });
     const price = priceOf(tx)!;
-    expect(Number((price * 1_400_000n) / 1_000_000n)).toBeLessThanOrEqual(0.00005 * 1_000_000_000 + 1);
+    expect(Number((price * 1_400_000n) / 1_000_000n)).toBeLessThanOrEqual(
+      0.00005 * 1_000_000_000 + 1,
+    );
   });
 
   it('is idempotent — re-applying replaces, never stacks, the price ix', () => {
     const tx = txWithLimit(200_000);
     applyPriorityFee(tx, { tier: 'low', maxCapSol: 0.005 });
     applyPriorityFee(tx, { tier: 'high', maxCapSol: 0.005 });
-    const prices = tx.instructions.filter((ix) => ix.programId.toBase58() === COMPUTE_BUDGET_PROGRAM && ix.data[0] === CB_SET_UNIT_PRICE);
+    const prices = tx.instructions.filter(
+      (ix) =>
+        ix.programId.toBase58() === COMPUTE_BUDGET_PROGRAM && ix.data[0] === CB_SET_UNIT_PRICE,
+    );
     expect(prices).toHaveLength(1);
     expect(priceOf(tx)).toBe(BigInt(computeUnitPriceMicroLamports('high', 200_000, 0.005))); // the latest tier wins
   });

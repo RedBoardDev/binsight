@@ -16,7 +16,12 @@ const m = (over: Partial<Omit<Mirror, 'status'>> = {}): Omit<Mirror, 'status'> =
 describe('MirrorRegistry', () => {
   it('open registers an open mirror (with OUR position + range)', () => {
     const r = new MirrorRegistry();
-    expect(r.open(m())).toMatchObject({ leaderPosition: 'L', ourPosition: 'O', status: 'open', lowerBin: -45 });
+    expect(r.open(m())).toMatchObject({
+      leaderPosition: 'L',
+      ourPosition: 'O',
+      status: 'open',
+      lowerBin: -45,
+    });
     expect(r.hasOpen('L')).toBe(true);
   });
 

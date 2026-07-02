@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { TIER_MICRO_LAMPORTS_PER_CU, computeUnitPriceMicroLamports, effectiveMicroPerCu } from './priority-fee';
+import {
+  computeUnitPriceMicroLamports,
+  effectiveMicroPerCu,
+  TIER_MICRO_LAMPORTS_PER_CU,
+} from './priority-fee';
 
 describe('priority-fee · computeUnitPriceMicroLamports', () => {
   const CU = 200_000; // a typical DLMM tx CU limit

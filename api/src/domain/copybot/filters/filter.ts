@@ -83,10 +83,14 @@ export function compareMax(value: number | undefined, max: number, metric: strin
 }
 
 /** Config keys carrying a numeric threshold (`number | null`). */
-type NumericConfigKey = { [K in keyof FilterConfig]-?: FilterConfig[K] extends number | null ? K : never }[keyof FilterConfig];
+type NumericConfigKey = {
+  [K in keyof FilterConfig]-?: FilterConfig[K] extends number | null ? K : never;
+}[keyof FilterConfig];
 /** Context keys carrying a numeric metric the bricks compare (`number | undefined`); `-?` so optional keys
  * don't leak `undefined` into the key union. */
-type NumericContextKey = { [K in keyof FilterContext]-?: FilterContext[K] extends number | undefined ? K : never }[keyof FilterContext];
+type NumericContextKey = {
+  [K in keyof FilterContext]-?: FilterContext[K] extends number | undefined ? K : never;
+}[keyof FilterContext];
 
 /** Declarative spec for a numeric-threshold filter (the shape shared by every min/max data brick). */
 export interface NumericThresholdSpec {

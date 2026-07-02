@@ -11,7 +11,9 @@ describe('deriveCommandId — idempotency key (brain↔vault contract)', () => {
     const eventKey = 'LEADER:POOL:open:SIG123';
     expect(deriveCommandId(eventKey)).toBe(createHash('sha256').update(eventKey).digest('hex'));
     // a fixed published vector — guards against a silent algorithm/encoding change:
-    expect(deriveCommandId('abc')).toBe('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+    expect(deriveCommandId('abc')).toBe(
+      'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+    );
   });
 
   it('is DETERMINISTIC — the same eventKey always yields the same id (idempotency: no double-sign on a retry)', () => {

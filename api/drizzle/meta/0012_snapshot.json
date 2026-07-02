@@ -1,5 +1,5 @@
 {
-  "id": "b13bc17e-09b8-4142-ba5c-e43863d61fcc",
+  "id": "7e85f955-bad6-42da-9382-eac96d426949",
   "prevId": "091765f6-db9e-419d-83e0-123dfce7e60e",
   "version": "7",
   "dialect": "postgresql",
@@ -304,137 +304,6 @@
         }
       },
       "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.leader_activity": {
-      "name": "leader_activity",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "serial",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "signature": {
-          "name": "signature",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "leader": {
-          "name": "leader",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "instruction": {
-          "name": "instruction",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "action": {
-          "name": "action",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "deposit_sol": {
-          "name": "deposit_sol",
-          "type": "double precision",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "withdraw_sol": {
-          "name": "withdraw_sol",
-          "type": "double precision",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "claim_sol": {
-          "name": "claim_sol",
-          "type": "double precision",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "pool": {
-          "name": "pool",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "non_sol_mint": {
-          "name": "non_sol_mint",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "non_sol_symbol": {
-          "name": "non_sol_symbol",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "block_time": {
-          "name": "block_time",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "source": {
-          "name": "source",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "detected_at": {
-          "name": "detected_at",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {
-        "uq_leader_activity_signature": {
-          "name": "uq_leader_activity_signature",
-          "columns": [
-            {
-              "expression": "signature",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "idx_leader_activity_leader": {
-          "name": "idx_leader_activity_leader",
-          "columns": [
-            {
-              "expression": "leader",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
@@ -897,6 +766,68 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.rpc_credit_daily": {
+      "name": "rpc_credit_daily",
+      "schema": "",
+      "columns": {
+        "day": {
+          "name": "day",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "method": {
+          "name": "method",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "wallet": {
+          "name": "wallet",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "code_path": {
+          "name": "code_path",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "calls": {
+          "name": "calls",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "credits": {
+          "name": "credits",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "rpc_credit_daily_day_method_wallet_code_path_pk": {
+          "name": "rpc_credit_daily_day_method_wallet_code_path_pk",
+          "columns": [
+            "day",
+            "method",
+            "wallet",
+            "code_path"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.settings": {
       "name": "settings",
       "schema": "",
@@ -917,6 +848,136 @@
       "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.swap_flow_cursor": {
+      "name": "swap_flow_cursor",
+      "schema": "",
+      "columns": {
+        "wallet": {
+          "name": "wallet",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "oldest_sig": {
+          "name": "oldest_sig",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "newest_sig": {
+          "name": "newest_sig",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "complete": {
+          "name": "complete",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.swap_flows": {
+      "name": "swap_flows",
+      "schema": "",
+      "columns": {
+        "wallet": {
+          "name": "wallet",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "signature": {
+          "name": "signature",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ts": {
+          "name": "ts",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "mint": {
+          "name": "mint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "token_amount": {
+          "name": "token_amount",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sol_amount": {
+          "name": "sol_amount",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "side": {
+          "name": "side",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "idx_swap_flows_wallet_ts": {
+          "name": "idx_swap_flows_wallet_ts",
+          "columns": [
+            {
+              "expression": "wallet",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "ts",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "swap_flows_wallet_signature_mint_pk": {
+          "name": "swap_flows_wallet_signature_mint_pk",
+          "columns": [
+            "wallet",
+            "signature",
+            "mint"
+          ]
+        }
+      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
@@ -1212,6 +1273,43 @@
           ]
         }
       },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.wallet_stream_cursor": {
+      "name": "wallet_stream_cursor",
+      "schema": "",
+      "columns": {
+        "wallet": {
+          "name": "wallet",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "last_signature": {
+          "name": "last_signature",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_slot": {
+          "name": "last_slot",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},

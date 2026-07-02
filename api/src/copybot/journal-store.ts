@@ -14,8 +14,19 @@
  * and swallow. Call sites fire-and-forget (do not await) so zero latency is added to the ≤3s copy budget.
  */
 import type { Logger } from 'pino';
-import { formatJournalLine, type Journal, type JournalEntry, type JournalProcess, severityFor, validationWarning } from '@/domain/copybot/journal';
-import { CODE_REGISTRY, FALLBACK_CODE, resolveLegacyReason } from '@/domain/copybot/observability/codes';
+import {
+  formatJournalLine,
+  type Journal,
+  type JournalEntry,
+  type JournalProcess,
+  severityFor,
+  validationWarning,
+} from '@/domain/copybot/journal';
+import {
+  CODE_REGISTRY,
+  FALLBACK_CODE,
+  resolveLegacyReason,
+} from '@/domain/copybot/observability/codes';
 import type { CopyEvent } from '@/domain/copybot/observability/event';
 import type { openDatabase } from '@/infrastructure/persistence/database';
 import { CopyEvents } from './observability/copy-events';
@@ -56,11 +67,14 @@ export class CopyJournalStore implements Journal {
    */
   static withEvents(events: CopyEvents, log: Logger, process: JournalProcess): CopyJournalStore {
     const store = Object.create(CopyJournalStore.prototype) as CopyJournalStore;
-    Object.assign(store as unknown as { events: CopyEvents; log: Logger; process: JournalProcess }, {
-      events,
-      log,
-      process,
-    });
+    Object.assign(
+      store as unknown as { events: CopyEvents; log: Logger; process: JournalProcess },
+      {
+        events,
+        log,
+        process,
+      },
+    );
     return store;
   }
 
@@ -130,7 +144,11 @@ export class CopyJournalStore implements Journal {
 }
 
 /** Read a code's denormalized facets (category / audience / pinned) from the registry. Pure local helper. */
-function codeFacets(code: CopyEvent['code']): { category: CopyEvent['category']; audience: CopyEvent['audience']; pinned: boolean } {
+function codeFacets(code: CopyEvent['code']): {
+  category: CopyEvent['category'];
+  audience: CopyEvent['audience'];
+  pinned: boolean;
+} {
   const meta = CODE_REGISTRY[code];
   return { category: meta.category, audience: meta.audience, pinned: meta.pinned ?? false };
 }

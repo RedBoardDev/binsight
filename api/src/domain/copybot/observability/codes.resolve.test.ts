@@ -14,7 +14,9 @@ describe('resolveLegacyReason · alias map (SPEC §2.3)', () => {
     expect(resolveLegacyReason('orphan')).toBe('failsafe.orphan_closed');
     expect(resolveLegacyReason('non_sol_pool')).toBe('eligibility.non_sol_paired');
     expect(resolveLegacyReason('insufficient_balance')).toBe('balance.insufficient');
-    expect(resolveLegacyReason('wallb:foreign_sol_destination')).toBe('wallb.foreign_sol_destination');
+    expect(resolveLegacyReason('wallb:foreign_sol_destination')).toBe(
+      'wallb.foreign_sol_destination',
+    );
   });
 });
 

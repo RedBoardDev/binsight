@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { type ExecutedBatchDeps, type ExecutedMessage, dispatchExecuted, processExecutedBatch } from './dispatch-executed';
+import {
+  dispatchExecuted,
+  type ExecutedBatchDeps,
+  type ExecutedMessage,
+  processExecutedBatch,
+} from './dispatch-executed';
 
 // A full set of stub handlers (all no-ops / not-pending by default); each test overrides what it asserts on.
 function makeDeps(over: Partial<ExecutedBatchDeps> = {}): ExecutedBatchDeps {
@@ -27,9 +32,16 @@ describe('dispatchExecuted — routes each ev:executed kind to its handler', () 
   it('close → onCloseConfirmed (prompt markClosed) THEN onCloseExecuted (residual sell)', async () => {
     // WHY: a landed close must both mark the DB closed AND trigger the residual sell — the fast path, not the 30s reconcile.
     const deps = makeDeps();
-    await dispatchExecuted({ kind: 'close', pool: 'P', positionPubkey: 'OUR', commandId: 'C' }, deps);
+    await dispatchExecuted(
+      { kind: 'close', pool: 'P', positionPubkey: 'OUR', commandId: 'C' },
+      deps,
+    );
     expect(deps.onCloseConfirmed).toHaveBeenCalledWith('OUR');
-    expect(deps.onCloseExecuted).toHaveBeenCalledWith({ pool: 'P', positionPubkey: 'OUR', commandId: 'C' });
+    expect(deps.onCloseExecuted).toHaveBeenCalledWith({
+      pool: 'P',
+      positionPubkey: 'OUR',
+      commandId: 'C',
+    });
   });
 
   it('buy with a pending reshape add → publishReshapeAddAfterBuy (not the open path)', async () => {
@@ -95,14 +107,22 @@ describe('dispatchExecuted — routes each ev:executed kind to its handler', () 
     // consumed) — dispatch still routes to it; the handler itself no-ops. Here we assert routing + no throw.
     const publishTwoSidedOpenAfterBuy = vi.fn(async () => {}); // real handler no-ops when the map entry is absent
     const deps = makeDeps({ publishTwoSidedOpenAfterBuy });
-    await expect(dispatchExecuted({ kind: 'buy', commandId: 'ALREADY-DONE' }, deps)).resolves.toBeUndefined();
+    await expect(
+      dispatchExecuted({ kind: 'buy', commandId: 'ALREADY-DONE' }, deps),
+    ).resolves.toBeUndefined();
     expect(publishTwoSidedOpenAfterBuy).toHaveBeenCalledWith('ALREADY-DONE');
   });
 
   it('a throwing handler makes dispatch REJECT (so the batch guard can isolate it)', async () => {
     const boom = new Error('db blip in markClosed');
-    const deps = makeDeps({ onCloseConfirmed: vi.fn(async () => { throw boom; }) });
-    await expect(dispatchExecuted({ kind: 'close', pool: 'P', positionPubkey: 'OUR' }, deps)).rejects.toBe(boom);
+    const deps = makeDeps({
+      onCloseConfirmed: vi.fn(async () => {
+        throw boom;
+      }),
+    });
+    await expect(
+      dispatchExecuted({ kind: 'close', pool: 'P', positionPubkey: 'OUR' }, deps),
+    ).rejects.toBe(boom);
   });
 });
 
@@ -140,7 +160,10 @@ describe('processExecutedBatch — per-message isolation + non-ack-on-throw (no-
       if (id === '1') throw new Error('redis blip on ack');
     });
     const deps = makeDeps({ ack });
-    await processExecutedBatch([msg('1', { kind: 'sell', commandId: 'S1' }), msg('2', { kind: 'sell', commandId: 'S2' })], deps);
+    await processExecutedBatch(
+      [msg('1', { kind: 'sell', commandId: 'S1' }), msg('2', { kind: 'sell', commandId: 'S2' })],
+      deps,
+    );
     expect(deps.onSellConfirmed).toHaveBeenCalledTimes(2); // both dispatched
     expect(deps.onLoopError).toHaveBeenCalledTimes(1); // only msg 1's ack failed
     expect(deps.ack).toHaveBeenCalledWith('2');

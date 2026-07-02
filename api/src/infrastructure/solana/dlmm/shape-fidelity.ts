@@ -51,7 +51,8 @@ function econLamports(b: BinLegs, solSide: 'X' | 'Y', binStep: number): number {
 }
 
 /** A bin's SOL-leg only, in lamports. */
-const solLegLamports = (b: BinLegs, solSide: 'X' | 'Y'): number => Number(solSide === 'Y' ? b.y : b.x);
+const solLegLamports = (b: BinLegs, solSide: 'X' | 'Y'): number =>
+  Number(solSide === 'Y' ? b.y : b.x);
 
 /** A bin's TOKEN-leg only, in raw token units (the non-SOL side). */
 const tokenLegRaw = (b: BinLegs, solSide: 'X' | 'Y'): number => Number(solSide === 'Y' ? b.x : b.y);
@@ -103,7 +104,12 @@ function maxDiffPct(a: Map<number, number>, b: Map<number, number>): number {
 }
 
 /** Compare the copy's fidelity to the leader. Pure. */
-export function compareFidelity(leader: PositionShape, copy: PositionShape, solSide: 'X' | 'Y', binStep: number): FidelityResult {
+export function compareFidelity(
+  leader: PositionShape,
+  copy: PositionShape,
+  solSide: 'X' | 'Y',
+  binStep: number,
+): FidelityResult {
   const lEcon = byOffset(leader, (b) => econLamports(b, solSide, binStep));
   const cEcon = byOffset(copy, (b) => econLamports(b, solSide, binStep));
   const lSol = byOffset(leader, (b) => solLegLamports(b, solSide));

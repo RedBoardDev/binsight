@@ -15,7 +15,11 @@ import {
   type CopyCode,
   EMIT_DEDUP_TTL_MS,
 } from '@/domain/copybot/observability/codes';
-import type { CopyEvent, CopyEventContext, CopySeverity } from '@/domain/copybot/observability/event';
+import type {
+  CopyEvent,
+  CopyEventContext,
+  CopySeverity,
+} from '@/domain/copybot/observability/event';
 import type { EmitInput } from '@/domain/copybot/observability/input';
 import { toAdminJson } from '@/domain/copybot/observability/render-admin';
 import type { EventStore } from './event-store';
@@ -202,7 +206,10 @@ export class CopyEvents {
         void this.store.persist(e);
       }
     } catch (err) {
-      this.log.error({ err: (err as Error).message, code: e.code }, 'copy-events: shim persist failed (non-fatal)');
+      this.log.error(
+        { err: (err as Error).message, code: e.code },
+        'copy-events: shim persist failed (non-fatal)',
+      );
     }
   }
 

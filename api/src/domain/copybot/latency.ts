@@ -26,6 +26,9 @@ export function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | undefined
 
 /** Runs all tasks IN PARALLEL, each bounded by `timeoutMs`. Returns one result per task in
  *  order, `undefined` for those that failed/timed out (never a global rejection). A synchronous throw is caught. */
-export function runParallel<T>(tasks: Array<() => Promise<T>>, timeoutMs: number): Promise<(T | undefined)[]> {
+export function runParallel<T>(
+  tasks: Array<() => Promise<T>>,
+  timeoutMs: number,
+): Promise<(T | undefined)[]> {
   return Promise.all(tasks.map((t) => withTimeout(Promise.resolve().then(t), timeoutMs)));
 }

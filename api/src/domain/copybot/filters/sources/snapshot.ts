@@ -16,6 +16,7 @@ export function snapshotToContext(s: TokenSnapshot, nowMs: number): Partial<Filt
   if (s.marketCapUsd != null) out.marketCapUsd = s.marketCapUsd;
   if (s.volume24hUsd != null) out.volume24hUsd = s.volume24hUsd;
   if (s.priceChange24hPercent != null) out.priceChangePercent = s.priceChange24hPercent;
-  if (s.firstPoolCreatedAtMs != null) out.tokenAgeHours = (nowMs - s.firstPoolCreatedAtMs) / MS_PER_HOUR;
+  if (s.firstPoolCreatedAtMs != null)
+    out.tokenAgeHours = (nowMs - s.firstPoolCreatedAtMs) / MS_PER_HOUR;
   return out;
 }

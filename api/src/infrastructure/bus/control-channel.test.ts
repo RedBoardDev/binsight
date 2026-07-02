@@ -1,9 +1,11 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { type ControlMessage, ControlChannel, parseControlMessage } from './control-channel';
+import { ControlChannel, type ControlMessage, parseControlMessage } from './control-channel';
 
 describe('parseControlMessage (pure)', () => {
   it('accepts a known config-changed message', () => {
-    expect(parseControlMessage(JSON.stringify({ type: 'config-changed' }))).toEqual({ type: 'config-changed' });
+    expect(parseControlMessage(JSON.stringify({ type: 'config-changed' }))).toEqual({
+      type: 'config-changed',
+    });
   });
 
   it('ignores malformed JSON, non-objects, missing/unknown types (never throws)', () => {
@@ -42,7 +44,9 @@ describe('ControlChannel (integration)', () => {
 
     const msg = await Promise.race([
       received,
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('control message not delivered in time')), 5000)),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('control message not delivered in time')), 5000),
+      ),
     ]);
     expect(msg).toEqual({ type: 'config-changed' });
   });

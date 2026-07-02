@@ -5,7 +5,11 @@
  */
 import { DLMM_PROGRAM_ID } from '@binsight/shared';
 import type { Connection, PublicKey } from '@solana/web3.js';
-import { type PoolMetaLookup, buildDetectedEvent, poolsOf } from '../domain/copybot/classify-dlmm-tx';
+import {
+  buildDetectedEvent,
+  type PoolMetaLookup,
+  poolsOf,
+} from '../domain/copybot/classify-dlmm-tx';
 import type { DetectedEvent } from '../domain/copybot/events';
 import type { ClassifyResult, DetectorDeps, SigInfo } from '../domain/copybot/leader-detector';
 import type { LoadedPoolMeta } from '../domain/dlmm';
@@ -55,7 +59,9 @@ export function makeDetectionDeps(args: {
         before = batch[batch.length - 1]?.signature;
         if (batch.length < SIG_PAGE) break;
         if (p >= MAX_POLL_PAGES) {
-          throw new Error(`poll: ${MAX_POLL_PAGES} full pages without reaching the cursor — retry on the next poll.`);
+          throw new Error(
+            `poll: ${MAX_POLL_PAGES} full pages without reaching the cursor — retry on the next poll.`,
+          );
         }
       }
       return out;
@@ -92,7 +98,9 @@ export function makeDetectionDeps(args: {
         const e = buildDetectedEvent(sig, txs[i] ?? null, poolMeta);
         if (e) map.set(sig, e);
       }
-      const mints = [...new Set([...map.values()].map((e) => e.nonSolMint).filter((m): m is string => !!m))];
+      const mints = [
+        ...new Set([...map.values()].map((e) => e.nonSolMint).filter((m): m is string => !!m)),
+      ];
       if (mints.length > 0) {
         const metas = await tokenMeta.resolve(mints);
         for (const e of map.values()) {

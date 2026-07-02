@@ -11,7 +11,7 @@
  */
 import type { DetectedEvent } from './events';
 import { type FilterConfig, type FilterContext, runFilters } from './filters';
-import { type FollowerState, type SizingConfig, computeCopySize } from './sizing';
+import { computeCopySize, type FollowerState, type SizingConfig } from './sizing';
 
 export interface EntryConfig extends SizingConfig {
   /** Skip positions whose pool is not SOL-paired (default true — spec non-goals). */
@@ -41,7 +41,11 @@ export function decideEntry(
 
   // Entry filters (all OFF by default) — before sizing: no point sizing what we reject.
   if (filters) {
-    const v = runFilters({ nonSolMint: event.nonSolMint, pool: event.pool }, filters.ctx, filters.config);
+    const v = runFilters(
+      { nonSolMint: event.nonSolMint, pool: event.pool },
+      filters.ctx,
+      filters.config,
+    );
     if (v.action === 'skip') return { outcome: 'skipped', reason: v.reason, leaderSizeSol };
   }
 

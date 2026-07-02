@@ -25,7 +25,11 @@ function fakeStore(): { store: EventStore; persisted: CopyEvent[]; durable: Copy
   return { store, persisted, durable };
 }
 
-function fakeLog(): Logger & { info: ReturnType<typeof vi.fn>; warn: ReturnType<typeof vi.fn>; error: ReturnType<typeof vi.fn> } {
+function fakeLog(): Logger & {
+  info: ReturnType<typeof vi.fn>;
+  warn: ReturnType<typeof vi.fn>;
+  error: ReturnType<typeof vi.fn>;
+} {
   return { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as unknown as Logger & {
     info: ReturnType<typeof vi.fn>;
     warn: ReturnType<typeof vi.fn>;
@@ -35,7 +39,12 @@ function fakeLog(): Logger & { info: ReturnType<typeof vi.fn>; warn: ReturnType<
 
 describe('assemble (pure)', () => {
   it('denormalizes severity/category/audience/pinned from the registry and stamps ts/eventTs/ctx', () => {
-    const e = assemble('lifecycle.open_failed', { stage: 'open', outcome: 'failed', commandId: 'CMD' }, BASE, 1000);
+    const e = assemble(
+      'lifecycle.open_failed',
+      { stage: 'open', outcome: 'failed', commandId: 'CMD' },
+      BASE,
+      1000,
+    );
     expect(e.code).toBe('lifecycle.open_failed');
     expect(e.severity).toBe('error');
     expect(e.category).toBe('LIFECYCLE');
@@ -47,12 +56,25 @@ describe('assemble (pure)', () => {
   });
 
   it('threads correlationId = commandId ?? eventKey (commandId wins)', () => {
-    expect(assemble('detect.observed', { stage: 'detect', outcome: 'detected', commandId: 'C', eventKey: 'K' }, BASE, 1).correlationId).toBe('C');
-    expect(assemble('detect.observed', { stage: 'detect', outcome: 'detected', eventKey: 'K' }, BASE, 1).correlationId).toBe('K');
+    expect(
+      assemble(
+        'detect.observed',
+        { stage: 'detect', outcome: 'detected', commandId: 'C', eventKey: 'K' },
+        BASE,
+        1,
+      ).correlationId,
+    ).toBe('C');
+    expect(
+      assemble('detect.observed', { stage: 'detect', outcome: 'detected', eventKey: 'K' }, BASE, 1)
+        .correlationId,
+    ).toBe('K');
   });
 
   it('honors an explicit eventTs (business/observed time) over the stamp', () => {
-    expect(assemble('detect.observed', { stage: 'detect', outcome: 'detected', eventTs: 42 }, BASE, 1000).eventTs).toBe(42);
+    expect(
+      assemble('detect.observed', { stage: 'detect', outcome: 'detected', eventTs: 42 }, BASE, 1000)
+        .eventTs,
+    ).toBe(42);
   });
 });
 
@@ -60,7 +82,11 @@ describe('CopyEvents.emit · routing + mirror', () => {
   it('mirrors a non-pinned event to pino at its severity and fire-and-forget persists it', () => {
     const { store, persisted, durable } = fakeStore();
     const log = fakeLog();
-    new CopyEvents(store, log, BASE).emit('detect.observed', { stage: 'detect', outcome: 'detected', commandId: 'A' });
+    new CopyEvents(store, log, BASE).emit('detect.observed', {
+      stage: 'detect',
+      outcome: 'detected',
+      commandId: 'A',
+    });
     expect(log.info).toHaveBeenCalledTimes(1);
     expect(persisted).toHaveLength(1);
     expect(durable).toHaveLength(0);
@@ -71,7 +97,11 @@ describe('CopyEvents.emit · routing + mirror', () => {
   it('routes a pinned event to the DURABLE path (so a critical alert is never lost) at error level', () => {
     const { store, persisted, durable } = fakeStore();
     const log = fakeLog();
-    new CopyEvents(store, log, BASE).emit('lifecycle.open_failed', { stage: 'open', outcome: 'failed', commandId: 'B' });
+    new CopyEvents(store, log, BASE).emit('lifecycle.open_failed', {
+      stage: 'open',
+      outcome: 'failed',
+      commandId: 'B',
+    });
     expect(log.error).toHaveBeenCalledTimes(1);
     expect(durable).toHaveLength(1);
     expect(persisted).toHaveLength(0);
@@ -104,10 +134,15 @@ describe('CopyEvents.emit · external alert sink (operator-actionable fan-out)',
       throw new Error('webhook boom');
     });
     const events = new CopyEvents(store, log, BASE, sink);
-    expect(() => events.emit('lifecycle.open_failed', { stage: 'open', outcome: 'failed', commandId: 'BOOM' })).not.toThrow();
+    expect(() =>
+      events.emit('lifecycle.open_failed', { stage: 'open', outcome: 'failed', commandId: 'BOOM' }),
+    ).not.toThrow();
     expect(durable).toHaveLength(1); // the durable persist still happened before the sink threw
     // Swallowed loud by the loop guard (in addition to the severity=error admin mirror this pinned event emits).
-    expect(log.error).toHaveBeenCalledWith(expect.objectContaining({ code: 'lifecycle.open_failed' }), 'copy-events: emit failed (non-fatal)');
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'lifecycle.open_failed' }),
+      'copy-events: emit failed (non-fatal)',
+    );
   });
 });
 
@@ -139,7 +174,9 @@ describe('CopyEvents.emit · never throws (the cardinal guarantee)', () => {
       persistDurable: async () => undefined,
     } as unknown as EventStore;
     const events = new CopyEvents(throwingStore, log, BASE);
-    expect(() => events.emit('detect.observed', { stage: 'detect', outcome: 'detected', commandId: 'X' })).not.toThrow();
+    expect(() =>
+      events.emit('detect.observed', { stage: 'detect', outcome: 'detected', commandId: 'X' }),
+    ).not.toThrow();
     expect(log.error).toHaveBeenCalledTimes(1); // failed loud...
   });
 });

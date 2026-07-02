@@ -62,7 +62,8 @@ export function computeCopySize(
   // 4) Insufficient balance.
   if (config.onInsufficient === 'skip') return { action: 'skip', reason: 'insufficient_balance' };
   // reduceToFit: open with the available amount, but re-checked against the floor.
-  if (available < config.minPositionSizeSol) return { action: 'skip', reason: 'insufficient_balance' };
+  if (available < config.minPositionSizeSol)
+    return { action: 'skip', reason: 'insufficient_balance' };
   return { action: 'open', sizeSol: available, reduced: true };
 }
 

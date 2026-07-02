@@ -75,7 +75,11 @@ export class LeaderDetector {
    * order, deduped via `seen`. `advanceCursor` is only true for contiguous sweeps (replay/poll),
    * never for the WS (which doesn't necessarily cover contiguously).
    */
-  async ingest(sigInfosNewestFirst: SigInfo[], source: EventSource, advanceCursor: boolean): Promise<void> {
+  async ingest(
+    sigInfosNewestFirst: SigInfo[],
+    source: EventSource,
+    advanceCursor: boolean,
+  ): Promise<void> {
     const newest = sigInfosNewestFirst[0]?.signature;
     if (newest === undefined) return;
     const freshNewestFirst = sigInfosNewestFirst.filter((s) => !this.seen.has(s.signature));
@@ -160,7 +164,11 @@ export class LeaderDetector {
    * NOTHING was un-reserved for retry this pass. Otherwise leave the cursor behind → the next poll re-lists the
    * window (`seen` dedups the committed ones; the unresolved ones get retried). This is the critical no-miss rule.
    */
-  private maybeAdvanceCursor(advanceCursor: boolean, newest: string, retriedThisPass: boolean): void {
+  private maybeAdvanceCursor(
+    advanceCursor: boolean,
+    newest: string,
+    retriedThisPass: boolean,
+  ): void {
     if (advanceCursor && this.inFlight.size === 0 && !retriedThisPass) this.cursor = newest;
   }
 

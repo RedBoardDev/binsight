@@ -22,7 +22,10 @@ export interface PendingOpenReservations {
   size(): number;
 }
 
-export function createPendingOpenReservations(ttlMs: number, now: () => number = Date.now): PendingOpenReservations {
+export function createPendingOpenReservations(
+  ttlMs: number,
+  now: () => number = Date.now,
+): PendingOpenReservations {
   const reservedAt = new Map<string, number>();
   return {
     reserve: (pos) => {

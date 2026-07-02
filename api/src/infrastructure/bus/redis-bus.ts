@@ -79,7 +79,18 @@ export class RedisBus {
     blockMs = 5000,
   ): Promise<ConsumedMessage[]> {
     const res = await this.readWithGroupHeal(stream, group, () =>
-      this.redis.xreadgroup('GROUP', group, consumer, 'COUNT', count, 'BLOCK', blockMs, 'STREAMS', stream, '>'),
+      this.redis.xreadgroup(
+        'GROUP',
+        group,
+        consumer,
+        'COUNT',
+        count,
+        'BLOCK',
+        blockMs,
+        'STREAMS',
+        stream,
+        '>',
+      ),
     );
     return this.parse(res, hop, key);
   }
@@ -87,19 +98,33 @@ export class RedisBus {
   /** Re-read THIS consumer's PENDING (delivered-but-unACKed) messages — XREADGROUP with id '0' returns the
    *  consumer's PEL (no BLOCK). A crashed prior instance read these but never ACKed; on boot the vault re-processes
    *  them (exactly-once via the executions table) so an in-flight cmd:sign is NEVER stranded by a crash. */
-  async consumePending(stream: string, group: string, consumer: string, hop: string, key: string, count = 100): Promise<ConsumedMessage[]> {
+  async consumePending(
+    stream: string,
+    group: string,
+    consumer: string,
+    hop: string,
+    key: string,
+    count = 100,
+  ): Promise<ConsumedMessage[]> {
     const res = await this.readWithGroupHeal(stream, group, () =>
       this.redis.xreadgroup('GROUP', group, consumer, 'COUNT', count, 'STREAMS', stream, '0'),
     );
     return this.parse(res, hop, key);
   }
 
-  private parse(res: Array<[string, Array<[string, string[]]>]> | null, hop: string, key: string): ConsumedMessage[] {
+  private parse(
+    res: Array<[string, Array<[string, string[]]>]> | null,
+    hop: string,
+    key: string,
+  ): ConsumedMessage[] {
     if (!res || res.length === 0) return [];
     const entries = res[0]?.[1] ?? [];
     return entries.map(([id, fields]) => {
       const f = fieldsToRecord(fields);
-      const payload = f.body !== undefined && f.hmac !== undefined ? verifyEnvelope(hop, key, { body: f.body, hmac: f.hmac }) : null;
+      const payload =
+        f.body !== undefined && f.hmac !== undefined
+          ? verifyEnvelope(hop, key, { body: f.body, hmac: f.hmac })
+          : null;
       return { id, payload, raw: f };
     });
   }
@@ -109,7 +134,12 @@ export class RedisBus {
   }
 
   /** DLQ: copies the raw message onto the `<stream>.DLQ` stream then ACKs the original. */
-  async deadLetter(stream: string, group: string, id: string, raw: Record<string, string>): Promise<void> {
+  async deadLetter(
+    stream: string,
+    group: string,
+    id: string,
+    raw: Record<string, string>,
+  ): Promise<void> {
     const flat = Object.entries(raw).flat();
     await this.redis.xadd(`${stream}.DLQ`, '*', ...flat);
     await this.redis.xack(stream, group, id);

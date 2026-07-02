@@ -11,7 +11,13 @@ export const DEFAULT_LEADER_ADDRESS = '8ryctvNwpJTuuap3wuNTfcyEx4DjSuXvhGXSDHNaU
 
 export const USER_DEFAULTS: UserSettings = {
   enabled: true,
-  sizing: { tradeRatioPct: 100, maxTradeSizeSol: 1.0, minPositionSizeSol: 0.05, solReserveSol: 0.05, onInsufficient: 'skip' }, // 100% = follow the leader, capped by maxTradeSize (spec §3)
+  sizing: {
+    tradeRatioPct: 100,
+    maxTradeSizeSol: 1.0,
+    minPositionSizeSol: 0.05,
+    solReserveSol: 0.05,
+    onInsufficient: 'skip',
+  }, // 100% = follow the leader, capped by maxTradeSize (spec §3)
   caps: { ...CAPS_DEFAULTS },
   twoSidedMode: 'off',
   filters: { ...FILTERS_ALL_OFF }, // all entry filters OFF by default; an enabled filter ENFORCES (no shadow mode)

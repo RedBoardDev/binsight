@@ -16,7 +16,8 @@ import type { CopybotConfig, EffectiveConfig, ExecutionConfig } from './types';
 function mergeSizing(base: SizingConfig, ov?: Partial<SizingConfig>): SizingConfig {
   if (!ov) return base;
   const merged: SizingConfig = { ...base, ...ov };
-  if (ov.maxTradeSizeSol !== undefined) merged.maxTradeSizeSol = Math.min(base.maxTradeSizeSol, ov.maxTradeSizeSol);
+  if (ov.maxTradeSizeSol !== undefined)
+    merged.maxTradeSizeSol = Math.min(base.maxTradeSizeSol, ov.maxTradeSizeSol);
   return merged;
 }
 
@@ -31,7 +32,10 @@ function mergeExecution(base: ExecutionConfig, ov?: Partial<ExecutionConfig>): E
 }
 
 /** Merge a sparse priority-fee override (per-leader, or env bridge) onto a base priority-fee config. */
-function mergePriorityFee(base: PriorityFeeConfig, ov?: Partial<PriorityFeeConfig>): PriorityFeeConfig {
+function mergePriorityFee(
+  base: PriorityFeeConfig,
+  ov?: Partial<PriorityFeeConfig>,
+): PriorityFeeConfig {
   return ov ? { ...base, ...ov } : base;
 }
 

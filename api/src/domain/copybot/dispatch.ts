@@ -17,7 +17,12 @@ export interface RoutingConfig {
   claimFloorSol: number;
 }
 
-export function classifyEventAction(e: DetectedEvent, tracked: boolean, cfg: RoutingConfig, rugExited = false): EventAction {
+export function classifyEventAction(
+  e: DetectedEvent,
+  tracked: boolean,
+  cfg: RoutingConfig,
+  rugExited = false,
+): EventAction {
   const kind = classifyInstruction(e.instruction);
   // A position we rug-SL-exited stays OPEN on the leader's side (rug-SL is our independent exit). Suppress
   // re-opening it on the leader's next add — we deliberately left; a genuinely new copy only starts on a NEW
@@ -33,7 +38,8 @@ export function classifyEventAction(e: DetectedEvent, tracked: boolean, cfg: Rou
   // A pure leader ADD (deposit, no withdrawal): grow with the leader only when infinite-add is on; else ignore it
   // (Valhalla "first deposit only"). Removes/closes above are unaffected, so the safety net is never gated.
   if (e.depositSol > 0) return cfg.infiniteAdd ? 'resync' : 'ignore';
-  if (kind === 'claim' || e.claimSol > 0) return e.claimSol >= cfg.claimFloorSol ? 'claim' : 'ignore'; // skip a dust claim
+  if (kind === 'claim' || e.claimSol > 0)
+    return e.claimSol >= cfg.claimFloorSol ? 'claim' : 'ignore'; // skip a dust claim
   return 'ignore';
 }
 

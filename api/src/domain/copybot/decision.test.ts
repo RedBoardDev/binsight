@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type EntryConfig, decideEntry } from './decision';
+import { decideEntry, type EntryConfig } from './decision';
 import type { DetectedEvent } from './events';
 import { FILTERS_ALL_OFF, type FilterContext } from './filters';
 
@@ -54,7 +54,9 @@ describe('decideEntry — paper entry decision (skip non-SOL + sizing)', () => {
 
   it('open too small (target below the floor) → skip below_min_floor', () => {
     // ratio 100 × 0.04 = 0.04 < 0.05.
-    expect(decideEntry(openEvent({ depositSol: 0.04 }), cfg({ tradeRatioPct: 100 }), flush)).toMatchObject({
+    expect(
+      decideEntry(openEvent({ depositSol: 0.04 }), cfg({ tradeRatioPct: 100 }), flush),
+    ).toMatchObject({
       outcome: 'skipped',
       reason: 'below_min_floor',
     });
@@ -68,13 +70,18 @@ describe('decideEntry — paper entry decision (skip non-SOL + sizing)', () => {
   });
 
   it('insufficient balance, reduceToFit mode → reduced to the available size', () => {
-    const d = decideEntry(openEvent(), cfg({ onInsufficient: 'reduceToFit' }), { availableBalanceSol: 0.5 });
+    const d = decideEntry(openEvent(), cfg({ onInsufficient: 'reduceToFit' }), {
+      availableBalanceSol: 0.5,
+    });
     expect(d.outcome).toBe('reduced');
     if (d.outcome === 'reduced') expect(d.sizeSol).toBeCloseTo(0.45, 9); // 0.5 − 0.05 reserve
   });
 
   describe('filter integration (P2.3)', () => {
-    const fctx = (over: Partial<FilterContext> = {}): FilterContext => ({ openTokenMints: new Set(), ...over });
+    const fctx = (over: Partial<FilterContext> = {}): FilterContext => ({
+      openTokenMints: new Set(),
+      ...over,
+    });
 
     it('filters provided but all OFF → does not block, we move on to sizing (mirrored)', () => {
       const d = decideEntry(openEvent(), cfg(), flush, { ctx: fctx(), config: FILTERS_ALL_OFF });

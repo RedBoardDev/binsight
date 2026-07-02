@@ -4,9 +4,27 @@ import { PriorityFeeOracle } from './priority-fee-oracle';
 type FetchInit = { method: string; headers: Record<string, string>; body: string };
 const HTTP = 'https://helius.example';
 const ACCT = 'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo'; // DLMM program (scope key)
-const LEVELS = { min: 0, low: 10_000, medium: 120_000, high: 900_000, veryHigh: 5_000_000, unsafeMax: 50_000_000 };
-const okFetch = (levels = LEVELS): ((u: string, i: FetchInit) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>) =>
-  (_u, _i) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ result: { priorityFeeLevels: levels } }) });
+const LEVELS = {
+  min: 0,
+  low: 10_000,
+  medium: 120_000,
+  high: 900_000,
+  veryHigh: 5_000_000,
+  unsafeMax: 50_000_000,
+};
+const okFetch =
+  (
+    levels = LEVELS,
+  ): ((
+    u: string,
+    i: FetchInit,
+  ) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>) =>
+  (_u, _i) =>
+    Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ result: { priorityFeeLevels: levels } }),
+    });
 
 describe('priority-fee-oracle · PriorityFeeOracle', () => {
   it('returns null before it is primed (caller falls back to the static tier)', () => {
@@ -40,7 +58,11 @@ describe('priority-fee-oracle · PriorityFeeOracle', () => {
     const flaky = (_u: string, _i: FetchInit) => {
       calls += 1;
       return calls === 1
-        ? Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ result: { priorityFeeLevels: LEVELS } }) })
+        ? Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve({ result: { priorityFeeLevels: LEVELS } }),
+          })
         : Promise.reject(new Error('network'));
     };
     const oracle = new PriorityFeeOracle(HTTP, ACCT, 0, flaky);
@@ -50,7 +72,9 @@ describe('priority-fee-oracle · PriorityFeeOracle', () => {
   });
 
   it('returns null for a non-2xx response (kept un-primed → static tier)', async () => {
-    const oracle = new PriorityFeeOracle(HTTP, ACCT, 0, () => Promise.resolve({ ok: false, status: 429, json: () => Promise.resolve({}) }));
+    const oracle = new PriorityFeeOracle(HTTP, ACCT, 0, () =>
+      Promise.resolve({ ok: false, status: 429, json: () => Promise.resolve({}) }),
+    );
     await oracle.refresh();
     expect(oracle.get('medium')).toBeNull();
   });

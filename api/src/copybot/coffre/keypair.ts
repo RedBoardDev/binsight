@@ -12,7 +12,9 @@ import { Keypair } from '@solana/web3.js';
 export function loadCopierKeypair(path: string, expectedOwner: string): Keypair {
   const kp = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(readFileSync(path, 'utf8'))));
   if (kp.publicKey.toBase58() !== expectedOwner) {
-    throw new Error(`THE-TRAP: loaded key ${kp.publicKey.toBase58()} ≠ expected owner ${expectedOwner} — aborting.`);
+    throw new Error(
+      `THE-TRAP: loaded key ${kp.publicKey.toBase58()} ≠ expected owner ${expectedOwner} — aborting.`,
+    );
   }
   return kp;
 }

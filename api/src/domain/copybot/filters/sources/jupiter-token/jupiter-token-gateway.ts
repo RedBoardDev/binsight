@@ -13,7 +13,11 @@ const TOKEN_SEARCH_PATH = '/tokens/v2/search';
 const DEFAULT_TIMEOUT_MS = 2_000; // bounded so a slow Jupiter never blocks the open (spec 19 §5)
 
 const StatsSchema = z
-  .object({ priceChange: z.number().nullish(), buyVolume: z.number().nullish(), sellVolume: z.number().nullish() })
+  .object({
+    priceChange: z.number().nullish(),
+    buyVolume: z.number().nullish(),
+    sellVolume: z.number().nullish(),
+  })
   .passthrough();
 const AuditSchema = z
   .object({

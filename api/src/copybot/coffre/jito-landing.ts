@@ -9,7 +9,10 @@
 import type { Connection } from '@solana/web3.js';
 import { land } from './landing';
 
-type HttpFetch = (url: string, init: { method: string; headers: Record<string, string>; body: string }) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
+type HttpFetch = (
+  url: string,
+  init: { method: string; headers: Record<string, string>; body: string },
+) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
 
 /**
  * Submit `rawSignedTx` as a Jito bundle; return its `signature` on acceptance. On ANY error (network, non-2xx,
@@ -23,8 +26,17 @@ export async function landViaJito(
   fetchFn: HttpFetch = fetch as unknown as HttpFetch,
 ): Promise<string> {
   try {
-    const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'sendBundle', params: [[Buffer.from(rawSignedTx).toString('base64')]] });
-    const res = await fetchFn(`${bundleUrl}/api/v1/bundles`, { method: 'POST', headers: { 'content-type': 'application/json' }, body });
+    const body = JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'sendBundle',
+      params: [[Buffer.from(rawSignedTx).toString('base64')]],
+    });
+    const res = await fetchFn(`${bundleUrl}/api/v1/bundles`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+    });
     if (!res.ok) throw new Error(`jito sendBundle HTTP ${res.status}`);
     await res.json(); // bundle id — accepted; the tx lands by its own signature
     return signature;

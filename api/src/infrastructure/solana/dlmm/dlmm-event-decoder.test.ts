@@ -57,7 +57,15 @@ function closePosition(): string {
 }
 // Rebalancing (IDL field order): lb_pair, position, owner, active_bin_id, x_withdrawn, x_added,
 // y_withdrawn, y_added, x_fee, y_fee, old_min/max, new_min/max, rewards[2]. A rebalance may harvest fees.
-function rebalancing(o: { xWd?: bigint; xAdd?: bigint; yWd?: bigint; yAdd?: bigint; xFee?: bigint; yFee?: bigint; bin: number }): string {
+function rebalancing(o: {
+  xWd?: bigint;
+  xAdd?: bigint;
+  yWd?: bigint;
+  yAdd?: bigint;
+  xFee?: bigint;
+  yFee?: bigint;
+  bin: number;
+}): string {
   const u64 = (v: bigint) => {
     const b = Buffer.alloc(8);
     b.writeBigUInt64LE(v, 0);
@@ -69,12 +77,22 @@ function rebalancing(o: { xWd?: bigint; xAdd?: bigint; yWd?: bigint; yAdd?: bigi
     return b;
   };
   const body = Buffer.concat([
-    PK(1), PK(3), PK(9), // lb_pair, position, owner
+    PK(1),
+    PK(3),
+    PK(9), // lb_pair, position, owner
     i32(o.bin),
-    u64(o.xWd ?? 0n), u64(o.xAdd ?? 0n), u64(o.yWd ?? 0n), u64(o.yAdd ?? 0n),
-    u64(o.xFee ?? 0n), u64(o.yFee ?? 0n),
-    i32(0), i32(0), i32(0), i32(0), // old_min/max, new_min/max
-    u64(0n), u64(0n), // rewards[2]
+    u64(o.xWd ?? 0n),
+    u64(o.xAdd ?? 0n),
+    u64(o.yWd ?? 0n),
+    u64(o.yAdd ?? 0n),
+    u64(o.xFee ?? 0n),
+    u64(o.yFee ?? 0n),
+    i32(0),
+    i32(0),
+    i32(0),
+    i32(0), // old_min/max, new_min/max
+    u64(0n),
+    u64(0n), // rewards[2]
   ]);
   return cpi([0, 109, 117, 179, 61, 91, 199, 200], body);
 }
@@ -135,15 +153,34 @@ describe('decodeDlmmLegs (IDL-driven)', () => {
   // FIX #124: a Rebalancing that harvests fees (x/y_fee_amount) must yield a claim leg alongside its
   // withdraw/deposit legs — else the leader's claim-via-rebalance is not mirrored (claimSol = 0).
   it('decodes a Rebalancing with harvested fees → withdraw + deposit + a claim leg for x/y_fee_amount', () => {
-    const legs = decodeDlmmLegs(tx([rebalancing({ xWd: 100n, yWd: 200n, xAdd: 50n, yAdd: 60n, xFee: 7n, yFee: 9n, bin: -12 })]));
-    expect(legs.find((l) => l.kind === 'withdraw')).toMatchObject({ amountX: 100n, amountY: 200n, activeBinId: -12 });
-    expect(legs.find((l) => l.kind === 'deposit')).toMatchObject({ amountX: 50n, amountY: 60n, activeBinId: -12 });
+    const legs = decodeDlmmLegs(
+      tx([
+        rebalancing({ xWd: 100n, yWd: 200n, xAdd: 50n, yAdd: 60n, xFee: 7n, yFee: 9n, bin: -12 }),
+      ]),
+    );
+    expect(legs.find((l) => l.kind === 'withdraw')).toMatchObject({
+      amountX: 100n,
+      amountY: 200n,
+      activeBinId: -12,
+    });
+    expect(legs.find((l) => l.kind === 'deposit')).toMatchObject({
+      amountX: 50n,
+      amountY: 60n,
+      activeBinId: -12,
+    });
     // The claim leg is what the OLD code was missing entirely.
-    expect(legs.find((l) => l.kind === 'claim')).toMatchObject({ kind: 'claim', amountX: 7n, amountY: 9n, activeBinId: -12 });
+    expect(legs.find((l) => l.kind === 'claim')).toMatchObject({
+      kind: 'claim',
+      amountX: 7n,
+      amountY: 9n,
+      activeBinId: -12,
+    });
   });
 
   it('decodes a Rebalancing with ZERO fees → no claim leg (only withdraw/deposit)', () => {
-    const legs = decodeDlmmLegs(tx([rebalancing({ xWd: 100n, yWd: 200n, xAdd: 50n, yAdd: 60n, bin: -12 })]));
+    const legs = decodeDlmmLegs(
+      tx([rebalancing({ xWd: 100n, yWd: 200n, xAdd: 50n, yAdd: 60n, bin: -12 })]),
+    );
     expect(legs.some((l) => l.kind === 'claim')).toBe(false);
     expect(legs.filter((l) => l.kind === 'withdraw' || l.kind === 'deposit')).toHaveLength(2);
   });
@@ -169,7 +206,9 @@ describe('decodeDlmmLegs (IDL-driven)', () => {
   // withdraw leg with EXACT amounts, and ALSO surface the close marker — with the bin borrowed from
   // the sibling Remove event. Amounts of the real leg are unchanged.
   it('decodes a NORMAL close (Remove + PositionClose) → withdraw leg intact + a close marker', () => {
-    const legs = decodeDlmmLegs(tx([removeLiquidity(156784710127n, 4039260423n, -429), closePosition()]));
+    const legs = decodeDlmmLegs(
+      tx([removeLiquidity(156784710127n, 4039260423n, -429), closePosition()]),
+    );
     const w = legs.find((l) => l.kind === 'withdraw')!;
     const c = legs.find((l) => l.kind === 'close')!;
     expect(w).toMatchObject({ amountX: 156784710127n, amountY: 4039260423n, activeBinId: -429 });

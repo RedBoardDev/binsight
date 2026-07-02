@@ -11,12 +11,19 @@
 import type { PriorityFeeTier } from '@/domain/copybot/priority-fee';
 
 /** Map each fee TIER to the matching Helius priority level (API identifiers — keep stable). */
-const TIER_TO_HELIUS_LEVEL: Record<PriorityFeeTier, string> = { low: 'low', medium: 'medium', high: 'high' };
+const TIER_TO_HELIUS_LEVEL: Record<PriorityFeeTier, string> = {
+  low: 'low',
+  medium: 'medium',
+  high: 'high',
+};
 
 const DEFAULT_REFRESH_MS = 15_000; // congestion moves on a seconds scale; 15s is responsive yet ~negligible RPC cost
 
 type PriorityFeeLevels = Record<string, number>; // helius result.priorityFeeLevels: { min, low, medium, high, veryHigh, unsafeMax } in µLamports/CU
-type HttpFetch = (url: string, init: { method: string; headers: Record<string, string>; body: string }) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
+type HttpFetch = (
+  url: string,
+  init: { method: string; headers: Record<string, string>; body: string },
+) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
 
 export class PriorityFeeOracle {
   private levels: PriorityFeeLevels | undefined;
@@ -46,7 +53,9 @@ export class PriorityFeeOracle {
           jsonrpc: '2.0',
           id: 'priority-fee',
           method: 'getPriorityFeeEstimate',
-          params: [{ accountKeys: [this.accountKey], options: { includeAllPriorityFeeLevels: true } }],
+          params: [
+            { accountKeys: [this.accountKey], options: { includeAllPriorityFeeLevels: true } },
+          ],
         }),
       });
       if (!res.ok) return; // keep last good

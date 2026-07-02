@@ -5,7 +5,7 @@ const TTL = 90_000;
 
 describe('PendingOpenReservations — TTL-bounded duplicate-open reservation', () => {
   it('reserve → isPending true; clear → isPending false', () => {
-    let now = 1_000;
+    const now = 1_000;
     const r = createPendingOpenReservations(TTL, () => now);
     expect(r.isPending('P')).toBe(false);
     r.reserve('P');
@@ -27,7 +27,7 @@ describe('PendingOpenReservations — TTL-bounded duplicate-open reservation', (
   });
 
   it('reservations are per-position (one position pending never suppresses another)', () => {
-    let now = 5;
+    const now = 5;
     const r = createPendingOpenReservations(TTL, () => now);
     r.reserve('A');
     expect(r.isPending('A')).toBe(true);

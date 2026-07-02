@@ -1,15 +1,22 @@
 import { DLMM_PROGRAM_ID } from '@binsight/shared';
-import { type Connection, Keypair, PublicKey, SystemProgram, Transaction, TransactionInstruction } from '@solana/web3.js';
+import {
+  type Connection,
+  Keypair,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+  TransactionInstruction,
+} from '@solana/web3.js';
 import { eq, inArray } from 'drizzle-orm';
 import { pino } from 'pino';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { deriveCommandId } from '@/copybot/command-id';
 import { derivePositionKeypair } from '@/copybot/ephemeral-position';
 import type { CopyEvents } from '@/copybot/observability/copy-events';
-import type { BlockhashCache } from '@/infrastructure/solana/blockhash-cache';
 import type { RedisBus } from '@/infrastructure/bus/redis-bus';
 import { openDatabase } from '@/infrastructure/persistence/database';
 import { executions } from '@/infrastructure/persistence/schema';
+import type { BlockhashCache } from '@/infrastructure/solana/blockhash-cache';
 import { type Ctx, process1 } from './process-command';
 
 // Integration: requires local Postgres (:5435) for the executions idempotency table.
@@ -23,7 +30,8 @@ const position = Keypair.generate().publicKey;
 const usedCommandIds: string[] = [];
 
 afterAll(async () => {
-  if (usedCommandIds.length) await db.delete(executions).where(inArray(executions.commandId, usedCommandIds));
+  if (usedCommandIds.length)
+    await db.delete(executions).where(inArray(executions.commandId, usedCommandIds));
 });
 
 /** A close tx that PASSES Wall B: feePayer = owner (copier), a DLMM ix touching the pool + position, no foreign dest. */
@@ -69,19 +77,38 @@ type Status = { value: { err?: unknown; confirmationStatus?: string } | null };
 function fakeConn(status: () => Status): Connection {
   return {
     getSlot: async () => 200,
-    getLatestBlockhash: async () => ({ blockhash: Keypair.generate().publicKey.toBase58(), lastValidBlockHeight: 1_000 }),
+    getLatestBlockhash: async () => ({
+      blockhash: Keypair.generate().publicKey.toBase58(),
+      lastValidBlockHeight: 1_000,
+    }),
     getBlockHeight: async () => 500,
     sendRawTransaction: async () => `SIG_${Math.floor(Math.random() * 1e9)}`,
     getSignatureStatus: async () => status(),
   } as unknown as Connection;
 }
-const blockhashCache = { get: () => ({ blockhash: Keypair.generate().publicKey.toBase58(), lastValidBlockHeight: 1_000 }) } as unknown as BlockhashCache;
+const blockhashCache = {
+  get: () => ({ blockhash: Keypair.generate().publicKey.toBase58(), lastValidBlockHeight: 1_000 }),
+} as unknown as BlockhashCache;
 // Typed observability emitter (P2): process1 emits codes through `events.emit`. A no-op fake here keeps the test
 // focused on the verdict + the executions idempotency state (the observability rows are covered by their own suites).
 const events = { emit: () => {} } as unknown as CopyEvents;
 
 function ctxFor(conn: Connection, bus: RedisBus): Ctx {
-  return { conn, db, bus, copier, blockhashCache, events, maxTradeSol: 1.0, signingEnabled: true, hmacKey: 'k', retryMax: 0, retryDelayMs: 0, confirmTimeoutMs: 40, log };
+  return {
+    conn,
+    db,
+    bus,
+    copier,
+    blockhashCache,
+    events,
+    maxTradeSol: 1.0,
+    signingEnabled: true,
+    hmacKey: 'k',
+    retryMax: 0,
+    retryDelayMs: 0,
+    confirmTimeoutMs: 40,
+    log,
+  };
 }
 
 describe('process1 — a returned signature is NOT execution (no dormant-position on a silently-failed close)', () => {
@@ -92,7 +119,10 @@ describe('process1 — a returned signature is NOT execution (no dormant-positio
     const verdict = await process1(sr, ctxFor(conn, bus));
     expect(verdict).toEqual({ ok: true, kind: 'close' });
     expect(bus.publish).toHaveBeenCalledTimes(1);
-    const row = await db.select().from(executions).where(eq(executions.commandId, sr.commandId as string));
+    const row = await db
+      .select()
+      .from(executions)
+      .where(eq(executions.commandId, sr.commandId as string));
     expect(row[0]?.state).toBe('landed');
   });
 
@@ -105,7 +135,10 @@ describe('process1 — a returned signature is NOT execution (no dormant-positio
     const verdict = await process1(sr, ctxFor(conn, bus));
     expect(verdict.ok).toBe(false);
     expect(bus.publish).not.toHaveBeenCalled(); // no premature ev:executed → the brain keeps the mirror open
-    const row = await db.select().from(executions).where(eq(executions.commandId, sr.commandId as string));
+    const row = await db
+      .select()
+      .from(executions)
+      .where(eq(executions.commandId, sr.commandId as string));
     expect(row[0]?.state).toBe('failed'); // re-claimable by a reconcile retry
   });
 
@@ -116,7 +149,10 @@ describe('process1 — a returned signature is NOT execution (no dormant-positio
     const verdict = await process1(sr, ctxFor(conn, bus));
     expect(verdict.ok).toBe(false);
     expect(bus.publish).not.toHaveBeenCalled();
-    const row = await db.select().from(executions).where(eq(executions.commandId, sr.commandId as string));
+    const row = await db
+      .select()
+      .from(executions)
+      .where(eq(executions.commandId, sr.commandId as string));
     expect(row[0]?.state).toBe('failed');
   });
 
@@ -146,7 +182,11 @@ describe('process1 — #3: a confirmed land is TERMINAL (a post-confirm failure 
     // the SAME tx with a fresh blockhash and RE-LAND it — a real-money double add/buy/sell/remove (no on-chain
     // idempotency). retryMax=1 is required to expose the regression: the old code re-lands on the throw (land×2),
     // the fixed code records the confirmed sig, breaks, and publishes ONCE outside the loop (land×1).
-    const bus = { publish: vi.fn(async () => { throw new Error('redis blip'); }) } as unknown as RedisBus;
+    const bus = {
+      publish: vi.fn(async () => {
+        throw new Error('redis blip');
+      }),
+    } as unknown as RedisBus;
     const land = vi.fn(async () => `SIG_${Math.floor(Math.random() * 1e9)}`); // one land == one sendRawTransaction
     const conn = {
       getSlot: async () => 200,
@@ -159,7 +199,10 @@ describe('process1 — #3: a confirmed land is TERMINAL (a post-confirm failure 
     expect(land).toHaveBeenCalledTimes(1); // no double-land — FAILS on the old code (re-lands → 2)
     expect(verdict).toEqual({ ok: true, kind: 'close' }); // the on-chain action is terminal → still 'landed'
     expect(bus.publish).toHaveBeenCalledTimes(1); // attempted once; the failure is swallowed, never re-published
-    const row = await db.select().from(executions).where(eq(executions.commandId, sr.commandId as string));
+    const row = await db
+      .select()
+      .from(executions)
+      .where(eq(executions.commandId, sr.commandId as string));
     expect(row[0]?.state).toBe('landed');
   });
 
@@ -173,7 +216,11 @@ describe('process1 — #3: a confirmed land is TERMINAL (a post-confirm failure 
 const ATA_PROGRAM = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
 const TOKEN_PROGRAM = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 const WSOL = new PublicKey('So11111111111111111111111111111111111111112');
-const ownerWsolAta = (owner: PublicKey): PublicKey => PublicKey.findProgramAddressSync([owner.toBuffer(), TOKEN_PROGRAM.toBuffer(), WSOL.toBuffer()], ATA_PROGRAM)[0];
+const ownerWsolAta = (owner: PublicKey): PublicKey =>
+  PublicKey.findProgramAddressSync(
+    [owner.toBuffer(), TOKEN_PROGRAM.toBuffer(), WSOL.toBuffer()],
+    ATA_PROGRAM,
+  )[0];
 
 /** A valid OPEN that WRAPS `wrapLamports` SOL into the copier's WSOL ATA (the real capital deployed). The ephemeral
  *  position (derived from commandId, as the coffre will) is a required signer so Wall B's open check passes. */
@@ -195,7 +242,11 @@ function openReq(wrapLamports: number, sizeSol = 0.1): Record<string, unknown> {
       ],
       data: Buffer.alloc(0),
     }),
-    SystemProgram.transfer({ fromPubkey: copier.publicKey, toPubkey: ownerWsolAta(copier.publicKey), lamports: wrapLamports }),
+    SystemProgram.transfer({
+      fromPubkey: copier.publicKey,
+      toPubkey: ownerWsolAta(copier.publicKey),
+      lamports: wrapLamports,
+    }),
   );
   return {
     commandId,
@@ -204,7 +255,9 @@ function openReq(wrapLamports: number, sizeSol = 0.1): Record<string, unknown> {
     pool: pool.toBase58(),
     positionPubkey: ephemeral.toBase58(),
     owner: copier.publicKey.toBase58(),
-    txBase64: t.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64'),
+    txBase64: t
+      .serialize({ requireAllSignatures: false, verifySignatures: false })
+      .toString('base64'),
     sizeSol,
     targetBinRange: { lower: -1, upper: 1 },
     issuedAtSlot: 100,
@@ -232,7 +285,10 @@ describe('process1 — OPEN: position-signer + the #3 Wall-B SOL-spend cap end-t
     const verdict = await process1(sr, ctxFor(conn, bus));
     expect(verdict).toMatchObject({ ok: false, reason: 'wallb:sol_spend_over_cap', kind: 'open' });
     expect(bus.publish).not.toHaveBeenCalled(); // never signed/landed
-    const row = await db.select().from(executions).where(eq(executions.commandId, sr.commandId as string));
+    const row = await db
+      .select()
+      .from(executions)
+      .where(eq(executions.commandId, sr.commandId as string));
     expect(row[0]?.state).toBe('failed');
   });
 });
@@ -252,7 +308,14 @@ function buyReq(confirmable: boolean, outputMint: PublicKey): Record<string, unk
       programId: JUP,
       keys: [
         { pubkey: copier.publicKey, isSigner: true, isWritable: true },
-        { pubkey: PublicKey.findProgramAddressSync([copier.publicKey.toBuffer(), TOKEN_PROGRAM.toBuffer(), outputMint.toBuffer()], ATA_PROGRAM)[0], isSigner: false, isWritable: true },
+        {
+          pubkey: PublicKey.findProgramAddressSync(
+            [copier.publicKey.toBuffer(), TOKEN_PROGRAM.toBuffer(), outputMint.toBuffer()],
+            ATA_PROGRAM,
+          )[0],
+          isSigner: false,
+          isWritable: true,
+        },
       ],
       data: Buffer.alloc(0),
     }),
@@ -264,13 +327,19 @@ function buyReq(confirmable: boolean, outputMint: PublicKey): Record<string, unk
     pool: pool.toBase58(),
     positionPubkey: copier.publicKey.toBase58(),
     owner: copier.publicKey.toBase58(),
-    txBase64: t.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64'),
+    txBase64: t
+      .serialize({ requireAllSignatures: false, verifySignatures: false })
+      .toString('base64'),
     sizeSol: 0.1,
     targetBinRange: { lower: 0, upper: 0 },
     issuedAtSlot: 100,
     deadlineSlot: 1_000_000,
     issuedAtMs: Date.now(),
-    buy: { outputMint: outputMint.toBase58(), exactOutAmountRaw: '1000', maxInLamports: '100000000' },
+    buy: {
+      outputMint: outputMint.toBase58(),
+      exactOutAmountRaw: '1000',
+      maxInLamports: '100000000',
+    },
   };
 }
 
@@ -300,19 +369,44 @@ const PRIOR_SIG = 'PriorBroadcastSignature111111111111111111111';
 const LVBH = 1_000; // lastValidBlockHeight stored with the submitted tx
 
 /** Seed an already-broadcast executions row (state 'submitted' with a signature+expiry) as a crashed prior attempt. */
-async function seedSubmitted(sr: Record<string, unknown>, signature: string | null, lastValidBlockHeight: number): Promise<void> {
-  await db.insert(executions).values({ commandId: sr.commandId as string, eventKey: sr.eventKey as string, state: signature ? 'submitted' : 'claimed', deadlineSlot: 1_000_000, signature, lastValidBlockHeight, createdAt: Date.now(), updatedAt: Date.now() });
+async function seedSubmitted(
+  sr: Record<string, unknown>,
+  signature: string | null,
+  lastValidBlockHeight: number,
+): Promise<void> {
+  await db
+    .insert(executions)
+    .values({
+      commandId: sr.commandId as string,
+      eventKey: sr.eventKey as string,
+      state: signature ? 'submitted' : 'claimed',
+      deadlineSlot: 1_000_000,
+      signature,
+      lastValidBlockHeight,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
 }
 
 /** A conn whose getSignatureStatus/getBlockHeight are stubbed to drive the recovery pre-check outcome. */
-function recoveryConn(opts: { priorStatus: Status; blockHeight: number; land: (raw: unknown) => Promise<string> }): Connection {
+function recoveryConn(opts: {
+  priorStatus: Status;
+  blockHeight: number;
+  land: (raw: unknown) => Promise<string>;
+}): Connection {
   return {
     getSlot: async () => 200,
-    getLatestBlockhash: async () => ({ blockhash: Keypair.generate().publicKey.toBase58(), lastValidBlockHeight: LVBH }),
+    getLatestBlockhash: async () => ({
+      blockhash: Keypair.generate().publicKey.toBase58(),
+      lastValidBlockHeight: LVBH,
+    }),
     getBlockHeight: async () => opts.blockHeight,
     // The seeded PRIOR_SIG is classified per opts.priorStatus; any OTHER (freshly re-signed) sig confirms so a
     // legitimately-dead retry can complete.
-    getSignatureStatus: async (s: string) => (s === PRIOR_SIG ? opts.priorStatus : ({ value: { confirmationStatus: 'confirmed' } } as Status)),
+    getSignatureStatus: async (s: string) =>
+      s === PRIOR_SIG
+        ? opts.priorStatus
+        : ({ value: { confirmationStatus: 'confirmed' } } as Status),
     sendRawTransaction: opts.land,
   } as unknown as Connection;
 }
@@ -329,11 +423,19 @@ describe('process1 — #7: markSubmitted persists sig+expiry BEFORE the tx hits 
     const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
     const conn = {
       getSlot: async () => 200,
-      getLatestBlockhash: async () => ({ blockhash: Keypair.generate().publicKey.toBase58(), lastValidBlockHeight: LVBH }),
+      getLatestBlockhash: async () => ({
+        blockhash: Keypair.generate().publicKey.toBase58(),
+        lastValidBlockHeight: LVBH,
+      }),
       getBlockHeight: async () => 500,
       getSignatureStatus: async () => ({ value: { confirmationStatus: 'confirmed' } }),
       sendRawTransaction: async () => {
-        const row = (await db.select().from(executions).where(eq(executions.commandId, sr.commandId as string)))[0];
+        const row = (
+          await db
+            .select()
+            .from(executions)
+            .where(eq(executions.commandId, sr.commandId as string))
+        )[0];
         stateAtLand = row?.state;
         sigAtLand = row?.signature;
         lvbhAtLand = row?.lastValidBlockHeight;
@@ -357,12 +459,19 @@ describe('process1 — #7: recovery pre-check re-signs ONLY a provably-dead tx (
     await seedSubmitted(sr, PRIOR_SIG, LVBH);
     const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
     const land = vi.fn(async () => 'SHOULD_NOT_BE_CALLED');
-    const conn = recoveryConn({ priorStatus: { value: { confirmationStatus: 'confirmed' } }, blockHeight: 500, land });
+    const conn = recoveryConn({
+      priorStatus: { value: { confirmationStatus: 'confirmed' } },
+      blockHeight: 500,
+      land,
+    });
     const verdict = await process1(sr, ctxFor(conn, bus), true); // recovering
     expect(land).not.toHaveBeenCalled(); // ← FAILS on the pre-#7 code (it re-signs the landed tx)
     expect(verdict).toEqual({ ok: true, kind: 'close' });
     expect(bus.publish).toHaveBeenCalledTimes(1); // ev:executed re-published (idempotent downstream)
-    const row = await db.select().from(executions).where(eq(executions.commandId, sr.commandId as string));
+    const row = await db
+      .select()
+      .from(executions)
+      .where(eq(executions.commandId, sr.commandId as string));
     expect(row[0]?.state).toBe('landed');
   });
 
@@ -377,7 +486,10 @@ describe('process1 — #7: recovery pre-check re-signs ONLY a provably-dead tx (
     const verdict = await process1(sr, ctxFor(conn, bus), true);
     expect(land).toHaveBeenCalledTimes(1); // one — and only one — new land
     expect(verdict).toEqual({ ok: true, kind: 'close' });
-    const row = await db.select().from(executions).where(eq(executions.commandId, sr.commandId as string));
+    const row = await db
+      .select()
+      .from(executions)
+      .where(eq(executions.commandId, sr.commandId as string));
     expect(row[0]?.state).toBe('landed');
   });
 
@@ -393,7 +505,10 @@ describe('process1 — #7: recovery pre-check re-signs ONLY a provably-dead tx (
     expect(land).not.toHaveBeenCalled(); // no re-sign while the blockhash lives
     expect(verdict).toMatchObject({ ok: false, reason: 'recover_in_flight', retryLater: true });
     expect(bus.publish).not.toHaveBeenCalled();
-    const row = await db.select().from(executions).where(eq(executions.commandId, sr.commandId as string));
+    const row = await db
+      .select()
+      .from(executions)
+      .where(eq(executions.commandId, sr.commandId as string));
     expect(row[0]?.state).toBe('submitted'); // untouched — awaits a later pass
   });
 

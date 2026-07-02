@@ -9,11 +9,17 @@
 import { z } from 'zod';
 import type { CapsConfig } from '../caps';
 import type { FilterConfig } from '../filters';
-import { type PriorityFeeConfig, PRIORITY_FEE_TIERS } from '../priority-fee';
+import { PRIORITY_FEE_TIERS, type PriorityFeeConfig } from '../priority-fee';
 import type { RugSlConfig } from '../rug-sl';
 import type { SizingConfig } from '../sizing';
 import { CONFIG_DEFAULTS, DEFAULT_LEADER_ADDRESS, USER_DEFAULTS } from './defaults';
-import { type CopybotConfig, type ExecutionConfig, type LeaderSettings, TWO_SIDED_MODES, type UserSettings } from './types';
+import {
+  type CopybotConfig,
+  type ExecutionConfig,
+  type LeaderSettings,
+  TWO_SIDED_MODES,
+  type UserSettings,
+} from './types';
 
 // Zod mirrors of the reused domain interfaces — `satisfies` keeps each schema in lock-step with its interface.
 const SizingSchema = z.object({
@@ -68,7 +74,20 @@ const RugSlSchema = z.object({
 }) satisfies z.ZodType<RugSlConfig>;
 
 const UserSchema = z
-  .object({ enabled: z.boolean(), sizing: SizingSchema, caps: CapsSchema, twoSidedMode: TwoSidedSchema, filters: FilterConfigSchema, execution: ExecutionSchema, priorityFee: PriorityFeeSchema, rugSl: RugSlSchema, infiniteAdd: z.boolean(), claimFloorSol: z.number().nonnegative(), jitoEnabled: z.boolean(), priorityFeeOracle: z.boolean() })
+  .object({
+    enabled: z.boolean(),
+    sizing: SizingSchema,
+    caps: CapsSchema,
+    twoSidedMode: TwoSidedSchema,
+    filters: FilterConfigSchema,
+    execution: ExecutionSchema,
+    priorityFee: PriorityFeeSchema,
+    rugSl: RugSlSchema,
+    infiniteAdd: z.boolean(),
+    claimFloorSol: z.number().nonnegative(),
+    jitoEnabled: z.boolean(),
+    priorityFeeOracle: z.boolean(),
+  })
   .strict() satisfies z.ZodType<UserSettings>;
 
 const LeaderSchema = z
@@ -123,9 +142,13 @@ function mergeUser(partial: unknown): UserSettings {
     priorityFee: { ...USER_DEFAULTS.priorityFee, ...(isObj(p.priorityFee) ? p.priorityFee : {}) },
     rugSl: { ...USER_DEFAULTS.rugSl, ...(isObj(p.rugSl) ? p.rugSl : {}) },
     infiniteAdd: typeof p.infiniteAdd === 'boolean' ? p.infiniteAdd : USER_DEFAULTS.infiniteAdd,
-    claimFloorSol: typeof p.claimFloorSol === 'number' ? p.claimFloorSol : USER_DEFAULTS.claimFloorSol,
+    claimFloorSol:
+      typeof p.claimFloorSol === 'number' ? p.claimFloorSol : USER_DEFAULTS.claimFloorSol,
     jitoEnabled: typeof p.jitoEnabled === 'boolean' ? p.jitoEnabled : USER_DEFAULTS.jitoEnabled,
-    priorityFeeOracle: typeof p.priorityFeeOracle === 'boolean' ? p.priorityFeeOracle : USER_DEFAULTS.priorityFeeOracle,
+    priorityFeeOracle:
+      typeof p.priorityFeeOracle === 'boolean'
+        ? p.priorityFeeOracle
+        : USER_DEFAULTS.priorityFeeOracle,
   } as UserSettings;
 }
 
@@ -153,7 +176,10 @@ export function parseConfig(raw: string | null): CopybotConfig {
   }
   if (!isObj(parsed)) return CONFIG_DEFAULTS;
   const src = isLegacyFlat(parsed) ? fromLegacyFlat(parsed) : parsed;
-  const candidate: CopybotConfig = { user: mergeUser(src.user), leaders: mergeLeaders(src.leaders) };
+  const candidate: CopybotConfig = {
+    user: mergeUser(src.user),
+    leaders: mergeLeaders(src.leaders),
+  };
   const result = CopybotConfigSchema.safeParse(candidate);
   return result.success ? result.data : CONFIG_DEFAULTS;
 }
@@ -165,7 +191,10 @@ export function isValidConfigBlob(raw: string | null): boolean {
     const parsed = JSON.parse(raw);
     if (!isObj(parsed)) return false;
     const src = isLegacyFlat(parsed) ? fromLegacyFlat(parsed) : parsed;
-    return CopybotConfigSchema.safeParse({ user: mergeUser(src.user), leaders: mergeLeaders(src.leaders) }).success;
+    return CopybotConfigSchema.safeParse({
+      user: mergeUser(src.user),
+      leaders: mergeLeaders(src.leaders),
+    }).success;
   } catch {
     return false;
   }

@@ -17,10 +17,25 @@ const EMPTY: TokenSnapshot = {
 describe('snapshotToContext — pure projection snapshot → FilterContext fields', () => {
   it('maps present fields and derives token age in hours from firstPool', () => {
     const ctx = snapshotToContext(
-      { ...EMPTY, organicScore: 70, holders: 500, marketCapUsd: 2_000_000, volume24hUsd: 10_000, priceChange24hPercent: 5, firstPoolCreatedAtMs: 1_000 },
+      {
+        ...EMPTY,
+        organicScore: 70,
+        holders: 500,
+        marketCapUsd: 2_000_000,
+        volume24hUsd: 10_000,
+        priceChange24hPercent: 5,
+        firstPoolCreatedAtMs: 1_000,
+      },
       2 * 3_600_000 + 1_000,
     );
-    expect(ctx).toEqual({ organicScore: 70, holders: 500, marketCapUsd: 2_000_000, volume24hUsd: 10_000, priceChangePercent: 5, tokenAgeHours: 2 });
+    expect(ctx).toEqual({
+      organicScore: 70,
+      holders: 500,
+      marketCapUsd: 2_000_000,
+      volume24hUsd: 10_000,
+      priceChangePercent: 5,
+      tokenAgeHours: 2,
+    });
   });
 
   it('null fields are omitted (undefined ⇒ the enabled filter skips as *_unavailable)', () => {

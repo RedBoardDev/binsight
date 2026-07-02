@@ -265,7 +265,10 @@ describe('NotificationManager — deriveFromState gating', () => {
     const now = PAST_GRACE.getTime();
 
     // Out of range for only 10 min < 30 → no alert.
-    bus.emit('state', stateOf([openPos({ positionAddress: 'P', outOfRangeSince: now - 10 * 60_000 })]));
+    bus.emit(
+      'state',
+      stateOf([openPos({ positionAddress: 'P', outOfRangeSince: now - 10 * 60_000 })]),
+    );
     expect(push.deliver).not.toHaveBeenCalled();
 
     // A different position out of range for 31 min ≥ 30 → fires once; repeat tick stays deduped.

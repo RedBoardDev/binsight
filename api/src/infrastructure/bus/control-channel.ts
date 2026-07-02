@@ -30,7 +30,8 @@ export function parseControlMessage(raw: string): ControlMessage | null {
   }
   if (typeof parsed !== 'object' || parsed === null) return null;
   const type = (parsed as { type?: unknown }).type;
-  if (typeof type !== 'string' || !(CONTROL_MESSAGE_TYPES as readonly string[]).includes(type)) return null;
+  if (typeof type !== 'string' || !(CONTROL_MESSAGE_TYPES as readonly string[]).includes(type))
+    return null;
   return { type: type as ControlMessageType };
 }
 

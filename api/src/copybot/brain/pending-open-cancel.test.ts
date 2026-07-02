@@ -6,7 +6,12 @@
  * the cancel decision, so they are locked here without booting the engine.
  */
 import { describe, expect, it } from 'vitest';
-import { type PendingOpenMaps, pendingOpenLeaders, pendingStashesFor, stashCount } from './pending-open-cancel';
+import {
+  type PendingOpenMaps,
+  pendingOpenLeaders,
+  pendingStashesFor,
+  stashCount,
+} from './pending-open-cancel';
 
 const LEADER_A = 'LeaderPosA';
 const LEADER_B = 'LeaderPosB';
@@ -79,7 +84,12 @@ describe('pendingOpenLeaders', () => {
   });
 
   it('is empty when there are no in-flight opens', () => {
-    const empty: PendingOpenMaps = { twoSidedOpens: new Map(), token2022Deposits: new Map(), token2022Mirrors: new Map(), reshapeAdds: new Map() };
+    const empty: PendingOpenMaps = {
+      twoSidedOpens: new Map(),
+      token2022Deposits: new Map(),
+      token2022Mirrors: new Map(),
+      reshapeAdds: new Map(),
+    };
     expect(pendingOpenLeaders(empty).size).toBe(0);
   });
 });

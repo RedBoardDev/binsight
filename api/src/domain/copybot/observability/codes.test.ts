@@ -7,7 +7,13 @@
  *    coalesced = an alert the user would never see — the cardinal sin of the copy-bot's no-miss guarantee).
  */
 import { describe, expect, it } from 'vitest';
-import { CODE_REGISTRY, type CopyCode, FEED_COALESCE_MS, LEGACY_REASON_ALIASES, PINNED_COALESCE_MS } from './codes';
+import {
+  CODE_REGISTRY,
+  type CopyCode,
+  FEED_COALESCE_MS,
+  LEGACY_REASON_ALIASES,
+  PINNED_COALESCE_MS,
+} from './codes';
 
 const ALL_CODES = Object.keys(CODE_REGISTRY) as CopyCode[];
 

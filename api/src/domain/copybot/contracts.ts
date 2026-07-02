@@ -48,11 +48,31 @@ export const SignRequestSchema = z
   .strict()
   .superRefine((v, ctx) => {
     // kind 'sell' ⟺ the sell payload is present (no ambiguous half-formed sell intents).
-    if (v.kind === 'sell' && !v.sell) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'sell payload required for kind=sell', path: ['sell'] });
-    if (v.kind !== 'sell' && v.sell) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'sell payload only allowed for kind=sell', path: ['sell'] });
+    if (v.kind === 'sell' && !v.sell)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'sell payload required for kind=sell',
+        path: ['sell'],
+      });
+    if (v.kind !== 'sell' && v.sell)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'sell payload only allowed for kind=sell',
+        path: ['sell'],
+      });
     // kind 'buy' ⟺ the buy payload is present (symmetric to sell).
-    if (v.kind === 'buy' && !v.buy) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'buy payload required for kind=buy', path: ['buy'] });
-    if (v.kind !== 'buy' && v.buy) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'buy payload only allowed for kind=buy', path: ['buy'] });
+    if (v.kind === 'buy' && !v.buy)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'buy payload required for kind=buy',
+        path: ['buy'],
+      });
+    if (v.kind !== 'buy' && v.buy)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'buy payload only allowed for kind=buy',
+        path: ['buy'],
+      });
   });
 
 export type SignRequest = z.infer<typeof SignRequestSchema>;

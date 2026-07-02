@@ -4,7 +4,7 @@
  * during the downtime (anti DORMANT position). Write-through at open/close.
  */
 import { eq } from 'drizzle-orm';
-import { openDatabase } from '@/infrastructure/persistence/database';
+import type { openDatabase } from '@/infrastructure/persistence/database';
 import { copyPositions } from '@/infrastructure/persistence/schema';
 import type { Mirror } from './mirror-registry';
 
@@ -33,7 +33,10 @@ export class MirrorStore {
 
   /** Persist the new SOL size after a proportional add/remove (so the effective ratio survives a restart). */
   async updateSize(leaderPosition: string, sizeSol: number): Promise<void> {
-    await this.db.update(copyPositions).set({ sizeSol }).where(eq(copyPositions.leaderPosition, leaderPosition));
+    await this.db
+      .update(copyPositions)
+      .set({ sizeSol })
+      .where(eq(copyPositions.leaderPosition, leaderPosition));
   }
 
   async markClosed(leaderPosition: string): Promise<void> {

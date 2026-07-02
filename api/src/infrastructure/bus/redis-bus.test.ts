@@ -117,7 +117,7 @@ describe('RedisBus — ensureGroup idempotency + deadLetter (fake redis)', () =>
 // re-create it and retry ONCE instead of wedging the consumer's outer backoff loop forever. Replay is safe because
 // consumers dedup (executions table / idempotent ev:executed handlers). A NON-NOGROUP error must still surface so
 // the caller's connection-backoff keeps working — we don't turn every read failure into a group re-create.
-describe('RedisBus — NOGROUP self-heal + \'0\' anchor (fake redis)', () => {
+describe("RedisBus — NOGROUP self-heal + '0' anchor (fake redis)", () => {
   const KEY = 'k_sign_test';
 
   it("ensureGroup anchors the group at '0' (replay-safe no-miss), NOT '$'", async () => {
@@ -163,7 +163,9 @@ describe('RedisBus — NOGROUP self-heal + \'0\' anchor (fake redis)', () => {
     });
     const xgroup = vi.fn(async () => 'OK');
     const bus = new RedisBus({ xreadgroup, xgroup } as never);
-    await expect(bus.consume('cmd:sign', 'coffre', 'c1', 'cmd:sign', KEY, 10, 100)).rejects.toThrow('ECONNRESET');
+    await expect(bus.consume('cmd:sign', 'coffre', 'c1', 'cmd:sign', KEY, 10, 100)).rejects.toThrow(
+      'ECONNRESET',
+    );
     expect(xgroup).not.toHaveBeenCalled(); // a genuine connection error is NOT a group loss → no re-create
     expect(xreadgroup).toHaveBeenCalledTimes(1); // and NO retry
   });

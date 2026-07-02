@@ -11,15 +11,25 @@ describe('ignoredTokens — user skip-list (USER-GLOBAL, instant, local)', () =>
     expect(ignoredTokens.enabled({ ...FILTERS_ALL_OFF, ignoredTokens: ['MINT'] })).toBe(true);
   });
   it('mint in the list → skip ignored_token', () => {
-    expect(ignoredTokens.evaluate({ ...FILTERS_ALL_OFF, ignoredTokens: ['MINT'] }, c('MINT'), ctx)).toEqual({ action: 'skip', reason: 'ignored_token' });
+    expect(
+      ignoredTokens.evaluate({ ...FILTERS_ALL_OFF, ignoredTokens: ['MINT'] }, c('MINT'), ctx),
+    ).toEqual({ action: 'skip', reason: 'ignored_token' });
   });
   it('mint not in the list → pass', () => {
-    expect(ignoredTokens.evaluate({ ...FILTERS_ALL_OFF, ignoredTokens: ['OTHER'] }, c('MINT'), ctx)).toEqual({ action: 'pass' });
+    expect(
+      ignoredTokens.evaluate({ ...FILTERS_ALL_OFF, ignoredTokens: ['OTHER'] }, c('MINT'), ctx),
+    ).toEqual({ action: 'pass' });
   });
   it('null mint → pass (nothing to filter)', () => {
-    expect(ignoredTokens.evaluate({ ...FILTERS_ALL_OFF, ignoredTokens: ['MINT'] }, c(null), ctx)).toEqual({ action: 'pass' });
+    expect(
+      ignoredTokens.evaluate({ ...FILTERS_ALL_OFF, ignoredTokens: ['MINT'] }, c(null), ctx),
+    ).toEqual({ action: 'pass' });
   });
   it('meta: user-global / local / instant', () => {
-    expect([ignoredTokens.scope, ignoredTokens.source, ignoredTokens.speedClass]).toEqual(['user-global', 'local', 'instant']);
+    expect([ignoredTokens.scope, ignoredTokens.source, ignoredTokens.speedClass]).toEqual([
+      'user-global',
+      'local',
+      'instant',
+    ]);
   });
 });

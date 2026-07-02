@@ -20,7 +20,10 @@ interface HttpResponse {
   status: number;
   json(): Promise<unknown>;
 }
-export type HttpFetch = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<HttpResponse>;
+export type HttpFetch = (
+  url: string,
+  init?: { method?: string; headers?: Record<string, string>; body?: string },
+) => Promise<HttpResponse>;
 
 const defaultFetch: HttpFetch = (url, init) => fetch(url, init);
 
@@ -32,7 +35,12 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 /** Fetch + parse JSON with retry/backoff on TRANSIENT failures (HTTP 429/5xx, network errors). A 4xx like 400
  *  (no route / bad request) is PERMANENT → thrown immediately (no point retrying). Jupiter's free tier
  *  rate-limits under bursts (the copy-bot's buy + sweep sells), so retrying is essential resilience. */
-async function fetchJsonWithRetry(fetchFn: HttpFetch, url: string, init: Parameters<HttpFetch>[1], label: string): Promise<unknown> {
+async function fetchJsonWithRetry(
+  fetchFn: HttpFetch,
+  url: string,
+  init: Parameters<HttpFetch>[1],
+  label: string,
+): Promise<unknown> {
   for (let attempt = 0; ; attempt++) {
     let res: HttpResponse | undefined;
     try {
@@ -42,8 +50,12 @@ async function fetchJsonWithRetry(fetchFn: HttpFetch, url: string, init: Paramet
     }
     if (res?.ok) return res.json();
     const status = res?.status;
-    if (status !== undefined && !RETRYABLE_STATUS.has(status)) throw new Error(`jupiter ${label} http ${status}`); // permanent
-    if (attempt >= RETRY_ATTEMPTS - 1) throw new Error(`jupiter ${label} ${status === undefined ? 'network error' : `http ${status}`} (retries exhausted)`);
+    if (status !== undefined && !RETRYABLE_STATUS.has(status))
+      throw new Error(`jupiter ${label} http ${status}`); // permanent
+    if (attempt >= RETRY_ATTEMPTS - 1)
+      throw new Error(
+        `jupiter ${label} ${status === undefined ? 'network error' : `http ${status}`} (retries exhausted)`,
+      );
     await sleep(RETRY_BASE_MS * 2 ** attempt + Math.floor(Math.random() * 100));
   }
 }
@@ -71,7 +83,13 @@ export async function getJupiterQuote(
 ): Promise<JupiterQuote> {
   const url = `${baseUrl}/quote?inputMint=${inputMint}&outputMint=${WSOL_MINT}&amount=${amountRaw}&slippageBps=${slippageBps}&asLegacyTransaction=true`;
   const raw = QuoteResponseSchema.parse(await fetchJsonWithRetry(fetchFn, url, undefined, 'quote'));
-  return { inputMint, outputMint: WSOL_MINT, inAmount: raw.inAmount, outAmount: raw.outAmount, raw };
+  return {
+    inputMint,
+    outputMint: WSOL_MINT,
+    inAmount: raw.inAmount,
+    outAmount: raw.outAmount,
+    raw,
+  };
 }
 
 /** Fetch an ExactOut quote to BUY exactly `exactOutAmountRaw` of `outputMint`, paid in SOL (wrapped). Used by the
@@ -85,10 +103,17 @@ export async function getJupiterBuyQuote(
   fetchFn: HttpFetch = defaultFetch,
 ): Promise<JupiterQuote> {
   const url = `${baseUrl}/quote?inputMint=${WSOL_MINT}&outputMint=${outputMint}&amount=${exactOutAmountRaw}&slippageBps=${slippageBps}&swapMode=ExactOut&asLegacyTransaction=true`;
-  const raw = QuoteResponseSchema.parse(await fetchJsonWithRetry(fetchFn, url, undefined, 'buy quote'));
-  return { inputMint: WSOL_MINT, outputMint, inAmount: raw.inAmount, outAmount: raw.outAmount, raw };
+  const raw = QuoteResponseSchema.parse(
+    await fetchJsonWithRetry(fetchFn, url, undefined, 'buy quote'),
+  );
+  return {
+    inputMint: WSOL_MINT,
+    outputMint,
+    inAmount: raw.inAmount,
+    outAmount: raw.outAmount,
+    raw,
+  };
 }
-
 
 /**
  * ExactIn BUY: spend `solInLamports` WSOL → receive a VARIABLE token amount. ExactIn has FULL Jupiter routing,
@@ -103,8 +128,16 @@ export async function getJupiterBuyQuoteExactIn(
   fetchFn: HttpFetch = defaultFetch,
 ): Promise<JupiterQuote> {
   const url = `${baseUrl}/quote?inputMint=${WSOL_MINT}&outputMint=${outputMint}&amount=${solInLamports}&slippageBps=${slippageBps}&swapMode=ExactIn&asLegacyTransaction=true`;
-  const raw = QuoteResponseSchema.parse(await fetchJsonWithRetry(fetchFn, url, undefined, 'buy quote (ExactIn)'));
-  return { inputMint: WSOL_MINT, outputMint, inAmount: raw.inAmount, outAmount: raw.outAmount, raw };
+  const raw = QuoteResponseSchema.parse(
+    await fetchJsonWithRetry(fetchFn, url, undefined, 'buy quote (ExactIn)'),
+  );
+  return {
+    inputMint: WSOL_MINT,
+    outputMint,
+    inAmount: raw.inAmount,
+    outAmount: raw.outAmount,
+    raw,
+  };
 }
 
 /** Build the UNSIGNED legacy swap tx (base64) for `quote`, with `userPublicKey` as the signer/fee payer. */
@@ -125,6 +158,8 @@ export async function buildJupiterSwapTx(
       dynamicComputeUnitLimit: true,
     }),
   };
-  const json = SwapResponseSchema.parse(await fetchJsonWithRetry(fetchFn, `${baseUrl}/swap`, init, 'swap'));
+  const json = SwapResponseSchema.parse(
+    await fetchJsonWithRetry(fetchFn, `${baseUrl}/swap`, init, 'swap'),
+  );
   return json.swapTransaction; // base64 legacy tx, unsigned
 }

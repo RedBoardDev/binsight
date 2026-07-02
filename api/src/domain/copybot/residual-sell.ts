@@ -20,7 +20,10 @@ export interface ResidualSellDecision {
  * Decide whether the residual token leg is worth swapping. Below `dustThresholdRaw` (raw token units) we skip:
  * the swap would either fail or cost more in fees than it returns. Pure.
  */
-export function decideResidualSell(tokenBalanceRaw: bigint, dustThresholdRaw: bigint): ResidualSellDecision {
+export function decideResidualSell(
+  tokenBalanceRaw: bigint,
+  dustThresholdRaw: bigint,
+): ResidualSellDecision {
   if (tokenBalanceRaw <= 0n) return { sell: false, reason: 'no_residual' };
   if (tokenBalanceRaw <= dustThresholdRaw) return { sell: false, reason: 'dust' };
   return { sell: true };
@@ -36,8 +39,14 @@ export interface OwnerTokenBalance {
  * close-triggered sell): every non-SOL mint above dust. Skips wSOL — it is SOL already (a swap would be
  * circular; it is unwrapped natively instead). Pure; reuses `decideResidualSell` for the per-token cutoff.
  */
-export function planWalletSweep(balances: OwnerTokenBalance[], wsolMint: string, dustThresholdRaw: bigint): OwnerTokenBalance[] {
-  return balances.filter((b) => b.mint !== wsolMint && decideResidualSell(b.amountRaw, dustThresholdRaw).sell);
+export function planWalletSweep(
+  balances: OwnerTokenBalance[],
+  wsolMint: string,
+  dustThresholdRaw: bigint,
+): OwnerTokenBalance[] {
+  return balances.filter(
+    (b) => b.mint !== wsolMint && decideResidualSell(b.amountRaw, dustThresholdRaw).sell,
+  );
 }
 
 /**
@@ -48,7 +57,8 @@ export function planWalletSweep(balances: OwnerTokenBalance[], wsolMint: string,
 export function minOutWithSlippage(quotedOutLamports: bigint, slippageBps: number): bigint {
   // Reject BOTH ends: < 0 is nonsensical, and >= 100% (10000 bps) would zero or invert the floor — i.e. accept any
   // output, including a near-total drain. That defeats this module's whole purpose, so it's a config error → fail loud.
-  if (slippageBps < 0 || slippageBps >= Number(BPS_DENOMINATOR)) throw new Error('slippageBps must be in [0, 10000)');
+  if (slippageBps < 0 || slippageBps >= Number(BPS_DENOMINATOR))
+    throw new Error('slippageBps must be in [0, 10000)');
   const keptBps = BPS_DENOMINATOR - BigInt(slippageBps);
   return (quotedOutLamports * keptBps) / BPS_DENOMINATOR;
 }

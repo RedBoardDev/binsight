@@ -54,6 +54,8 @@ describe('SignRequestSchema', () => {
   });
 
   it('parses a valid sell (kind=sell + sell payload)', () => {
-    expect(SignRequestSchema.safeParse({ ...valid, kind: 'sell', sell: sellPayload }).success).toBe(true);
+    expect(SignRequestSchema.safeParse({ ...valid, kind: 'sell', sell: sellPayload }).success).toBe(
+      true,
+    );
   });
 });

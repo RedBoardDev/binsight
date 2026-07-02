@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type SizingConfig, coreRatioMaxSizingBrick, computeCopySize } from './sizing';
+import { computeCopySize, coreRatioMaxSizingBrick, type SizingConfig } from './sizing';
 
 // Spec "preset" defaults (06 §1.1/§1.8): ratio 50%, max 1.0, floor 0.05, reserve 0.05, skip by default.
 const base = (over: Partial<SizingConfig> = {}): SizingConfig => ({
@@ -77,7 +77,9 @@ describe('computeCopySize — the copy size (P2.2, the heart)', () => {
     });
     it("'reduceToFit' mode ⇒ open with the available amount (balance − reserve), reduced=true", () => {
       // WHY: reduceToFit deploys what remains after the gas reserve rather than missing the copy.
-      const d = computeCopySize(base({ onInsufficient: 'reduceToFit' }), 2, { availableBalanceSol: 0.5 });
+      const d = computeCopySize(base({ onInsufficient: 'reduceToFit' }), 2, {
+        availableBalanceSol: 0.5,
+      });
       expect(d).toMatchObject({ action: 'open', reduced: true });
       if (d.action === 'open') expect(d.sizeSol).toBeCloseTo(0.45, 9); // 0.5 − 0.05
     });

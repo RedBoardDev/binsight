@@ -15,7 +15,10 @@ export type LeaderPositionState = 'open' | 'closed' | 'unknown';
 
 /** Translates the result of an on-chain fetch into a state. An RPC error ⇒ 'unknown' (we never close on
  *  doubt); account present ⇒ 'open'; account absent ⇒ 'closed' (rent reclaimed at DLMM close). Pure. */
-export function leaderStateFromFetch(accountExists: boolean, errored: boolean): LeaderPositionState {
+export function leaderStateFromFetch(
+  accountExists: boolean,
+  errored: boolean,
+): LeaderPositionState {
   if (errored) return 'unknown';
   return accountExists ? 'open' : 'closed';
 }

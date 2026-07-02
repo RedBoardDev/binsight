@@ -11,7 +11,7 @@
  */
 import { classifyInstruction } from '../dlmm';
 import { type CapsConfig, type CapsState, checkCaps } from './caps';
-import { type EntryConfig, type EntryDecision, decideEntry } from './decision';
+import { decideEntry, type EntryConfig, type EntryDecision } from './decision';
 import type { DetectedEvent } from './events';
 import type { FilterConfig, FilterContext } from './filters';
 import type { LeaderPosition } from './leader-position';
@@ -65,17 +65,30 @@ export function processPaperEvent(
     // Filter context: the tokens we ALREADY hold open (this position is not yet in the ledger).
     const ctx: FilterContext = {
       openTokenMints: new Set(
-        deps.ledger.openPositions().map((p) => p.nonSolMint).filter((m): m is string => m !== null),
+        deps.ledger
+          .openPositions()
+          .map((p) => p.nonSolMint)
+          .filter((m): m is string => m !== null),
       ),
     };
-    const decision = decideEntry(event, deps.config, { availableBalanceSol: deps.followerBalanceSol }, {
-      ctx,
-      config: deps.filterConfig,
-    });
+    const decision = decideEntry(
+      event,
+      deps.config,
+      { availableBalanceSol: deps.followerBalanceSol },
+      {
+        ctx,
+        config: deps.filterConfig,
+      },
+    );
     if (decision.outcome === 'skipped') return { kind: 'entry', decision, opened: null };
 
     // Filters + sizing OK → portfolio envelope (caps + kill-switch). Blocks ⇒ we requalify as a skip.
-    const cap = checkCaps(deps.caps, buildCapsState(deps.ledger, event.nonSolMint), decision.sizeSol, deps.nowMs);
+    const cap = checkCaps(
+      deps.caps,
+      buildCapsState(deps.ledger, event.nonSolMint),
+      decision.sizeSol,
+      deps.nowMs,
+    );
     if (cap.action === 'block') {
       return {
         kind: 'entry',
@@ -120,7 +133,10 @@ export interface PaperDecisionRow {
 }
 
 /** Maps a paper action to the shadow-log row to persist. Pure. */
-export function paperDecisionRow(event: DetectedEvent, outcome: NonNullable<PaperOutcome>): PaperDecisionRow {
+export function paperDecisionRow(
+  event: DetectedEvent,
+  outcome: NonNullable<PaperOutcome>,
+): PaperDecisionRow {
   const common = {
     signature: event.signature,
     pool: event.pool || null,

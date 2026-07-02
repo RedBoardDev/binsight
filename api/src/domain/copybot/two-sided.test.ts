@@ -73,16 +73,25 @@ describe('planTwoSided — replicate BOTH legs (or fall back to SOL-only)', () =
 
 describe('sizeTwoSided — scale BOTH legs by the leader-leg ratio (NOT total value), SOL leg capped', () => {
   it('50% → exactly half of EACH leg (composition preserved)', () => {
-    expect(sizeTwoSided(120_000_000n, 5_000_000n, 50, 1_000_000_000n)).toEqual({ solLamports: 60_000_000n, tokenTarget: 2_500_000n });
+    expect(sizeTwoSided(120_000_000n, 5_000_000n, 50, 1_000_000_000n)).toEqual({
+      solLamports: 60_000_000n,
+      tokenTarget: 2_500_000n,
+    });
   });
 
   it('100% → both legs at full leader size', () => {
-    expect(sizeTwoSided(120_000_000n, 5_000_000n, 100, 1_000_000_000n)).toEqual({ solLamports: 120_000_000n, tokenTarget: 5_000_000n });
+    expect(sizeTwoSided(120_000_000n, 5_000_000n, 100, 1_000_000_000n)).toEqual({
+      solLamports: 120_000_000n,
+      tokenTarget: 5_000_000n,
+    });
   });
 
   it('cap: SOL leg over maxSol → SOL clamped AND token scaled by the SAME factor (composition still holds)', () => {
     // 100% of 1 SOL leg, cap 0.5 SOL → factor 0.5 → token also halved.
-    expect(sizeTwoSided(1_000_000_000n, 4_000_000n, 100, 500_000_000n)).toEqual({ solLamports: 500_000_000n, tokenTarget: 2_000_000n });
+    expect(sizeTwoSided(1_000_000_000n, 4_000_000n, 100, 500_000_000n)).toEqual({
+      solLamports: 500_000_000n,
+      tokenTarget: 2_000_000n,
+    });
   });
 
   it('no cap (maxSol 0) → pure ratio, no clamp', () => {
@@ -119,7 +128,16 @@ describe('planTwoSidedReshape — proportional removes (both legs) + per-leg tok
   it('SOL-only position (no token leg) → no token adds', () => {
     const leaderSol: BinSol[] = [{ offset: 0, sol: 1.0 }];
     const ourSol: BinSol[] = [{ offset: 0, sol: 0.2 }];
-    const r = planTwoSidedReshape(leaderSol, ourSol, [{ offset: 0, sol: 0 }], [{ offset: 0, sol: 0 }], ratio, NO_CAP, DEAD, 1);
+    const r = planTwoSidedReshape(
+      leaderSol,
+      ourSol,
+      [{ offset: 0, sol: 0 }],
+      [{ offset: 0, sol: 0 }],
+      ratio,
+      NO_CAP,
+      DEAD,
+      1,
+    );
     expect(r.tokenAddOps.length).toBe(0);
   });
 
@@ -145,7 +163,16 @@ describe('planTwoSidedReshape — proportional removes (both legs) + per-leg tok
     const ourSol: BinSol[] = [{ offset: 0, sol: 0 }];
     const leaderToken: BinSol[] = [{ offset: 0, sol: 100 }];
     const ourToken: BinSol[] = [{ offset: 0, sol: 0 }];
-    const r = planTwoSidedReshape(leaderSol, ourSol, leaderToken, ourToken, 0.5, NO_CAP, DEAD, DEAD);
+    const r = planTwoSidedReshape(
+      leaderSol,
+      ourSol,
+      leaderToken,
+      ourToken,
+      0.5,
+      NO_CAP,
+      DEAD,
+      DEAD,
+    );
     const solAdd = r.ops.find((o) => o.offset === 0 && o.action === 'add');
     expect(solAdd?.action === 'add' && solAdd.addSol).toBeCloseTo(0.5, 6); // factor == ratio 0.5
     expect(r.tokenAddOps[0]?.addSol).toBeCloseTo(50, 6); // 0.5 × 100 — identical to the capped-off path
@@ -156,10 +183,22 @@ describe('planTwoSidedReshape — proportional removes (both legs) + per-leg tok
   // token-heavy. The fix emits a token-leg remove on such bins (but NOT on mixed bins already covered by a SOL
   // remove, to avoid a double trim).
   it('leader SHRANK including a PURE-TOKEN bin → that bin gets a token-leg remove, mixed bin not double-trimmed', () => {
-    const leaderSol: BinSol[] = [{ offset: 0, sol: 0.2 }, { offset: 2, sol: 0 }]; // offset 2 = pure-token bin (no SOL)
-    const ourSol: BinSol[] = [{ offset: 0, sol: 0.4 }, { offset: 2, sol: 0 }]; // mixed bin over target → SOL remove
-    const leaderToken: BinSol[] = [{ offset: 0, sol: 20 }, { offset: 2, sol: 10 }];
-    const ourToken: BinSol[] = [{ offset: 0, sol: 40 }, { offset: 2, sol: 20 }]; // both over target after the shrink
+    const leaderSol: BinSol[] = [
+      { offset: 0, sol: 0.2 },
+      { offset: 2, sol: 0 },
+    ]; // offset 2 = pure-token bin (no SOL)
+    const ourSol: BinSol[] = [
+      { offset: 0, sol: 0.4 },
+      { offset: 2, sol: 0 },
+    ]; // mixed bin over target → SOL remove
+    const leaderToken: BinSol[] = [
+      { offset: 0, sol: 20 },
+      { offset: 2, sol: 10 },
+    ];
+    const ourToken: BinSol[] = [
+      { offset: 0, sol: 40 },
+      { offset: 2, sol: 20 },
+    ]; // both over target after the shrink
     const r = planTwoSidedReshape(leaderSol, ourSol, leaderToken, ourToken, ratio, NO_CAP, DEAD, 1);
 
     const removes = r.ops.filter((o) => o.action === 'remove');

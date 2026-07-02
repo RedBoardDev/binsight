@@ -11,15 +11,26 @@ describe('singlePoolPerToken — ≤1 live position per token (per-leader, insta
     expect(singlePoolPerToken.enabled(cfgOn)).toBe(true);
   });
   it('token already held open → skip single_pool_per_token', () => {
-    expect(singlePoolPerToken.evaluate(cfgOn, c('MINT'), { openTokenMints: new Set(['MINT']) })).toEqual({ action: 'skip', reason: 'single_pool_per_token' });
+    expect(
+      singlePoolPerToken.evaluate(cfgOn, c('MINT'), { openTokenMints: new Set(['MINT']) }),
+    ).toEqual({ action: 'skip', reason: 'single_pool_per_token' });
   });
   it('token not held → pass', () => {
-    expect(singlePoolPerToken.evaluate(cfgOn, c('MINT'), { openTokenMints: new Set(['OTHER']) })).toEqual({ action: 'pass' });
+    expect(
+      singlePoolPerToken.evaluate(cfgOn, c('MINT'), { openTokenMints: new Set(['OTHER']) }),
+    ).toEqual({ action: 'pass' });
   });
   it('null mint → pass', () => {
-    expect(singlePoolPerToken.evaluate(cfgOn, c(null), { openTokenMints: new Set(['MINT']) })).toEqual({ action: 'pass' });
+    expect(
+      singlePoolPerToken.evaluate(cfgOn, c(null), { openTokenMints: new Set(['MINT']) }),
+    ).toEqual({ action: 'pass' });
   });
   it('meta: per-leader / local / instant / preset ON', () => {
-    expect([singlePoolPerToken.scope, singlePoolPerToken.source, singlePoolPerToken.speedClass, singlePoolPerToken.safePreset]).toEqual(['per-leader', 'local', 'instant', true]);
+    expect([
+      singlePoolPerToken.scope,
+      singlePoolPerToken.source,
+      singlePoolPerToken.speedClass,
+      singlePoolPerToken.safePreset,
+    ]).toEqual(['per-leader', 'local', 'instant', true]);
   });
 });

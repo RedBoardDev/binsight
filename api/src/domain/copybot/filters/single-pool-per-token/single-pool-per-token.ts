@@ -10,5 +10,6 @@ export const singlePoolPerToken: FilterBrick = {
   source: 'local',
   safePreset: true,
   enabled: (cfg) => cfg.singlePoolPerToken,
-  evaluate: (_cfg, c, ctx) => (c.nonSolMint && ctx.openTokenMints.has(c.nonSolMint) ? skip('single_pool_per_token') : PASS),
+  evaluate: (_cfg, c, ctx) =>
+    c.nonSolMint && ctx.openTokenMints.has(c.nonSolMint) ? skip('single_pool_per_token') : PASS,
 };

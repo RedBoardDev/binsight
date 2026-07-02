@@ -32,7 +32,8 @@ export function setAtPath<T>(root: T, path: string, value: unknown): T {
     const seg = segs[i] as string;
     const next = cur[seg];
     if (next === undefined || next === null) cur[seg] = {};
-    else if (typeof next !== 'object') throw new Error(`cannot descend into non-object at "${segs.slice(0, i + 1).join('.')}"`);
+    else if (typeof next !== 'object')
+      throw new Error(`cannot descend into non-object at "${segs.slice(0, i + 1).join('.')}"`);
     cur = cur[seg] as Record<string, unknown>;
   }
   cur[segs[segs.length - 1] as string] = value;
@@ -50,7 +51,8 @@ export function coerceValue(raw: string): unknown {
 
 /** Append a leader (enabled, no overrides). Throws on duplicate or when the SYSTEM cap is reached. Pure. */
 export function addLeader(config: CopybotConfig, address: string): CopybotConfig {
-  if (config.leaders.some((l) => l.address === address)) throw new Error(`leader already followed: ${address}`);
+  if (config.leaders.some((l) => l.address === address))
+    throw new Error(`leader already followed: ${address}`);
   if (config.leaders.length >= MAX_LEADERS) throw new Error(`max ${MAX_LEADERS} leaders reached`);
   const leader: LeaderSettings = { address, enabled: true, overrides: {} };
   return { ...config, leaders: [...config.leaders, leader] };
@@ -58,6 +60,7 @@ export function addLeader(config: CopybotConfig, address: string): CopybotConfig
 
 /** Remove a leader by address. Throws if not followed. Pure. */
 export function removeLeader(config: CopybotConfig, address: string): CopybotConfig {
-  if (!config.leaders.some((l) => l.address === address)) throw new Error(`leader not followed: ${address}`);
+  if (!config.leaders.some((l) => l.address === address))
+    throw new Error(`leader not followed: ${address}`);
   return { ...config, leaders: config.leaders.filter((l) => l.address !== address) };
 }

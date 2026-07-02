@@ -10,7 +10,9 @@ import type { CopyEvent } from '@/domain/copybot/observability/event';
 import { createAlertWebhookSink } from './alert';
 
 function fakeLog(): Logger & { warn: ReturnType<typeof vi.fn> } {
-  return { warn: vi.fn(), error: vi.fn(), info: vi.fn() } as unknown as Logger & { warn: ReturnType<typeof vi.fn> };
+  return { warn: vi.fn(), error: vi.fn(), info: vi.fn() } as unknown as Logger & {
+    warn: ReturnType<typeof vi.fn>;
+  };
 }
 
 const PINNED_EVENT = {
@@ -41,7 +43,9 @@ describe('createAlertWebhookSink', () => {
   });
 
   it('POSTs the event identity (code/severity/reason/adminDetail/ts) as JSON to the configured URL', () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 200 }));
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 200 }));
     const sink = createAlertWebhookSink('https://hook.example/alert', fakeLog());
     sink!(PINNED_EVENT);
     expect(fetchSpy).toHaveBeenCalledTimes(1);

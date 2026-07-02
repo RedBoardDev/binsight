@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { PaperPosition } from './paper-position';
-import { type LeaderPositionState, failsafeRow, leaderStateFromFetch, planFailsafeCloses, planReconcile } from './reconciliation';
+import {
+  failsafeRow,
+  type LeaderPositionState,
+  leaderStateFromFetch,
+  planFailsafeCloses,
+  planReconcile,
+} from './reconciliation';
 
 function mirror(over: Partial<PaperPosition> = {}): PaperPosition {
   return {
@@ -63,7 +69,9 @@ describe('planFailsafeCloses — sweep A (only closes the confirmed-closed)', ()
       ['A', 'closed'],
       ['B', 'open'],
     ]);
-    expect(planFailsafeCloses(mirrors, state)).toEqual([{ leaderPosition: 'A', ourPosition: 'oA', sizeSol: 1 }]);
+    expect(planFailsafeCloses(mirrors, state)).toEqual([
+      { leaderPosition: 'A', ourPosition: 'oA', sizeSol: 1 },
+    ]);
   });
 
   it('mix: returns ONLY the confirmed-closed', () => {
@@ -125,7 +133,12 @@ describe('planReconcile — airtight on-chain reconciliation (anti-dormant)', ()
   });
 
   it('on-chain (enumerator) position not tracked → orphan', () => {
-    const plan = planReconcile({ ourOnChain: new Set(['oX']), ourClosed: new Set(), tracked: [], leaderClosed: new Set() });
+    const plan = planReconcile({
+      ourOnChain: new Set(['oX']),
+      ourClosed: new Set(),
+      tracked: [],
+      leaderClosed: new Set(),
+    });
     expect(plan.orphans).toEqual(['oX']);
   });
 

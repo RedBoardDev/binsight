@@ -9,7 +9,9 @@ import { deadLetterCode, routeVerdict } from './coffre-main';
 
 describe('coffre routeVerdict — what the loop does with a verdict', () => {
   it('retryLater (#7 recovery in-flight) → RETAIN: leave UNACKED, NEVER dead-lettered (a prior broadcast may still land)', () => {
-    expect(routeVerdict({ ok: false, reason: 'recover_in_flight', retryLater: true })).toEqual({ action: 'retain' });
+    expect(routeVerdict({ ok: false, reason: 'recover_in_flight', retryLater: true })).toEqual({
+      action: 'retain',
+    });
     // retryLater wins even over an ok flag — it must stay in the PEL for a later chain re-check.
     expect(routeVerdict({ ok: true, retryLater: true })).toEqual({ action: 'retain' });
   });
@@ -26,7 +28,13 @@ describe('coffre routeVerdict — what the loop does with a verdict', () => {
 });
 
 describe('coffre deadLetterCode — pinned differentiation of the dead-letter trace', () => {
-  const POISON = ['bad_hmac_or_hop', 'bad_schema', 'commandId_mismatch', 'owner_mismatch', 'undecodable_tx'];
+  const POISON = [
+    'bad_hmac_or_hop',
+    'bad_schema',
+    'commandId_mismatch',
+    'owner_mismatch',
+    'undecodable_tx',
+  ];
   const BENIGN = ['duplicate', 'stale'];
 
   it('forged / tampered / malformed → the dedicated pinned `system.command_quarantined` (NOT system.fatal — the process is alive)', () => {

@@ -10,5 +10,6 @@ export const ignoredTokens: FilterBrick = {
   source: 'local',
   safePreset: null,
   enabled: (cfg) => cfg.ignoredTokens.length > 0,
-  evaluate: (cfg, c) => (c.nonSolMint && cfg.ignoredTokens.includes(c.nonSolMint) ? skip('ignored_token') : PASS),
+  evaluate: (cfg, c) =>
+    c.nonSolMint && cfg.ignoredTokens.includes(c.nonSolMint) ? skip('ignored_token') : PASS,
 };

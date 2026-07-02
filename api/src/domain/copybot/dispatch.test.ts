@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type EventAction, classifyEventAction, routeWithPending } from './dispatch';
+import { classifyEventAction, type EventAction, routeWithPending } from './dispatch';
 import type { DetectedEvent } from './events';
 
 const ev = (over: Partial<DetectedEvent>): DetectedEvent => ({
@@ -17,8 +17,12 @@ const ev = (over: Partial<DetectedEvent>): DetectedEvent => ({
   ...over,
 });
 
-const route = (over: Partial<DetectedEvent>, tracked: boolean, infiniteAdd = true, claimFloorSol = 0): EventAction =>
-  classifyEventAction(ev(over), tracked, { infiniteAdd, claimFloorSol });
+const route = (
+  over: Partial<DetectedEvent>,
+  tracked: boolean,
+  infiniteAdd = true,
+  claimFloorSol = 0,
+): EventAction => classifyEventAction(ev(over), tracked, { infiniteAdd, claimFloorSol });
 
 describe('classifyEventAction — event routing (robustness)', () => {
   it('first deposit on an UNTRACKED position → open', () => {
@@ -32,7 +36,9 @@ describe('classifyEventAction — event routing (robustness)', () => {
   });
 
   it('deposit on a TRACKED position → resync (grow)', () => {
-    expect(route({ instruction: 'AddLiquidityByStrategy2', depositSol: 0.04 }, true)).toBe('resync');
+    expect(route({ instruction: 'AddLiquidityByStrategy2', depositSol: 0.04 }, true)).toBe(
+      'resync',
+    );
   });
 
   it('close instruction on a TRACKED position → close (even though it also withdraws)', () => {
@@ -55,8 +61,12 @@ describe('classifyEventAction — event routing (robustness)', () => {
   it('a claim that ALSO reports a withdraw is still a claim ONLY if not a close (close+withdraw wins as close)', () => {
     // Defensive: if a tx both withdraws AND is a close, it is a close. A pure claim with an incidental withdraw>0
     // routes to resync (withdraw branch) — never silently dropped. Encodes the documented precedence.
-    expect(route({ instruction: 'ClosePosition', withdrawSol: 0.1, claimSol: 0.01 }, true)).toBe('close');
-    expect(route({ instruction: 'RemoveLiquidity', withdrawSol: 0.05, claimSol: 0.01 }, true)).toBe('resync');
+    expect(route({ instruction: 'ClosePosition', withdrawSol: 0.1, claimSol: 0.01 }, true)).toBe(
+      'close',
+    );
+    expect(route({ instruction: 'RemoveLiquidity', withdrawSol: 0.05, claimSol: 0.01 }, true)).toBe(
+      'resync',
+    );
   });
 
   it('a no-op event on a tracked position (no deposit/withdraw/claim, unknown instruction) → ignore', () => {
@@ -78,24 +88,34 @@ describe('classifyEventAction — close routing keys off `e.closed`, not the log
 
   it('★ close+withdraw (closed:true, withdrawSol>0, unclassifiable label) on a TRACKED position → close (was resync)', () => {
     // OLD kind-only code: kind=null → the withdraw branch wins → 'resync' → treated as a shrink, not a close.
-    expect(route({ instruction: UNCLASSIFIABLE, closed: true, withdrawSol: 0.1 }, true)).toBe('close');
+    expect(route({ instruction: UNCLASSIFIABLE, closed: true, withdrawSol: 0.1 }, true)).toBe(
+      'close',
+    );
   });
 
   it('a partial remove (closed:false, withdrawSol>0, unclassifiable label) on a TRACKED position → resync (unchanged)', () => {
     // Not a close → the `e.closed` branch must NOT fire; a genuine withdraw still routes to resync.
-    expect(route({ instruction: UNCLASSIFIABLE, closed: false, withdrawSol: 0.1 }, true)).toBe('resync');
+    expect(route({ instruction: UNCLASSIFIABLE, closed: false, withdrawSol: 0.1 }, true)).toBe(
+      'resync',
+    );
   });
 
   it('a first deposit (closed:false, depositSol>0, unclassifiable label) on an UNTRACKED position → open (unchanged)', () => {
-    expect(route({ instruction: UNCLASSIFIABLE, closed: false, depositSol: 0.1 }, false)).toBe('open');
+    expect(route({ instruction: UNCLASSIFIABLE, closed: false, depositSol: 0.1 }, false)).toBe(
+      'open',
+    );
   });
 
   it('a claim (positive claimSol) still routes to claim, never close (closed:false)', () => {
-    expect(route({ instruction: UNCLASSIFIABLE, closed: false, claimSol: 0.01 }, true)).toBe('claim');
+    expect(route({ instruction: UNCLASSIFIABLE, closed: false, claimSol: 0.01 }, true)).toBe(
+      'claim',
+    );
   });
 
   it('close-by-label still works when NOT truncated (kind==="close" path, closed defaulting) — no regression', () => {
-    expect(route({ instruction: 'ClosePosition', withdrawSol: 0.1, closed: false }, true)).toBe('close');
+    expect(route({ instruction: 'ClosePosition', withdrawSol: 0.1, closed: false }, true)).toBe(
+      'close',
+    );
   });
 });
 
@@ -112,12 +132,16 @@ describe('classifyEventAction — infinite-add gate (default OFF: only the first
 
   it('★ even with infiniteAdd OFF, a REMOVE is still followed → resync (shrink); a CLOSE still closes (no-dormant safety)', () => {
     // The gate must NEVER touch the exit path — missing a leader remove/close is the cardinal sin.
-    expect(route({ instruction: 'RemoveLiquidity', withdrawSol: 0.05 }, true, false)).toBe('resync');
+    expect(route({ instruction: 'RemoveLiquidity', withdrawSol: 0.05 }, true, false)).toBe(
+      'resync',
+    );
     expect(route({ instruction: 'ClosePosition', withdrawSol: 0.1 }, true, false)).toBe('close');
   });
 
   it('infiniteAdd OFF does not affect a first open on an untracked position', () => {
-    expect(route({ instruction: 'InitializePosition', depositSol: 0.1 }, false, false)).toBe('open');
+    expect(route({ instruction: 'InitializePosition', depositSol: 0.1 }, false, false)).toBe(
+      'open',
+    );
   });
 });
 
@@ -153,8 +177,17 @@ describe('classifyEventAction — rug-SL exit must NOT auto-reopen (the leader p
 
   it('rug-exited does not interfere with a TRACKED position routing (close/resync unaffected)', () => {
     // The flag only gates the untracked-open path; a still-tracked mirror routes normally regardless.
-    expect(classifyEventAction(ev({ instruction: 'ClosePosition', withdrawSol: 0.1 }), true, cfg, true)).toBe('close');
-    expect(classifyEventAction(ev({ instruction: 'RemoveLiquidity', withdrawSol: 0.05 }), true, cfg, true)).toBe('resync');
+    expect(
+      classifyEventAction(ev({ instruction: 'ClosePosition', withdrawSol: 0.1 }), true, cfg, true),
+    ).toBe('close');
+    expect(
+      classifyEventAction(
+        ev({ instruction: 'RemoveLiquidity', withdrawSol: 0.05 }),
+        true,
+        cfg,
+        true,
+      ),
+    ).toBe('resync');
   });
 });
 
@@ -163,34 +196,64 @@ describe('routeWithPending — a follow-up add during a MULTI-TX open routes to 
   const deposit = { instruction: 'AddLiquidityByStrategy2', depositSol: 0.1 };
 
   it('an open is routed on an untracked, not-pending position (and the brain then reserves it)', () => {
-    const action = routeWithPending(ev(deposit), { hasOpen: () => false, isPendingOpen: () => false, cfg, rugExited: false });
+    const action = routeWithPending(ev(deposit), {
+      hasOpen: () => false,
+      isPendingOpen: () => false,
+      cfg,
+      rugExited: false,
+    });
     expect(action).toBe('open');
   });
 
   it('★ a follow-up deposit while the open is PENDING (registry.open not yet run) → resync, not a duplicate open', () => {
     // This is the duplicate-open bug: without the pending reservation, hasOpen is still false during a multi-tx
     // open window and the follow-up deposit would route to a SECOND on-chain open (real-money double open).
-    const action = routeWithPending(ev(deposit), { hasOpen: () => false, isPendingOpen: () => true, cfg, rugExited: false });
+    const action = routeWithPending(ev(deposit), {
+      hasOpen: () => false,
+      isPendingOpen: () => true,
+      cfg,
+      rugExited: false,
+    });
     expect(action).toBe('resync');
   });
 
   it('a follow-up deposit while pending with infiniteAdd OFF → ignore (matches a normal add), still not a 2nd open', () => {
-    const action = routeWithPending(ev(deposit), { hasOpen: () => false, isPendingOpen: () => true, cfg: { infiniteAdd: false, claimFloorSol: 0 }, rugExited: false });
+    const action = routeWithPending(ev(deposit), {
+      hasOpen: () => false,
+      isPendingOpen: () => true,
+      cfg: { infiniteAdd: false, claimFloorSol: 0 },
+      rugExited: false,
+    });
     expect(action).toBe('ignore');
   });
 
   it('once registry.open has run (hasOpen true, no longer pending) routing is normal → resync on a deposit', () => {
-    const action = routeWithPending(ev(deposit), { hasOpen: () => true, isPendingOpen: () => false, cfg, rugExited: false });
+    const action = routeWithPending(ev(deposit), {
+      hasOpen: () => true,
+      isPendingOpen: () => false,
+      cfg,
+      rugExited: false,
+    });
     expect(action).toBe('resync');
   });
 
   it('a CLOSE during a pending open still routes to close (exit path never suppressed)', () => {
-    const action = routeWithPending(ev({ instruction: 'ClosePosition', withdrawSol: 0.1 }), { hasOpen: () => false, isPendingOpen: () => true, cfg, rugExited: false });
+    const action = routeWithPending(ev({ instruction: 'ClosePosition', withdrawSol: 0.1 }), {
+      hasOpen: () => false,
+      isPendingOpen: () => true,
+      cfg,
+      rugExited: false,
+    });
     expect(action).toBe('close');
   });
 
   it('neither open nor pending, no deposit → ignore (no stale copying)', () => {
-    const action = routeWithPending(ev({ instruction: 'ClaimFee', claimSol: 0.01 }), { hasOpen: () => false, isPendingOpen: () => false, cfg, rugExited: false });
+    const action = routeWithPending(ev({ instruction: 'ClaimFee', claimSol: 0.01 }), {
+      hasOpen: () => false,
+      isPendingOpen: () => false,
+      cfg,
+      rugExited: false,
+    });
     expect(action).toBe('ignore');
   });
 });

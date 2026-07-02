@@ -18,7 +18,8 @@ const URL = process.env.DATABASE_URL ?? 'postgres://meteora:meteora@localhost:54
 const MARKER = '__test_event_store__';
 const db = openDatabase(URL);
 const noopLog = { warn: vi.fn(), info: vi.fn(), error: vi.fn() } as unknown as Logger;
-const clean = (): Promise<unknown> => db.delete(copyJournal).where(eq(copyJournal.eventKey, MARKER));
+const clean = (): Promise<unknown> =>
+  db.delete(copyJournal).where(eq(copyJournal.eventKey, MARKER));
 
 function event(overrides: Partial<CopyEvent> = {}): CopyEvent {
   const ts = Date.now();
@@ -83,11 +84,21 @@ describe('EventStore — persistence back-fills the new columns (SPEC §5)', () 
 
 describe('EventStore — NEVER throws (the cardinal guarantee)', () => {
   it('swallows a DB write failure and logs loud (the loop guard)', async () => {
-    const brokenDb = { insert: () => ({ values: async () => { throw new Error('db down'); } }) } as unknown as ReturnType<typeof openDatabase>;
+    const brokenDb = {
+      insert: () => ({
+        values: async () => {
+          throw new Error('db down');
+        },
+      }),
+    } as unknown as ReturnType<typeof openDatabase>;
     const warn = vi.fn();
     const log = { warn, info: vi.fn(), error: vi.fn() } as unknown as Logger;
     // persist() is fire-and-forget; persistDurable() is awaited — both must resolve without throwing.
-    await expect(new EventStore(brokenDb, log).persistDurable(event({ commandId: 'CORR3', correlationId: 'CORR3' }))).resolves.toBeUndefined();
+    await expect(
+      new EventStore(brokenDb, log).persistDurable(
+        event({ commandId: 'CORR3', correlationId: 'CORR3' }),
+      ),
+    ).resolves.toBeUndefined();
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]![1]).toContain('journal write failed');
   });

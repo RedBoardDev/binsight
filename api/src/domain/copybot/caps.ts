@@ -43,7 +43,12 @@ export const CAPS_DEFAULTS: CapsConfig = {
 };
 
 /** Allows or blocks a NEW opening of size `sizeSol`. First block wins (kill-switch first). Pure. */
-export function checkCaps(cfg: CapsConfig, state: CapsState, sizeSol: number, nowMs: number): CapVerdict {
+export function checkCaps(
+  cfg: CapsConfig,
+  state: CapsState,
+  sizeSol: number,
+  nowMs: number,
+): CapVerdict {
   if (cfg.killSwitchGlobal) return block('kill_switch_global');
   if (cfg.killSwitchLeader) return block('kill_switch_leader');
   if (cfg.maxOpenPositions != null && state.openPositions >= cfg.maxOpenPositions) {
@@ -57,7 +62,10 @@ export function checkCaps(cfg: CapsConfig, state: CapsState, sizeSol: number, no
     const recent = state.openTimestampsMs.filter((t) => t > since).length;
     if (recent >= cfg.maxOpensPerWindow) return block('max_opens_per_window');
   }
-  if (cfg.maxTotalExposureSol != null && state.totalExposureSol + sizeSol > cfg.maxTotalExposureSol) {
+  if (
+    cfg.maxTotalExposureSol != null &&
+    state.totalExposureSol + sizeSol > cfg.maxTotalExposureSol
+  ) {
     return block('max_total_exposure');
   }
   return ALLOW;

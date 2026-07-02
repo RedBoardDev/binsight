@@ -63,7 +63,11 @@ export class PaperPositionLedger {
 
   /** Closes the mirror of this leader position if we hold one OPEN. Returns the closed position, or
    *  `undefined` if we hold nothing (open skipped / never opened) or if it's already closed (no-op). */
-  closeMirror(leaderPosition: string, closeSignature: string, blockTime: number | null): PaperPosition | undefined {
+  closeMirror(
+    leaderPosition: string,
+    closeSignature: string,
+    blockTime: number | null,
+  ): PaperPosition | undefined {
     const pos = this.positions.get(leaderPosition);
     if (!pos || pos.status === 'closed') return undefined;
     pos.status = 'closed';

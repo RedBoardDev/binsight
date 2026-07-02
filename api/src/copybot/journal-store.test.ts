@@ -10,7 +10,8 @@ const URL = process.env.DATABASE_URL ?? 'postgres://meteora:meteora@localhost:54
 const MARKER = '__test_journal_evt__'; // unique event_key so cleanup never touches real rows
 const db = openDatabase(URL);
 const noopLog = { warn: vi.fn(), info: vi.fn(), error: vi.fn() } as unknown as Logger;
-const clean = (): Promise<unknown> => db.delete(copyJournal).where(eq(copyJournal.eventKey, MARKER));
+const clean = (): Promise<unknown> =>
+  db.delete(copyJournal).where(eq(copyJournal.eventKey, MARKER));
 
 beforeAll(async () => {
   await clean();
@@ -55,7 +56,13 @@ describe('CopyJournalStore — persistence (integration)', () => {
 
   it('defaults severity to error for a rejected vault command (alerting depends on it being persisted as error)', async () => {
     const store = new CopyJournalStore(db, noopLog, 'coffre');
-    await store.record({ stage: 'sign', outcome: 'rejected', reason: 'wall_b_reject', eventKey: MARKER, commandId: 'CMD2' });
+    await store.record({
+      stage: 'sign',
+      outcome: 'rejected',
+      reason: 'wall_b_reject',
+      eventKey: MARKER,
+      commandId: 'CMD2',
+    });
 
     const row = (await db.select().from(copyJournal).where(eq(copyJournal.commandId, 'CMD2')))[0]!;
     expect(row.process).toBe('coffre');
@@ -67,7 +74,14 @@ describe('CopyJournalStore — persistence (integration)', () => {
     // WHY: P1's whole point is that every journaled row becomes attributable (WHERE wallet=$1) and code-tagged
     // BEFORE any call-site rewrite. A mapped reason resolves to its leaf; the bound wallet/userId back-fill.
     const store = new CopyJournalStore(db, noopLog, 'brain', 'COPYWALLET', 'tenant-1');
-    await store.record({ stage: 'open', outcome: 'skipped', reason: 'below_min_market_cap', eventKey: MARKER, commandId: 'CMD4', pool: 'POOLx' });
+    await store.record({
+      stage: 'open',
+      outcome: 'skipped',
+      reason: 'below_min_market_cap',
+      eventKey: MARKER,
+      commandId: 'CMD4',
+      pool: 'POOLx',
+    });
 
     const row = (await db.select().from(copyJournal).where(eq(copyJournal.commandId, 'CMD4')))[0]!;
     expect(row.code).toBe('filter.below_min_market_cap'); // reason → leaf (resolveLegacyReason)
@@ -81,7 +95,13 @@ describe('CopyJournalStore — persistence (integration)', () => {
 
   it('P1 shim: an unmapped reason back-fills the deterministic FALLBACK code (internal, never a fake feed alert)', async () => {
     const store = new CopyJournalStore(db, noopLog, 'coffre');
-    await store.record({ stage: 'sweep', outcome: 'failed', reason: 'build_error', eventKey: MARKER, commandId: 'CMD5' });
+    await store.record({
+      stage: 'sweep',
+      outcome: 'failed',
+      reason: 'build_error',
+      eventKey: MARKER,
+      commandId: 'CMD5',
+    });
 
     const row = (await db.select().from(copyJournal).where(eq(copyJournal.commandId, 'CMD5')))[0]!;
     expect(row.code).toBe('system.unmapped'); // no leaf → deterministic fallback
@@ -97,7 +117,13 @@ describe('CopyJournalStore — clean stdout event line', () => {
     const info = vi.fn();
     const log = { warn: vi.fn(), info, error: vi.fn() } as unknown as Logger;
     const store = new CopyJournalStore(db, log, 'brain');
-    await store.record({ stage: 'open', outcome: 'published', kind: 'open', ourSizeSol: 0.3, eventKey: MARKER });
+    await store.record({
+      stage: 'open',
+      outcome: 'published',
+      kind: 'open',
+      ourSizeSol: 0.3,
+      eventKey: MARKER,
+    });
     expect(info).toHaveBeenCalledTimes(1);
     expect(info.mock.calls[0]![0]).toContain('OPEN published');
   });
@@ -107,7 +133,12 @@ describe('CopyJournalStore — clean stdout event line', () => {
     const error = vi.fn();
     const log = { warn: vi.fn(), info: vi.fn(), error } as unknown as Logger;
     const store = new CopyJournalStore(db, log, 'coffre');
-    await store.record({ stage: 'sign', outcome: 'rejected', reason: 'wallb:foreign_sol_destination', eventKey: MARKER });
+    await store.record({
+      stage: 'sign',
+      outcome: 'rejected',
+      reason: 'wallb:foreign_sol_destination',
+      eventKey: MARKER,
+    });
     expect(error).toHaveBeenCalledTimes(1);
     expect(error.mock.calls[0]![0]).toContain('wallb:foreign_sol_destination');
   });
@@ -116,12 +147,20 @@ describe('CopyJournalStore — clean stdout event line', () => {
 describe('CopyJournalStore — fail-safe (the cardinal guarantee)', () => {
   it('NEVER throws when the DB write fails — a journal hiccup must not break the hot path / cause a missed copy', async () => {
     // A db whose awaited insert rejects (DB down). The bot must keep running regardless.
-    const brokenDb = { insert: () => ({ values: async () => { throw new Error('db down'); } }) } as unknown as ReturnType<typeof openDatabase>;
+    const brokenDb = {
+      insert: () => ({
+        values: async () => {
+          throw new Error('db down');
+        },
+      }),
+    } as unknown as ReturnType<typeof openDatabase>;
     const warn = vi.fn();
     const log = { warn, info: vi.fn(), error: vi.fn() } as unknown as Logger;
     const store = new CopyJournalStore(brokenDb, log, 'brain');
 
-    await expect(store.record({ stage: 'close', outcome: 'published', kind: 'close' })).resolves.toBeUndefined();
+    await expect(
+      store.record({ stage: 'close', outcome: 'published', kind: 'close' }),
+    ).resolves.toBeUndefined();
     expect(warn).toHaveBeenCalledTimes(1); // failed loudly...
     expect(warn.mock.calls[0]![1]).toContain('journal write failed'); // ...but swallowed the error
   });
@@ -135,6 +174,8 @@ describe('CopyJournalStore — fail-safe (the cardinal guarantee)', () => {
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]![1]).toContain('missing a required reason');
     // still persisted despite the missing reason
-    expect(await db.select().from(copyJournal).where(eq(copyJournal.commandId, 'CMD3'))).toHaveLength(1);
+    expect(
+      await db.select().from(copyJournal).where(eq(copyJournal.commandId, 'CMD3')),
+    ).toHaveLength(1);
   });
 });

@@ -29,8 +29,7 @@ function fakes(opts: {
   const writes: Map<string, PositionEconomics>[] = [];
   const legRepo = {
     legsByWallet: async () => opts.legs,
-    getPoolMetas: async (p: string[]) =>
-      new Map([...opts.pools].filter(([k]) => p.includes(k))),
+    getPoolMetas: async (p: string[]) => new Map([...opts.pools].filter(([k]) => p.includes(k))),
   };
   const positionRepo = {
     closedEconomicsForWallet: async () => opts.stored,

@@ -51,7 +51,9 @@ describe('minOutWithSlippage — slippage floor (never sell into a terrible rout
 
 describe('planWalletSweep — no-miss safety net: every non-SOL token above dust gets swept', () => {
   it('sweeps a real non-SOL token (the dormant-balance bug this prevents)', () => {
-    expect(planWalletSweep([{ mint: 'TOKEN', amountRaw: 6_217n }], WSOL, 100n)).toEqual([{ mint: 'TOKEN', amountRaw: 6_217n }]);
+    expect(planWalletSweep([{ mint: 'TOKEN', amountRaw: 6_217n }], WSOL, 100n)).toEqual([
+      { mint: 'TOKEN', amountRaw: 6_217n },
+    ]);
   });
 
   it('skips wSOL — it is SOL already, swapping it would be circular', () => {
@@ -59,11 +61,23 @@ describe('planWalletSweep — no-miss safety net: every non-SOL token above dust
   });
 
   it('skips dust below the threshold but keeps everything real', () => {
-    expect(planWalletSweep([{ mint: 'A', amountRaw: 50n }, { mint: 'B', amountRaw: 5_000n }], WSOL, 100n)).toEqual([{ mint: 'B', amountRaw: 5_000n }]);
+    expect(
+      planWalletSweep(
+        [
+          { mint: 'A', amountRaw: 50n },
+          { mint: 'B', amountRaw: 5_000n },
+        ],
+        WSOL,
+        100n,
+      ),
+    ).toEqual([{ mint: 'B', amountRaw: 5_000n }]);
   });
 
   it('sweeps mixed classic + Token-2022 legs together (both must be caught — Token-2022 was the missed class)', () => {
-    const balances = [{ mint: 'CLASSIC', amountRaw: 1_000n }, { mint: 'TOKEN2022', amountRaw: 2_000n }];
+    const balances = [
+      { mint: 'CLASSIC', amountRaw: 1_000n },
+      { mint: 'TOKEN2022', amountRaw: 2_000n },
+    ];
     expect(planWalletSweep(balances, WSOL, 100n)).toEqual(balances);
   });
 

@@ -6,10 +6,17 @@
  * STATIC imports: this module ONLY runs built (tsup `tsup.copybot.config.ts`, CJS) — the bundle resolves the
  * ESM/CJS interop of the SDK + anchor. NEVER import it from a path launched by tsx/vitest (it would break).
  */
-import DLMM, { DEFAULT_BIN_PER_POSITION, MAX_BIN_LENGTH_ALLOWED_IN_ONE_TX, StrategyType } from '@meteora-ag/dlmm';
-import BN from 'bn.js';
+import DLMM, {
+  DEFAULT_BIN_PER_POSITION,
+  MAX_BIN_LENGTH_ALLOWED_IN_ONE_TX,
+  StrategyType,
+} from '@meteora-ag/dlmm';
 import type { Connection, PublicKey, Transaction } from '@solana/web3.js';
-import { ATOMIC_BY_WEIGHT_BIN_LIMIT, MAX_SINGLE_POSITION_BINS } from '@/domain/copybot/open-routing';
+import BN from 'bn.js';
+import {
+  ATOMIC_BY_WEIGHT_BIN_LIMIT,
+  MAX_SINGLE_POSITION_BINS,
+} from '@/domain/copybot/open-routing';
 
 // STATIC imports: these modules ONLY run built (tsup/esbuild) — the bundle resolves the ESM/CJS interop
 // of the SDK + anchor. Do not import them from a path launched by tsx (it would break).
@@ -98,9 +105,10 @@ export async function buildAddByWeight(
   // `addLiquidityByWeight` UNCHANGED — CRITICALLY, v1 uses `addLiquidityOneSide` for a one-sided deposit (deposits SOL
   // into the valid bins regardless of the active-bin side), whereas v2 is two-sided-only and deposits 0 for a one-sided
   // leg whose range is on the "wrong" side of the active bin. v1 is classic-pinned on-chain so it can't do Token-2022.
-  return isToken2022Pool(dlmm) ? dlmm.addLiquidityByWeight2(params) : dlmm.addLiquidityByWeight(params);
+  return isToken2022Pool(dlmm)
+    ? dlmm.addLiquidityByWeight2(params)
+    : dlmm.addLiquidityByWeight(params);
 }
-
 
 /** Adds TWO-SIDED liquidity by-weight to an EXISTING position via the v2 ix `addLiquidityByWeight2` ALWAYS. v2 is the
  *  correct two-sided deposit (BOTH legs span the active bin) and fits a full position span (≤70 bins) in ONE
@@ -132,7 +140,6 @@ export async function buildAddByWeight2(
   });
 }
 
-
 /** Token-2022 program id — a pool whose token leg is owned by this needs the v2 (interface) deposit ix, not v1. */
 const TOKEN_2022_PROGRAM_ID = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
 
@@ -140,7 +147,10 @@ const TOKEN_2022_PROGRAM_ID = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
  *  real owner). Such pools REJECT the v1 by-weight deposit on-chain (token_x_program is pinned to classic) → the open
  *  must use the 2-tx create + addLiquidityByWeight2 path; classic-SPL pools keep the atomic 1-tx by-weight open. */
 export function isToken2022Pool(pair: DlmmPair): boolean {
-  return pair.tokenX.owner.toBase58() === TOKEN_2022_PROGRAM_ID || pair.tokenY.owner.toBase58() === TOKEN_2022_PROGRAM_ID;
+  return (
+    pair.tokenX.owner.toBase58() === TOKEN_2022_PROGRAM_ID ||
+    pair.tokenY.owner.toBase58() === TOKEN_2022_PROGRAM_ID
+  );
 }
 
 /** SDK DEFAULT_BIN_PER_POSITION: `createEmptyPosition` covers a span of ≤ this many bins; a wider span needs the
@@ -180,7 +190,14 @@ export async function buildRemovePartial(
   pair?: DlmmPair,
 ): Promise<Transaction[]> {
   const dlmm = pair ?? (await DLMM.create(conn, pool));
-  return dlmm.removeLiquidity({ user: owner, position, fromBinId, toBinId, bps: new BN(bps), shouldClaimAndClose: false });
+  return dlmm.removeLiquidity({
+    user: owner,
+    position,
+    fromBinId,
+    toBinId,
+    bps: new BN(bps),
+    shouldClaimAndClose: false,
+  });
 }
 
 /** One-sided SOL open with a chosen shape (Spot / BidAsk / Curve) — for the leader-test wallet (the driving
@@ -198,7 +215,8 @@ export async function buildOpenByStrategy(
 ): Promise<Transaction | Transaction[]> {
   const dlmm = await DLMM.create(conn, pool);
   const active = (await dlmm.getActiveBin()).binId;
-  const [minBinId, maxBinId] = solSide === 'Y' ? [active - widthBins, active] : [active, active + widthBins];
+  const [minBinId, maxBinId] =
+    solSide === 'Y' ? [active - widthBins, active] : [active, active + widthBins];
   return dlmm.initializePositionAndAddLiquidityByStrategy({
     positionPubKey,
     user: owner,
@@ -249,7 +267,8 @@ export async function buildAddByStrategy(
 ): Promise<Transaction | Transaction[]> {
   const dlmm = await DLMM.create(conn, pool);
   const active = (await dlmm.getActiveBin()).binId;
-  const [minBinId, maxBinId] = solSide === 'Y' ? [active - widthBins, active] : [active, active + widthBins];
+  const [minBinId, maxBinId] =
+    solSide === 'Y' ? [active - widthBins, active] : [active, active + widthBins];
   return dlmm.addLiquidityByStrategy({
     positionPubKey,
     user: owner,
@@ -337,7 +356,8 @@ export async function buildClaimTx(
   const dlmm = await DLMM.create(conn, pool);
   const { userPositions } = await dlmm.getPositionsByUserAndLbPair(owner);
   const position = userPositions.find((p) => p.publicKey.toBase58() === positionPubkey);
-  if (!position) throw new Error(`claim: position ${positionPubkey} not found for ${owner.toBase58()}`);
+  if (!position)
+    throw new Error(`claim: position ${positionPubkey} not found for ${owner.toBase58()}`);
   return dlmm.claimSwapFee({ owner, position });
 }
 

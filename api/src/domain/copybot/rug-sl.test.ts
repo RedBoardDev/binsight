@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decideRugSl, type PricePoint, RugSlTracker, type RugSlConfig } from './rug-sl';
+import { decideRugSl, type PricePoint, type RugSlConfig, RugSlTracker } from './rug-sl';
 
 const CFG: RugSlConfig = { enabled: true, dropPercent: 40, windowSeconds: 60 };
 const NOW = 1_000_000;

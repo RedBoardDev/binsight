@@ -11,7 +11,8 @@ const URL = process.env.DATABASE_URL ?? 'postgres://meteora:meteora@localhost:54
 const PROCESS = 'brain' as const;
 const db = openDatabase(URL);
 const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as unknown as Logger;
-const clean = (): Promise<unknown> => db.delete(copybotStatus).where(eq(copybotStatus.process, PROCESS));
+const clean = (): Promise<unknown> =>
+  db.delete(copybotStatus).where(eq(copybotStatus.process, PROCESS));
 
 beforeEach(async () => {
   await clean();
@@ -42,9 +43,21 @@ describe('HeartbeatStore (integration)', () => {
   });
 
   it('NEVER throws when the DB write fails (a status hiccup must not crash the bot)', async () => {
-    const brokenDb = { insert: () => ({ values: () => ({ onConflictDoUpdate: async () => { throw new Error('db down'); } }) }) } as unknown as ReturnType<typeof openDatabase>;
+    const brokenDb = {
+      insert: () => ({
+        values: () => ({
+          onConflictDoUpdate: async () => {
+            throw new Error('db down');
+          },
+        }),
+      }),
+    } as unknown as ReturnType<typeof openDatabase>;
     const warn = vi.fn();
-    const store = new HeartbeatStore(brokenDb, { warn, info: vi.fn(), error: vi.fn() } as unknown as Logger, PROCESS);
+    const store = new HeartbeatStore(
+      brokenDb,
+      { warn, info: vi.fn(), error: vi.fn() } as unknown as Logger,
+      PROCESS,
+    );
     await expect(store.beat({ openPositions: 1 })).resolves.toBeUndefined();
     expect(warn).toHaveBeenCalledTimes(1);
   });

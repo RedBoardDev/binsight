@@ -27,7 +27,10 @@ export class HeartbeatStore {
         .values({ process: this.process, ts: now, detail })
         .onConflictDoUpdate({ target: copybotStatus.process, set: { ts: now, detail } });
     } catch (e) {
-      this.log.warn({ err: (e as Error).message, process: this.process }, 'heartbeat write failed (non-fatal)');
+      this.log.warn(
+        { err: (e as Error).message, process: this.process },
+        'heartbeat write failed (non-fatal)',
+      );
     }
   }
 }

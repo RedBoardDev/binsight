@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type FilterContext, FILTERS_ALL_OFF } from '../filter';
+import { FILTERS_ALL_OFF, type FilterContext } from '../filter';
 import { minHolders } from './min-holders';
 
 const c = { nonSolMint: 'MINT', pool: 'POOL' };
@@ -12,15 +12,25 @@ describe('minHolders — concentration proxy (per-leader, external-call, Jupiter
     expect(minHolders.enabled(on(100))).toBe(true);
   });
   it('holders below threshold → skip below_min_holders', () => {
-    expect(minHolders.evaluate(on(100), c, ctx(50))).toEqual({ action: 'skip', reason: 'below_min_holders' });
+    expect(minHolders.evaluate(on(100), c, ctx(50))).toEqual({
+      action: 'skip',
+      reason: 'below_min_holders',
+    });
   });
   it('holders ≥ threshold → pass', () => {
     expect(minHolders.evaluate(on(100), c, ctx(500))).toEqual({ action: 'pass' });
   });
   it('unknown holders → skip min_holders_unavailable', () => {
-    expect(minHolders.evaluate(on(100), c, ctx())).toEqual({ action: 'skip', reason: 'min_holders_unavailable' });
+    expect(minHolders.evaluate(on(100), c, ctx())).toEqual({
+      action: 'skip',
+      reason: 'min_holders_unavailable',
+    });
   });
   it('meta: jupiter-token / external-call / no numeric preset', () => {
-    expect([minHolders.source, minHolders.speedClass, minHolders.safePreset]).toEqual(['jupiter-token', 'external-call', null]);
+    expect([minHolders.source, minHolders.speedClass, minHolders.safePreset]).toEqual([
+      'jupiter-token',
+      'external-call',
+      null,
+    ]);
   });
 });

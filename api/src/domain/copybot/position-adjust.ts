@@ -27,7 +27,9 @@ export interface BinSol {
 }
 
 /** One per-bin re-shape operation toward the target. `remove.bps` = fraction of OUR CURRENT amount at that bin. */
-export type ReshapeOp = { offset: number; action: 'add'; addSol: number } | { offset: number; action: 'remove'; bps: number };
+export type ReshapeOp =
+  | { offset: number; action: 'add'; addSol: number }
+  | { offset: number; action: 'remove'; bps: number };
 
 /**
  * SHAPE-EXACT re-sync (PURE). Brings OUR per-bin distribution to `factor × leader per-bin`, where
@@ -36,7 +38,13 @@ export type ReshapeOp = { offset: number; action: 'add'; addSol: number } | { of
  * `deadbandSol` skips per-bin wiggle. This is what makes a SELECTIVE per-bin leader add/remove copied EXACTLY
  * (the size-only `planResync` only matched the total, letting the shape drift). Inputs aligned by `offset`.
  */
-export function planReshape(leaderBins: BinSol[], ourBins: BinSol[], ratio: number, maxSol: number, deadbandSol: number): ReshapeOp[] {
+export function planReshape(
+  leaderBins: BinSol[],
+  ourBins: BinSol[],
+  ratio: number,
+  maxSol: number,
+  deadbandSol: number,
+): ReshapeOp[] {
   if (!(ratio > 0)) return [];
   const leaderTotal = leaderBins.reduce((s, b) => s + b.sol, 0);
   if (!(leaderTotal > 0)) return [];
@@ -98,7 +106,9 @@ export function chunkBySpan<T extends { binId: number }>(items: T[], maxSpan: nu
  *  `offset` is relative to each position's LOWER bin and `baseBin` = our position's lower — the alignment fixed
  *  at the re-anchored open). Collapses contiguous same-bps removes into ranges to minimize txs. Pure. */
 export function reshapeToCalls(ops: ReshapeOp[], baseBin: number): ReshapeCalls {
-  const adds = ops.flatMap((o) => (o.action === 'add' ? [{ binId: baseBin + o.offset, addSol: o.addSol }] : []));
+  const adds = ops.flatMap((o) =>
+    o.action === 'add' ? [{ binId: baseBin + o.offset, addSol: o.addSol }] : [],
+  );
   const removeBins = ops
     .flatMap((o) => (o.action === 'remove' ? [{ binId: baseBin + o.offset, bps: o.bps }] : []))
     .sort((a, b) => a.binId - b.binId);
@@ -109,7 +119,10 @@ export function reshapeToCalls(ops: ReshapeOp[], baseBin: number): ReshapeCalls 
   for (const r of removeBins) {
     const last = removes.at(-1);
     const contiguous = last && r.binId === last.toBin + 1;
-    if (contiguous && Math.max(runMax, r.bps) - Math.min(runMin, r.bps) <= REMOVE_BPS_COALESCE_TOL) {
+    if (
+      contiguous &&
+      Math.max(runMax, r.bps) - Math.min(runMin, r.bps) <= REMOVE_BPS_COALESCE_TOL
+    ) {
       last.toBin = r.binId; // extend the run; merged bps = midpoint of its span (unbiased, |per-bin error| ≤ spread/2)
       runMin = Math.min(runMin, r.bps);
       runMax = Math.max(runMax, r.bps);
@@ -122,7 +135,6 @@ export function reshapeToCalls(ops: ReshapeOp[], baseBin: number): ReshapeCalls 
   }
   return { removes, adds };
 }
-
 
 /** A by-weight bin entry (binId + per-leg bps) — structurally the builder's `WeightBin`, kept SDK-free here so the
  *  contiguity helper stays pure and unit-testable. */

@@ -7,66 +7,134 @@
  *   yarn tsup --config tsup.copybot.config.ts → node --env-file=../.env dist/copybot/brain-main.cjs [--once] [--seconds=N]
  */
 import { DLMM_PROGRAM_ID } from '@binsight/shared';
-import { Connection, type Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
+import {
+  Connection,
+  type Keypair,
+  LAMPORTS_PER_SOL,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+} from '@solana/web3.js';
 import { pino } from 'pino';
+import { createAlertWebhookSink } from '@/copybot/alert';
+import { assertBusKey } from '@/copybot/bus-key-guard';
+import { deriveCommandId } from '@/copybot/command-id';
+import { ConfigStore } from '@/copybot/config-store';
+import { makeDetectionDeps } from '@/copybot/detection';
+import { derivePositionKeypair } from '@/copybot/ephemeral-position';
+import { HeartbeatStore } from '@/copybot/heartbeat-store';
+import { SYSTEM_USER_ID } from '@/copybot/journal-store';
+import { LOG_MARKER_EVENT_ROUTED } from '@/copybot/log-markers';
+import { CopyEvents } from '@/copybot/observability/copy-events';
+import { EventStore } from '@/copybot/observability/event-store';
+import { RugExitStore } from '@/copybot/rug-exit-store';
 import { type CapsState, checkCaps } from '@/domain/copybot/caps';
+import { type EffectiveConfig, effectiveFor } from '@/domain/copybot/config';
 import { type SignRequest, SignRequestSchema } from '@/domain/copybot/contracts';
 import { decideEntry } from '@/domain/copybot/decision';
 import { routeWithPending } from '@/domain/copybot/dispatch';
 import type { DetectedEvent } from '@/domain/copybot/events';
-import { type JournalEntry, stageForKind } from '@/domain/copybot/journal';
-import { RugSlTracker } from '@/domain/copybot/rug-sl';
-import { jitoTipFor } from '@/domain/copybot/jito-tip';
-import { type EffectiveConfig, effectiveFor } from '@/domain/copybot/config';
-
-import { type FilterContext, filtersActive, neededSources, rangeCoveragePercent, resolveFilterContext, runFilters, type TokenSnapshot } from '@/domain/copybot/filters';
+import {
+  type FilterContext,
+  filtersActive,
+  neededSources,
+  rangeCoveragePercent,
+  resolveFilterContext,
+  runFilters,
+  type TokenSnapshot,
+} from '@/domain/copybot/filters';
 import { JupiterTokenGateway } from '@/domain/copybot/filters/sources/jupiter-token/jupiter-token-gateway';
-import { TtlCache } from '@/domain/copybot/ttl-cache';
+import { jitoTipFor } from '@/domain/copybot/jito-tip';
+import { type JournalEntry, stageForKind } from '@/domain/copybot/journal';
 import { type EventSource, LeaderDetector } from '@/domain/copybot/leader-detector';
 import { LeaderPositionTracker } from '@/domain/copybot/leader-position';
-import { ATOMIC_BY_WEIGHT_BIN_LIMIT, isWideOpen } from '@/domain/copybot/open-routing';
-import { chunkBySpan, fillContiguousWeights, lamportsToSol, reshapeToCalls } from '@/domain/copybot/position-adjust';
-import { reanchorShape } from '@/domain/copybot/reanchor';
-import { type TwoSidedPlan, planTwoSided, planTwoSidedReshape, sizeTwoSided } from '@/domain/copybot/two-sided';
-import { planReconcile } from '@/domain/copybot/reconciliation';
-import { decideResidualSell, minOutWithSlippage, planWalletSweep } from '@/domain/copybot/residual-sell';
-import { classifyInstruction } from '@/domain/dlmm';
-import { RedisBus } from '@/infrastructure/bus/redis-bus';
-import { ControlChannel } from '@/infrastructure/bus/control-channel';
-import { openDatabase } from '@/infrastructure/persistence/database';
-import { decodeDlmmLegs } from '@/infrastructure/solana/dlmm/dlmm-event-decoder';
-import { type WeightBin, buildAddByWeight, buildAddByWeight2, buildClaimTx, buildCloseTx, buildCreateEmptyPosition, buildOpenByWeight, buildRemovePartial, createDlmmPair, isToken2022Pool } from '@/infrastructure/solana/dlmm/dlmm-tx-builder';
-import { readLeaderPositionShape, type UserPosition, readUserPositions } from '@/infrastructure/solana/dlmm/leader-position-reader';
-import { readActiveTokenPrice } from '@/infrastructure/solana/dlmm/active-bin-price';
-import { OnchainPoolMetaReader } from '@/infrastructure/solana/dlmm/pool-meta';
-import { DEFAULT_JUPITER_BASE_URL, WSOL_MINT, buildJupiterSwapTx, getJupiterBuyQuoteExactIn, getJupiterQuote } from '@/infrastructure/solana/jupiter/jupiter-swap-builder';
-import { BlockhashCache } from '@/infrastructure/solana/blockhash-cache';
-import { PriorityFeeOracle } from '@/infrastructure/solana/priority-fee-oracle';
-import { HeliusTxSubscriber } from '@/infrastructure/solana/helius-tx-subscriber';
-import { readAllOwnerTokenBalances, readOwnerTokenBalance } from '@/infrastructure/solana/token-balance-reader';
-import { HeliusTokenMetadataGateway } from '@/infrastructure/solana/token-metadata-gateway';
-import { createAlertWebhookSink } from '@/copybot/alert';
-import { assertBusKey } from '@/copybot/bus-key-guard';
-import { ConfigStore } from '@/copybot/config-store';
-import { SYSTEM_USER_ID } from '@/copybot/journal-store';
-import { CopyEvents } from '@/copybot/observability/copy-events';
-import { type CopyCode, FALLBACK_CODE, resolveLegacyReason } from '@/domain/copybot/observability/codes';
+import {
+  type CopyCode,
+  FALLBACK_CODE,
+  resolveLegacyReason,
+} from '@/domain/copybot/observability/codes';
 import type { EmitInput } from '@/domain/copybot/observability/input';
-import { EventStore } from '@/copybot/observability/event-store';
-import { HeartbeatStore } from '@/copybot/heartbeat-store';
-import { type BrainStatusDetail, DETECTION_STALE_FAILURES, HEARTBEAT_INTERVAL_MS, detectionHealthy, shouldAlertDetectionStale } from '@/domain/copybot/status';
-import { deriveCommandId } from '@/copybot/command-id';
-import { makeDetectionDeps } from '@/copybot/detection';
-import { LOG_MARKER_EVENT_ROUTED } from '@/copybot/log-markers';
-import { derivePositionKeypair } from '@/copybot/ephemeral-position';
+import { ATOMIC_BY_WEIGHT_BIN_LIMIT, isWideOpen } from '@/domain/copybot/open-routing';
+import {
+  chunkBySpan,
+  fillContiguousWeights,
+  lamportsToSol,
+  reshapeToCalls,
+} from '@/domain/copybot/position-adjust';
+import { reanchorShape } from '@/domain/copybot/reanchor';
+import { planReconcile } from '@/domain/copybot/reconciliation';
+import {
+  decideResidualSell,
+  minOutWithSlippage,
+  planWalletSweep,
+} from '@/domain/copybot/residual-sell';
+import { RugSlTracker } from '@/domain/copybot/rug-sl';
+import {
+  type BrainStatusDetail,
+  DETECTION_STALE_FAILURES,
+  detectionHealthy,
+  HEARTBEAT_INTERVAL_MS,
+  shouldAlertDetectionStale,
+} from '@/domain/copybot/status';
+import { TtlCache } from '@/domain/copybot/ttl-cache';
+import {
+  planTwoSided,
+  planTwoSidedReshape,
+  sizeTwoSided,
+  type TwoSidedPlan,
+} from '@/domain/copybot/two-sided';
+import { classifyInstruction } from '@/domain/dlmm';
+import { ControlChannel } from '@/infrastructure/bus/control-channel';
+import { RedisBus } from '@/infrastructure/bus/redis-bus';
+import { openDatabase } from '@/infrastructure/persistence/database';
+import { BlockhashCache } from '@/infrastructure/solana/blockhash-cache';
+import { readActiveTokenPrice } from '@/infrastructure/solana/dlmm/active-bin-price';
+import { decodeDlmmLegs } from '@/infrastructure/solana/dlmm/dlmm-event-decoder';
+import {
+  buildAddByWeight,
+  buildAddByWeight2,
+  buildClaimTx,
+  buildCloseTx,
+  buildCreateEmptyPosition,
+  buildOpenByWeight,
+  buildRemovePartial,
+  createDlmmPair,
+  isToken2022Pool,
+  type WeightBin,
+} from '@/infrastructure/solana/dlmm/dlmm-tx-builder';
+import {
+  readLeaderPositionShape,
+  readUserPositions,
+  type UserPosition,
+} from '@/infrastructure/solana/dlmm/leader-position-reader';
+import { OnchainPoolMetaReader } from '@/infrastructure/solana/dlmm/pool-meta';
+import { HeliusTxSubscriber } from '@/infrastructure/solana/helius-tx-subscriber';
+import {
+  buildJupiterSwapTx,
+  DEFAULT_JUPITER_BASE_URL,
+  getJupiterBuyQuoteExactIn,
+  getJupiterQuote,
+  WSOL_MINT,
+} from '@/infrastructure/solana/jupiter/jupiter-swap-builder';
+import { PriorityFeeOracle } from '@/infrastructure/solana/priority-fee-oracle';
+import {
+  readAllOwnerTokenBalances,
+  readOwnerTokenBalance,
+} from '@/infrastructure/solana/token-balance-reader';
+import { HeliusTokenMetadataGateway } from '@/infrastructure/solana/token-metadata-gateway';
 import { applyPriorityFee, withCuLimit } from './compute-budget';
+import { type ExecutedBatchDeps, processExecutedBatch } from './dispatch-executed';
 import { type Mirror, MirrorRegistry } from './mirror-registry';
 import { MirrorStore } from './mirror-store';
-import { type ExecutedBatchDeps, processExecutedBatch } from './dispatch-executed';
-import { createPositionQueue } from './position-queue';
+import {
+  type PendingOpenMaps,
+  type PendingStashKeys,
+  pendingOpenLeaders,
+  pendingStashesFor,
+  stashCount,
+} from './pending-open-cancel';
 import { createPendingOpenReservations } from './pending-open-reservations';
-import { type PendingOpenMaps, type PendingStashKeys, pendingOpenLeaders, pendingStashesFor, stashCount } from './pending-open-cancel';
-import { RugExitStore } from '@/copybot/rug-exit-store';
+import { createPositionQueue } from './position-queue';
 
 const STREAM = 'copybot:cmd:sign';
 const HOP = 'cmd:sign';
@@ -123,20 +191,28 @@ const cfg = {
   ownerPubkey: process.env.COPIER_OWNER ?? 'Ybbt2Td4TjxwpzvuicbP9ANizBwAJzqjuRmRrvDh9zz',
   balanceSol: Number(process.env.COPIER_BALANCE_SOL ?? '10'),
   jupiterBaseUrl: process.env.JUPITER_BASE_URL ?? DEFAULT_JUPITER_BASE_URL,
-  jitoEnabledEnv: process.env.COPYBOT_JITO !== undefined ? process.env.COPYBOT_JITO === 'true' : undefined, // env override of the DB jitoEnabled (anti-sandwich tip ix)
-  priorityFeeOracleEnv: process.env.COPYBOT_PRIORITY_FEE_ORACLE !== undefined ? process.env.COPYBOT_PRIORITY_FEE_ORACLE === 'true' : undefined, // env override of the DB priorityFeeOracle
+  jitoEnabledEnv:
+    process.env.COPYBOT_JITO !== undefined ? process.env.COPYBOT_JITO === 'true' : undefined, // env override of the DB jitoEnabled (anti-sandwich tip ix)
+  priorityFeeOracleEnv:
+    process.env.COPYBOT_PRIORITY_FEE_ORACLE !== undefined
+      ? process.env.COPYBOT_PRIORITY_FEE_ORACLE === 'true'
+      : undefined, // env override of the DB priorityFeeOracle
 };
 // Sizing/caps/two-sided/filters all come from the DB-backed config (config-store), resolved per leader via eff().
 // The DB config is the SINGLE source of truth (the on-chain bench seeds it directly — see test-onchain/bench-config).
 const log = pino({ level: process.env.LOG_LEVEL ?? 'info' });
-const firstTx = (t: Transaction | Transaction[]): Transaction => (Array.isArray(t) ? (t[0] as Transaction) : t);
+const firstTx = (t: Transaction | Transaction[]): Transaction =>
+  Array.isArray(t) ? (t[0] as Transaction) : t;
 // A by-weight OPEN/ADD build must be a SINGLE tx — if the SDK chunked it (range too wide for one tx), publishing only
 // the first tx would deposit nothing (create the position but not the liquidity, or land a partial deposit). Wide
 // opens/adds are routed through create + add2 (one ≤70-bin deposit tx); this asserts that invariant — fail LOUD
 // rather than silently drop a chunk (the no-miss/shape-fidelity pillar). Close/claim/remove are ≤70 bins → 1 tx.
 const onlyTx = (t: Transaction | Transaction[], context: string): Transaction => {
   const arr = Array.isArray(t) ? t : [t];
-  if (arr.length !== 1) throw new Error(`${context}: build chunked into ${arr.length} txs (range too wide) — aborting, no partial open/deposit`);
+  if (arr.length !== 1)
+    throw new Error(
+      `${context}: build chunked into ${arr.length} txs (range too wide) — aborting, no partial open/deposit`,
+    );
   return arr[0] as Transaction;
 };
 // Merge several SDK txs into ONE (concatenate their instructions). A WIDE atomic open chunks into [pre, main, post];
@@ -163,7 +239,17 @@ const TWO_SIDED_CU_LIMIT = 1_400_000; // max CU cap (free — only used CU is me
 // restart whose pending entry is gone will no-op (the deferred open/deposit is dropped, recovered only by the
 // orphan-sweep / reconcile backstops). The ev:executed PEL drain below covers the close path + transient errors within
 // a LIVE process; persisting these maps to survive a crash is a separate follow-up (not in this fix).
-const pendingTwoSidedOpens = new Map<string, { e: DetectedEvent; dist: WeightBin[]; sizeLamports: bigint; solSide: 'X' | 'Y'; tokenMint: string; sizeSol: number }>();
+const pendingTwoSidedOpens = new Map<
+  string,
+  {
+    e: DetectedEvent;
+    dist: WeightBin[];
+    sizeLamports: bigint;
+    solSide: 'X' | 'Y';
+    tokenMint: string;
+    sizeSol: number;
+  }
+>();
 
 // TOKEN-2022 2-TX OPEN: a Token-2022 leg can't be deposited by the v1 by-weight ix (on-chain it pins the token
 // program to classic). The deposit must use the v2 ix (addLiquidityByWeight2), which is add-to-EXISTING → the open
@@ -177,12 +263,51 @@ const pendingTwoSidedOpens = new Map<string, { e: DetectedEvent; dist: WeightBin
 //    create lands (add2 fetches the positionV2 account, so it can't be pre-built).
 //  · PREBUILT (one-sided wide / classic-wide two-sided): `prebuiltDeposit` present → the deposit (native
 //    addLiquidityOneSide/addLiquidityByWeight + unwrap, built atomically with the create) is published as-is.
-const pendingToken2022Deposits = new Map<string, { e: DetectedEvent; lower: number; upper: number; sizeSol: number; prebuiltDeposit?: Transaction; dist?: WeightBin[]; totalX?: bigint; totalY?: bigint }>();
-const pendingToken2022Mirrors = new Map<string, { leaderPosition: string; ourPosition: string; pool: string; nonSolSymbol: string | null; sizeSol: number; lower: number; upper: number; leaderSizeSol: number }>();
+const pendingToken2022Deposits = new Map<
+  string,
+  {
+    e: DetectedEvent;
+    lower: number;
+    upper: number;
+    sizeSol: number;
+    prebuiltDeposit?: Transaction;
+    dist?: WeightBin[];
+    totalX?: bigint;
+    totalY?: bigint;
+  }
+>();
+const pendingToken2022Mirrors = new Map<
+  string,
+  {
+    leaderPosition: string;
+    ourPosition: string;
+    pool: string;
+    nonSolSymbol: string | null;
+    sizeSol: number;
+    lower: number;
+    upper: number;
+    leaderSizeSol: number;
+  }
+>();
 // TWO-SIDED RESHAPE ADD (grow with a token-leg deficit): like the open, the token can't be bought via ExactOut on a
 // Token-2022 coin → buy via ExactIn (variable output) then build+publish the add ONCE the buy lands (deposit the
 // ACTUAL balance). Stashed by the reshape buy's commandId; consumed in publishReshapeAddAfterBuy.
-const pendingReshapeAdds = new Map<string, { dist: WeightBin[]; addLamports: bigint; solSide: 'X' | 'Y'; tokenMint: string; lower: number; upper: number; totalAddSol: number; ourPosition: string; pool: string; leaderPosition: string; signature: string }>();
+const pendingReshapeAdds = new Map<
+  string,
+  {
+    dist: WeightBin[];
+    addLamports: bigint;
+    solSide: 'X' | 'Y';
+    tokenMint: string;
+    lower: number;
+    upper: number;
+    totalAddSol: number;
+    ourPosition: string;
+    pool: string;
+    leaderPosition: string;
+    signature: string;
+  }
+>();
 const buildingToken2022Positions = new Map<string, number>(); // ourPosition → ms the create was published (orphan-close grace while the deposit lands)
 // DUPLICATE-OPEN GUARD (two mechanisms). (1) `positionQueue` serializes ALL handler work for ONE leader position:
 // event B's routing is computed only AFTER event A's handler settled (so a classic open's `registry.open` @511 has
@@ -211,7 +336,10 @@ const inFlightBuyMints = new Map<string, number>(); // tokenMint → ms the two-
 // confirm — only the commandId/pool. Stash the sold token (mint + resolved symbol if known) keyed by the sell's
 // commandId at publish time, so the sell-confirm handler can name the token in the FEED `swap.executed` line
 // ("Swapped X → SOL") WITHOUT an extra RPC. Mirrors the inFlightBuyMints / pendingReshapeAdds stash pattern.
-const pendingSellMints = new Map<string, { tokenMint: string; nonSolSymbol: string | null; pool: string }>();
+const pendingSellMints = new Map<
+  string,
+  { tokenMint: string; nonSolSymbol: string | null; pool: string }
+>();
 // The sweep must not sell the bought token during buy → (create →) deposit (≤ ~20s under load). Kept SHORT so it
 // expires soon after the deposit lands — else it would also block the safety-sweep from selling that same token's
 // CLOSE residual (the close returns it to the wallet) for too long. The close-triggered sell is the primary path;
@@ -252,7 +380,12 @@ async function main(): Promise<void> {
   // actionable (pinned) events also fan out to the external ALERT_WEBHOOK via the injected sink (no-op when unset).
   const tlog = log.child({ userId: SYSTEM_USER_ID, wallet: cfg.ownerPubkey, process: 'brain' });
   const alertSink = createAlertWebhookSink(process.env.ALERT_WEBHOOK, tlog);
-  const events = new CopyEvents(new EventStore(db, tlog), tlog, { userId: SYSTEM_USER_ID, wallet: cfg.ownerPubkey, process: 'brain' }, alertSink);
+  const events = new CopyEvents(
+    new EventStore(db, tlog),
+    tlog,
+    { userId: SYSTEM_USER_ID, wallet: cfg.ownerPubkey, process: 'brain' },
+    alertSink,
+  );
   // P2: emit a TYPED event for a call site whose `reason` is RUNTIME-DYNAMIC (decision.reason, cap.reason, the
   // filter verdict, the generic publish marker). The leaf == the verbatim reason (SPEC §2.1 + resolveLegacyReason);
   // an unmapped/absent reason deterministically falls back to `system.unmapped` (never code-less). The pure
@@ -265,15 +398,19 @@ async function main(): Promise<void> {
   // the emit dedup keys on `(correlationId, code)`, so distinct skipped opens/reshapes need a UNIQUE eventKey or
   // they would collapse into one row under the 120s LRU. WS + cursor-poll re-detect of the SAME leg shares the key
   // (correctly collapses to one row). The leaf differs per stage so an open-skip and a reshape-skip never alias.
-  const openSkipKey = (e: DetectedEvent): string => `${cfg.leader}:${e.pool}:open-skip:${e.signature}:${e.position}`;
-  const reshapeSkipKey = (e: DetectedEvent, m: Mirror): string => `${cfg.leader}:${m.pool}:reshape-skip:${e.signature}:${m.ourPosition}`;
+  const openSkipKey = (e: DetectedEvent): string =>
+    `${cfg.leader}:${e.pool}:open-skip:${e.signature}:${e.position}`;
+  const reshapeSkipKey = (e: DetectedEvent, m: Mirror): string =>
+    `${cfg.leader}:${m.pool}:reshape-skip:${e.signature}:${m.ourPosition}`;
   // Per-position correlation keys for the `lifecycle.*_confirmed` FEED events. These confirmed emits carry no
   // commandId of their own, yet the emit dedup keys on `(correlationId, code)` — without a per-position key the
   // `correlationId` would be empty and two DISTINCT positions' confirms within the 120s LRU would collapse into one
   // row (lost feed). Keyed by OUR position so the SAME position's duplicate confirms (ev:executed + reconcile)
   // correctly collapse to one row, while distinct positions stay distinct. The leaf differs per code.
-  const openConfirmedKey = (pool: string, ourPosition: string): string => `${cfg.leader}:${pool}:open-confirmed:${ourPosition}`;
-  const closeConfirmedKey = (pool: string, ourPosition: string): string => `${cfg.leader}:${pool}:close-confirmed:${ourPosition}`;
+  const openConfirmedKey = (pool: string, ourPosition: string): string =>
+    `${cfg.leader}:${pool}:open-confirmed:${ourPosition}`;
+  const closeConfirmedKey = (pool: string, ourPosition: string): string =>
+    `${cfg.leader}:${pool}:close-confirmed:${ourPosition}`;
   const configStore = new ConfigStore(db, log);
   let runtimeConfig = await configStore.seedIfAbsent(); // the CopybotConfig blob; polled + ping-reloaded live below
   const reloadConfig = async (): Promise<void> => {
@@ -302,7 +439,18 @@ async function main(): Promise<void> {
   let detectionStaleAlerted = false; // once-per-episode gate; re-armed when BOTH counters are back to 0
   const brainStatus = (): BrainStatusDetail => {
     const open = registry.openPositions();
-    return { leader: cfg.leader, openPositions: open.length, exposureSol: open.reduce((s, m) => s + m.sizeSol, 0), lastActionAt, lastLatencyMs, wsConnected, lastPollAt, lastReconcileAt, pollFailures, reconcileFailures };
+    return {
+      leader: cfg.leader,
+      openPositions: open.length,
+      exposureSol: open.reduce((s, m) => s + m.sizeSol, 0),
+      lastActionAt,
+      lastLatencyMs,
+      wsConnected,
+      lastPollAt,
+      lastReconcileAt,
+      pollFailures,
+      reconcileFailures,
+    };
   };
   // A detector loop (poll or reconcile) succeeded: stamp its time, zero its consecutive-failure counter, and re-arm
   // the stale alert once detection is FULLY healthy again (both counters at 0). Observability only.
@@ -345,23 +493,35 @@ async function main(): Promise<void> {
   const snapshotCache = new TtlCache<TokenSnapshot>(SNAPSHOT_TTL_MS);
   const jupiterToken = new JupiterTokenGateway({
     apiKey: process.env.JUPITER_TOKEN_API_KEY,
-    onError: (err, mint) => log.warn({ err, mint }, 'jupiter token snapshot failed (filter data unavailable)'),
+    onError: (err, mint) =>
+      log.warn({ err, mint }, 'jupiter token snapshot failed (filter data unavailable)'),
   }).getSnapshot;
   const filterDeps = { jupiterToken, snapshotCache };
   log.info({ filters: eff().filters }, '🧪 entry filters loaded');
 
   const capsState = (): CapsState => {
     const open = registry.openPositions();
-    return { openPositions: open.length, totalExposureSol: open.reduce((s, m) => s + m.sizeSol, 0), tokenOpenCount: 0, openTimestampsMs: [] };
+    return {
+      openPositions: open.length,
+      totalExposureSol: open.reduce((s, m) => s + m.sizeSol, 0),
+      tokenOpenCount: 0,
+      openTimestampsMs: [],
+    };
   };
 
-  async function publish(sr: Omit<SignRequest, 'issuedAtMs'>, journalHint?: Partial<JournalEntry>): Promise<void> {
+  async function publish(
+    sr: Omit<SignRequest, 'issuedAtMs'>,
+    journalHint?: Partial<JournalEntry>,
+  ): Promise<void> {
     const full: SignRequest = { ...sr, issuedAtMs: Date.now() }; // timestamp at publish time (latency)
     SignRequestSchema.parse(full); // local guardrail: we only publish a valid contract
     const id = await bus.publish(STREAM, HOP, hmacKey, full);
     // Machine-readable publish marker: the EXACT copy pubkey + kind we just published (the journal's formatted line
     // carries neither as a field). Ops visibility + lets a consumer track the published copy without RPC enumeration.
-    log.info({ kind: full.kind, our: full.positionPubkey, pool: full.pool, streamId: id }, '📤 published');
+    log.info(
+      { kind: full.kind, our: full.positionPubkey, pool: full.pool, streamId: id },
+      '📤 published',
+    );
     // Activity journal: EVERY published intent is recorded once here (single backstop). A context-specific publish
     // (a failsafe / orphan / rug-SL re-close) passes a `reason` hint that resolves to the pinned `failsafe.*` code
     // (SPEC §2.1) — every other publish is a plain internal `lifecycle.open_published` trace (the on-chain
@@ -369,7 +529,9 @@ async function main(): Promise<void> {
     // NB: `severity` is denormalized from the resolved code in the typed model (the failsafe codes are already
     // warn/error), so the legacy `journalHint.severity` is no longer plumbed — the registry now governs it.
     const reason = journalHint?.reason;
-    const code = reason ? (resolveLegacyReason(reason) ?? FALLBACK_CODE) : 'lifecycle.open_published';
+    const code = reason
+      ? (resolveLegacyReason(reason) ?? FALLBACK_CODE)
+      : 'lifecycle.open_published';
     events.emit(code, {
       stage: journalHint?.stage ?? stageForKind(full.kind),
       outcome: journalHint?.outcome ?? 'published',
@@ -402,8 +564,17 @@ async function main(): Promise<void> {
     // the vault bundles; on the RPC fallback the tip burns (small, capped, only when Jito is on). Wall B allowlists
     // a tip to a known Jito account up to its own hard cap. Default off ⇒ no tip ix at all.
     const tip = jitoTipFor(jitoOn(), pf.maxCapSol * LAMPORTS_PER_SOL, prioritySpent, jitoTipSeed++);
-    if (tip) tx.instructions.push(SystemProgram.transfer({ fromPubkey: ownerPk, toPubkey: tip.account, lamports: tip.lamports }));
-    return tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64');
+    if (tip)
+      tx.instructions.push(
+        SystemProgram.transfer({
+          fromPubkey: ownerPk,
+          toPubkey: tip.account,
+          lamports: tip.lamports,
+        }),
+      );
+    return tx
+      .serialize({ requireAllSignatures: false, verifySignatures: false })
+      .toString('base64');
   }
 
   async function slots(): Promise<{ issuedAtSlot: number; deadlineSlot: number }> {
@@ -416,7 +587,13 @@ async function main(): Promise<void> {
   // read-after-write lag). Read until the shape is RELIABLE: a both-legs shape is fully indexed (return at once → zero
   // added latency on the common two-sided open); a single-leg shape is confirmed STABLE (total liquidity unchanged
   // across two reads) before trusting it as genuinely one-sided / settled. null only if the position is never readable.
-  async function readStableShape(poolPk: PublicKey, owner: PublicKey, position: string, pair: Awaited<ReturnType<typeof createDlmmPair>>, expectBothLegs = false) {
+  async function readStableShape(
+    poolPk: PublicKey,
+    owner: PublicKey,
+    position: string,
+    pair: Awaited<ReturnType<typeof createDlmmPair>>,
+    expectBothLegs = false,
+  ) {
     let last: Awaited<ReturnType<typeof readLeaderPositionShape>> = null;
     let lastTotal = -1n;
     const maxReads = expectBothLegs ? TWO_SIDED_SHAPE_MAX_READS : OPEN_SHAPE_READ_RETRIES;
@@ -442,20 +619,52 @@ async function main(): Promise<void> {
   }
 
   async function handleOpen(e: DetectedEvent): Promise<void> {
-    log.info({ position: e.position, pool: e.pool, depositSol: e.depositSol }, '🔨 handleOpen start');
+    log.info(
+      { position: e.position, pool: e.pool, depositSol: e.depositSol },
+      '🔨 handleOpen start',
+    );
     const ec = eff();
-    const decision = decideEntry(e, { ...ec.sizing, skipNonSolPaired: true }, { availableBalanceSol: cfg.balanceSol });
+    const decision = decideEntry(
+      e,
+      { ...ec.sizing, skipNonSolPaired: true },
+      { availableBalanceSol: cfg.balanceSol },
+    );
     if (decision.outcome === 'skipped') {
       // dynamic reason: below_min_floor (sizing) / insufficient_balance (balance, pinned) / non_sol_paired — resolved to its leaf.
       // `eventKey` (the per-open detection correlation) keys the emit dedup so distinct opens skipped for the same
       // reason stay DISTINCT rows (an empty correlation would collapse them); WS+poll re-detect of one leg collapses.
-      emitFor(decision.reason, { stage: 'open', outcome: 'skipped', reason: decision.reason, leader: cfg.leader, pool: e.pool, leaderPosition: e.position, eventKey: openSkipKey(e), leaderSizeSol: e.depositSol, adminDetail: { mint: e.nonSolMint, nonSolSymbol: e.nonSolSymbol, configuredSol: cfg.balanceSol } });
+      emitFor(decision.reason, {
+        stage: 'open',
+        outcome: 'skipped',
+        reason: decision.reason,
+        leader: cfg.leader,
+        pool: e.pool,
+        leaderPosition: e.position,
+        eventKey: openSkipKey(e),
+        leaderSizeSol: e.depositSol,
+        adminDetail: {
+          mint: e.nonSolMint,
+          nonSolSymbol: e.nonSolSymbol,
+          configuredSol: cfg.balanceSol,
+        },
+      });
       return;
     }
     const cap = checkCaps(ec.caps, capsState(), decision.sizeSol, Date.now());
     if (cap.action === 'block') {
       // dynamic cap reason: kill_switch_* (internal) / max_open_positions / max_concurrent_per_token / max_opens_per_window / max_total_exposure (feed).
-      emitFor(cap.reason, { stage: 'open', outcome: 'blocked', reason: cap.reason, leader: cfg.leader, pool: e.pool, leaderPosition: e.position, eventKey: openSkipKey(e), leaderSizeSol: e.depositSol, ourSizeSol: decision.sizeSol, adminDetail: { mint: e.nonSolMint, nonSolSymbol: e.nonSolSymbol } });
+      emitFor(cap.reason, {
+        stage: 'open',
+        outcome: 'blocked',
+        reason: cap.reason,
+        leader: cfg.leader,
+        pool: e.pool,
+        leaderPosition: e.position,
+        eventKey: openSkipKey(e),
+        leaderSizeSol: e.depositSol,
+        ourSizeSol: decision.sizeSol,
+        adminDetail: { mint: e.nonSolMint, nonSolSymbol: e.nonSolSymbol },
+      });
       return;
     }
 
@@ -466,12 +675,24 @@ async function main(): Promise<void> {
     // nothing when only local/leader-shape filters are enabled. ONE shared DLMM instance serves the read AND build.
     const pairP = createDlmmPair(conn, poolPk);
     const slotsP = slots();
-    const filterDataP = resolveFilterContext(e.nonSolMint, neededSources(ec.filters), filterDeps, { nowMs: Date.now(), timeoutMs: FILTER_TIMEOUT_MS });
+    const filterDataP = resolveFilterContext(e.nonSolMint, neededSources(ec.filters), filterDeps, {
+      nowMs: Date.now(),
+      timeoutMs: FILTER_TIMEOUT_MS,
+    });
 
     const meta = await poolReader.loadPoolMeta(e.pool);
     if (!meta?.solSide) {
       void pairP.catch(() => undefined); // non-SOL skip → discard the in-flight pair read (no unhandled rejection)
-      events.emit('eligibility.non_sol_paired', { stage: 'open', outcome: 'skipped', reason: 'non_sol_pool', leader: cfg.leader, pool: e.pool, leaderPosition: e.position, eventKey: openSkipKey(e), adminDetail: { mint: e.nonSolMint, nonSolSymbol: e.nonSolSymbol } });
+      events.emit('eligibility.non_sol_paired', {
+        stage: 'open',
+        outcome: 'skipped',
+        reason: 'non_sol_pool',
+        leader: cfg.leader,
+        pool: e.pool,
+        leaderPosition: e.position,
+        eventKey: openSkipKey(e),
+        adminDetail: { mint: e.nonSolMint, nonSolSymbol: e.nonSolSymbol },
+      });
       return;
     }
 
@@ -482,7 +703,16 @@ async function main(): Promise<void> {
     const expectTwoSided = (e.depositTokenRaw ?? 0) > ec.execution.dustTokenRaw;
     const shape = await readStableShape(poolPk, leaderPk, e.position, pair, expectTwoSided);
     if (!shape) {
-      events.emit('detect.leader_position_not_found', { stage: 'open', outcome: 'skipped', reason: 'leader_position_not_found', leader: cfg.leader, pool: e.pool, leaderPosition: e.position, eventKey: openSkipKey(e), adminDetail: { afterRetries: OPEN_SHAPE_READ_RETRIES } });
+      events.emit('detect.leader_position_not_found', {
+        stage: 'open',
+        outcome: 'skipped',
+        reason: 'leader_position_not_found',
+        leader: cfg.leader,
+        pool: e.pool,
+        leaderPosition: e.position,
+        eventKey: openSkipKey(e),
+        adminDetail: { afterRetries: OPEN_SHAPE_READ_RETRIES },
+      });
       return;
     }
 
@@ -513,17 +743,43 @@ async function main(): Promise<void> {
     if (verdict.action === 'skip') {
       // An enabled filter ENFORCES (no shadow mode): the open is skipped with the failing filter's reason → its
       // `filter.<reason>` leaf (dynamic; 16 verbatim filter leaves, all feed/transparency — resolved per reason).
-      emitFor(verdict.reason, { stage: 'open', outcome: 'skipped', reason: verdict.reason, leader: cfg.leader, pool: e.pool, leaderPosition: e.position, eventKey: openSkipKey(e), leaderSizeSol: e.depositSol, adminDetail: { mint: e.nonSolMint, nonSolSymbol: e.nonSolSymbol } });
+      emitFor(verdict.reason, {
+        stage: 'open',
+        outcome: 'skipped',
+        reason: verdict.reason,
+        leader: cfg.leader,
+        pool: e.pool,
+        leaderPosition: e.position,
+        eventKey: openSkipKey(e),
+        leaderSizeSol: e.depositSol,
+        adminDetail: { mint: e.nonSolMint, nonSolSymbol: e.nonSolSymbol },
+      });
       return;
     }
 
     // TWO-SIDED (flag-gated): if the leader's position holds a TOKEN leg, replicate BOTH sides (buy the token,
     // deposit two-sided). 'shadow' logs the plan but still opens SOL-only; 'off' (default) = SOL-side-only.
     if (ec.twoSidedMode !== 'off') {
-      const legs = shape.perBin.map((b) => ({ binId: b.binId, solRaw: meta.solSide === 'Y' ? b.y : b.x, tokenRaw: meta.solSide === 'Y' ? b.x : b.y }));
-      const plan = planTwoSided(legs, shape.activeBinId, shape.activeBinId, BigInt(ec.execution.dustTokenRaw));
+      const legs = shape.perBin.map((b) => ({
+        binId: b.binId,
+        solRaw: meta.solSide === 'Y' ? b.y : b.x,
+        tokenRaw: meta.solSide === 'Y' ? b.x : b.y,
+      }));
+      const plan = planTwoSided(
+        legs,
+        shape.activeBinId,
+        shape.activeBinId,
+        BigInt(ec.execution.dustTokenRaw),
+      );
       if (plan.twoSided && plan.leaderSolRaw > 0n && e.nonSolMint) {
-        log.info({ mode: ec.twoSidedMode, leaderTokenRaw: plan.leaderTokenRaw.toString(), bins: plan.weights.length }, '🪙 two-sided position detected');
+        log.info(
+          {
+            mode: ec.twoSidedMode,
+            leaderTokenRaw: plan.leaderTokenRaw.toString(),
+            bins: plan.weights.length,
+          },
+          '🪙 two-sided position detected',
+        );
         // SAFE: a two-sided leader is copied as BOTH legs or NOT AT ALL — NEVER a half (one-sided) position. 'on'
         // hands off to openTwoSided, which either replicates both legs or SKIPS cleanly if the token can't be
         // bought (no Jupiter route). Either way we return — we do NOT fall through to the one-sided SOL path.
@@ -532,11 +788,20 @@ async function main(): Promise<void> {
       }
     }
 
-    const perBinSol = shape.perBin.map((b) => ({ binId: b.binId, amount: meta.solSide === 'Y' ? b.y : b.x }));
+    const perBinSol = shape.perBin.map((b) => ({
+      binId: b.binId,
+      amount: meta.solSide === 'Y' ? b.y : b.x,
+    }));
     const reanchored = reanchorShape(shape.activeBinId, shape.activeBinId, perBinSol); // delta 0 = 100% exact bins
     // CONTIGUOUS span for the SDK by-weight open: a re-anchor that drops a tiny interior bin to 0 bps would leave a
     // binId gap → "Discontinuous Bin ID". Fill gaps with 0/0 (min/max unchanged, so targetBinRange stays correct).
-    const dist: WeightBin[] = fillContiguousWeights(reanchored.weights.map((w) => ({ binId: w.binId, xBps: meta.solSide === 'X' ? w.bps : 0, yBps: meta.solSide === 'Y' ? w.bps : 0 })));
+    const dist: WeightBin[] = fillContiguousWeights(
+      reanchored.weights.map((w) => ({
+        binId: w.binId,
+        xBps: meta.solSide === 'X' ? w.bps : 0,
+        yBps: meta.solSide === 'Y' ? w.bps : 0,
+      })),
+    );
 
     const sizeLamports = BigInt(Math.round(decision.sizeSol * LAMPORTS_PER_SOL));
     const totalX = meta.solSide === 'X' ? sizeLamports : 0n;
@@ -548,14 +813,34 @@ async function main(): Promise<void> {
     // (deposit+unwrap) once the create lands (publishSplitOpen). The commandId is derived from `open-create:` so the
     // create's position keypair matches the one baked into the SDK build. Narrow opens (≤25) keep the atomic 1-tx path.
     const wide = isWideOpen(dist.length);
-    const eventKey = wide ? `${cfg.leader}:${e.pool}:open-create:${e.signature}` : `${cfg.leader}:${e.pool}:open:${e.signature}`;
+    const eventKey = wide
+      ? `${cfg.leader}:${e.pool}:open-create:${e.signature}`
+      : `${cfg.leader}:${e.pool}:open:${e.signature}`;
     const commandId = deriveCommandId(eventKey);
     const posKp: Keypair = derivePositionKeypair(commandId);
-    const built = await buildOpenByWeight(conn, poolPk, ownerPk, posKp.publicKey, totalX, totalY, dist, pair);
+    const built = await buildOpenByWeight(
+      conn,
+      poolPk,
+      ownerPk,
+      posKp.publicKey,
+      totalX,
+      totalY,
+      dist,
+      pair,
+    );
     if (wide) {
       void slotsP.catch(() => undefined); // the parallel slot fetch is unused on this path; publishSplitOpen fetches its own
       const arr = Array.isArray(built) ? built : [built]; // ≥26 bins → [pre, main, post]
-      return publishSplitOpen(e, { createTx: arr[0] as Transaction, depositTx: mergeDeposit(arr.slice(1)), posPubkey: posKp.publicKey.toBase58(), commandId, eventKey, lower, upper, sizeSol: decision.sizeSol });
+      return publishSplitOpen(e, {
+        createTx: arr[0] as Transaction,
+        depositTx: mergeDeposit(arr.slice(1)),
+        posPubkey: posKp.publicKey.toBase58(),
+        commandId,
+        eventKey,
+        lower,
+        upper,
+        sizeSol: decision.sizeSol,
+      });
     }
     const { issuedAtSlot, deadlineSlot } = await slotsP;
     const sr: Omit<SignRequest, 'issuedAtMs'> = {
@@ -571,7 +856,16 @@ async function main(): Promise<void> {
       issuedAtSlot,
       deadlineSlot,
     };
-    const mirror = registry.open({ leaderPosition: e.position, ourPosition: sr.positionPubkey, pool: e.pool, nonSolSymbol: e.nonSolSymbol, sizeSol: decision.sizeSol, lowerBin: lower, upperBin: upper, openedAt: Date.now() });
+    const mirror = registry.open({
+      leaderPosition: e.position,
+      ourPosition: sr.positionPubkey,
+      pool: e.pool,
+      nonSolSymbol: e.nonSolSymbol,
+      sizeSol: decision.sizeSol,
+      lowerBin: lower,
+      upperBin: upper,
+      openedAt: Date.now(),
+    });
     pendingOpens.clear(e.position); // now tracked → lift the duplicate-open reservation for this leader position
     await store.saveOpen(mirror); // persist BEFORE publishing → never an untracked open
     await publish(sr, { leaderPosition: e.position, leaderSizeSol: e.depositSol });
@@ -580,27 +874,62 @@ async function main(): Promise<void> {
   /** TWO-SIDED open: buy the token leg (ExactOut, deterministic) then deposit BOTH legs. Publishes the BUY first
    *  so the coffre lands it before the open (funds the token). The SOL leg keeps the sized SOL; the token leg is
    *  scaled by the SAME factor (our SOL / leader SOL) to preserve the leader's composition. */
-  async function openTwoSided(e: DetectedEvent, tokenMint: string, solSide: 'X' | 'Y', plan: TwoSidedPlan): Promise<void> {
+  async function openTwoSided(
+    e: DetectedEvent,
+    tokenMint: string,
+    solSide: 'X' | 'Y',
+    plan: TwoSidedPlan,
+  ): Promise<void> {
     const ec = eff();
     // Scale BOTH legs by copyRatio of the leader's respective legs (preserves composition), SOL leg capped.
-    const { solLamports: sizeLamports, tokenTarget } = sizeTwoSided(plan.leaderSolRaw, plan.leaderTokenRaw, ec.sizing.tradeRatioPct ?? 100, BigInt(Math.round(ec.sizing.maxTradeSizeSol * LAMPORTS_PER_SOL)));
+    const { solLamports: sizeLamports, tokenTarget } = sizeTwoSided(
+      plan.leaderSolRaw,
+      plan.leaderTokenRaw,
+      ec.sizing.tradeRatioPct ?? 100,
+      BigInt(Math.round(ec.sizing.maxTradeSizeSol * LAMPORTS_PER_SOL)),
+    );
     const sizeSol = Number(sizeLamports) / LAMPORTS_PER_SOL;
-    const dist: WeightBin[] = fillContiguousWeights(plan.weights.map((w) => ({ binId: w.binId, xBps: solSide === 'X' ? w.solBps : w.tokenBps, yBps: solSide === 'Y' ? w.solBps : w.tokenBps }))); // contiguous span (SDK by-weight requirement)
+    const dist: WeightBin[] = fillContiguousWeights(
+      plan.weights.map((w) => ({
+        binId: w.binId,
+        xBps: solSide === 'X' ? w.solBps : w.tokenBps,
+        yBps: solSide === 'Y' ? w.solBps : w.tokenBps,
+      })),
+    ); // contiguous span (SDK by-weight requirement)
     // ExactIn buy: ExactOut has NO Jupiter route for most memecoins (NO_ROUTES_FOUND). Price the token leg via the
     // SELL direction (ExactIn, fully routed) → its SOL value → spend that to BUY the token (ExactIn). The token
     // received is variable, so the build-after-buy step deposits the ACTUAL balance (not a pre-planned exact amount).
     let buyQuote: Awaited<ReturnType<typeof getJupiterBuyQuoteExactIn>>;
     let buyTxB64: string;
     try {
-      const priceQuote = await getJupiterQuote(cfg.jupiterBaseUrl, tokenMint, tokenTarget, ec.execution.slippageBps); // sell tokenTarget → its SOL value
+      const priceQuote = await getJupiterQuote(
+        cfg.jupiterBaseUrl,
+        tokenMint,
+        tokenTarget,
+        ec.execution.slippageBps,
+      ); // sell tokenTarget → its SOL value
       const solToSpend = BigInt(priceQuote.outAmount);
       if (!(solToSpend > 0n)) throw new Error('token leg priced at 0 SOL');
-      buyQuote = await getJupiterBuyQuoteExactIn(cfg.jupiterBaseUrl, tokenMint, solToSpend, ec.execution.slippageBps);
+      buyQuote = await getJupiterBuyQuoteExactIn(
+        cfg.jupiterBaseUrl,
+        tokenMint,
+        solToSpend,
+        ec.execution.slippageBps,
+      );
       buyTxB64 = await buildJupiterSwapTx(cfg.jupiterBaseUrl, buyQuote, ownerPk.toBase58());
     } catch (err) {
       // SAFE: the token leg genuinely can't be acquired (no route EVEN via ExactIn, or a priced-at-0 leg). We do NOT
       // open a HALF (one-sided) position — SKIP entirely (nothing stashed/published yet → clean no-op).
-      events.emit('eligibility.twosided.unbuyable', { stage: 'open', outcome: 'skipped', reason: 'twosided_unbuyable', leader: cfg.leader, pool: e.pool, leaderPosition: e.position, eventKey: openSkipKey(e), adminDetail: { mint: tokenMint, nonSolSymbol: e.nonSolSymbol, err: (err as Error).message } });
+      events.emit('eligibility.twosided.unbuyable', {
+        stage: 'open',
+        outcome: 'skipped',
+        reason: 'twosided_unbuyable',
+        leader: cfg.leader,
+        pool: e.pool,
+        leaderPosition: e.position,
+        eventKey: openSkipKey(e),
+        adminDetail: { mint: tokenMint, nonSolSymbol: e.nonSolSymbol, err: (err as Error).message },
+      });
       return; // SAFE: never a partial/one-sided copy
     }
     const buyKey = `${cfg.leader}:${e.pool}:buy:${e.signature}`;
@@ -623,9 +952,22 @@ async function main(): Promise<void> {
       targetBinRange: { lower: 0, upper: 0 },
       issuedAtSlot,
       deadlineSlot,
-      buy: { outputMint: tokenMint, exactOutAmountRaw: buyQuote.outAmount, maxInLamports: buyQuote.inAmount }, // expected token (informational) + the SOL input (cap)
+      buy: {
+        outputMint: tokenMint,
+        exactOutAmountRaw: buyQuote.outAmount,
+        maxInLamports: buyQuote.inAmount,
+      }, // expected token (informational) + the SOL input (cap)
     });
-    log.info({ tokenMint, expectToken: buyQuote.outAmount, spendSol: Number(buyQuote.inAmount) / LAMPORTS_PER_SOL, solLamports: sizeLamports.toString(), bins: dist.length }, '🪙 two-sided BUY (ExactIn) published — the open follows once the buy lands');
+    log.info(
+      {
+        tokenMint,
+        expectToken: buyQuote.outAmount,
+        spendSol: Number(buyQuote.inAmount) / LAMPORTS_PER_SOL,
+        solLamports: sizeLamports.toString(),
+        bins: dist.length,
+      },
+      '🪙 two-sided BUY (ExactIn) published — the open follows once the buy lands',
+    );
   }
 
   /** Publish an open as TX1 createEmptyPosition (kind 'open') → TX2 addLiquidityByWeight2 (kind 'add'), sequenced via
@@ -638,15 +980,38 @@ async function main(): Promise<void> {
   async function publishOpenViaCreateDeposit(
     e: DetectedEvent,
     pair: Awaited<ReturnType<typeof createDlmmPair>>,
-    args: { dist: WeightBin[]; totalX: bigint; totalY: bigint; lower: number; upper: number; sizeSol: number },
+    args: {
+      dist: WeightBin[];
+      totalX: bigint;
+      totalY: bigint;
+      lower: number;
+      upper: number;
+      sizeSol: number;
+    },
   ): Promise<void> {
     const { dist, totalX, totalY, lower, upper, sizeSol } = args;
     const createEventKey = `${cfg.leader}:${e.pool}:open-create:${e.signature}`;
     const createCommandId = deriveCommandId(createEventKey);
     const posKp: Keypair = derivePositionKeypair(createCommandId); // the coffre signs 'open' with derivePositionKeypair(commandId) → MUST match
-    const built = await buildCreateEmptyPosition(conn, new PublicKey(e.pool), ownerPk, posKp.publicKey, lower, upper, pair);
+    const built = await buildCreateEmptyPosition(
+      conn,
+      new PublicKey(e.pool),
+      ownerPk,
+      posKp.publicKey,
+      lower,
+      upper,
+      pair,
+    );
     const { issuedAtSlot, deadlineSlot } = await slots();
-    pendingToken2022Deposits.set(createCommandId, { e, dist, totalX, totalY, lower, upper, sizeSol });
+    pendingToken2022Deposits.set(createCommandId, {
+      e,
+      dist,
+      totalX,
+      totalY,
+      lower,
+      upper,
+      sizeSol,
+    });
     buildingToken2022Positions.set(posKp.publicKey.toBase58(), Date.now()); // orphan-close grace until the deposit lands
     await publish(
       {
@@ -664,7 +1029,10 @@ async function main(): Promise<void> {
       },
       { leaderPosition: e.position, leaderSizeSol: e.depositSol },
     );
-    log.info({ our: posKp.publicKey.toBase58(), bins: dist.length }, '🔨 open via create+deposit published (deposit follows once the create lands)');
+    log.info(
+      { our: posKp.publicKey.toBase58(), bins: dist.length },
+      '🔨 open via create+deposit published (deposit follows once the create lands)',
+    );
   }
 
   /** Publish a WIDE open (≥26 bins) via the SDK's NATIVE multi-tx split. The atomic by-weight open returns
@@ -676,11 +1044,26 @@ async function main(): Promise<void> {
    *  `commandId` is derived from `eventKey` BY THE CALLER so the create's position keypair matches `createTx`. */
   async function publishSplitOpen(
     e: DetectedEvent,
-    args: { createTx: Transaction; depositTx: Transaction; posPubkey: string; commandId: string; eventKey: string; lower: number; upper: number; sizeSol: number },
+    args: {
+      createTx: Transaction;
+      depositTx: Transaction;
+      posPubkey: string;
+      commandId: string;
+      eventKey: string;
+      lower: number;
+      upper: number;
+      sizeSol: number;
+    },
   ): Promise<void> {
     const { createTx, depositTx, posPubkey, commandId, eventKey, lower, upper, sizeSol } = args;
     const { issuedAtSlot, deadlineSlot } = await slots();
-    pendingToken2022Deposits.set(commandId, { e, lower, upper, sizeSol, prebuiltDeposit: depositTx });
+    pendingToken2022Deposits.set(commandId, {
+      e,
+      lower,
+      upper,
+      sizeSol,
+      prebuiltDeposit: depositTx,
+    });
     buildingToken2022Positions.set(posPubkey, Date.now()); // orphan-close grace until the deposit lands
     await publish(
       {
@@ -698,7 +1081,10 @@ async function main(): Promise<void> {
       },
       { leaderPosition: e.position, leaderSizeSol: e.depositSol },
     );
-    log.info({ our: posPubkey, lower, upper }, '🔨 wide open CREATE published (split — deposit follows once the create lands)');
+    log.info(
+      { our: posPubkey, lower, upper },
+      '🔨 wide open CREATE published (split — deposit follows once the create lands)',
+    );
   }
 
   /** Build + publish the two-sided OPEN once its BUY has landed (token + ATA now exist → clean SDK build). Keyed
@@ -713,7 +1099,9 @@ async function main(): Promise<void> {
     const pair = await createDlmmPair(conn, poolPk);
     // Deposit the token we ACTUALLY bought (ExactIn output is variable) — read the settled balance, don't assume an
     // exact amount. SOL leg = the sized lamports; token leg = the real balance, distributed by the same bps `dist`.
-    const actualToken = depositableToken(await readOwnerTokenBalance(conn, ownerPk, new PublicKey(tokenMint))); // reserve a hair for per-bin bps rounding (TransferChecked insufficient-funds)
+    const actualToken = depositableToken(
+      await readOwnerTokenBalance(conn, ownerPk, new PublicKey(tokenMint)),
+    ); // reserve a hair for per-bin bps rounding (TransferChecked insufficient-funds)
     const totalX = solSide === 'X' ? sizeLamports : actualToken;
     const totalY = solSide === 'Y' ? sizeLamports : actualToken;
     const lower = Math.min(...dist.map((d) => d.binId));
@@ -727,7 +1115,21 @@ async function main(): Promise<void> {
       if (dist.length > TOKEN2022_MAX_OPEN_BINS) {
         // Wider than a single create + single add2 chunk → SKIP (never a partial deposit). The bought token is
         // recovered by the wallet sweep (sold back to SOL); a >70-bin two-sided memecoin copy is rare.
-        events.emit('eligibility.twosided.token2022_too_wide', { stage: 'open', outcome: 'skipped', reason: 'twosided_token2022_too_wide', leader: cfg.leader, pool: e.pool, leaderPosition: e.position, eventKey: openSkipKey(e), adminDetail: { mint: tokenMint, nonSolSymbol: e.nonSolSymbol, bins: dist.length, max: TOKEN2022_MAX_OPEN_BINS } });
+        events.emit('eligibility.twosided.token2022_too_wide', {
+          stage: 'open',
+          outcome: 'skipped',
+          reason: 'twosided_token2022_too_wide',
+          leader: cfg.leader,
+          pool: e.pool,
+          leaderPosition: e.position,
+          eventKey: openSkipKey(e),
+          adminDetail: {
+            mint: tokenMint,
+            nonSolSymbol: e.nonSolSymbol,
+            bins: dist.length,
+            max: TOKEN2022_MAX_OPEN_BINS,
+          },
+        });
         return;
       }
       return publishOpenViaCreateDeposit(e, pair, { dist, totalX, totalY, lower, upper, sizeSol });
@@ -737,13 +1139,33 @@ async function main(): Promise<void> {
     // sequence it (publishSplitOpen) so the deposit isn't dropped. NARROW (≤25) → the atomic 1-tx open (token held now
     // → CU estimation works). v1 addLiquidityByWeight is correct for a CLASSIC two-sided deposit (both legs span active).
     const wide = isWideOpen(dist.length);
-    const eventKey = wide ? `${cfg.leader}:${e.pool}:open-create:${e.signature}` : `${cfg.leader}:${e.pool}:open:${e.signature}`;
+    const eventKey = wide
+      ? `${cfg.leader}:${e.pool}:open-create:${e.signature}`
+      : `${cfg.leader}:${e.pool}:open:${e.signature}`;
     const commandId = deriveCommandId(eventKey);
     const posKp: Keypair = derivePositionKeypair(commandId);
-    const built = await buildOpenByWeight(conn, poolPk, ownerPk, posKp.publicKey, totalX, totalY, dist, pair);
+    const built = await buildOpenByWeight(
+      conn,
+      poolPk,
+      ownerPk,
+      posKp.publicKey,
+      totalX,
+      totalY,
+      dist,
+      pair,
+    );
     if (wide) {
       const arr = Array.isArray(built) ? built : [built]; // ≥26 bins → [pre, main, post]
-      return publishSplitOpen(e, { createTx: arr[0] as Transaction, depositTx: mergeDeposit(arr.slice(1)), posPubkey: posKp.publicKey.toBase58(), commandId, eventKey, lower, upper, sizeSol });
+      return publishSplitOpen(e, {
+        createTx: arr[0] as Transaction,
+        depositTx: mergeDeposit(arr.slice(1)),
+        posPubkey: posKp.publicKey.toBase58(),
+        commandId,
+        eventKey,
+        lower,
+        upper,
+        sizeSol,
+      });
     }
     const { issuedAtSlot, deadlineSlot } = await slots();
     const sr: Omit<SignRequest, 'issuedAtMs'> = {
@@ -760,11 +1182,23 @@ async function main(): Promise<void> {
       deadlineSlot,
     };
     if (consumeOpenCancellation(e.position, e.pool)) return; // a close arrived DURING the build → abort before the on-chain publish
-    const mirror = registry.open({ leaderPosition: e.position, ourPosition: sr.positionPubkey, pool: e.pool, nonSolSymbol: e.nonSolSymbol, sizeSol, lowerBin: lower, upperBin: upper, openedAt: Date.now() });
+    const mirror = registry.open({
+      leaderPosition: e.position,
+      ourPosition: sr.positionPubkey,
+      pool: e.pool,
+      nonSolSymbol: e.nonSolSymbol,
+      sizeSol,
+      lowerBin: lower,
+      upperBin: upper,
+      openedAt: Date.now(),
+    });
     pendingOpens.clear(e.position); // now tracked → lift the duplicate-open reservation for this leader position
     await store.saveOpen(mirror); // persist BEFORE publishing → never an untracked open
     await publish(sr, { leaderPosition: e.position, leaderSizeSol: e.depositSol });
-    log.info({ our: sr.positionPubkey, bins: dist.length }, '🪙 two-sided OPEN published (after buy landed)');
+    log.info(
+      { our: sr.positionPubkey, bins: dist.length },
+      '🪙 two-sided OPEN published (after buy landed)',
+    );
   }
 
   /** TX2 of a Token-2022 two-sided open: once the empty position (TX1) has CONFIRMED on-chain, build + publish the
@@ -790,7 +1224,16 @@ async function main(): Promise<void> {
       let built: Transaction | Transaction[] | undefined;
       for (let r = 0; r < OPEN_SHAPE_READ_RETRIES && built === undefined; r++) {
         try {
-          built = await buildAddByWeight(conn, poolPk, ownerPk, posKp.publicKey, ctx.totalX as bigint, ctx.totalY as bigint, ctx.dist as WeightBin[], pair);
+          built = await buildAddByWeight(
+            conn,
+            poolPk,
+            ownerPk,
+            posKp.publicKey,
+            ctx.totalX as bigint,
+            ctx.totalY as bigint,
+            ctx.dist as WeightBin[],
+            pair,
+          );
         } catch (err) {
           if (r === OPEN_SHAPE_READ_RETRIES - 1) throw err;
           await sleep(OPEN_SHAPE_READ_DELAY_MS);
@@ -799,14 +1242,26 @@ async function main(): Promise<void> {
       // addLiquidityByWeight2 returns Transaction[]; ≤70 bins = a single chunk. More than one chunk would be a
       // PARTIAL deposit (shape mismatch) → abort (the empty position is then orphan-closed).
       const txs = Array.isArray(built) ? built : [built as Transaction];
-      if (txs.length !== 1) throw new Error(`token2022 deposit chunked into ${txs.length} txs (range too wide) — aborting, no partial deposit`);
+      if (txs.length !== 1)
+        throw new Error(
+          `token2022 deposit chunked into ${txs.length} txs (range too wide) — aborting, no partial deposit`,
+        );
       depositTx = txs[0] as Transaction;
     }
     if (consumeOpenCancellation(e.position, e.pool)) return; // a close arrived DURING the deposit build → abort before the on-chain deposit
     const depositEventKey = `${cfg.leader}:${e.pool}:open-deposit:${e.signature}`;
     const depositCommandId = deriveCommandId(depositEventKey);
     const { issuedAtSlot, deadlineSlot } = await slots();
-    pendingToken2022Mirrors.set(depositCommandId, { leaderPosition: e.position, ourPosition: posKp.publicKey.toBase58(), pool: e.pool, nonSolSymbol: e.nonSolSymbol, sizeSol, lower, upper, leaderSizeSol: e.depositSol });
+    pendingToken2022Mirrors.set(depositCommandId, {
+      leaderPosition: e.position,
+      ourPosition: posKp.publicKey.toBase58(),
+      pool: e.pool,
+      nonSolSymbol: e.nonSolSymbol,
+      sizeSol,
+      lower,
+      upper,
+      leaderSizeSol: e.depositSol,
+    });
     await publish(
       {
         commandId: depositCommandId,
@@ -823,7 +1278,15 @@ async function main(): Promise<void> {
       },
       { leaderPosition: e.position, leaderSizeSol: e.depositSol },
     );
-    log.info({ our: posKp.publicKey.toBase58(), prebuilt: ctx.prebuiltDeposit !== undefined, lower, upper }, '🔨 open DEPOSIT published (position created → deposit)');
+    log.info(
+      {
+        our: posKp.publicKey.toBase58(),
+        prebuilt: ctx.prebuiltDeposit !== undefined,
+        lower,
+        upper,
+      },
+      '🔨 open DEPOSIT published (position created → deposit)',
+    );
   }
 
   /** Finalize a Token-2022 two-sided open once its deposit (TX2) has landed: NOW persist the mirror (the position is
@@ -839,15 +1302,40 @@ async function main(): Promise<void> {
       buildingToken2022Positions.delete(pend.ourPosition);
       return;
     }
-    const mirror = registry.open({ leaderPosition: pend.leaderPosition, ourPosition: pend.ourPosition, pool: pend.pool, nonSolSymbol: pend.nonSolSymbol, sizeSol: pend.sizeSol, lowerBin: pend.lower, upperBin: pend.upper, openedAt: Date.now() });
+    const mirror = registry.open({
+      leaderPosition: pend.leaderPosition,
+      ourPosition: pend.ourPosition,
+      pool: pend.pool,
+      nonSolSymbol: pend.nonSolSymbol,
+      sizeSol: pend.sizeSol,
+      lowerBin: pend.lower,
+      upperBin: pend.upper,
+      openedAt: Date.now(),
+    });
     pendingOpens.clear(pend.leaderPosition); // now tracked → lift the duplicate-open reservation for this leader position
     await store.saveOpen(mirror); // tracked only NOW — a funded, deposited position
     buildingToken2022Positions.delete(pend.ourPosition);
     // Token-2022 open is COMPLETE (deposit landed → mirror persisted) → emit the FEED `lifecycle.open_confirmed`,
     // the SAME confirm a classic open fires in onOpenConfirmed (the classic branch's ev:executed 'open' carries the
     // empty-position create, never the funded mirror, so it is excluded there). Observability-only.
-    events.opened({ stage: 'open', outcome: 'confirmed', leader: cfg.leader, pool: mirror.pool, leaderPosition: mirror.leaderPosition, ourPosition: mirror.ourPosition, ourSizeSol: mirror.sizeSol, eventKey: openConfirmedKey(mirror.pool, mirror.ourPosition), adminDetail: { nonSolSymbol: mirror.nonSolSymbol, openCount: registry.openPositions().length } });
-    log.info({ our: pend.ourPosition }, '🪙 two-sided Token-2022 OPEN complete (deposit landed → mirror persisted)');
+    events.opened({
+      stage: 'open',
+      outcome: 'confirmed',
+      leader: cfg.leader,
+      pool: mirror.pool,
+      leaderPosition: mirror.leaderPosition,
+      ourPosition: mirror.ourPosition,
+      ourSizeSol: mirror.sizeSol,
+      eventKey: openConfirmedKey(mirror.pool, mirror.ourPosition),
+      adminDetail: {
+        nonSolSymbol: mirror.nonSolSymbol,
+        openCount: registry.openPositions().length,
+      },
+    });
+    log.info(
+      { our: pend.ourPosition },
+      '🪙 two-sided Token-2022 OPEN complete (deposit landed → mirror persisted)',
+    );
   }
 
   /** Build + publish a two-sided RESHAPE ADD once its token BUY (ExactIn) has landed — deposit the ACTUAL bought
@@ -856,12 +1344,33 @@ async function main(): Promise<void> {
     const ctx = pendingReshapeAdds.get(buyCommandId);
     if (!ctx) return;
     pendingReshapeAdds.delete(buyCommandId);
-    const { dist, addLamports, solSide, tokenMint, lower, upper, totalAddSol, ourPosition, pool, leaderPosition, signature } = ctx;
+    const {
+      dist,
+      addLamports,
+      solSide,
+      tokenMint,
+      lower,
+      upper,
+      totalAddSol,
+      ourPosition,
+      pool,
+      leaderPosition,
+      signature,
+    } = ctx;
     // A reshape ADD is on an EXISTING (registered) mirror — NOT an open, so a leader close finds the mirror and runs
     // the normal close path. But that close may land WHILE this add's buy was in flight: don't ADD liquidity to a
     // position the leader closed (registry.close flips its status). The bought token is recovered by the sweep.
     if (!registry.hasOpen(leaderPosition)) {
-      events.emit('reshape.noop', { stage: 'reshape', outcome: 'noop', leader: cfg.leader, pool, leaderPosition, ourPosition, eventKey: `${cfg.leader}:${pool}:reshape-add-cancelled:${signature}`, adminDetail: { phase: 'mirror_closed_before_reshape_add' } });
+      events.emit('reshape.noop', {
+        stage: 'reshape',
+        outcome: 'noop',
+        leader: cfg.leader,
+        pool,
+        leaderPosition,
+        ourPosition,
+        eventKey: `${cfg.leader}:${pool}:reshape-add-cancelled:${signature}`,
+        adminDetail: { phase: 'mirror_closed_before_reshape_add' },
+      });
       return;
     }
     const poolPk = new PublicKey(pool);
@@ -875,25 +1384,79 @@ async function main(): Promise<void> {
     const totalY = solSide === 'Y' ? depositToken : addLamports;
     const built =
       dist.length >= ATOMIC_BY_WEIGHT_BIN_LIMIT
-        ? await buildAddByWeight2(conn, poolPk, ownerPk, new PublicKey(ourPosition), totalX, totalY, dist, pair)
-        : await buildAddByWeight(conn, poolPk, ownerPk, new PublicKey(ourPosition), totalX, totalY, dist, pair);
+        ? await buildAddByWeight2(
+            conn,
+            poolPk,
+            ownerPk,
+            new PublicKey(ourPosition),
+            totalX,
+            totalY,
+            dist,
+            pair,
+          )
+        : await buildAddByWeight(
+            conn,
+            poolPk,
+            ownerPk,
+            new PublicKey(ourPosition),
+            totalX,
+            totalY,
+            dist,
+            pair,
+          );
     const { issuedAtSlot, deadlineSlot } = await slots();
     const addKey = `${cfg.leader}:${pool}:reshape-add:${signature}`;
-    await publish({ commandId: deriveCommandId(addKey), eventKey: addKey, kind: 'add', pool, positionPubkey: ourPosition, owner: ownerPk.toBase58(), txBase64: serializeUnsigned(withCuLimit(onlyTx(built, 'reshape add (two-sided)'), TWO_SIDED_CU_LIMIT)), sizeSol: totalAddSol, targetBinRange: { lower, upper }, issuedAtSlot, deadlineSlot }, { stage: 'reshape', leaderPosition });
-    log.info({ our: ourPosition, bins: dist.length }, '🪙 two-sided reshape ADD published (after buy landed)');
+    await publish(
+      {
+        commandId: deriveCommandId(addKey),
+        eventKey: addKey,
+        kind: 'add',
+        pool,
+        positionPubkey: ourPosition,
+        owner: ownerPk.toBase58(),
+        txBase64: serializeUnsigned(
+          withCuLimit(onlyTx(built, 'reshape add (two-sided)'), TWO_SIDED_CU_LIMIT),
+        ),
+        sizeSol: totalAddSol,
+        targetBinRange: { lower, upper },
+        issuedAtSlot,
+        deadlineSlot,
+      },
+      { stage: 'reshape', leaderPosition },
+    );
+    log.info(
+      { our: ourPosition, bins: dist.length },
+      '🪙 two-sided reshape ADD published (after buy landed)',
+    );
   }
 
   // A cancelled multi-tx open surfaces as the leader-closed FAILSAFE (SAME semantics as the reClose alias
   // `leader_closed` → `failsafe.activated`): the leader closed and we protected capital by NOT completing the open.
   // Feed-visible + deduped per leader position (distinct cancels stay distinct; a cross-path double-emit collapses).
-  const openCancelledKey = (pool: string, leaderPosition: string): string => `${cfg.leader}:${pool}:open-cancelled:${leaderPosition}`;
+  const openCancelledKey = (pool: string, leaderPosition: string): string =>
+    `${cfg.leader}:${pool}:open-cancelled:${leaderPosition}`;
   const emitOpenCancelled = (leaderPosition: string, pool: string, dropped: number): void => {
-    events.emit('failsafe.activated', { stage: 'open', outcome: 'skipped', reason: 'leader_closed', leader: cfg.leader, pool, leaderPosition, eventKey: openCancelledKey(pool, leaderPosition), adminDetail: { phase: 'multi_tx_open_cancelled', dropped } });
+    events.emit('failsafe.activated', {
+      stage: 'open',
+      outcome: 'skipped',
+      reason: 'leader_closed',
+      leader: cfg.leader,
+      pool,
+      leaderPosition,
+      eventKey: openCancelledKey(pool, leaderPosition),
+      adminDetail: { phase: 'multi_tx_open_cancelled', dropped },
+    });
   };
-  const pendingOpenMapsView = (): PendingOpenMaps => ({ twoSidedOpens: pendingTwoSidedOpens, token2022Deposits: pendingToken2022Deposits, token2022Mirrors: pendingToken2022Mirrors, reshapeAdds: pendingReshapeAdds });
+  const pendingOpenMapsView = (): PendingOpenMaps => ({
+    twoSidedOpens: pendingTwoSidedOpens,
+    token2022Deposits: pendingToken2022Deposits,
+    token2022Mirrors: pendingToken2022Mirrors,
+    reshapeAdds: pendingReshapeAdds,
+  });
   // Does this leader position have any in-flight multi-tx open stash? (Belt-and-suspenders behind pendingOpens: a
   // stash can outlive the reservation's TTL if a buy/create never lands.)
-  const hasPendingOpenStash = (leaderPosition: string): boolean => stashCount(pendingStashesFor(leaderPosition, pendingOpenMapsView())) > 0;
+  const hasPendingOpenStash = (leaderPosition: string): boolean =>
+    stashCount(pendingStashesFor(leaderPosition, pendingOpenMapsView())) > 0;
 
   // Cancel an IN-FLIGHT multi-tx open because the leader closed before it completed. Drops every pending-open stash
   // for this leader position across the 4 continuation maps, clears the duplicate-open reservation, and marks it in
@@ -934,14 +1497,34 @@ async function main(): Promise<void> {
       // (buy→open / create→deposit / wide split) whose `registry.open` runs in a later ev:executed continuation. If
       // the leader CLOSED during that gap the in-flight open must be CANCELLED — else the continuation deploys
       // capital into the pool the leader just EXITED. Nothing is on-chain to close (the open never landed).
-      if (pendingOpens.isPending(e.position) || hasPendingOpenStash(e.position)) cancelPendingOpen(e.position, e.pool);
+      if (pendingOpens.isPending(e.position) || hasPendingOpenStash(e.position))
+        cancelPendingOpen(e.position, e.pool);
       return;
     }
     const eventKey = `${cfg.leader}:${m.pool}:close:${e.signature}`;
-    const built = await buildCloseTx(conn, new PublicKey(m.pool), ownerPk, new PublicKey(m.ourPosition), m.lowerBin, m.upperBin);
+    const built = await buildCloseTx(
+      conn,
+      new PublicKey(m.pool),
+      ownerPk,
+      new PublicKey(m.ourPosition),
+      m.lowerBin,
+      m.upperBin,
+    );
     const { issuedAtSlot, deadlineSlot } = await slots();
     registry.close(e.position); // in-memory fast path (caps/dedup); the DB is marked closed by the reconcile once confirmed on-chain
-    await publish({ commandId: deriveCommandId(eventKey), eventKey, kind: 'close', pool: m.pool, positionPubkey: m.ourPosition, owner: ownerPk.toBase58(), txBase64: serializeUnsigned(firstTx(built)), sizeSol: m.sizeSol, targetBinRange: { lower: m.lowerBin, upper: m.upperBin }, issuedAtSlot, deadlineSlot });
+    await publish({
+      commandId: deriveCommandId(eventKey),
+      eventKey,
+      kind: 'close',
+      pool: m.pool,
+      positionPubkey: m.ourPosition,
+      owner: ownerPk.toBase58(),
+      txBase64: serializeUnsigned(firstTx(built)),
+      sizeSol: m.sizeSol,
+      targetBinRange: { lower: m.lowerBin, upper: m.upperBin },
+      issuedAtSlot,
+      deadlineSlot,
+    });
     recentlyPublishedClose.set(m.ourPosition, Date.now()); // grace: don't let the reconcile re-close while this is landing
   }
 
@@ -951,7 +1534,19 @@ async function main(): Promise<void> {
     const eventKey = `${cfg.leader}:${m.pool}:claim:${e.signature}`;
     const built = await buildClaimTx(conn, new PublicKey(m.pool), ownerPk, m.ourPosition);
     const { issuedAtSlot, deadlineSlot } = await slots();
-    await publish({ commandId: deriveCommandId(eventKey), eventKey, kind: 'claim', pool: m.pool, positionPubkey: m.ourPosition, owner: ownerPk.toBase58(), txBase64: serializeUnsigned(firstTx(built)), sizeSol: m.sizeSol, targetBinRange: { lower: m.lowerBin, upper: m.upperBin }, issuedAtSlot, deadlineSlot });
+    await publish({
+      commandId: deriveCommandId(eventKey),
+      eventKey,
+      kind: 'claim',
+      pool: m.pool,
+      positionPubkey: m.ourPosition,
+      owner: ownerPk.toBase58(),
+      txBase64: serializeUnsigned(firstTx(built)),
+      sizeSol: m.sizeSol,
+      targetBinRange: { lower: m.lowerBin, upper: m.upperBin },
+      issuedAtSlot,
+      deadlineSlot,
+    });
   }
 
   // The leader changed a position (add or partial remove) → RE-SYNC ours to the TARGET = copyRatio × leader's
@@ -965,7 +1560,17 @@ async function main(): Promise<void> {
     const poolPk = new PublicKey(m.pool);
     const meta = await poolReader.loadPoolMeta(m.pool);
     if (!meta?.solSide) {
-      events.emit('eligibility.non_sol_paired', { stage: 'reshape', outcome: 'skipped', reason: 'non_sol_pool', leader: cfg.leader, pool: m.pool, leaderPosition: e.position, ourPosition: m.ourPosition, eventKey: reshapeSkipKey(e, m), adminDetail: { nonSolSymbol: m.nonSolSymbol } });
+      events.emit('eligibility.non_sol_paired', {
+        stage: 'reshape',
+        outcome: 'skipped',
+        reason: 'non_sol_pool',
+        leader: cfg.leader,
+        pool: m.pool,
+        leaderPosition: e.position,
+        ourPosition: m.ourPosition,
+        eventKey: reshapeSkipKey(e, m),
+        adminDetail: { nonSolSymbol: m.nonSolSymbol },
+      });
       return;
     }
     const solSide = meta.solSide;
@@ -977,7 +1582,8 @@ async function main(): Promise<void> {
     // carries a real change, RETRY the read+compute until a deficit appears (or retries exhausted = a genuine noop).
     const solOf = (b: { x: bigint; y: bigint }) => lamportsToSol(solSide === 'Y' ? b.y : b.x);
     const tokenOf = (b: { x: bigint; y: bigint }) => Number(solSide === 'Y' ? b.x : b.y); // RAW token units
-    const changeExpected = e.depositSol > RESYNC_MIN_CHANGE_SOL || e.withdrawSol > RESYNC_MIN_CHANGE_SOL;
+    const changeExpected =
+      e.depositSol > RESYNC_MIN_CHANGE_SOL || e.withdrawSol > RESYNC_MIN_CHANGE_SOL;
     let ourShape: Awaited<ReturnType<typeof readLeaderPositionShape>> = null;
     let plan: ReturnType<typeof planTwoSidedReshape> | null = null;
     let leaderBins: Array<{ offset: number; sol: number }> = []; // hoisted: also used post-loop for the new-size calc
@@ -987,16 +1593,43 @@ async function main(): Promise<void> {
       if (!leaderShape) return; // leader gone → the reconcile closes ours
       const os = await readLeaderPositionShape(conn, poolPk, ownerPk, m.ourPosition, pair);
       if (!os) {
-        events.emit('detect.not_on_chain_yet', { stage: 'reshape', outcome: 'skipped', reason: 'not_on_chain_yet', leader: cfg.leader, pool: m.pool, leaderPosition: e.position, ourPosition: m.ourPosition, eventKey: reshapeSkipKey(e, m) });
+        events.emit('detect.not_on_chain_yet', {
+          stage: 'reshape',
+          outcome: 'skipped',
+          reason: 'not_on_chain_yet',
+          leader: cfg.leader,
+          pool: m.pool,
+          leaderPosition: e.position,
+          ourPosition: m.ourPosition,
+          eventKey: reshapeSkipKey(e, m),
+        });
         return;
       }
       ourShape = os;
-      leaderBins = leaderShape.perBin.map((b) => ({ offset: b.binId - leaderShape.lowerBinId, sol: solOf(b) }));
+      leaderBins = leaderShape.perBin.map((b) => ({
+        offset: b.binId - leaderShape.lowerBinId,
+        sol: solOf(b),
+      }));
       const ourBins = os.perBin.map((b) => ({ offset: b.binId - os.lowerBinId, sol: solOf(b) }));
-      const leaderTokenBins = leaderShape.perBin.map((b) => ({ offset: b.binId - leaderShape.lowerBinId, sol: tokenOf(b) }));
-      const ourTokenBins = os.perBin.map((b) => ({ offset: b.binId - os.lowerBinId, sol: tokenOf(b) }));
+      const leaderTokenBins = leaderShape.perBin.map((b) => ({
+        offset: b.binId - leaderShape.lowerBinId,
+        sol: tokenOf(b),
+      }));
+      const ourTokenBins = os.perBin.map((b) => ({
+        offset: b.binId - os.lowerBinId,
+        sol: tokenOf(b),
+      }));
       // SOL-leg ops (removes are proportional → cover both legs); token-leg ADD deficit handled two-sided when enabled.
-      plan = planTwoSidedReshape(leaderBins, ourBins, leaderTokenBins, ourTokenBins, copyRatio, ec.sizing.maxTradeSizeSol, ec.execution.reshapeBinDeadbandSol, ec.execution.reshapeBinDeadbandToken);
+      plan = planTwoSidedReshape(
+        leaderBins,
+        ourBins,
+        leaderTokenBins,
+        ourTokenBins,
+        copyRatio,
+        ec.sizing.maxTradeSizeSol,
+        ec.execution.reshapeBinDeadbandSol,
+        ec.execution.reshapeBinDeadbandToken,
+      );
       if (plan.ops.length > 0 || (ec.twoSidedMode === 'on' && plan.tokenAddOps.length > 0)) break; // deficit found → proceed
       // noop this read — if a change was expected, the leader event likely isn't indexed yet → retry
     }
@@ -1004,24 +1637,64 @@ async function main(): Promise<void> {
     const { ops, tokenAddOps } = plan;
     const twoSidedAdd = ec.twoSidedMode === 'on' && tokenAddOps.length > 0;
     if (ops.length === 0 && !twoSidedAdd) {
-      events.emit('reshape.noop', { stage: 'reshape', outcome: 'noop', leader: cfg.leader, pool: m.pool, leaderPosition: e.position, ourPosition: m.ourPosition, eventKey: reshapeSkipKey(e, m) });
+      events.emit('reshape.noop', {
+        stage: 'reshape',
+        outcome: 'noop',
+        leader: cfg.leader,
+        pool: m.pool,
+        leaderPosition: e.position,
+        ourPosition: m.ourPosition,
+        eventKey: reshapeSkipKey(e, m),
+      });
       return;
     }
 
     const calls = reshapeToCalls(ops, ourShape.lowerBinId);
     // Our position's bin range is fixed at open; can't add outside it (leader extending its range = v1 limit).
-    const adds = calls.adds.filter((a) => a.binId >= ourShape.lowerBinId && a.binId <= ourShape.upperBinId);
+    const adds = calls.adds.filter(
+      (a) => a.binId >= ourShape.lowerBinId && a.binId <= ourShape.upperBinId,
+    );
     if (adds.length < calls.adds.length) {
-      events.emit('reshape.partial_range', { stage: 'reshape', outcome: 'skipped', reason: 'partial_range', leader: cfg.leader, pool: m.pool, leaderPosition: e.position, ourPosition: m.ourPosition, eventKey: reshapeSkipKey(e, m), adminDetail: { dropped: calls.adds.length - adds.length } });
+      events.emit('reshape.partial_range', {
+        stage: 'reshape',
+        outcome: 'skipped',
+        reason: 'partial_range',
+        leader: cfg.leader,
+        pool: m.pool,
+        leaderPosition: e.position,
+        ourPosition: m.ourPosition,
+        eventKey: reshapeSkipKey(e, m),
+        adminDetail: { dropped: calls.adds.length - adds.length },
+      });
     }
 
     const { issuedAtSlot, deadlineSlot } = await slots();
     // Removes first (free SOL), then ONE by-weight add. Each is its own idempotent cmd:sign.
     let rm = 0;
     for (const r of calls.removes) {
-      const built = await buildRemovePartial(conn, poolPk, ownerPk, new PublicKey(m.ourPosition), r.fromBin, r.toBin, r.bps);
+      const built = await buildRemovePartial(
+        conn,
+        poolPk,
+        ownerPk,
+        new PublicKey(m.ourPosition),
+        r.fromBin,
+        r.toBin,
+        r.bps,
+      );
       const eventKey = `${cfg.leader}:${m.pool}:reshape-rm${rm}:${e.signature}`;
-      await publish({ commandId: deriveCommandId(eventKey), eventKey, kind: 'remove', pool: m.pool, positionPubkey: m.ourPosition, owner: ownerPk.toBase58(), txBase64: serializeUnsigned(firstTx(built)), sizeSol: 0, targetBinRange: { lower: r.fromBin, upper: r.toBin }, issuedAtSlot, deadlineSlot });
+      await publish({
+        commandId: deriveCommandId(eventKey),
+        eventKey,
+        kind: 'remove',
+        pool: m.pool,
+        positionPubkey: m.ourPosition,
+        owner: ownerPk.toBase58(),
+        txBase64: serializeUnsigned(firstTx(built)),
+        sizeSol: 0,
+        targetBinRange: { lower: r.fromBin, upper: r.toBin },
+        issuedAtSlot,
+        deadlineSlot,
+      });
       rm++;
     }
     if (twoSidedAdd) {
@@ -1031,11 +1704,36 @@ async function main(): Promise<void> {
       const tokenMint = solSide === 'Y' ? meta.mintX : meta.mintY;
       const tokenAdds = tokenAddOps
         .map((o) => ({ binId: ourShape.lowerBinId + o.offset, raw: Math.round(o.addSol) }))
-        .filter((a) => a.binId >= ourShape.lowerBinId && a.binId <= ourShape.upperBinId && a.raw > 0);
-      const solShaped = adds.length > 0 ? reanchorShape(0, 0, adds.map((a) => ({ binId: a.binId, amount: BigInt(Math.round(a.addSol * LAMPORTS_PER_SOL)) }))) : null;
-      const tokShaped = tokenAdds.length > 0 ? reanchorShape(0, 0, tokenAdds.map((a) => ({ binId: a.binId, amount: BigInt(a.raw) }))) : null;
+        .filter(
+          (a) => a.binId >= ourShape.lowerBinId && a.binId <= ourShape.upperBinId && a.raw > 0,
+        );
+      const solShaped =
+        adds.length > 0
+          ? reanchorShape(
+              0,
+              0,
+              adds.map((a) => ({
+                binId: a.binId,
+                amount: BigInt(Math.round(a.addSol * LAMPORTS_PER_SOL)),
+              })),
+            )
+          : null;
+      const tokShaped =
+        tokenAdds.length > 0
+          ? reanchorShape(
+              0,
+              0,
+              tokenAdds.map((a) => ({ binId: a.binId, amount: BigInt(a.raw) })),
+            )
+          : null;
       const byBin = new Map<number, WeightBin>();
-      if (solShaped) for (const w of solShaped.weights) byBin.set(w.binId, { binId: w.binId, xBps: solSide === 'X' ? w.bps : 0, yBps: solSide === 'Y' ? w.bps : 0 });
+      if (solShaped)
+        for (const w of solShaped.weights)
+          byBin.set(w.binId, {
+            binId: w.binId,
+            xBps: solSide === 'X' ? w.bps : 0,
+            yBps: solSide === 'Y' ? w.bps : 0,
+          });
       if (tokShaped)
         for (const w of tokShaped.weights) {
           const cur = byBin.get(w.binId) ?? { binId: w.binId, xBps: 0, yBps: 0 };
@@ -1052,21 +1750,80 @@ async function main(): Promise<void> {
       // Price the token target (sell direction, fully routed) → spend that SOL via ExactIn (output variable → the add
       // is built after the buy lands, reading the real balance). Skip cleanly if the token can't be priced/bought.
       try {
-        const priceQuote = await getJupiterQuote(cfg.jupiterBaseUrl, tokenMint, totalTokenRaw, ec.execution.slippageBps);
+        const priceQuote = await getJupiterQuote(
+          cfg.jupiterBaseUrl,
+          tokenMint,
+          totalTokenRaw,
+          ec.execution.slippageBps,
+        );
         const solToSpend = BigInt(priceQuote.outAmount);
         if (!(solToSpend > 0n)) throw new Error('token leg priced at 0 SOL');
-        const buyQuote = await getJupiterBuyQuoteExactIn(cfg.jupiterBaseUrl, tokenMint, solToSpend, ec.execution.slippageBps);
+        const buyQuote = await getJupiterBuyQuoteExactIn(
+          cfg.jupiterBaseUrl,
+          tokenMint,
+          solToSpend,
+          ec.execution.slippageBps,
+        );
         const buyTxB64 = await buildJupiterSwapTx(cfg.jupiterBaseUrl, buyQuote, ownerPk.toBase58());
         const buyKey = `${cfg.leader}:${m.pool}:reshape-buy:${e.signature}`;
         const buyCommandId = deriveCommandId(buyKey);
-        pendingReshapeAdds.set(buyCommandId, { dist, addLamports, solSide, tokenMint, lower: dist[0]!.binId, upper: dist.at(-1)!.binId, totalAddSol, ourPosition: m.ourPosition, pool: m.pool, leaderPosition: m.leaderPosition, signature: e.signature });
+        pendingReshapeAdds.set(buyCommandId, {
+          dist,
+          addLamports,
+          solSide,
+          tokenMint,
+          lower: dist[0]!.binId,
+          upper: dist.at(-1)!.binId,
+          totalAddSol,
+          ourPosition: m.ourPosition,
+          pool: m.pool,
+          leaderPosition: m.leaderPosition,
+          signature: e.signature,
+        });
         inFlightBuyMints.set(tokenMint, Date.now()); // protect the bought token from the sweep until the reshape add deposits it
-        await publish({ commandId: buyCommandId, eventKey: buyKey, kind: 'buy', pool: m.pool, positionPubkey: ownerPk.toBase58(), owner: ownerPk.toBase58(), txBase64: buyTxB64, sizeSol: Number(buyQuote.inAmount) / LAMPORTS_PER_SOL, targetBinRange: { lower: 0, upper: 0 }, issuedAtSlot, deadlineSlot, buy: { outputMint: tokenMint, exactOutAmountRaw: buyQuote.outAmount, maxInLamports: buyQuote.inAmount } }, { stage: 'reshape', leaderPosition: m.leaderPosition });
-        log.info({ our: m.ourPosition, tokenMint, bins: dist.length }, '🪙 two-sided reshape BUY (ExactIn) published — the add follows once the buy lands');
+        await publish(
+          {
+            commandId: buyCommandId,
+            eventKey: buyKey,
+            kind: 'buy',
+            pool: m.pool,
+            positionPubkey: ownerPk.toBase58(),
+            owner: ownerPk.toBase58(),
+            txBase64: buyTxB64,
+            sizeSol: Number(buyQuote.inAmount) / LAMPORTS_PER_SOL,
+            targetBinRange: { lower: 0, upper: 0 },
+            issuedAtSlot,
+            deadlineSlot,
+            buy: {
+              outputMint: tokenMint,
+              exactOutAmountRaw: buyQuote.outAmount,
+              maxInLamports: buyQuote.inAmount,
+            },
+          },
+          { stage: 'reshape', leaderPosition: m.leaderPosition },
+        );
+        log.info(
+          { our: m.ourPosition, tokenMint, bins: dist.length },
+          '🪙 two-sided reshape BUY (ExactIn) published — the add follows once the buy lands',
+        );
       } catch (err) {
         // SAFE: can't acquire the token deficit → the SOL-leg removes already published stand; skip the token add (no
         // partial two-sided add). The reconcile self-corrects on the next leader event.
-        events.emit('reshape.token_unbuyable', { stage: 'reshape', outcome: 'skipped', reason: 'reshape_token_unbuyable', leader: cfg.leader, pool: m.pool, leaderPosition: e.position, ourPosition: m.ourPosition, eventKey: reshapeSkipKey(e, m), adminDetail: { mint: tokenMint, nonSolSymbol: m.nonSolSymbol, err: (err as Error).message } });
+        events.emit('reshape.token_unbuyable', {
+          stage: 'reshape',
+          outcome: 'skipped',
+          reason: 'reshape_token_unbuyable',
+          leader: cfg.leader,
+          pool: m.pool,
+          leaderPosition: e.position,
+          ourPosition: m.ourPosition,
+          eventKey: reshapeSkipKey(e, m),
+          adminDetail: {
+            mint: tokenMint,
+            nonSolSymbol: m.nonSolSymbol,
+            err: (err as Error).message,
+          },
+        });
       }
     } else if (adds.length > 0) {
       // A reshape ADD spanning ≥26 bins would chunk the SDK by-weight deposit into [pre, main, post] (deposit not the
@@ -1077,22 +1834,62 @@ async function main(): Promise<void> {
       let ci = 0;
       for (const chunk of chunks) {
         const chunkSol = chunk.reduce((s, a) => s + a.addSol, 0);
-        const shaped = reanchorShape(0, 0, chunk.map((a) => ({ binId: a.binId, amount: BigInt(Math.round(a.addSol * LAMPORTS_PER_SOL)) }))); // delta 0: keep binIds, amounts → BPS (normalized within the chunk)
+        const shaped = reanchorShape(
+          0,
+          0,
+          chunk.map((a) => ({
+            binId: a.binId,
+            amount: BigInt(Math.round(a.addSol * LAMPORTS_PER_SOL)),
+          })),
+        ); // delta 0: keep binIds, amounts → BPS (normalized within the chunk)
         // CONTIGUOUS span: a selective/deadband add (or a re-anchor that drops a tiny interior bin) leaves binId gaps;
         // the SDK by-weight rejects those ("Discontinuous Bin ID"). Fill them with 0/0 — same as the two-sided path.
-        const dist: WeightBin[] = fillContiguousWeights(shaped.weights.map((w) => ({ binId: w.binId, xBps: solSide === 'X' ? w.bps : 0, yBps: solSide === 'Y' ? w.bps : 0 })));
+        const dist: WeightBin[] = fillContiguousWeights(
+          shaped.weights.map((w) => ({
+            binId: w.binId,
+            xBps: solSide === 'X' ? w.bps : 0,
+            yBps: solSide === 'Y' ? w.bps : 0,
+          })),
+        );
         const chunkLamports = BigInt(Math.round(chunkSol * LAMPORTS_PER_SOL));
-        const built = await buildAddByWeight(conn, poolPk, ownerPk, new PublicKey(m.ourPosition), solSide === 'X' ? chunkLamports : 0n, solSide === 'Y' ? chunkLamports : 0n, dist, pair);
+        const built = await buildAddByWeight(
+          conn,
+          poolPk,
+          ownerPk,
+          new PublicKey(m.ourPosition),
+          solSide === 'X' ? chunkLamports : 0n,
+          solSide === 'Y' ? chunkLamports : 0n,
+          dist,
+          pair,
+        );
         const eventKey = `${cfg.leader}:${m.pool}:reshape-add${ci}:${e.signature}`; // per-chunk key → distinct idempotent commands
-        await publish({ commandId: deriveCommandId(eventKey), eventKey, kind: 'add', pool: m.pool, positionPubkey: m.ourPosition, owner: ownerPk.toBase58(), txBase64: serializeUnsigned(onlyTx(built, 'reshape add chunk')), sizeSol: chunkSol, targetBinRange: { lower: dist[0]!.binId, upper: dist.at(-1)!.binId }, issuedAtSlot, deadlineSlot });
+        await publish({
+          commandId: deriveCommandId(eventKey),
+          eventKey,
+          kind: 'add',
+          pool: m.pool,
+          positionPubkey: m.ourPosition,
+          owner: ownerPk.toBase58(),
+          txBase64: serializeUnsigned(onlyTx(built, 'reshape add chunk')),
+          sizeSol: chunkSol,
+          targetBinRange: { lower: dist[0]!.binId, upper: dist.at(-1)!.binId },
+          issuedAtSlot,
+          deadlineSlot,
+        });
         ci++;
       }
     }
 
-    const newSize = Math.min(copyRatio * leaderBins.reduce((s, b) => s + b.sol, 0), ec.sizing.maxTradeSizeSol);
+    const newSize = Math.min(
+      copyRatio * leaderBins.reduce((s, b) => s + b.sol, 0),
+      ec.sizing.maxTradeSizeSol,
+    );
     registry.adjustSize(e.position, newSize);
     await store.updateSize(e.position, newSize);
-    log.info({ position: e.position, removes: calls.removes.length, adds: adds.length, newSize }, '🔧 reshape published (per-bin exact)');
+    log.info(
+      { position: e.position, removes: calls.removes.length, adds: adds.length, newSize },
+      '🔧 reshape published (per-bin exact)',
+    );
   }
 
   // Anti-dormant reconcile (the no-miss-close pillar) — driven by ON-CHAIN reality, NEVER by DB status (which
@@ -1108,7 +1905,10 @@ async function main(): Promise<void> {
     try {
       held = await readUserPositions(conn, ownerPk);
     } catch (e) {
-      log.error({ e: (e as Error).message }, 'reconcile: failed to enumerate our positions → skip this sweep');
+      log.error(
+        { e: (e as Error).message },
+        'reconcile: failed to enumerate our positions → skip this sweep',
+      );
       return;
     }
     const ourOnChain = new Set(held.map((p) => p.position)); // enumerator → orphan detection ONLY (can lag)
@@ -1131,12 +1931,17 @@ async function main(): Promise<void> {
     const now = Date.now();
     // Open-grace: a copy opened < RECONCILE_OPEN_GRACE_MS ago isn't reliably confirmable on-chain yet → exclude
     // it from close decisions so a fresh open is never mistaken for "gone" (anti-dormant regression).
-    const recentlyOpened = new Set(tracked.filter((m) => now - m.openedAt < RECONCILE_OPEN_GRACE_MS).map((m) => m.ourPosition));
+    const recentlyOpened = new Set(
+      tracked.filter((m) => now - m.openedAt < RECONCILE_OPEN_GRACE_MS).map((m) => m.ourPosition),
+    );
 
     const plan = planReconcile({
       ourOnChain,
       ourClosed,
-      tracked: tracked.map((m) => ({ ourPosition: m.ourPosition, leaderPosition: m.leaderPosition })),
+      tracked: tracked.map((m) => ({
+        ourPosition: m.ourPosition,
+        leaderPosition: m.leaderPosition,
+      })),
       leaderClosed,
       recentlyOpened,
       rugExitPending, // re-close a rug-SL-closed mirror (leader still open) until confirmed gone — never-miss-close
@@ -1151,7 +1956,17 @@ async function main(): Promise<void> {
       rugSlTracker.forget(our);
       if (rugExitPending.delete(our)) void rugExitStore.savePending(rugExitPending); // rug-SL close CONFIRMED gone → stop retrying
 
-      events.closed({ stage: 'close', outcome: 'confirmed', leader: cfg.leader, pool: m.pool, leaderPosition: m.leaderPosition, ourPosition: our, ourSizeSol: m.sizeSol, eventKey: closeConfirmedKey(m.pool, our), adminDetail: { nonSolSymbol: m.nonSolSymbol, via: 'reconcile' } });
+      events.closed({
+        stage: 'close',
+        outcome: 'confirmed',
+        leader: cfg.leader,
+        pool: m.pool,
+        leaderPosition: m.leaderPosition,
+        ourPosition: our,
+        ourSizeSol: m.sizeSol,
+        eventKey: closeConfirmedKey(m.pool, our),
+        adminDetail: { nonSolSymbol: m.nonSolSymbol, via: 'reconcile' },
+      });
     }
     for (const rc of plan.reClose) {
       // Grace: skip if we published a close for this position recently (let the in-flight close land first).
@@ -1172,14 +1987,17 @@ async function main(): Promise<void> {
       // reconcile; Valhalla force-closes random DLMMs). We have its pool + bins from the enumerator. The grace
       // avoids re-publishing while a previous orphan-close is still landing.
       const p = held.find((h) => h.position === orphan);
-      if (p && now - (recentlyPublishedClose.get(orphan) ?? 0) >= RECLOSE_GRACE_MS) await publishOrphanClose(p);
+      if (p && now - (recentlyPublishedClose.get(orphan) ?? 0) >= RECLOSE_GRACE_MS)
+        await publishOrphanClose(p);
     }
 
     // Belt-and-suspenders (backstop behind the close-event-driven handleClose path): a leader that closed a position
     // whose MULTI-TX open is still IN FLIGHT is never in `tracked` (the mirror isn't registered yet), so the loops
     // above can't catch it. Cancel any pending open whose leader account is confirmably GONE so the continuation
     // never funds an exited pool — only when it's a CLEAN addition (leader account read as null; else rely on handleClose).
-    const pendingLeaders = [...pendingOpenLeaders(pendingOpenMapsView())].filter(([lp]) => !registry.hasOpen(lp));
+    const pendingLeaders = [...pendingOpenLeaders(pendingOpenMapsView())].filter(
+      ([lp]) => !registry.hasOpen(lp),
+    );
     if (pendingLeaders.length > 0) {
       await Promise.all(
         pendingLeaders.map(async ([lp, pool]) => {
@@ -1194,14 +2012,37 @@ async function main(): Promise<void> {
   // (per `tag`) → the vault retries it (idempotency re-claims a previously failed close) until it lands.
   async function publishSafetyClose(m: Mirror, tag: string, reason: string): Promise<void> {
     const eventKey = `${cfg.leader}:${m.pool}:${tag}:${m.leaderPosition}`;
-    const built = await buildCloseTx(conn, new PublicKey(m.pool), ownerPk, new PublicKey(m.ourPosition), m.lowerBin, m.upperBin);
+    const built = await buildCloseTx(
+      conn,
+      new PublicKey(m.pool),
+      ownerPk,
+      new PublicKey(m.ourPosition),
+      m.lowerBin,
+      m.upperBin,
+    );
     const { issuedAtSlot, deadlineSlot } = await slots();
-    await publish({ commandId: deriveCommandId(eventKey), eventKey, kind: 'close', pool: m.pool, positionPubkey: m.ourPosition, owner: ownerPk.toBase58(), txBase64: serializeUnsigned(firstTx(built)), sizeSol: m.sizeSol, targetBinRange: { lower: m.lowerBin, upper: m.upperBin }, issuedAtSlot, deadlineSlot }, { stage: 'failsafe', severity: 'warn', reason, leaderPosition: m.leaderPosition });
+    await publish(
+      {
+        commandId: deriveCommandId(eventKey),
+        eventKey,
+        kind: 'close',
+        pool: m.pool,
+        positionPubkey: m.ourPosition,
+        owner: ownerPk.toBase58(),
+        txBase64: serializeUnsigned(firstTx(built)),
+        sizeSol: m.sizeSol,
+        targetBinRange: { lower: m.lowerBin, upper: m.upperBin },
+        issuedAtSlot,
+        deadlineSlot,
+      },
+      { stage: 'failsafe', severity: 'warn', reason, leaderPosition: m.leaderPosition },
+    );
     recentlyPublishedClose.set(m.ourPosition, Date.now()); // grace; journaled as a failsafe-published event in publish()
   }
 
   // Re-publish a failsafe close for a mirror still on-chain whose leader has closed.
-  const publishReClose = (m: Mirror): Promise<void> => publishSafetyClose(m, 'failsafe', 'leader_closed');
+  const publishReClose = (m: Mirror): Promise<void> =>
+    publishSafetyClose(m, 'failsafe', 'leader_closed');
 
   // Rug-SL: poll each open pool's active-bin token price (one cheap lbPair read per pool), feed the tracker, and
   // close any position whose price crashed ≥ dropPercent within the window. The leader keeps holding (it's OUR
@@ -1242,14 +2083,46 @@ async function main(): Promise<void> {
   // close OUR own position. Deterministic commandId → idempotent if it has to be retried.
   async function publishOrphanClose(p: UserPosition): Promise<void> {
     const eventKey = `${cfg.leader}:${p.pool}:orphan:${p.position}`;
-    const built = await buildCloseTx(conn, new PublicKey(p.pool), ownerPk, new PublicKey(p.position), p.lowerBinId, p.upperBinId);
+    const built = await buildCloseTx(
+      conn,
+      new PublicKey(p.pool),
+      ownerPk,
+      new PublicKey(p.position),
+      p.lowerBinId,
+      p.upperBinId,
+    );
     const { issuedAtSlot, deadlineSlot } = await slots();
     const commandId = deriveCommandId(eventKey);
-    await publish({ commandId, eventKey, kind: 'close', pool: p.pool, positionPubkey: p.position, owner: ownerPk.toBase58(), txBase64: serializeUnsigned(firstTx(built)), sizeSol: 0, targetBinRange: { lower: p.lowerBinId, upper: p.upperBinId }, issuedAtSlot, deadlineSlot }, { stage: 'failsafe', reason: 'orphan' });
+    await publish(
+      {
+        commandId,
+        eventKey,
+        kind: 'close',
+        pool: p.pool,
+        positionPubkey: p.position,
+        owner: ownerPk.toBase58(),
+        txBase64: serializeUnsigned(firstTx(built)),
+        sizeSol: 0,
+        targetBinRange: { lower: p.lowerBinId, upper: p.upperBinId },
+        issuedAtSlot,
+        deadlineSlot,
+      },
+      { stage: 'failsafe', reason: 'orphan' },
+    );
     recentlyPublishedClose.set(p.position, Date.now());
     // Orphan auto-close → the pinned, feed-visible `failsafe.orphan_closed` (was a generic `alert()`). Same
     // commandId as the publish marker above ⇒ the emit dedup collapses the two into ONE orphan-closed row.
-    events.emit('failsafe.orphan_closed', { stage: 'failsafe', outcome: 'published', reason: 'orphan', leader: cfg.leader, pool: p.pool, ourPosition: p.position, commandId, eventKey, adminDetail: { position: p.position, pool: p.pool } });
+    events.emit('failsafe.orphan_closed', {
+      stage: 'failsafe',
+      outcome: 'published',
+      reason: 'orphan',
+      leader: cfg.leader,
+      pool: p.pool,
+      ourPosition: p.position,
+      commandId,
+      eventKey,
+      adminDetail: { position: p.position, pool: p.pool },
+    });
   }
 
   // ev:executed(open) → a CLASSIC open LANDED on-chain: emit the FEED `lifecycle.open_confirmed` so the user sees
@@ -1261,7 +2134,17 @@ async function main(): Promise<void> {
   function onOpenConfirmed(ourPosition: string): void {
     const m = registry.getByOurPosition(ourPosition);
     if (!m) return;
-    events.opened({ stage: 'open', outcome: 'confirmed', leader: cfg.leader, pool: m.pool, leaderPosition: m.leaderPosition, ourPosition, ourSizeSol: m.sizeSol, eventKey: openConfirmedKey(m.pool, ourPosition), adminDetail: { nonSolSymbol: m.nonSolSymbol, openCount: registry.openPositions().length } });
+    events.opened({
+      stage: 'open',
+      outcome: 'confirmed',
+      leader: cfg.leader,
+      pool: m.pool,
+      leaderPosition: m.leaderPosition,
+      ourPosition,
+      ourSizeSol: m.sizeSol,
+      eventKey: openConfirmedKey(m.pool, ourPosition),
+      adminDetail: { nonSolSymbol: m.nonSolSymbol, openCount: registry.openPositions().length },
+    });
   }
 
   // ev:executed(add) → a reshape ADD leg LANDED → emit the FEED `lifecycle.add_confirmed` (the publish only emits the
@@ -1272,7 +2155,17 @@ async function main(): Promise<void> {
   function onAddConfirmed(ourPosition: string, commandId: string): void {
     const m = registry.getByOurPosition(ourPosition);
     if (!m) return;
-    events.addedLiquidity({ stage: 'reshape', outcome: 'confirmed', leader: cfg.leader, pool: m.pool, leaderPosition: m.leaderPosition, ourPosition, ourSizeSol: m.sizeSol, commandId, adminDetail: { nonSolSymbol: m.nonSolSymbol } });
+    events.addedLiquidity({
+      stage: 'reshape',
+      outcome: 'confirmed',
+      leader: cfg.leader,
+      pool: m.pool,
+      leaderPosition: m.leaderPosition,
+      ourPosition,
+      ourSizeSol: m.sizeSol,
+      commandId,
+      adminDetail: { nonSolSymbol: m.nonSolSymbol },
+    });
   }
 
   // ev:executed(claim) → a fees CLAIM LANDED → emit the FEED `lifecycle.claim_confirmed` (the publish only emits the
@@ -1281,7 +2174,17 @@ async function main(): Promise<void> {
   function onClaimConfirmed(ourPosition: string, commandId: string): void {
     const m = registry.getByOurPosition(ourPosition);
     if (!m) return;
-    events.claimed({ stage: 'close', outcome: 'confirmed', leader: cfg.leader, pool: m.pool, leaderPosition: m.leaderPosition, ourPosition, ourSizeSol: m.sizeSol, commandId, adminDetail: { nonSolSymbol: m.nonSolSymbol } }); // 'claim' maps to the close-domain stage (stageForKind)
+    events.claimed({
+      stage: 'close',
+      outcome: 'confirmed',
+      leader: cfg.leader,
+      pool: m.pool,
+      leaderPosition: m.leaderPosition,
+      ourPosition,
+      ourSizeSol: m.sizeSol,
+      commandId,
+      adminDetail: { nonSolSymbol: m.nonSolSymbol },
+    }); // 'claim' maps to the close-domain stage (stageForKind)
   }
 
   // ev:executed(close) → the close LANDED, so our position is gone: mark the mirror closed in the DB NOW (don't
@@ -1294,7 +2197,17 @@ async function main(): Promise<void> {
     registry.close(m.leaderPosition);
     recentlyPublishedClose.delete(ourPosition);
     rugSlTracker.forget(ourPosition);
-    events.closed({ stage: 'close', outcome: 'confirmed', leader: cfg.leader, pool: m.pool, leaderPosition: m.leaderPosition, ourPosition, ourSizeSol: m.sizeSol, eventKey: closeConfirmedKey(m.pool, ourPosition), adminDetail: { nonSolSymbol: m.nonSolSymbol, via: 'ev_executed' } });
+    events.closed({
+      stage: 'close',
+      outcome: 'confirmed',
+      leader: cfg.leader,
+      pool: m.pool,
+      leaderPosition: m.leaderPosition,
+      ourPosition,
+      ourSizeSol: m.sizeSol,
+      eventKey: closeConfirmedKey(m.pool, ourPosition),
+      adminDetail: { nonSolSymbol: m.nonSolSymbol, via: 'ev_executed' },
+    });
   }
 
   // ev:executed(sell) → a residual token→SOL SELL (close-triggered OR safety-sweep) LANDED → emit the FEED
@@ -1308,7 +2221,20 @@ async function main(): Promise<void> {
     const stash = pendingSellMints.get(ev.commandId);
     if (!stash) return; // unknown / already-confirmed sell → nothing to name
     pendingSellMints.delete(ev.commandId);
-    events.swapped({ stage: 'sell', outcome: 'confirmed', kind: 'sell', leader: cfg.leader, pool: ev.pool ?? stash.pool, commandId: ev.commandId, signature: ev.sig, adminDetail: { nonSolSymbol: stash.nonSolSymbol, mint: stash.tokenMint, pool: ev.pool ?? stash.pool } });
+    events.swapped({
+      stage: 'sell',
+      outcome: 'confirmed',
+      kind: 'sell',
+      leader: cfg.leader,
+      pool: ev.pool ?? stash.pool,
+      commandId: ev.commandId,
+      signature: ev.sig,
+      adminDetail: {
+        nonSolSymbol: stash.nonSolSymbol,
+        mint: stash.tokenMint,
+        pool: ev.pool ?? stash.pool,
+      },
+    });
   }
 
   // ev:executed feedback → fast residual sell. Once the vault confirms a CLOSE landed, the close returned SOL +
@@ -1319,14 +2245,33 @@ async function main(): Promise<void> {
    *  (resolvable only on the close path, via the Mirror) names the token in the sell-confirm FEED line; null on
    *  the sweep path falls back to the truncated mint. Returns whether a sell was published (false = quote below
    *  the SOL-out floor). */
-  async function publishSell(tokenMint: string, residualRaw: bigint, pool: string, source: 'close' | 'sweep', nonSolSymbol: string | null = null): Promise<boolean> {
+  async function publishSell(
+    tokenMint: string,
+    residualRaw: bigint,
+    pool: string,
+    source: 'close' | 'sweep',
+    nonSolSymbol: string | null = null,
+  ): Promise<boolean> {
     const t0 = Date.now();
     const ec = eff();
     const eventKey = `${cfg.leader}:${pool}:${source}:${tokenMint}:${residualRaw}`; // hoisted: also keys the below-min-sell-out skip's emit dedup
-    const quote = await getJupiterQuote(cfg.jupiterBaseUrl, tokenMint, residualRaw, ec.execution.slippageBps);
+    const quote = await getJupiterQuote(
+      cfg.jupiterBaseUrl,
+      tokenMint,
+      residualRaw,
+      ec.execution.slippageBps,
+    );
     const minOut = minOutWithSlippage(BigInt(quote.outAmount), ec.execution.slippageBps);
     if (minOut < BigInt(ec.execution.minSellOutLamports)) {
-      events.emit('swap.below_min_sell_out', { stage: 'sell', outcome: 'skipped', reason: 'below_min_sell_out', leader: cfg.leader, pool, eventKey, adminDetail: { mint: tokenMint, outAmount: quote.outAmount, source } });
+      events.emit('swap.below_min_sell_out', {
+        stage: 'sell',
+        outcome: 'skipped',
+        reason: 'below_min_sell_out',
+        leader: cfg.leader,
+        pool,
+        eventKey,
+        adminDetail: { mint: tokenMint, outAmount: quote.outAmount, source },
+      });
       return false;
     }
     const txBase64 = await buildJupiterSwapTx(cfg.jupiterBaseUrl, quote, ownerPk.toBase58());
@@ -1349,9 +2294,23 @@ async function main(): Promise<void> {
       targetBinRange: { lower: 0, upper: 0 }, // n/a for a sell
       issuedAtSlot,
       deadlineSlot,
-      sell: { inputMint: tokenMint, inputAmountRaw: residualRaw.toString(), minOutLamports: minOut.toString() },
+      sell: {
+        inputMint: tokenMint,
+        inputAmountRaw: residualRaw.toString(),
+        minOutLamports: minOut.toString(),
+      },
     });
-    log.info({ tokenMint, residual: residualRaw.toString(), outAmount: quote.outAmount, minOut: minOut.toString(), source, buildMs: Date.now() - t0 }, '💱 sell published');
+    log.info(
+      {
+        tokenMint,
+        residual: residualRaw.toString(),
+        outAmount: quote.outAmount,
+        minOut: minOut.toString(),
+        source,
+        buildMs: Date.now() - t0,
+      },
+      '💱 sell published',
+    );
     return true;
   }
 
@@ -1364,12 +2323,22 @@ async function main(): Promise<void> {
     if (!decision.sell) {
       // dynamic reason: `no_residual` → swap.no_residual (internal). (`dust` is unreachable here — the dust threshold
       // is 0 so a sub-dust balance is already `no_residual`; if it ever fired it would take the deterministic fallback.)
-      emitFor(decision.reason, { stage: 'sell', outcome: 'skipped', reason: decision.reason, leader: cfg.leader, pool: ev.pool, eventKey: `${cfg.leader}:${ev.pool}:close-sell:${ev.positionPubkey ?? tokenMint}`, adminDetail: { mint: tokenMint } });
+      emitFor(decision.reason, {
+        stage: 'sell',
+        outcome: 'skipped',
+        reason: decision.reason,
+        leader: cfg.leader,
+        pool: ev.pool,
+        eventKey: `${cfg.leader}:${ev.pool}:close-sell:${ev.positionPubkey ?? tokenMint}`,
+        adminDetail: { mint: tokenMint },
+      });
       return;
     }
     // Resolve the token symbol from the (now-closed) Mirror so the sell-confirm FEED line can name it (null → the
     // renderer truncates the mint). The Mirror still exists at close-confirm time (markClosed flips status, not the row).
-    const closedMirror = ev.positionPubkey ? registry.getByOurPosition(ev.positionPubkey) : undefined;
+    const closedMirror = ev.positionPubkey
+      ? registry.getByOurPosition(ev.positionPubkey)
+      : undefined;
     await publishSell(tokenMint, residual, ev.pool, 'close', closedMirror?.nonSolSymbol ?? null);
   }
 
@@ -1382,16 +2351,31 @@ async function main(): Promise<void> {
     // Sweep ANY non-SOL (minSellOutLamports gates economics post-quote) — EXCEPT a token still in-flight for a
     // two-sided open (bought, awaiting deposit): selling it mid-open would empty the token leg. After the grace, a
     // still-present in-flight token means the open failed → it IS a stranded residual → swept.
-    const toSweep = planWalletSweep(balances, WSOL_MINT, SELL_RESIDUAL_DUST_RAW).filter((b) => swNow - (inFlightBuyMints.get(b.mint) ?? 0) >= INFLIGHT_BUY_GRACE_MS);
+    const toSweep = planWalletSweep(balances, WSOL_MINT, SELL_RESIDUAL_DUST_RAW).filter(
+      (b) => swNow - (inFlightBuyMints.get(b.mint) ?? 0) >= INFLIGHT_BUY_GRACE_MS,
+    );
     if (toSweep.length === 0) return;
     // `eventKey` is the per-cycle correlation (swNow): each periodic sweep that finds a residual is its own row
     // (the operator must see a still-stranded residual each cycle), while WS/poll have no part here. The per-mint
     // failure shares the cycle stamp + mint so a retry within the same cycle collapses, distinct cycles don't.
-    events.emit('swap.sweep_detected', { stage: 'sweep', outcome: 'detected', leader: cfg.leader, eventKey: `${cfg.leader}:sweep:${swNow}`, adminDetail: { count: toSweep.length, mints: toSweep.map((b) => b.mint) } });
+    events.emit('swap.sweep_detected', {
+      stage: 'sweep',
+      outcome: 'detected',
+      leader: cfg.leader,
+      eventKey: `${cfg.leader}:sweep:${swNow}`,
+      adminDetail: { count: toSweep.length, mints: toSweep.map((b) => b.mint) },
+    });
     for (const b of toSweep) {
       await publishSell(b.mint, b.amountRaw, ownerPk.toBase58(), 'sweep').catch((e) => {
         // A sweep sell that fails to build/publish is the swap-failed path → pinned, feed-visible (SPEC §2.1 swap).
-        events.swapFailed({ stage: 'sweep', outcome: 'failed', reason: 'failed_after_retries', leader: cfg.leader, eventKey: `${cfg.leader}:sweep:${swNow}:${b.mint}`, adminDetail: { mint: b.mint, error: (e as Error).message } });
+        events.swapFailed({
+          stage: 'sweep',
+          outcome: 'failed',
+          reason: 'failed_after_retries',
+          leader: cfg.leader,
+          eventKey: `${cfg.leader}:sweep:${swNow}:${b.mint}`,
+          adminDetail: { mint: b.mint, error: (e as Error).message },
+        });
       });
     }
   }
@@ -1400,7 +2384,16 @@ async function main(): Promise<void> {
     // Dedup / tracker / replay-skip stay SYNCHRONOUS at enqueue time (the cursor+tracker state must advance in the
     // order events arrive, before any handler runs). `tracker.apply` returns null for a stale/duplicate leg.
     const pos = tracker.apply(e);
-    log.debug({ source, position: e.position, instr: e.instruction, depositSol: e.depositSol, posNull: !pos }, '👁️ onEvent in');
+    log.debug(
+      {
+        source,
+        position: e.position,
+        instr: e.instruction,
+        depositSol: e.depositSol,
+        posNull: !pos,
+      },
+      '👁️ onEvent in',
+    );
     if (source === 'replay' || !pos) return; // mono-user: no copying of a past open (stale)
     const t0 = Date.now();
     // SERIALIZE per leader position: all handler work for ONE position runs strictly in order (no concurrent
@@ -1418,12 +2411,36 @@ async function main(): Promise<void> {
         cfg: { infiniteAdd: ecRoute.infiniteAdd, claimFloorSol: ecRoute.claimFloorSol },
         rugExited: rugExited.has(e.position),
       });
-      log.info({ source, position: e.position, kind, action, depositSol: e.depositSol, withdrawSol: e.withdrawSol, claimSol: e.claimSol, eventCount: pos.eventCount, tracked }, LOG_MARKER_EVENT_ROUTED);
+      log.info(
+        {
+          source,
+          position: e.position,
+          kind,
+          action,
+          depositSol: e.depositSol,
+          withdrawSol: e.withdrawSol,
+          claimSol: e.claimSol,
+          eventCount: pos.eventCount,
+          tracked,
+        },
+        LOG_MARKER_EVENT_ROUTED,
+      );
       if (action !== 'ignore') {
         // `eventKey` = the per-leg detection correlation (sig:position) so the emit dedup keys uniquely PER routed
         // leg — without it every routed event shares an empty correlation and the LRU would collapse them into one
         // row (a lost-detect regression). WS + cursor-poll re-observations of the SAME leg correctly collapse to one.
-        void events.emit('detect.routed', { stage: 'detect', outcome: 'detected', kind: kind ?? undefined, leader: cfg.leader, pool: e.pool, leaderPosition: e.position, signature: e.signature, leaderSizeSol: e.depositSol || e.withdrawSol || e.claimSol, eventKey: `${e.signature}:${e.position}`, adminDetail: { action, instruction: e.instruction } });
+        void events.emit('detect.routed', {
+          stage: 'detect',
+          outcome: 'detected',
+          kind: kind ?? undefined,
+          leader: cfg.leader,
+          pool: e.pool,
+          leaderPosition: e.position,
+          signature: e.signature,
+          leaderSizeSol: e.depositSol || e.withdrawSol || e.claimSol,
+          eventKey: `${e.signature}:${e.position}`,
+          adminDetail: { action, instruction: e.instruction },
+        });
       }
       // Reserve BEFORE handleOpen: a multi-tx open returns before `registry.open`, so without this a follow-up add
       // (a later serialized task) would see tracked=false and route to a 2nd open. Cleared at each registry.open site.
@@ -1456,13 +2473,24 @@ async function main(): Promise<void> {
   // A signature the detector could NOT resolve after the bounded retry → force-past to avoid stalling the
   // cursor, but emit a LOUD gap: a leader event may have been missed (the reconcile backstop still covers closes).
   const onGap = (signature: string, attempts: number): void => {
-    events.emit('detect.gap', { stage: 'detect', outcome: 'failed', leader: cfg.leader, signature, eventKey: `gap:${signature}`, adminDetail: { attempts } });
+    events.emit('detect.gap', {
+      stage: 'detect',
+      outcome: 'failed',
+      leader: cfg.leader,
+      signature,
+      eventKey: `gap:${signature}`,
+      adminDetail: { attempts },
+    });
   };
-  const detector = new LeaderDetector(makeDetectionDeps({ conn, pk: leaderPk, poolReader, tokenMeta, onEvent, onGap }));
+  const detector = new LeaderDetector(
+    makeDetectionDeps({ conn, pk: leaderPk, poolReader, tokenMeta, onEvent, onGap }),
+  );
   await blockhashCache.start(); // prime + background-refresh so serializeUnsigned never pays a getLatestBlockhash RTT
   if (oracleOn()) {
     await priorityFeeOracle.start(); // prime + background-refresh the live fee estimate (opt-in)
-    log.info('📈 priority-fee oracle on (live estimate raises the tier in congestion; cap still bounds it)');
+    log.info(
+      '📈 priority-fee oracle on (live estimate raises the tier in congestion; cap still bounds it)',
+    );
   }
 
   // --once: validates the pipeline by forcing ONE open on a live leader position (deterministic), then exits.
@@ -1478,7 +2506,15 @@ async function main(): Promise<void> {
 
   // No-dormant-token: at boot, sweep any non-SOL balance left on the wallet (a prior downtime, a missed/
   // rejected close-sell) back to SOL before resuming — the wallet must never sit on a dormant token.
-  await sweepWallet().catch((e) => events.system('system.sweep_failed', e, { stage: 'sweep', outcome: 'failed', reason: 'sweep_failed', leader: cfg.leader, adminDetail: { phase: 'boot' } }));
+  await sweepWallet().catch((e) =>
+    events.system('system.sweep_failed', e, {
+      stage: 'sweep',
+      outcome: 'failed',
+      reason: 'sweep_failed',
+      leader: cfg.leader,
+      adminDetail: { phase: 'boot' },
+    }),
+  );
 
   // No-dormant: reload persisted open mirrors + immediate failsafe (the leader may have closed during a
   // brain downtime → we close right away whatever must be closed before even resuming live).
@@ -1498,11 +2534,14 @@ async function main(): Promise<void> {
   sub.onConnectionChange((c) => {
     wsConnected = c;
   });
-  sub.onReconnect(() => detector.poll().catch((e) => log.error({ e: (e as Error).message }, 'catch-up poll')));
+  sub.onReconnect(() =>
+    detector.poll().catch((e) => log.error({ e: (e as Error).message }, 'catch-up poll')),
+  );
   sub.watch(cfg.leader, (sig, logs) => {
     const hasDlmm = logs.some((l) => l.includes(DLMM_PROGRAM_ID));
     log.debug({ sig, hasDlmm, nLogs: logs.length }, '📡 ws notif');
-    if (hasDlmm) detector.onWsSignature(sig).catch((e) => log.error({ e: (e as Error).message }, 'ws'));
+    if (hasDlmm)
+      detector.onWsSignature(sig).catch((e) => log.error({ e: (e as Error).message }, 'ws'));
   });
   sub.start();
   const timer = setInterval(
@@ -1526,8 +2565,14 @@ async function main(): Promise<void> {
         }),
     RECON_MS,
   );
-  const sweepTimer = setInterval(() => sweepWallet().catch((e) => log.error({ e: (e as Error).message }, 'sweep')), SWEEP_MS);
-  const rugSlTimer = setInterval(() => rugSlSweep().catch((e) => log.error({ e: (e as Error).message }, 'rug-sl')), RUG_SL_POLL_MS);
+  const sweepTimer = setInterval(
+    () => sweepWallet().catch((e) => log.error({ e: (e as Error).message }, 'sweep')),
+    SWEEP_MS,
+  );
+  const rugSlTimer = setInterval(
+    () => rugSlSweep().catch((e) => log.error({ e: (e as Error).message }, 'rug-sl')),
+    RUG_SL_POLL_MS,
+  );
   // Live config reload. A web config edit publishes a control ping → reload from the DB NOW (kill-switch in <100ms);
   // the periodic poll is the backstop if a ping is ever missed. load() is fail-safe (defaults on corruption); these
   // are the only writes to runtimeConfig post-boot.
@@ -1538,7 +2583,10 @@ async function main(): Promise<void> {
   });
   // Process heartbeat: beat now (web sees the brain online immediately) then on an interval.
   void heartbeat.beat(brainStatus());
-  const heartbeatTimer = setInterval(() => void heartbeat.beat(brainStatus()), HEARTBEAT_INTERVAL_MS);
+  const heartbeatTimer = setInterval(
+    () => void heartbeat.beat(brainStatus()),
+    HEARTBEAT_INTERVAL_MS,
+  );
 
   // ev:executed consumer on a SEPARATE Redis connection (a blocking XREAD must never stall publishes). Crash-proof.
   let stopped = false;
@@ -1554,29 +2602,77 @@ async function main(): Promise<void> {
     onCloseExecuted: (ev) =>
       onCloseExecuted(ev).catch((e) =>
         // close-residual sell build/publish failed → the swap-failed path (pinned, feed "swap manually").
-        events.swapFailed({ stage: 'sell', outcome: 'failed', reason: 'failed_after_retries', leader: cfg.leader, pool: ev.pool, commandId: ev.commandId, adminDetail: { error: (e as Error).message, pool: ev.pool } }),
+        events.swapFailed({
+          stage: 'sell',
+          outcome: 'failed',
+          reason: 'failed_after_retries',
+          leader: cfg.leader,
+          pool: ev.pool,
+          commandId: ev.commandId,
+          adminDetail: { error: (e as Error).message, pool: ev.pool },
+        }),
       ),
     hasPendingReshapeAdd: (commandId) => pendingReshapeAdds.has(commandId),
     publishReshapeAddAfterBuy: (commandId) =>
-      publishReshapeAddAfterBuy(commandId).catch((e) => events.emit('reshape.add_failed', { stage: 'reshape', outcome: 'failed', reason: 'add_failed', leader: cfg.leader, commandId, adminDetail: { error: (e as Error).message, commandId } })),
+      publishReshapeAddAfterBuy(commandId).catch((e) =>
+        events.emit('reshape.add_failed', {
+          stage: 'reshape',
+          outcome: 'failed',
+          reason: 'add_failed',
+          leader: cfg.leader,
+          commandId,
+          adminDetail: { error: (e as Error).message, commandId },
+        }),
+      ),
     publishTwoSidedOpenAfterBuy: (commandId) =>
-      publishTwoSidedOpenAfterBuy(commandId).catch((e) => events.emit('lifecycle.open_failed', { stage: 'open', outcome: 'failed', reason: 'open_failed', leader: cfg.leader, commandId, adminDetail: { error: (e as Error).message, commandId } })),
+      publishTwoSidedOpenAfterBuy(commandId).catch((e) =>
+        events.emit('lifecycle.open_failed', {
+          stage: 'open',
+          outcome: 'failed',
+          reason: 'open_failed',
+          leader: cfg.leader,
+          commandId,
+          adminDetail: { error: (e as Error).message, commandId },
+        }),
+      ),
     hasPendingToken2022Deposit: (commandId) => pendingToken2022Deposits.has(commandId),
     publishDepositAfterPositionCreated: (commandId) =>
       publishDepositAfterPositionCreated(commandId).catch((e) =>
         // the deposit leg of a Token-2022 OPEN failed to build/publish → the open did not complete (open_failed).
-        events.emit('lifecycle.open_failed', { stage: 'open', outcome: 'failed', reason: 'open_failed', leader: cfg.leader, commandId, adminDetail: { error: (e as Error).message, commandId, leg: 'token2022_deposit' } }),
+        events.emit('lifecycle.open_failed', {
+          stage: 'open',
+          outcome: 'failed',
+          reason: 'open_failed',
+          leader: cfg.leader,
+          commandId,
+          adminDetail: { error: (e as Error).message, commandId, leg: 'token2022_deposit' },
+        }),
       ),
     onOpenConfirmed,
     hasPendingToken2022Mirror: (commandId) => pendingToken2022Mirrors.has(commandId),
     finalizeToken2022Open: (commandId) =>
-      finalizeToken2022Open(commandId).catch((e) => events.emit('lifecycle.open_failed', { stage: 'open', outcome: 'failed', reason: 'open_failed', leader: cfg.leader, commandId, adminDetail: { error: (e as Error).message, commandId, leg: 'token2022_finalize' } })),
+      finalizeToken2022Open(commandId).catch((e) =>
+        events.emit('lifecycle.open_failed', {
+          stage: 'open',
+          outcome: 'failed',
+          reason: 'open_failed',
+          leader: cfg.leader,
+          commandId,
+          adminDetail: { error: (e as Error).message, commandId, leg: 'token2022_finalize' },
+        }),
+      ),
     onAddConfirmed,
     onClaimConfirmed,
     onSellConfirmed,
     ack: (id) => evBus.ack(EV_EXECUTED_STREAM, 'brain', id),
     onLoopError: (err, id) =>
-      events.system('system.loop_errored', err, { stage: 'failsafe', outcome: 'failed', reason: 'loop_errored', leader: cfg.leader, adminDetail: { loop: 'ev_executed', id } }),
+      events.system('system.loop_errored', err, {
+        stage: 'failsafe',
+        outcome: 'failed',
+        reason: 'loop_errored',
+        leader: cfg.leader,
+        adminDetail: { loop: 'ev_executed', id },
+      }),
   };
   const consumeExecuted = async (): Promise<void> => {
     let backoff = 1000;
@@ -1586,13 +2682,40 @@ async function main(): Promise<void> {
         // unACKed (a transient handler/ack throw, or a same-process restart) is re-processed here so a confirmation
         // (ESPECIALLY a close) is never stranded by `'>'` (which only returns NEW messages). On the first iteration
         // this also recovers a boot-time PEL. Then read new messages. Both go through the SAME per-message guard.
-        await processExecutedBatch(await evBus.consumePending(EV_EXECUTED_STREAM, 'brain', 'brain-1', 'ev:executed', hmacKey, 100), executedDeps);
-        await processExecutedBatch(await evBus.consume(EV_EXECUTED_STREAM, 'brain', 'brain-1', 'ev:executed', hmacKey, 10, 5000), executedDeps);
+        await processExecutedBatch(
+          await evBus.consumePending(
+            EV_EXECUTED_STREAM,
+            'brain',
+            'brain-1',
+            'ev:executed',
+            hmacKey,
+            100,
+          ),
+          executedDeps,
+        );
+        await processExecutedBatch(
+          await evBus.consume(
+            EV_EXECUTED_STREAM,
+            'brain',
+            'brain-1',
+            'ev:executed',
+            hmacKey,
+            10,
+            5000,
+          ),
+          executedDeps,
+        );
         backoff = 1000;
       } catch (e) {
         // CONNECTION-level failure only (a Redis-down consume/consumePending) — per-message errors are already
         // isolated inside processExecutedBatch. Record + exponential backoff + continue (Redis may recover).
-        events.system('system.loop_errored', e, { stage: 'failsafe', outcome: 'failed', reason: 'loop_errored', leader: cfg.leader, adminDetail: { loop: 'ev_executed', backoff } });
+        events.system('system.loop_errored', e, {
+          stage: 'failsafe',
+          outcome: 'failed',
+          reason: 'loop_errored',
+          leader: cfg.leader,
+          adminDetail: { loop: 'ev_executed', backoff },
+        });
         await sleep(backoff);
         backoff = Math.min(backoff * 2, 30_000);
       }
@@ -1627,21 +2750,51 @@ async function onceValidate(
   hmacKey: string,
   logger: typeof log,
 ): Promise<void> {
-  const sigs = (await conn.getSignaturesForAddress(leaderPk, { limit: 14 })).filter((s) => !s.err).map((s) => s.signature);
-  const txs = await conn.getParsedTransactions(sigs, { maxSupportedTransactionVersion: 0, commitment: 'confirmed' });
+  const sigs = (await conn.getSignaturesForAddress(leaderPk, { limit: 14 }))
+    .filter((s) => !s.err)
+    .map((s) => s.signature);
+  const txs = await conn.getParsedTransactions(sigs, {
+    maxSupportedTransactionVersion: 0,
+    commitment: 'confirmed',
+  });
   for (const tx of txs) {
     if (!tx?.meta?.logMessages?.some((l) => l.includes(DLMM_PROGRAM_ID))) continue;
     for (const leg of decodeDlmmLegs(tx)) {
       const meta = await poolReader.loadPoolMeta(leg.lbPair);
       if (!meta?.solSide || !leg.position) continue;
-      const shape = await readLeaderPositionShape(conn, new PublicKey(leg.lbPair), leaderPk, leg.position);
+      const shape = await readLeaderPositionShape(
+        conn,
+        new PublicKey(leg.lbPair),
+        leaderPk,
+        leg.position,
+      );
       if (!shape) continue;
       const sym = meta.mintX === WSOL_MINT ? meta.mintY : meta.mintX;
-      logger.info({ pool: leg.lbPair, position: leg.position }, '--once: forced open on live position');
-      await handleOpen({ signature: `once-${leg.position}`, blockTime: 1, instruction: 'AddLiquidityByStrategy2', depositSol: 0.5, withdrawSol: 0, claimSol: 0, closed: false, pool: leg.lbPair, position: leg.position, nonSolMint: sym, nonSolSymbol: null });
+      logger.info(
+        { pool: leg.lbPair, position: leg.position },
+        '--once: forced open on live position',
+      );
+      await handleOpen({
+        signature: `once-${leg.position}`,
+        blockTime: 1,
+        instruction: 'AddLiquidityByStrategy2',
+        depositSol: 0.5,
+        withdrawSol: 0,
+        claimSol: 0,
+        closed: false,
+        pool: leg.lbPair,
+        position: leg.position,
+        nonSolMint: sym,
+        nonSolSymbol: null,
+      });
       // re-read the stream to prove the publication
-      const msgs = await bus.consume('copybot:cmd:sign', 'validate', 'v1', 'cmd:sign', hmacKey, 5, 2000).catch(() => []);
-      logger.info({ consumed: msgs.length, ok: msgs[0]?.payload != null }, '--once: re-read from the bus');
+      const msgs = await bus
+        .consume('copybot:cmd:sign', 'validate', 'v1', 'cmd:sign', hmacKey, 5, 2000)
+        .catch(() => []);
+      logger.info(
+        { consumed: msgs.length, ok: msgs[0]?.payload != null },
+        '--once: re-read from the bus',
+      );
       return;
     }
   }

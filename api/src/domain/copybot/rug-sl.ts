@@ -47,7 +47,9 @@ export class RugSlTracker {
 
   /** Append a price sample for `key` (our position pubkey) and prune samples older than `retainMs`. */
   record(key: string, price: number, nowMs: number): void {
-    const next = [...(this.windows.get(key) ?? []), { ts: nowMs, price }].filter((p) => nowMs - p.ts <= this.retainMs);
+    const next = [...(this.windows.get(key) ?? []), { ts: nowMs, price }].filter(
+      (p) => nowMs - p.ts <= this.retainMs,
+    );
     this.windows.set(key, next);
   }
 

@@ -105,7 +105,10 @@ export function toUserMessage(e: CopyEvent): UserMessage | null {
     case 'swap': {
       // 💱 Swapped 124,500 WIF → 0.31 SOL (intended) · tx: …   (D-6 intended, labelled)
       const inAmount = readNumber(e.adminDetail, 'swapInAmount');
-      const inSymbol = readString(e.adminDetail, 'nonSolSymbol') ?? readString(e.adminDetail, 'mint')?.slice(0, MINT_TRUNCATE) ?? '?';
+      const inSymbol =
+        readString(e.adminDetail, 'nonSolSymbol') ??
+        readString(e.adminDetail, 'mint')?.slice(0, MINT_TRUNCATE) ??
+        '?';
       const lhs = inAmount !== undefined ? `${formatTokenAmount(inAmount)} ${inSymbol}` : inSymbol;
       const rhs = e.ourSizeSol !== undefined ? `${sol(e.ourSizeSol)} (intended)` : 'SOL';
       return msg(EMOJI.swap, e, [`${lhs} → ${rhs}`], links);
@@ -113,7 +116,9 @@ export function toUserMessage(e: CopyEvent): UserMessage | null {
     case 'swap-failed': {
       // 🚨 Swap failed after retries — swap manually · jup.ag/swap/WIF-SOL
       const symbol = readString(e.adminDetail, 'nonSolSymbol');
-      const jupLinks = symbol ? [{ label: 'swap manually', url: `${JUP_SWAP_BASE}${symbol}-SOL` }] : [];
+      const jupLinks = symbol
+        ? [{ label: 'swap manually', url: `${JUP_SWAP_BASE}${symbol}-SOL` }]
+        : [];
       return msg(EMOJI.alert, e, [pair, 'swap failed — swap manually'], jupLinks);
     }
     case 'insufficient-balance': {
@@ -121,7 +126,8 @@ export function toUserMessage(e: CopyEvent): UserMessage | null {
       const configured = readNumber(e.adminDetail, 'configuredSol');
       const required = readNumber(e.adminDetail, 'requiredSol') ?? e.ourSizeSol;
       const parts = [pair];
-      if (configured !== undefined && required !== undefined) parts.push(`configured ${solBare(configured)} / required ${sol(required)} — skipped`);
+      if (configured !== undefined && required !== undefined)
+        parts.push(`configured ${solBare(configured)} / required ${sol(required)} — skipped`);
       else if (required !== undefined) parts.push(`required ${sol(required)} — skipped`);
       else parts.push('skipped');
       return msg(EMOJI.insufficient, e, parts, links);
@@ -149,7 +155,9 @@ export function toUserMessage(e: CopyEvent): UserMessage | null {
     case 'failsafe-failed': {
       // 🚨 Failsafe FAILED — close manually — WIF/SOL · app.meteora.ag/dlmm/…
       const meteoraUrl = readString(e.adminDetail, 'meteoraUrl');
-      const failLinks = meteoraUrl ? [...links, { label: 'close manually', url: meteoraUrl }] : links;
+      const failLinks = meteoraUrl
+        ? [...links, { label: 'close manually', url: meteoraUrl }]
+        : links;
       return msg(EMOJI.alert, e, [pair, 'close manually'], failLinks);
     }
     case 'system-fatal': {
@@ -165,7 +173,12 @@ export function toUserMessage(e: CopyEvent): UserMessage | null {
 // ── Pure helpers ────────────────────────────────────────────────────────────────────────────────────────────
 
 /** Assemble the `UserMessage`. `titleKey` = the code (a future locale layer keys on it); the title text is the registry's. */
-function msg(emoji: string, e: CopyEvent, lineParts: Array<string>, links: UserMessage['links']): UserMessage {
+function msg(
+  emoji: string,
+  e: CopyEvent,
+  lineParts: Array<string>,
+  links: UserMessage['links'],
+): UserMessage {
   return { emoji, titleKey: e.code, lineParts, links };
 }
 
@@ -186,7 +199,10 @@ function formatTokenAmount(v: number): string {
 
 /** A `tx: <sig…>` solscan link from a signature (SOL-only ergonomics; the admin row keeps the full sig). */
 function txLink(signature: string): { label: string; url: string } {
-  const shortSig = signature.length > SIG_TRUNCATE * 2 ? `${signature.slice(0, SIG_TRUNCATE)}…${signature.slice(-SIG_TRUNCATE)}` : signature;
+  const shortSig =
+    signature.length > SIG_TRUNCATE * 2
+      ? `${signature.slice(0, SIG_TRUNCATE)}…${signature.slice(-SIG_TRUNCATE)}`
+      : signature;
   return { label: `tx: ${shortSig}`, url: `${SOLSCAN_TX_BASE}${signature}` };
 }
 

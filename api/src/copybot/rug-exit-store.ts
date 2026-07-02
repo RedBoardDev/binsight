@@ -28,7 +28,12 @@ export class RugExitStore {
   /** Write-through the full re-open-suppression set after a rug-exit. Fail-safe: a write error is logged, never thrown
    *  (the in-memory set still suppresses re-open for the current process; only cross-restart durability is at risk). */
   save(set: ReadonlySet<string>): Promise<void> {
-    return this.saveSet(RUG_EXITED_KEY, set, 'rug-exit set', 'in-memory still suppresses re-open this run');
+    return this.saveSet(
+      RUG_EXITED_KEY,
+      set,
+      'rug-exit set',
+      'in-memory still suppresses re-open this run',
+    );
   }
 
   /** Load the persisted rug-exit-PENDING OUR positions (rug-SL-closed, awaiting on-chain confirmation → re-close).
@@ -41,7 +46,12 @@ export class RugExitStore {
   /** Write-through the full rug-exit-pending set. Fail-safe: a write error is logged, never thrown (the in-memory
    *  set still drives the re-close this run; only cross-restart durability of the pending retry is at risk). */
   savePending(set: ReadonlySet<string>): Promise<void> {
-    return this.saveSet(RUG_EXIT_PENDING_KEY, set, 'rug-exit-pending set', 'in-memory still re-closes this run');
+    return this.saveSet(
+      RUG_EXIT_PENDING_KEY,
+      set,
+      'rug-exit-pending set',
+      'in-memory still re-closes this run',
+    );
   }
 
   /** Read a persisted `string[]` from the settings table. Empty on absent/corrupt — never throws (fail-safe). */
@@ -51,7 +61,9 @@ export class RugExitStore {
       const raw = rows[0]?.value;
       if (!raw) return new Set();
       const arr: unknown = JSON.parse(raw);
-      return Array.isArray(arr) ? new Set(arr.filter((x): x is string => typeof x === 'string')) : new Set();
+      return Array.isArray(arr)
+        ? new Set(arr.filter((x): x is string => typeof x === 'string'))
+        : new Set();
     } catch (e) {
       this.log.warn({ e: (e as Error).message }, `${label} load failed → starting empty`);
       return new Set();
@@ -59,10 +71,18 @@ export class RugExitStore {
   }
 
   /** Write-through the full set as a JSON `string[]`. Fail-safe: a write error is logged, never thrown. */
-  private async saveSet(key: string, set: ReadonlySet<string>, label: string, degradedNote: string): Promise<void> {
+  private async saveSet(
+    key: string,
+    set: ReadonlySet<string>,
+    label: string,
+    degradedNote: string,
+  ): Promise<void> {
     try {
       const value = JSON.stringify([...set]);
-      await this.db.insert(settings).values({ key, value }).onConflictDoUpdate({ target: settings.key, set: { value } });
+      await this.db
+        .insert(settings)
+        .values({ key, value })
+        .onConflictDoUpdate({ target: settings.key, set: { value } });
     } catch (e) {
       this.log.warn({ e: (e as Error).message }, `${label} save failed (${degradedNote})`);
     }

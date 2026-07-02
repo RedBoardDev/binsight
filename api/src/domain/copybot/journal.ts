@@ -90,7 +90,12 @@ export interface Journal {
 }
 
 /** Outcomes that denote a non-progressing result whose cause MUST be recorded (so the feed always explains them). */
-const REASON_REQUIRED: ReadonlySet<JournalOutcome> = new Set<JournalOutcome>(['skipped', 'blocked', 'failed', 'rejected']);
+const REASON_REQUIRED: ReadonlySet<JournalOutcome> = new Set<JournalOutcome>([
+  'skipped',
+  'blocked',
+  'failed',
+  'rejected',
+]);
 
 /** Default severity for an outcome. Invariant the UI/alerting rely on: failed/rejected are ALWAYS surfaced as error. */
 export function severityFor(outcome: JournalOutcome): JournalSeverity {
@@ -115,7 +120,6 @@ export function validationWarning(entry: JournalEntry): string | null {
   return null;
 }
 
-
 /**
  * Default pipeline stage for a leader/sign kind — used by the generic publish-time journaling so every published
  * intent is recorded without per-call-site stage plumbing. Context-specific publishes (a failsafe/orphan re-close,
@@ -136,7 +140,6 @@ export function stageForKind(kind: JournalKind): JournalStage {
       return 'sell';
   }
 }
-
 
 /** Per-outcome icon for the human-readable log line (Valhalla-style). */
 const OUTCOME_ICON: Record<JournalOutcome, string> = {

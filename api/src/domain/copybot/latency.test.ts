@@ -54,7 +54,8 @@ describe('runParallel', () => {
 
   it('runs IN PARALLEL: 3 tasks of 100ms resolve after ~100ms (not 300)', async () => {
     vi.useFakeTimers();
-    const delayed = (v: number) => () => new Promise<number>((res) => setTimeout(() => res(v), 100));
+    const delayed = (v: number) => () =>
+      new Promise<number>((res) => setTimeout(() => res(v), 100));
     const p = runParallel([delayed(1), delayed(2), delayed(3)], 1000);
     await vi.advanceTimersByTimeAsync(100); // a single 100ms tick is enough for all 3 → parallel
     expect(await p).toEqual([1, 2, 3]);

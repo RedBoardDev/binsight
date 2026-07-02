@@ -57,7 +57,9 @@ describe('config edit · addLeader / removeLeader', () => {
   });
 
   it('rejects a duplicate leader', () => {
-    expect(() => addLeader(CONFIG_DEFAULTS, CONFIG_DEFAULTS.leaders[0]!.address)).toThrow(/already followed/);
+    expect(() => addLeader(CONFIG_DEFAULTS, CONFIG_DEFAULTS.leaders[0]!.address)).toThrow(
+      /already followed/,
+    );
   });
 
   it('enforces the MAX_LEADERS SYSTEM cap', () => {

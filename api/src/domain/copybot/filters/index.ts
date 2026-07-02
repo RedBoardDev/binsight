@@ -24,10 +24,10 @@ import { minTokenAgeHours } from './min-token-age/min-token-age';
 import { singlePoolPerToken } from './single-pool-per-token/single-pool-per-token';
 
 export * from './filter';
-export * from './sources/source';
-export { snapshotToContext } from './sources/snapshot';
-export { type ResolveDeps, resolveFilterContext } from './sources/resolve';
 export { rangeCoveragePercent } from './sources/leader-shape';
+export { type ResolveDeps, resolveFilterContext } from './sources/resolve';
+export { snapshotToContext } from './sources/snapshot';
+export * from './sources/source';
 
 /** Run order: instant/local first (free, short-circuiting), then cached/external Jupiter-backed filters. */
 export const REGISTRY: readonly FilterBrick[] = [
@@ -48,7 +48,11 @@ export const FILTER_BRICKS = REGISTRY;
 const FREE_SOURCES: ReadonlySet<DataSource> = new Set<DataSource>(['local', 'leader-shape']);
 
 /** Run the ENABLED filters in registry order; the first skip wins, else pass. Pure. */
-export function runFilters(candidate: FilterCandidate, ctx: FilterContext, cfg: FilterConfig): FilterVerdict {
+export function runFilters(
+  candidate: FilterCandidate,
+  ctx: FilterContext,
+  cfg: FilterConfig,
+): FilterVerdict {
   for (const brick of REGISTRY) {
     if (!brick.enabled(cfg)) continue;
     const v = brick.evaluate(cfg, candidate, ctx);
@@ -65,7 +69,6 @@ export function neededSources(cfg: FilterConfig): Set<DataSource> {
   }
   return out;
 }
-
 
 /** Whether ANY entry filter is turned on in this config — drives the per-open observability log. Pure. */
 export function filtersActive(cfg: FilterConfig): boolean {

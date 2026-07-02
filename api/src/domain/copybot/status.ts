@@ -62,6 +62,10 @@ export type CoffreStatusDetail = {
  * A process is online iff it beat within the stale window. `null` (never beat) ⇒ offline. Pure.
  * Boundary is inclusive (a beat exactly `staleMs` ago still counts as online) so the edge doesn't flap.
  */
-export function isOnline(lastBeatMs: number | null, nowMs: number, staleMs: number = HEARTBEAT_STALE_MS): boolean {
+export function isOnline(
+  lastBeatMs: number | null,
+  nowMs: number,
+  staleMs: number = HEARTBEAT_STALE_MS,
+): boolean {
   return lastBeatMs !== null && nowMs - lastBeatMs <= staleMs;
 }

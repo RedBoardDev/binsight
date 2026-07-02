@@ -80,7 +80,8 @@ function ownerAta(owner: PublicKey, mint: PublicKey, tokenProgram: PublicKey): s
 /** Decodes + verifies an unsigned legacy tx against the intent. Pure, does not throw (returns a verdict). */
 export function verifyTx(tx: Transaction, intent: WallBIntent): WallBVerdict {
   const signers = tx.signatures.map((s) => s.publicKey.toBase58());
-  if (signers.length === 0 || signers[0] !== intent.owner) return { ok: false, reason: 'signer_not_owner' };
+  if (signers.length === 0 || signers[0] !== intent.owner)
+    return { ok: false, reason: 'signer_not_owner' };
   if (intent.kind === 'open' && !signers.includes(intent.positionPubkey)) {
     return { ok: false, reason: 'missing_position_signer' };
   }
@@ -98,8 +99,10 @@ export function verifyTx(tx: Transaction, intent: WallBIntent): WallBVerdict {
     // Decode the ComputeBudget priority fee so the worst case (price × CU-limit) can be capped below — a drain vector
     // Wall B must bound independently of the brain (the fee is burned, not transferred, so the wrap-cap can't catch it).
     if (prog === COMPUTE_BUDGET) {
-      if (ix.data.length >= 5 && ix.data[0] === CB_SET_UNIT_LIMIT) cbUnitLimit = BigInt(ix.data.readUInt32LE(1));
-      if (ix.data.length >= 9 && ix.data[0] === CB_SET_UNIT_PRICE) cbUnitPriceMicro = ix.data.readBigUInt64LE(1);
+      if (ix.data.length >= 5 && ix.data[0] === CB_SET_UNIT_LIMIT)
+        cbUnitLimit = BigInt(ix.data.readUInt32LE(1));
+      if (ix.data.length >= 9 && ix.data[0] === CB_SET_UNIT_PRICE)
+        cbUnitPriceMicro = ix.data.readBigUInt64LE(1);
     }
 
     // INV-4/5: an outgoing System-Transfer (instruction index 2) must target owner or their WSOL ATA.
@@ -111,7 +114,8 @@ export function verifyTx(tx: Transaction, intent: WallBIntent): WallBVerdict {
       if (from === intent.owner && to !== intent.owner && to !== ownerWsolAta) {
         // The ONE allowed non-owner SOL destination: a capped tip to a known Jito tip account (anti-sandwich).
         if (to !== undefined && JITO_TIP_SET.has(to)) {
-          if (lamports > BigInt(MAX_JITO_TIP_LAMPORTS)) return { ok: false, reason: 'jito_tip_too_large' };
+          if (lamports > BigInt(MAX_JITO_TIP_LAMPORTS))
+            return { ok: false, reason: 'jito_tip_too_large' };
         } else {
           return { ok: false, reason: 'foreign_sol_destination' };
         }
@@ -122,13 +126,16 @@ export function verifyTx(tx: Transaction, intent: WallBIntent): WallBVerdict {
   // Priority-fee cap (defense in depth, ALL kinds): the worst-case fee = price × CU-limit. Use the explicit CU limit
   // if the tx sets one, else the protocol per-tx ceiling (never under-bound). A compromised brain that inflates the
   // compute-unit price to drain SOL via fees is rejected here, even though the fee is not a System-Transfer.
-  const worstCaseFeeLamports = (cbUnitPriceMicro * (cbUnitLimit ?? PROTOCOL_MAX_CU)) / MICRO_LAMPORTS_PER_LAMPORT;
-  if (worstCaseFeeLamports > MAX_PRIORITY_FEE_LAMPORTS) return { ok: false, reason: 'priority_fee_too_large' };
+  const worstCaseFeeLamports =
+    (cbUnitPriceMicro * (cbUnitLimit ?? PROTOCOL_MAX_CU)) / MICRO_LAMPORTS_PER_LAMPORT;
+  if (worstCaseFeeLamports > MAX_PRIORITY_FEE_LAMPORTS)
+    return { ok: false, reason: 'priority_fee_too_large' };
 
   // SOL-spend cap (defense in depth): the ACTUAL wrapped SOL must stay under the caller's ceiling, regardless of the
   // self-reported sizeSol. Closes/removes/claims/sells wrap nothing (0 ≤ cap). The ceiling is generous (covers rent +
   // slippage) so it only catches a GROSS over-spend, never false-rejects a legitimate deposit/buy.
-  if (intent.maxLamports !== undefined && wrapLamports > BigInt(intent.maxLamports)) return { ok: false, reason: 'sol_spend_over_cap' };
+  if (intent.maxLamports !== undefined && wrapLamports > BigInt(intent.maxLamports))
+    return { ok: false, reason: 'sol_spend_over_cap' };
 
   // A 'sell' (token→SOL) or 'buy' (SOL→token) is a Jupiter swap: no DLMM pool is referenced. Bind it to owner's
   // ATA of the swap's non-SOL token (sell = the residual sold, buy = the token bought for a two-sided copy) —
@@ -150,6 +157,7 @@ export function verifyTx(tx: Transaction, intent: WallBIntent): WallBVerdict {
   // position is harmless, never a drain); all other kinds stay strictly pool-bound. Without this an emptied position
   // can't be closed → dormant (violates the no-miss-close pillar).
   const closeRefsOurPosition = intent.kind === 'close' && accountKeys.has(intent.positionPubkey);
-  if (!accountKeys.has(intent.pool) && !closeRefsOurPosition) return { ok: false, reason: 'pool_not_referenced' };
+  if (!accountKeys.has(intent.pool) && !closeRefsOurPosition)
+    return { ok: false, reason: 'pool_not_referenced' };
   return { ok: true };
 }

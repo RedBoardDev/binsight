@@ -1,5 +1,5 @@
 import type { OpenPosition } from '@binsight/shared';
-import type { OnchainValued, SnapshotPlan } from '@/domain/dlmm';
+import type { OnchainValued, OnchainWalletSnapshot, SnapshotPlan } from '@/domain/dlmm';
 import type { PoolRef } from '@/domain/ports';
 
 export interface WalletRuntime {
@@ -13,6 +13,10 @@ export interface WalletRuntime {
   reconciled: boolean;
   /** Authoritative, slot-consistent valuation from the on-chain snapshot (null until first snapshot). */
   onchain: OnchainValued | null;
+  /** Raw cached snapshot from the last EXACT on-chain read — the source the shared price-mark tick
+   *  re-prices (with the live Jupiter price, zero RPC) to keep a VIEWED wallet's value/range live between
+   *  exact reads. Null until the first snapshot. */
+  lastSnapshot: OnchainWalletSnapshot | null;
   lastSnapshotAt: number;
   snapshotting: boolean;
   lastClosedSyncAt: number;
@@ -24,7 +28,8 @@ export interface WalletRuntime {
   /** on-chain positions source: force a projection→positions sync on the next snapshot (set on activity). */
   needsSync: boolean;
   lastSyncAt: number;
-  /** on-chain positions source: last delta-ingest time (drives the dropped-WS-event backstop sweep). */
+  /** on-chain positions source: epoch ms of the last delta-ingest (telemetry only now — the
+   *  TransactionStream's gap detector + live activity replaced the dropped-WS-event backstop sweep). */
   lastIngestAt: number;
   /** on-chain positions source: closed-position count at the last full reproject — emit closed_changed
    *  only when this actually moves (−1 = never reprojected, so the first reproject always notifies). */
@@ -32,6 +37,13 @@ export interface WalletRuntime {
   /** on-chain positions source: txs ingested so far during the initial backfill — drives the UI's
    *  "indexing… (N txs)" onboarding state. `reconciled` flips true once the first projection lands. */
   ingestedTxs: number;
+  /** epoch ms of the most recent close detected for this wallet (0 = none). Drives the bounded
+   *  post-close realized-PnL refresh so a market-sold residual's REAL value converges without waiting
+   *  for the wallet's NEXT close (the only other re-trigger). */
+  lastCloseAt: number;
+  /** epoch ms the realized-PnL pass was last triggered — throttles the post-close refresh to one
+   *  pass per interval so a quiet-but-viewed wallet doesn't re-fetch Helius every snapshot tick. */
+  lastRealizedRunAt: number;
 }
 
 export function makeRuntime(address: string, openPositions: OpenPosition[]): WalletRuntime {
@@ -47,6 +59,7 @@ export function makeRuntime(address: string, openPositions: OpenPosition[]): Wal
     refreshing: false,
     reconciled: false,
     onchain: null,
+    lastSnapshot: null,
     lastSnapshotAt: 0,
     snapshotting: false,
     lastClosedSyncAt: Date.now(),
@@ -58,5 +71,7 @@ export function makeRuntime(address: string, openPositions: OpenPosition[]): Wal
     lastIngestAt: 0,
     lastClosedCount: -1,
     ingestedTxs: 0,
+    lastCloseAt: 0,
+    lastRealizedRunAt: 0,
   };
 }

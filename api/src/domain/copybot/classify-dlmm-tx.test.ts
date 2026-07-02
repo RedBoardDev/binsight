@@ -1,10 +1,10 @@
-import { utils } from '@coral-xyz/anchor';
 import { DLMM_PROGRAM_ID } from '@binsight/shared';
+import { utils } from '@coral-xyz/anchor';
 import type { ParsedTransactionWithMeta } from '@solana/web3.js';
 import { describe, expect, it } from 'vitest';
 import type { LoadedPoolMeta } from '../dlmm';
 import { classifyInstruction } from '../dlmm';
-import { type PoolMetaLookup, buildDetectedEvent, poolsOf } from './classify-dlmm-tx';
+import { buildDetectedEvent, type PoolMetaLookup, poolsOf } from './classify-dlmm-tx';
 
 // --- Event-CPI event builders at the REAL byte layout (same technique as dlmm-event-decoder.test.ts:
 // [8 self-CPI tag][8 disc][borsh]) → we exercise the real decoding path, without the network. lb_pair = PK(1). ---
@@ -23,11 +23,20 @@ const binBuf = (bin: number): Buffer => {
   return b;
 };
 const addLiquidity = (x: bigint, y: bigint, bin: number): string =>
-  cpi([31, 94, 125, 90, 227, 52, 61, 186], Buffer.concat([PK(1), PK(2), PK(3), amounts(x, y), binBuf(bin)]));
+  cpi(
+    [31, 94, 125, 90, 227, 52, 61, 186],
+    Buffer.concat([PK(1), PK(2), PK(3), amounts(x, y), binBuf(bin)]),
+  );
 const removeLiquidity = (x: bigint, y: bigint, bin: number): string =>
-  cpi([116, 244, 97, 232, 103, 31, 152, 58], Buffer.concat([PK(1), PK(2), PK(3), amounts(x, y), binBuf(bin)]));
+  cpi(
+    [116, 244, 97, 232, 103, 31, 152, 58],
+    Buffer.concat([PK(1), PK(2), PK(3), amounts(x, y), binBuf(bin)]),
+  );
 const claimFee2 = (fx: bigint, fy: bigint, bin: number): string =>
-  cpi([232, 171, 242, 97, 58, 77, 35, 45], Buffer.concat([PK(1), PK(3), PK(9), amounts(fx, fy), binBuf(bin)]));
+  cpi(
+    [232, 171, 242, 97, 58, 77, 35, 45],
+    Buffer.concat([PK(1), PK(3), PK(9), amounts(fx, fy), binBuf(bin)]),
+  );
 // PositionClose: position, owner (NO lb_pair, NO bin id) — a standalone close emits only this event.
 const closePosition = (): string =>
   cpi([255, 196, 16, 107, 28, 202, 53, 128], Buffer.concat([PK(3), PK(9)]));
@@ -42,7 +51,11 @@ const SOL_Y: LoadedPoolMeta = { binStep: 1, solSide: 'Y', mintX: NONSOL, mintY: 
 const lookupSolY: PoolMetaLookup = () => SOL_Y;
 
 // minimal parsed tx: logs (for the DLMM filter + parseInstruction) + innerInstructions (the CPI events).
-function tx(instr: string, datas: string[], blockTime: number | null = 1_700_000_000): ParsedTransactionWithMeta {
+function tx(
+  instr: string,
+  datas: string[],
+  blockTime: number | null = 1_700_000_000,
+): ParsedTransactionWithMeta {
   return {
     blockTime,
     transaction: { signatures: ['SIG1'] },
@@ -52,7 +65,9 @@ function tx(instr: string, datas: string[], blockTime: number | null = 1_700_000
         `Program log: Instruction: ${instr}`,
         `Program ${DLMM_PROGRAM_ID} success`,
       ],
-      innerInstructions: [{ index: 0, instructions: datas.map((d) => ({ programId: DLMM_PROGRAM_ID, data: d })) }],
+      innerInstructions: [
+        { index: 0, instructions: datas.map((d) => ({ programId: DLMM_PROGRAM_ID, data: d })) },
+      ],
     },
   } as unknown as ParsedTransactionWithMeta;
 }
@@ -60,13 +75,18 @@ function tx(instr: string, datas: string[], blockTime: number | null = 1_700_000
 // Same shape as `tx()` but with logs that DO NOT mention the DLMM program — simulates Solana's 10KB
 // logMessages truncation (a DLMM ix after a big Jupiter bundle): the inner CPI events are intact, the log
 // string is gone. The OLD log-gated classifier returned null here → a PERMANENT miss of the leader event.
-function txLogsTruncated(datas: string[], blockTime: number | null = 1_700_000_000): ParsedTransactionWithMeta {
+function txLogsTruncated(
+  datas: string[],
+  blockTime: number | null = 1_700_000_000,
+): ParsedTransactionWithMeta {
   return {
     blockTime,
     transaction: { signatures: ['SIG1'] },
     meta: {
       logMessages: ['Program JUP... invoke [1]', 'Program log: truncated'], // NO DLMM program id, NO Instruction: line
-      innerInstructions: [{ index: 0, instructions: datas.map((d) => ({ programId: DLMM_PROGRAM_ID, data: d })) }],
+      innerInstructions: [
+        { index: 0, instructions: datas.map((d) => ({ programId: DLMM_PROGRAM_ID, data: d })) },
+      ],
     },
   } as unknown as ParsedTransactionWithMeta;
 }
@@ -75,7 +95,11 @@ describe('buildDetectedEvent — no-miss gate keys off DLMM EVENTS, not logs (10
   // NO-MISS PILLAR: gating DLMM-ness on logMessages loses any DLMM ix whose program string was truncated
   // past 10KB. The gate now reads the inner Event-CPI (`hasDlmmEvents`) → the event is STILL detected.
   it('DLMM events present but logs truncated (no program id) → event is DETECTED (was null before)', () => {
-    const e = buildDetectedEvent('sigTrunc', txLogsTruncated([addLiquidity(0n, 1_500_000_000n, 0)]), lookupSolY);
+    const e = buildDetectedEvent(
+      'sigTrunc',
+      txLogsTruncated([addLiquidity(0n, 1_500_000_000n, 0)]),
+      lookupSolY,
+    );
     expect(e).not.toBeNull(); // the whole point: no-miss even under log truncation
     expect(e?.depositSol).toBeCloseTo(1.5, 9);
     expect(e?.instruction).toBe('(DLMM)'); // no Instruction: line in the truncated logs → best-effort label
@@ -83,7 +107,11 @@ describe('buildDetectedEvent — no-miss gate keys off DLMM EVENTS, not logs (10
   });
 
   it('a close whose logs are truncated → closed === true and withdrawSol intact (routing key survives)', () => {
-    const e = buildDetectedEvent('sigTruncClose', txLogsTruncated([removeLiquidity(0n, 2_000_000_000n, 0), closePosition()]), lookupSolY);
+    const e = buildDetectedEvent(
+      'sigTruncClose',
+      txLogsTruncated([removeLiquidity(0n, 2_000_000_000n, 0), closePosition()]),
+      lookupSolY,
+    );
     expect(e).not.toBeNull();
     expect(e?.closed).toBe(true); // the robust close signal — independent of the (truncated) log label
     expect(e?.withdrawSol).toBeCloseTo(2, 9);
@@ -93,7 +121,10 @@ describe('buildDetectedEvent — no-miss gate keys off DLMM EVENTS, not logs (10
     const nonDlmm = {
       blockTime: 1,
       transaction: { signatures: ['SIG1'] },
-      meta: { logMessages: ['Program 11111111111111111111111111111111 invoke [1]'], innerInstructions: [] },
+      meta: {
+        logMessages: ['Program 11111111111111111111111111111111 invoke [1]'],
+        innerInstructions: [],
+      },
     } as unknown as ParsedTransactionWithMeta;
     expect(buildDetectedEvent('sigOther', nonDlmm, lookupSolY)).toBeNull();
   });
@@ -101,7 +132,11 @@ describe('buildDetectedEvent — no-miss gate keys off DLMM EVENTS, not logs (10
 
 describe('buildDetectedEvent — `closed` flag (robust close signal for routing)', () => {
   it('STANDALONE close (only PositionClose) → closed === true, all amounts 0', () => {
-    const e = buildDetectedEvent('sigStandalone', tx('ClosePosition2', [closePosition()]), lookupSolY);
+    const e = buildDetectedEvent(
+      'sigStandalone',
+      tx('ClosePosition2', [closePosition()]),
+      lookupSolY,
+    );
     expect(e?.closed).toBe(true);
     expect(e?.depositSol).toBe(0);
     expect(e?.withdrawSol).toBe(0);
@@ -109,18 +144,30 @@ describe('buildDetectedEvent — `closed` flag (robust close signal for routing)
   });
 
   it('NORMAL close (Remove + PositionClose) → closed === true AND withdrawSol > 0', () => {
-    const e = buildDetectedEvent('sigNormal', tx('ClosePosition2', [removeLiquidity(0n, 2_000_000_000n, 0), closePosition()]), lookupSolY);
+    const e = buildDetectedEvent(
+      'sigNormal',
+      tx('ClosePosition2', [removeLiquidity(0n, 2_000_000_000n, 0), closePosition()]),
+      lookupSolY,
+    );
     expect(e?.closed).toBe(true);
     expect(e?.withdrawSol).toBeCloseTo(2, 9);
   });
 
   it('a plain OPEN (no PositionClose) → closed === false', () => {
-    const e = buildDetectedEvent('sigOpen', tx('InitializePositionPda', [addLiquidity(0n, 1_500_000_000n, 0)]), lookupSolY);
+    const e = buildDetectedEvent(
+      'sigOpen',
+      tx('InitializePositionPda', [addLiquidity(0n, 1_500_000_000n, 0)]),
+      lookupSolY,
+    );
     expect(e?.closed).toBe(false);
   });
 
   it('a partial REMOVE (no PositionClose) → closed === false (not a full close)', () => {
-    const e = buildDetectedEvent('sigPartial', tx('RemoveLiquidityByRange2', [removeLiquidity(0n, 500_000_000n, 0)]), lookupSolY);
+    const e = buildDetectedEvent(
+      'sigPartial',
+      tx('RemoveLiquidityByRange2', [removeLiquidity(0n, 500_000_000n, 0)]),
+      lookupSolY,
+    );
     expect(e?.closed).toBe(false);
     expect(e?.withdrawSol).toBeCloseTo(0.5, 9);
   });
@@ -128,7 +175,11 @@ describe('buildDetectedEvent — `closed` flag (robust close signal for routing)
 
 describe('buildDetectedEvent — routing DLMM legs into SOL (golden: open/close/claim/partial withdrawal)', () => {
   it('OPEN (AddLiquidity) → all the capital in depositSol, nothing elsewhere', () => {
-    const e = buildDetectedEvent('sigOpen', tx('InitializePositionPda', [addLiquidity(0n, 1_500_000_000n, 0)]), lookupSolY);
+    const e = buildDetectedEvent(
+      'sigOpen',
+      tx('InitializePositionPda', [addLiquidity(0n, 1_500_000_000n, 0)]),
+      lookupSolY,
+    );
     expect(e).not.toBeNull();
     expect(e?.instruction).toBe('InitializePositionPda');
     expect(e?.depositSol).toBeCloseTo(1.5, 9);
@@ -146,20 +197,34 @@ describe('buildDetectedEvent — routing DLMM legs into SOL (golden: open/close/
   // forbidden half copy). depositTokenRaw surfaces the raw NON-SOL units deposited so the brain knows to wait for both
   // legs before classifying. A regression that drops the token-leg amount would make this 0 → caught here.
   it('TWO-SIDED open → depositTokenRaw carries the raw NON-SOL amount (authoritative two-sided signal)', () => {
-    const e = buildDetectedEvent('sigTwo', tx('AddLiquidityByStrategy2', [addLiquidity(2_000_000n, 1_500_000_000n, 0)]), lookupSolY);
+    const e = buildDetectedEvent(
+      'sigTwo',
+      tx('AddLiquidityByStrategy2', [addLiquidity(2_000_000n, 1_500_000_000n, 0)]),
+      lookupSolY,
+    );
     expect(e?.depositSol).toBeGreaterThan(1.5); // BOTH legs valued in SOL (1.5 SOL + the token leg's SOL value)
     expect(e?.depositTokenRaw).toBe(2_000_000); // NON-SOL (X) leg → marks it two-sided
   });
 
   it('TWO-SIDED open → depositTokenRaw SUMS the non-SOL leg across multiple Adds in one tx', () => {
-    const e = buildDetectedEvent('sigTwoMulti', tx('AddLiquidityByStrategy2', [addLiquidity(2_000_000n, 1_000_000_000n, 0), addLiquidity(500_000n, 250_000_000n, 0)]), lookupSolY);
+    const e = buildDetectedEvent(
+      'sigTwoMulti',
+      tx('AddLiquidityByStrategy2', [
+        addLiquidity(2_000_000n, 1_000_000_000n, 0),
+        addLiquidity(500_000n, 250_000_000n, 0),
+      ]),
+      lookupSolY,
+    );
     expect(e?.depositTokenRaw).toBe(2_500_000); // 2.0M + 0.5M
   });
 
   it('CLOSE (RemoveLiquidity + ClaimFee2) → capital out in withdrawSol AND fees in claimSol, no deposit', () => {
     const e = buildDetectedEvent(
       'sigClose',
-      tx('ClosePosition2', [removeLiquidity(0n, 2_000_000_000n, 0), claimFee2(0n, 125_000_000n, 0)]),
+      tx('ClosePosition2', [
+        removeLiquidity(0n, 2_000_000_000n, 0),
+        claimFee2(0n, 125_000_000n, 0),
+      ]),
       lookupSolY,
     );
     expect(e?.depositSol).toBe(0);
@@ -173,7 +238,11 @@ describe('buildDetectedEvent — routing DLMM legs into SOL (golden: open/close/
   // brain's tracker could not match the mirror and the fast-path close never routed (only the 30s reconcile
   // caught it). The close marker now surfaces the position, and parseInstruction classifies it 'close' → routes.
   it('STANDALONE close (only PositionClose) → position surfaced + instruction classifies as close', () => {
-    const e = buildDetectedEvent('sigStandaloneClose', tx('ClosePosition2', [closePosition()]), lookupSolY);
+    const e = buildDetectedEvent(
+      'sigStandaloneClose',
+      tx('ClosePosition2', [closePosition()]),
+      lookupSolY,
+    );
     expect(e).not.toBeNull();
     expect(e?.position).toBe(POSITION); // THE BUG: was '' → tracker could not key the mirror → close missed on fast path
     expect(classifyInstruction(e!.instruction)).toBe('close'); // dispatch routes 'close' off this
@@ -186,7 +255,11 @@ describe('buildDetectedEvent — routing DLMM legs into SOL (golden: open/close/
   // REGRESSION: a NORMAL close (Remove + PositionClose) must keep the REAL pool from the withdraw leg — the
   // zero-amount close marker (empty lbPair) appended after it must NOT clobber `pool`, and amounts are intact.
   it('NORMAL close (Remove + PositionClose) → real pool preserved, withdraw amount intact, position kept', () => {
-    const e = buildDetectedEvent('sigNormalClose', tx('ClosePosition2', [removeLiquidity(0n, 2_000_000_000n, 0), closePosition()]), lookupSolY);
+    const e = buildDetectedEvent(
+      'sigNormalClose',
+      tx('ClosePosition2', [removeLiquidity(0n, 2_000_000_000n, 0), closePosition()]),
+      lookupSolY,
+    );
     expect(e?.pool).toBe(LB_PAIR); // NOT clobbered to '' by the trailing close marker
     expect(e?.position).toBe(POSITION);
     expect(e?.withdrawSol).toBeCloseTo(2, 9); // capital-out unchanged
@@ -194,14 +267,22 @@ describe('buildDetectedEvent — routing DLMM legs into SOL (golden: open/close/
   });
 
   it('CLAIM alone (ClaimFee2) → only claimSol', () => {
-    const e = buildDetectedEvent('sigClaim', tx('ClaimFee2', [claimFee2(0n, 250_000_000n, 0)]), lookupSolY);
+    const e = buildDetectedEvent(
+      'sigClaim',
+      tx('ClaimFee2', [claimFee2(0n, 250_000_000n, 0)]),
+      lookupSolY,
+    );
     expect(e?.depositSol).toBe(0);
     expect(e?.withdrawSol).toBe(0);
     expect(e?.claimSol).toBeCloseTo(0.25, 9);
   });
 
   it('PARTIAL WITHDRAWAL (RemoveLiquidity, without close) → same path as a close on the withdrawSol side', () => {
-    const e = buildDetectedEvent('sigPartial', tx('RemoveLiquidityByRange2', [removeLiquidity(0n, 500_000_000n, 0)]), lookupSolY);
+    const e = buildDetectedEvent(
+      'sigPartial',
+      tx('RemoveLiquidityByRange2', [removeLiquidity(0n, 500_000_000n, 0)]),
+      lookupSolY,
+    );
     expect(e?.instruction).toBe('RemoveLiquidityByRange2');
     expect(e?.withdrawSol).toBeCloseTo(0.5, 9);
     expect(e?.depositSol).toBe(0);
@@ -211,15 +292,27 @@ describe('buildDetectedEvent — routing DLMM legs into SOL (golden: open/close/
   it('multiple Adds in one tx → depositSol sums the legs (never overwritten)', () => {
     const e = buildDetectedEvent(
       'sigMulti',
-      tx('AddLiquidityByStrategy2', [addLiquidity(0n, 1_000_000_000n, 0), addLiquidity(0n, 250_000_000n, 0)]),
+      tx('AddLiquidityByStrategy2', [
+        addLiquidity(0n, 1_000_000_000n, 0),
+        addLiquidity(0n, 250_000_000n, 0),
+      ]),
       lookupSolY,
     );
     expect(e?.depositSol).toBeCloseTo(1.25, 9);
   });
 
   it('pool present but NOT valuable in SOL (solSide null) → event KEPT, amounts at 0, nonSolMint null', () => {
-    const noSol: PoolMetaLookup = () => ({ binStep: 1, solSide: null, mintX: NONSOL, mintY: 'OtherMintNotSol111111111111111111111111111' });
-    const e = buildDetectedEvent('sigNoSol', tx('AddLiquidityByStrategy2', [addLiquidity(0n, 9n, 0)]), noSol);
+    const noSol: PoolMetaLookup = () => ({
+      binStep: 1,
+      solSide: null,
+      mintX: NONSOL,
+      mintY: 'OtherMintNotSol111111111111111111111111111',
+    });
+    const e = buildDetectedEvent(
+      'sigNoSol',
+      tx('AddLiquidityByStrategy2', [addLiquidity(0n, 9n, 0)]),
+      noSol,
+    );
     expect(e).not.toBeNull(); // we NEVER lose the action — no-miss pillar
     expect(e?.depositSol).toBe(0);
     expect(e?.nonSolMint).toBeNull();
@@ -227,7 +320,11 @@ describe('buildDetectedEvent — routing DLMM legs into SOL (golden: open/close/
   });
 
   it('meta absent for the pool (lookup → null) → action kept without amount', () => {
-    const e = buildDetectedEvent('sigUnknown', tx('AddLiquidityByStrategy2', [addLiquidity(0n, 9n, 0)]), () => null);
+    const e = buildDetectedEvent(
+      'sigUnknown',
+      tx('AddLiquidityByStrategy2', [addLiquidity(0n, 9n, 0)]),
+      () => null,
+    );
     expect(e?.depositSol).toBe(0);
     expect(e?.nonSolMint).toBeNull();
   });
@@ -236,7 +333,10 @@ describe('buildDetectedEvent — routing DLMM legs into SOL (golden: open/close/
     const nonDlmm = {
       blockTime: 1,
       transaction: { signatures: ['SIG1'] },
-      meta: { logMessages: ['Program 11111111111111111111111111111111 invoke [1]'], innerInstructions: [] },
+      meta: {
+        logMessages: ['Program 11111111111111111111111111111111 invoke [1]'],
+        innerInstructions: [],
+      },
     } as unknown as ParsedTransactionWithMeta;
     expect(buildDetectedEvent('sigOther', nonDlmm, lookupSolY)).toBeNull();
   });
@@ -246,7 +346,11 @@ describe('buildDetectedEvent — routing DLMM legs into SOL (golden: open/close/
   });
 
   it('blockTime absent → null (no misleading 0)', () => {
-    const e = buildDetectedEvent('sigNoTime', tx('ClaimFee2', [claimFee2(0n, 1n, 0)], null), lookupSolY);
+    const e = buildDetectedEvent(
+      'sigNoTime',
+      tx('ClaimFee2', [claimFee2(0n, 1n, 0)], null),
+      lookupSolY,
+    );
     expect(e?.blockTime).toBeNull();
   });
 

@@ -29,7 +29,11 @@ export interface ExecutedEvent {
  *  per-message guard isolates it); the sync `*Confirmed` handlers are observability-only and never throw. */
 export interface DispatchExecutedDeps {
   onCloseConfirmed: (ourPosition: string) => Promise<void>;
-  onCloseExecuted: (ev: { pool: string; positionPubkey?: string; commandId?: string }) => Promise<void>;
+  onCloseExecuted: (ev: {
+    pool: string;
+    positionPubkey?: string;
+    commandId?: string;
+  }) => Promise<void>;
   hasPendingReshapeAdd: (commandId: string) => boolean;
   publishReshapeAddAfterBuy: (commandId: string) => Promise<void>;
   publishTwoSidedOpenAfterBuy: (commandId: string) => Promise<void>;
@@ -47,10 +51,17 @@ export interface DispatchExecutedDeps {
  *  per-message try/catch turns that into a non-ack + retry). Branch order/conditions are identical to the
  *  original inline loop — do NOT reorder (a Token-2022 create/deposit 'open'/'add' must be caught by its
  *  pending-map branch BEFORE the classic-confirm branch). */
-export async function dispatchExecuted(ev: ExecutedEvent | null, deps: DispatchExecutedDeps): Promise<void> {
+export async function dispatchExecuted(
+  ev: ExecutedEvent | null,
+  deps: DispatchExecutedDeps,
+): Promise<void> {
   if (ev?.kind === 'close' && ev.pool) {
     if (ev.positionPubkey) await deps.onCloseConfirmed(ev.positionPubkey); // prompt DB markClosed — no 30s wait
-    await deps.onCloseExecuted({ pool: ev.pool, positionPubkey: ev.positionPubkey, commandId: ev.commandId });
+    await deps.onCloseExecuted({
+      pool: ev.pool,
+      positionPubkey: ev.positionPubkey,
+      commandId: ev.commandId,
+    });
   } else if (ev?.kind === 'buy' && ev.commandId) {
     // a token BUY just landed → build+publish the OPEN (open buy) or the RESHAPE ADD (reshape buy).
     if (deps.hasPendingReshapeAdd(ev.commandId)) await deps.publishReshapeAddAfterBuy(ev.commandId);
@@ -58,7 +69,11 @@ export async function dispatchExecuted(ev: ExecutedEvent | null, deps: DispatchE
   } else if (ev?.kind === 'open' && ev.commandId && deps.hasPendingToken2022Deposit(ev.commandId)) {
     // a Token-2022 / split open's empty position (TX1) CONFIRMED → build+publish the deposit (TX2).
     await deps.publishDepositAfterPositionCreated(ev.commandId);
-  } else if (ev?.kind === 'open' && ev.positionPubkey && !(ev.commandId !== undefined && deps.hasPendingToken2022Deposit(ev.commandId))) {
+  } else if (
+    ev?.kind === 'open' &&
+    ev.positionPubkey &&
+    !(ev.commandId !== undefined && deps.hasPendingToken2022Deposit(ev.commandId))
+  ) {
     // a CLASSIC 1-tx open LANDED → FEED `lifecycle.open_confirmed`. Observability-only.
     deps.onOpenConfirmed(ev.positionPubkey);
   } else if (ev?.kind === 'add' && ev.commandId && deps.hasPendingToken2022Mirror(ev.commandId)) {
@@ -92,7 +107,10 @@ export interface ExecutedBatchDeps extends DispatchExecutedDeps {
 /** Process a batch of `ev:executed` messages with PER-MESSAGE error isolation (mirrors the coffre `processBatch`):
  *  on success ack; on throw record the loop error for THAT message and CONTINUE without acking (so the next PEL
  *  drain re-delivers it). One bad message must never strand its batch-mates nor abort the batch. */
-export async function processExecutedBatch(msgs: ReadonlyArray<ExecutedMessage>, deps: ExecutedBatchDeps): Promise<void> {
+export async function processExecutedBatch(
+  msgs: ReadonlyArray<ExecutedMessage>,
+  deps: ExecutedBatchDeps,
+): Promise<void> {
   for (const msg of msgs) {
     try {
       await dispatchExecuted(msg.payload as ExecutedEvent | null, deps);
