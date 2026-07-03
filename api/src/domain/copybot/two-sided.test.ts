@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { BinSol } from './position-adjust';
-import { type LeaderBinLegs, planTwoSided, planTwoSidedReshape, sizeTwoSided } from './two-sided';
+import {
+  type LeaderBinLegs,
+  planTwoSided,
+  planTwoSidedReshape,
+  sizeTwoSided,
+  twoSidedLegTotals,
+} from './two-sided';
 
 const sumSol = (w: { solBps: number }[]): number => w.reduce((s, b) => s + b.solBps, 0);
 const sumToken = (w: { tokenBps: number }[]): number => w.reduce((s, b) => s + b.tokenBps, 0);
@@ -209,5 +215,25 @@ describe('planTwoSidedReshape — proportional removes (both legs) + per-leg tok
     // The mixed bin (offset 0) is trimmed by the SOL-leg remove only — exactly ONE op, no token-leg duplicate.
     expect(removes.filter((o) => o.offset === 0).length).toBe(1);
     expect(r.tokenAddOps.length).toBe(0); // a shrink has no token adds
+  });
+});
+
+describe('twoSidedLegTotals — SOL/token → pool X/Y mapping (ULTRACODE #16)', () => {
+  const SOL = 100n;
+  const TOK = 7n;
+
+  it('solSide=X → the SOL amount is on X, the token on Y', () => {
+    // WHY: the pool fixes which mint is X/Y; the SOL amount must land on the SOL side. The reshape-add path had
+    // this inverted (SOL on the token side) → a two-sided grow failed on-chain or deposited swapped legs.
+    expect(twoSidedLegTotals('X', SOL, TOK)).toEqual({ totalX: SOL, totalY: TOK });
+  });
+
+  it('solSide=Y → the SOL amount is on Y, the token on X', () => {
+    expect(twoSidedLegTotals('Y', SOL, TOK)).toEqual({ totalX: TOK, totalY: SOL });
+  });
+
+  it('the SOL amount is NEVER placed on the token side (the #16 invariant), both sides', () => {
+    expect(twoSidedLegTotals('X', SOL, TOK).totalX).toBe(SOL);
+    expect(twoSidedLegTotals('Y', SOL, TOK).totalY).toBe(SOL);
   });
 });

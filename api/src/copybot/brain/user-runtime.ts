@@ -77,6 +77,7 @@ import {
   planTwoSidedReshape,
   sizeTwoSided,
   type TwoSidedPlan,
+  twoSidedLegTotals,
 } from '@/domain/copybot/two-sided';
 import { classifyInstruction } from '@/domain/dlmm';
 import type { ControlChannel } from '@/infrastructure/bus/control-channel';
@@ -1128,8 +1129,7 @@ export async function createUserRuntime(
     const actualToken = depositableToken(
       await readOwnerTokenBalance(conn, ownerPk, new PublicKey(tokenMint)),
     ); // reserve a hair for per-bin bps rounding (TransferChecked insufficient-funds)
-    const totalX = solSide === 'X' ? sizeLamports : actualToken;
-    const totalY = solSide === 'Y' ? sizeLamports : actualToken;
+    const { totalX, totalY } = twoSidedLegTotals(solSide, sizeLamports, actualToken);
     const lower = Math.min(...dist.map((d) => d.binId));
     const upper = Math.max(...dist.map((d) => d.binId));
 
@@ -1419,8 +1419,9 @@ export async function createUserRuntime(
     // TWO-SIDED add. WIDE (≥26 bins) → addLiquidityByWeight2 (v1 would chunk at 26 → onlyTx throw → the wide grow would
     // fail); fits ≤70 bins in one tx, works classic + Token-2022. NARROW (≤25) → keep the PROVEN buildAddByWeight (v1
     // classic / add2 Token-2022) untouched — exact per-bin placement (changing it perturbs precise spike/refill copies).
-    const totalX = solSide === 'X' ? depositToken : addLamports;
-    const totalY = solSide === 'Y' ? depositToken : addLamports;
+    // SOL/token → pool X/Y via the SHARED mapping (ULTRACODE #16: this path had the operands inverted vs the
+    // open path — SOL landed on the token side — so a two-sided grow failed or deposited swapped legs).
+    const { totalX, totalY } = twoSidedLegTotals(solSide, addLamports, depositToken);
     const built =
       dist.length >= ATOMIC_BY_WEIGHT_BIN_LIMIT
         ? await buildAddByWeight2(

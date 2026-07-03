@@ -151,21 +151,33 @@ async function reconcileUser(
   };
 }
 
-/** The anti-dormant reconcile over the SHARED wallet (the no-miss-close pillar) — see the module doc. */
-export async function runReconcileSweep(deps: ReconcileSweepDeps): Promise<void> {
+/**
+ * The anti-dormant reconcile over the SHARED wallet (the no-miss-close pillar) — see the module doc.
+ * Returns `{ enumerated }`: false when the position enumerator (getAllLbPairPositionsByUser) threw, which the
+ * SDK does CONSISTENTLY for certain wallet states (issue #245). Crucially, an enumerator failure does NOT abort
+ * the per-user close backstop (Phase 2): markClosed/reClose depend on per-account DIRECT reads, not on the
+ * enumerator — so a leader close is still mirrored while the SDK enumerator is broken (ULTRACODE #17). Only the
+ * orphan pass (Phase 3) needs the enumeration and is skipped. The caller treats `enumerated:false` as a reconcile
+ * FAILURE so a permanently-broken enumerator trips the detection-stale watchdog instead of reading as healthy
+ * (ULTRACODE #14).
+ */
+export async function runReconcileSweep(
+  deps: ReconcileSweepDeps,
+): Promise<{ enumerated: boolean }> {
   const now = (deps.nowMs ?? Date.now)();
 
-  // Phase 1 — ONE shared enumeration. Failure aborts the whole sweep (retry next tick): every phase below
-  // needs the on-chain truth, and acting on incomplete data is forbidden.
-  let held: UserPosition[];
+  // Phase 1 — ONE shared enumeration. Failure degrades (does NOT abort): Phase 2's close backstop uses direct
+  // reads and still runs; only the orphan pass (which genuinely needs the whole-wallet enumeration) is skipped.
+  let held: UserPosition[] = [];
+  let enumerated = true;
   try {
     held = await deps.enumeratePositions();
   } catch (e) {
+    enumerated = false;
     deps.log.error(
       { e: (e as Error).message },
-      'reconcile: failed to enumerate our positions → skip this sweep',
+      'reconcile: enumerator failed → orphan pass skipped; per-user close backstop still runs (direct reads)',
     );
-    return;
   }
   const ourOnChain = new Set(held.map((p) => p.position));
 
@@ -200,8 +212,9 @@ export async function runReconcileSweep(deps: ReconcileSweepDeps): Promise<void>
     }
   }
 
-  // Phase 3 — GLOBAL orphan pass (SYSTEM wallet maintenance). Only on complete claims (see above).
-  if (claimsComplete) {
+  // Phase 3 — GLOBAL orphan pass (SYSTEM wallet maintenance). Requires the enumeration (no whole-wallet view
+  // without it) AND complete per-user claims (else a user's live position reads as "tracked by no user").
+  if (enumerated && claimsComplete) {
     const orphans = planOrphans({
       onChain: ourOnChain,
       users: userClaims,
@@ -250,6 +263,7 @@ export async function runReconcileSweep(deps: ReconcileSweepDeps): Promise<void>
       );
     }
   }
+  return { enumerated };
 }
 
 /** The per-user runtime surface the rug-SL sweep drives (structural — `UserRuntime` satisfies it). */

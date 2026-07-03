@@ -322,7 +322,7 @@ async function main(): Promise<void> {
   // Anti-dormant reconcile over the SHARED wallet (the no-miss-close pillar) — 3 phases in wallet-sweeps.ts:
   // ONE enumeration + a per-sweep read cache, one isolated plan per user, then the GLOBAL orphan pass (orphan =
   // tracked by NO user), published as SYSTEM through the always-on SYSTEM runtime.
-  const reconcileSweep = (): Promise<void> =>
+  const reconcileSweep = (): Promise<{ enumerated: boolean }> =>
     runReconcileSweep({
       log,
       runtimes: () => runtimes.values(),
@@ -338,8 +338,12 @@ async function main(): Promise<void> {
   // open mirrors / pending closes — change exactly when this sweep confirms closes). Never rejects.
   const reconcileTick = (): Promise<void> =>
     reconcileSweep()
-      .then(() => {
-        onReconcileSuccess();
+      .then(({ enumerated }) => {
+        // An enumerator failure (SDK #245) is a reconcile FAILURE for the watchdog (#14) — a permanently broken
+        // enumerator must trip detection-stale, not read as healthy — even though the per-user close backstop
+        // (direct reads) still ran this tick (#17).
+        if (enumerated) onReconcileSuccess();
+        else onReconcileFailure();
         hub.pruneDrained();
       })
       .catch((e) => {

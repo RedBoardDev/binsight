@@ -225,15 +225,19 @@ describe('runReconcileSweep — shared-wallet attribution (Inc.3b S6)', () => {
     expect(rt.buildingToken2022Positions.has('STALE_BUILD')).toBe(false);
   });
 
-  it('enumeration failure aborts the WHOLE sweep (no per-user plan, no orphan pass — never act on incomplete data)', async () => {
+  it('enumeration failure DEGRADES (not aborts): the per-user close backstop still runs, only the orphan pass is skipped (#17)', async () => {
+    // WHY (was the inverse assertion — the #17 bug): an enumerator throw (SDK #245) used to skip EVERYTHING,
+    // silently dropping the leader-close backstop. Now the direct-read close signal still confirms a gone
+    // position (markClosed) while only the orphan authority (which needs the whole-wallet enumeration) is skipped.
     const { rt, calls } = makeReconcileRt('user-a', [mirror({ ourPosition: 'OUR_A' })]);
     const { deps, orphanCloses } = makeDeps([rt], [], { OUR_A: null, [LP]: null });
     deps.enumeratePositions = async () => {
       throw new Error('rpc down');
     };
-    await runReconcileSweep(deps);
-    expect(calls.markClosed).toEqual([]);
-    expect(orphanCloses).toEqual([]);
+    const result = await runReconcileSweep(deps);
+    expect(calls.markClosed).toEqual([LP]); // OUR_A confirmed gone via direct read → close confirmed
+    expect(orphanCloses).toEqual([]); // orphan pass skipped (no enumeration)
+    expect(result.enumerated).toBe(false); // reported as a reconcile failure to the watchdog (#14)
   });
 
   it('pending-open-cancel backstop runs PER RUNTIME: only the owner of the gone leader cancels', async () => {
@@ -421,5 +425,42 @@ describe('runRugSlSweep — pool-grouped across runtimes (Inc.3b S6)', () => {
     deps.recentlyPublishedClose.set('OUR_A', NOW - 1);
     await runRugSlSweep(deps);
     expect(calls.safetyCloses).toEqual([]);
+  });
+});
+
+describe('runReconcileSweep — enumerator failure degrades, never aborts the close backstop (#14/#17)', () => {
+  it('#17: enumerator THROWS ⇒ a leader-closed mirror still reCloses (direct reads, not the SDK enumerator)', async () => {
+    // WHY: getAllLbPairPositionsByUser throws CONSISTENTLY for certain wallet states (SDK #245). markClosed/reClose
+    // depend on per-account direct reads, so a leader close MUST still be mirrored while the enumerator is broken —
+    // otherwise the #1 no-miss-close pillar fails exactly when the enumerator is stuck.
+    const { rt, calls } = makeReconcileRt('user-a', [mirror({ ourPosition: 'OUR_A' })]);
+    const { deps } = makeDeps([rt], [], { OUR_A: {}, [LP]: null }); // leader gone
+    deps.enumeratePositions = async () => {
+      throw new Error('SDK #245: Cannot read properties of undefined');
+    };
+    const result = await runReconcileSweep(deps);
+    expect(calls.reClosed).toEqual(['OUR_A']); // backstop ran despite the broken enumerator
+    expect(result.enumerated).toBe(false);
+  });
+
+  it('#17: enumerator throws ⇒ the orphan pass is skipped (no whole-wallet view ⇒ no orphan authority)', async () => {
+    const { rt } = makeReconcileRt('user-a', [mirror({ ourPosition: 'OUR_A' })]);
+    const { deps, orphanCloses } = makeDeps([rt], [pos('STRAY')], {
+      OUR_A: {},
+      [LP]: {},
+      STRAY: {},
+    });
+    deps.enumeratePositions = async () => {
+      throw new Error('enumerator down');
+    };
+    await runReconcileSweep(deps);
+    expect(orphanCloses).toEqual([]); // a stray can't be declared an orphan without the enumeration
+  });
+
+  it('#14: a successful enumeration returns enumerated:true (the watchdog resets on this)', async () => {
+    const { rt } = makeReconcileRt('user-a', [mirror({ ourPosition: 'OUR_A' })]);
+    const { deps } = makeDeps([rt], [pos('OUR_A')], { OUR_A: {}, [LP]: {} });
+    const result = await runReconcileSweep(deps);
+    expect(result.enumerated).toBe(true);
   });
 });

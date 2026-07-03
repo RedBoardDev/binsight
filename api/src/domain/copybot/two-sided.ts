@@ -38,6 +38,23 @@ export interface TwoSidedPlan {
 }
 
 /**
+ * Map a two-sided deposit's (SOL, token) amounts onto the pool's (X, Y) token order. The DLMM pool fixes which
+ * mint is token X vs Y; `solSide` says which one is SOL. Both the OPEN and the RESHAPE-ADD paths MUST agree on
+ * this mapping — they used to compute it inline and DIVERGED (ULTRACODE #16: the reshape-add put the SOL amount
+ * on the token side for `solSide==='X'`, so a two-sided grow failed on-chain or landed with the legs inverted —
+ * real money). One tested function is now the single source of truth. Pure, bigint-exact.
+ */
+export function twoSidedLegTotals(
+  solSide: 'X' | 'Y',
+  solAmount: bigint,
+  tokenAmount: bigint,
+): { totalX: bigint; totalY: bigint } {
+  return solSide === 'X'
+    ? { totalX: solAmount, totalY: tokenAmount }
+    : { totalX: tokenAmount, totalY: solAmount };
+}
+
+/**
  * Size a two-sided copy: scale BOTH legs by `pct`% of the leader (preserves the leader's SOL:token composition),
  * capping the SOL leg at `maxSolLamports` (the token leg scales down by the SAME cap factor so composition holds).
  * Pure, bigint-exact. NB: must scale each leg by the ratio of LEADER legs — NOT decideEntry's sizeSol, which is
