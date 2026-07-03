@@ -23,7 +23,7 @@ export interface ExecutedEvent {
   positionPubkey?: string;
   commandId?: string;
   sig?: string;
-  /** Tenant of the landed command (3b fan-out: routes the confirm to that user's runtime — not read yet).
+  /** Tenant of the landed command (3b fan-out: routes the confirm to that user's runtime — see executed-router).
    *  OPTIONAL: messages already in flight across a deploy predate the field; the router falls back to
    *  position/commandId ownership for those. */
   userId?: string;
@@ -32,11 +32,13 @@ export interface ExecutedEvent {
 /** The handler callbacks the dispatch routes to. The async ones may reject on a transient failure (the caller's
  *  per-message guard isolates it); the sync `*Confirmed` handlers are observability-only and never throw. */
 export interface DispatchExecutedDeps {
-  onCloseConfirmed: (ourPosition: string) => Promise<void>;
+  /** `userId` (additive, 3b) lets the caller route the confirm to the owning runtime — see executed-router. */
+  onCloseConfirmed: (ourPosition: string, userId?: string) => Promise<void>;
   onCloseExecuted: (ev: {
     pool: string;
     positionPubkey?: string;
     commandId?: string;
+    userId?: string;
   }) => Promise<void>;
   hasPendingReshapeAdd: (commandId: string) => boolean;
   publishReshapeAddAfterBuy: (commandId: string) => Promise<void>;
@@ -60,11 +62,12 @@ export async function dispatchExecuted(
   deps: DispatchExecutedDeps,
 ): Promise<void> {
   if (ev?.kind === 'close' && ev.pool) {
-    if (ev.positionPubkey) await deps.onCloseConfirmed(ev.positionPubkey); // prompt DB markClosed — no 30s wait
+    if (ev.positionPubkey) await deps.onCloseConfirmed(ev.positionPubkey, ev.userId); // prompt DB markClosed — no 30s wait
     await deps.onCloseExecuted({
       pool: ev.pool,
       positionPubkey: ev.positionPubkey,
       commandId: ev.commandId,
+      userId: ev.userId,
     });
   } else if (ev?.kind === 'buy' && ev.commandId) {
     // a token BUY just landed → build+publish the OPEN (open buy) or the RESHAPE ADD (reshape buy).

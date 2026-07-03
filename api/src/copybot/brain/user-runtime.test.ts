@@ -9,7 +9,6 @@ import { deriveCommandId } from '@/copybot/command-id';
 import type { HeartbeatStore } from '@/copybot/heartbeat-store';
 import { CONFIG_DEFAULTS } from '@/domain/copybot/config';
 import type { TokenSnapshot } from '@/domain/copybot/filters';
-import { LeaderPositionTracker } from '@/domain/copybot/leader-position';
 import { TtlCache } from '@/domain/copybot/ttl-cache';
 import type { ControlChannel } from '@/infrastructure/bus/control-channel';
 import type { RedisBus } from '@/infrastructure/bus/redis-bus';
@@ -68,7 +67,6 @@ const shared: SharedBrainDeps = {
   filterDeps: { jupiterToken: async () => null, snapshotCache: new TtlCache<TokenSnapshot>(1000) },
   control: {} as ControlChannel,
   heartbeat: {} as HeartbeatStore,
-  tracker: new LeaderPositionTracker(),
   recentlyPublishedClose: new Map(),
   inFlightBuyMints: new Map(),
   pendingSellMints: new Map(),
@@ -203,6 +201,41 @@ describe('createUserRuntime — two instances are FULLY isolated (Inc.3b S3)', (
     expect(rows.find((r) => r.eventKey === 'iso-emit-b')?.userId).toBe(USER_B);
   });
 
+  it('SKIP journaling is per-user on the SHARED wallet: the same skipped open = TWO rows, keys fold the userId', async () => {
+    // WHY (3b step 5): the durable journal dedup index is (wallet, correlationId, code) and every user shares ONE
+    // wallet until Inc.4 — if two users' skip keys were identical, the second user's skip row would be silently
+    // collapsed into the first's (a lost audit line). The key must also carry the EVENT's leader (threaded by the
+    // hub), not the boot leader — this passes a different leader on purpose to prove the threading.
+    const EVENT_LEADER = 'EventLeader11111111111111111111111111111111';
+    const e = {
+      signature: 'sig-skip-1',
+      blockTime: 1,
+      instruction: 'AddLiquidityByStrategy2',
+      depositSol: 1,
+      withdrawSol: 0,
+      claimSol: 0,
+      closed: false,
+      pool: 'POOL_SKIP',
+      position: '__test_skip_pos__',
+      nonSolMint: null, // decideEntry skips 'non_sol_paired' BEFORE any RPC → fully offline path
+      nonSolSymbol: null,
+    };
+    rtA.onEvent(e, 'ws', EVENT_LEADER, 1);
+    rtB.onEvent(e, 'ws', EVENT_LEADER, 1);
+    const keyA = `${USER_A}:${EVENT_LEADER}:POOL_SKIP:open-skip:sig-skip-1:__test_skip_pos__`;
+    const keyB = `${USER_B}:${EVENT_LEADER}:POOL_SKIP:open-skip:sig-skip-1:__test_skip_pos__`;
+    const rows = await waitFor(
+      () =>
+        db
+          .select({ userId: schema.copyJournal.userId, eventKey: schema.copyJournal.eventKey })
+          .from(schema.copyJournal)
+          .where(inArray(schema.copyJournal.eventKey, [keyA, keyB])),
+      (r) => r.length === 2,
+    );
+    expect(rows.find((r) => r.eventKey === keyA)?.userId).toBe(USER_A);
+    expect(rows.find((r) => r.eventKey === keyB)?.userId).toBe(USER_B);
+  });
+
   it("config is per-instance — setConfig on A never changes B's effective config", () => {
     // WHY: reloadConfig applies per-user rows (kill switch, stop-closes). A shared config reference would let one
     // user's stop/kill-switch silently halt (or re-enable) every other user's trading.
@@ -212,5 +245,62 @@ describe('createUserRuntime — two instances are FULLY isolated (Inc.3b S3)', (
     });
     expect(rtA.getConfig().user.enabled).toBe(!CONFIG_DEFAULTS.user.enabled);
     expect(rtB.getConfig().user.enabled).toBe(CONFIG_DEFAULTS.user.enabled);
+  });
+});
+
+describe('UserRuntime — fan-out ownership accessors (Inc.3b S5)', () => {
+  const LP2 = '__test_own_leader_pos__';
+
+  it('ownsLeaderPosition: true for an OPEN mirror, false for the other runtime (owner-union must not over-target)', () => {
+    // WHY: the hub unions "owners" into an event's targets so a CLOSE reaches a user whose leader was stopped
+    // mid-flight — but over-claiming would deliver other users' events to a runtime that must not act on them.
+    rtB.registry.open({
+      leaderPosition: LP2,
+      leaderAddress: LEADER,
+      ourPosition: 'OUR_B2',
+      pool: 'POOL',
+      nonSolSymbol: null,
+      sizeSol: 0.1,
+      lowerBin: -1,
+      upperBin: 1,
+      openedAt: Date.now(),
+    });
+    expect(rtB.ownsLeaderPosition(LP2)).toBe(true);
+    expect(rtA.ownsLeaderPosition(LP2)).toBe(false);
+  });
+
+  it('ownsLeaderPosition: true while an in-flight multi-tx open STASH holds the position (close must cancel it)', () => {
+    // WHY: a leader close during a buy→open gap must reach the runtime whose continuation is in flight — the
+    // pending stash is that runtime's only claim on the position (registry.open has not run yet).
+    const LP3 = '__test_own_stash_pos__';
+    const stash = rtA.pendingOpenMapsView().twoSidedOpens as Map<
+      string,
+      { e: { position: string; pool: string } }
+    >;
+    stash.set('CMD_STASH', { e: { position: LP3, pool: 'POOL' } });
+    expect(rtA.ownsLeaderPosition(LP3)).toBe(true);
+    expect(rtA.ownsCommand('CMD_STASH')).toBe(true); // ev:executed continuation routes by this claim
+    expect(rtB.ownsLeaderPosition(LP3)).toBe(false);
+    stash.delete('CMD_STASH');
+    expect(rtA.ownsLeaderPosition(LP3)).toBe(false);
+  });
+
+  it('ownsOurPosition: mirror row (even closed) + pending rug-exit both claim the confirm routing', () => {
+    // WHY: a close confirm can arrive AFTER registry.close flipped the row, and a rug-SL retry entry can outlive
+    // its mirror — both must still route the ev:executed close to THIS runtime (purge + markClosed idempotent).
+    expect(rtB.ownsOurPosition('OUR_B2')).toBe(true);
+    rtB.registry.close(LP2);
+    expect(rtB.ownsOurPosition('OUR_B2')).toBe(true); // the row survives a close (status flip, not delete)
+    rtA.rugExitPending.add('OUR_RUG_ROUTE');
+    expect(rtA.ownsOurPosition('OUR_RUG_ROUTE')).toBe(true);
+    expect(rtB.ownsOurPosition('OUR_RUG_ROUTE')).toBe(false);
+  });
+
+  it('leaderHoldings: open mirrors attribute their leader; an unattributable rug-pending yields null (retain)', () => {
+    // WHY: shouldRetainLeader keeps a drained leader's detector alive from exactly this view — a mis-attributed
+    // holding would let the hub drop a leader whose mirror can still close (the forbidden miss).
+    const holdingsA = rtA.leaderHoldings();
+    expect(holdingsA.openMirrorLeaders).toContain(LEADER); // rtA's mirror from the isolation suite above
+    expect(holdingsA.rugExitPendingLeaders).toContain(null); // OUR_RUG_ROUTE has no mirror row → unattributable
   });
 });

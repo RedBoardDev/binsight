@@ -31,9 +31,12 @@ export function makeDetectionDeps(args: {
   onEvent: DetectorDeps['onEvent'];
   persist?: DetectorDeps['persist'];
   onGap?: DetectorDeps['onGap'];
+  /** Optional SHARED pool-meta cache (Inc.3b: one deps object per watched leader — leaders sharing a pool must
+   *  not each pay the meta read). Defaults to a per-deps private cache (the single-leader behavior). */
+  poolMetaCache?: Map<string, LoadedPoolMeta | null>;
 }): DetectorDeps {
   const { conn, pk, poolReader, tokenMeta, onEvent, persist, onGap } = args;
-  const poolMetaCache = new Map<string, LoadedPoolMeta | null>();
+  const poolMetaCache = args.poolMetaCache ?? new Map<string, LoadedPoolMeta | null>();
   const getPoolMeta = async (lbPair: string): Promise<LoadedPoolMeta | null> => {
     const cached = poolMetaCache.get(lbPair);
     if (cached !== undefined) return cached;

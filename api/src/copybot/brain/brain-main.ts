@@ -6,26 +6,30 @@
  * Bundled CJS (tsup.copybot.config.ts) — imports the SDK, NEVER runs under tsx. Does NOT import the keypair.
  *   yarn tsup --config tsup.copybot.config.ts → node --env-file=../.env dist/copybot/brain-main.cjs [--once] [--seconds=N]
  *
- * Inc.3b step 3: everything tenant-scoped lives in `createUserRuntime` (user-runtime.ts). This file keeps the
- * PROCESS SHELL — env/boot, detection wiring, the timers, the wallet-level sweeps (reconcile / rug-SL / wallet
- * sweep) and the ev:executed consumer — and runs exactly ONE runtime bound to SYSTEM_USER_ID (the multi-user
- * fan-out is the next 3b step).
+ * Inc.3b steps 3-5: everything tenant-scoped lives in `createUserRuntime` (user-runtime.ts); per-leader detection
+ * + the event fan-out live in the `LeaderHub` (leader-hub.ts), seeded here with exactly [cfg.leader]. This file
+ * keeps the PROCESS SHELL — env/boot, the timers, the wallet-level sweeps (reconcile / rug-SL / wallet sweep) and
+ * the ev:executed consumer (routed per runtime via executed-router) — and still boots exactly ONE runtime bound
+ * to SYSTEM_USER_ID (the config-driven leader set + multi-user boot are 3b step 7).
  */
 import { DLMM_PROGRAM_ID } from '@binsight/shared';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { pino } from 'pino';
+import { createAlertWebhookSink } from '@/copybot/alert';
 import { assertBusKey } from '@/copybot/bus-key-guard';
 import { ConfigStore } from '@/copybot/config-store';
 import { makeDetectionDeps } from '@/copybot/detection';
 import { HeartbeatStore } from '@/copybot/heartbeat-store';
 import { SYSTEM_USER_ID } from '@/copybot/journal-store';
+import { CopyEvents } from '@/copybot/observability/copy-events';
+import { EventStore } from '@/copybot/observability/event-store';
 import { purgeRugExitPending } from '@/copybot/rug-exit-store';
-import { effectiveFor } from '@/domain/copybot/config';
+import { type CopybotConfig, effectiveFor } from '@/domain/copybot/config';
 import type { DetectedEvent } from '@/domain/copybot/events';
+import { shouldRetainLeader } from '@/domain/copybot/fan-out';
 import type { TokenSnapshot } from '@/domain/copybot/filters';
 import { JupiterTokenGateway } from '@/domain/copybot/filters/sources/jupiter-token/jupiter-token-gateway';
 import { LeaderDetector } from '@/domain/copybot/leader-detector';
-import { LeaderPositionTracker } from '@/domain/copybot/leader-position';
 import { planReconcile } from '@/domain/copybot/reconciliation';
 import { planWalletSweep } from '@/domain/copybot/residual-sell';
 import {
@@ -36,6 +40,7 @@ import {
   shouldAlertDetectionStale,
 } from '@/domain/copybot/status';
 import { TtlCache } from '@/domain/copybot/ttl-cache';
+import type { LoadedPoolMeta } from '@/domain/dlmm';
 import { ControlChannel } from '@/infrastructure/bus/control-channel';
 import { RedisBus } from '@/infrastructure/bus/redis-bus';
 import { openDatabase } from '@/infrastructure/persistence/database';
@@ -57,6 +62,8 @@ import { PriorityFeeOracle } from '@/infrastructure/solana/priority-fee-oracle';
 import { readAllOwnerTokenBalances } from '@/infrastructure/solana/token-balance-reader';
 import { HeliusTokenMetadataGateway } from '@/infrastructure/solana/token-metadata-gateway';
 import { type ExecutedBatchDeps, processExecutedBatch } from './dispatch-executed';
+import { resolveExecutedTarget } from './executed-router';
+import { LeaderHub } from './leader-hub';
 import type { Mirror } from './mirror-registry';
 import { pendingOpenLeaders } from './pending-open-cancel';
 import {
@@ -64,6 +71,7 @@ import {
   RECLOSE_GRACE_MS,
   SELL_RESIDUAL_DUST_RAW,
   type SharedBrainDeps,
+  type UserRuntime,
 } from './user-runtime';
 
 const POLL_MS = 15_000;
@@ -140,7 +148,6 @@ async function main(): Promise<void> {
   const poolReader = new OnchainPoolMetaReader(conn);
   const tokenMeta = new HeliusTokenMetadataGateway(cfg.httpUrl, log);
   const bus = RedisBus.connect(cfg.redisUrl);
-  const tracker = new LeaderPositionTracker();
   const db = openDatabase(cfg.dbUrl);
   // Single-tenant binding (Inc.3a — SPEC §11): the brain still runs ONE user, bound ONCE here and passed to the
   // single user runtime, which threads it through everything tenant-scoped (commandId derivation,
@@ -184,7 +191,6 @@ async function main(): Promise<void> {
     filterDeps,
     control,
     heartbeat,
-    tracker,
     recentlyPublishedClose,
     inFlightBuyMints,
     pendingSellMints,
@@ -203,6 +209,10 @@ async function main(): Promise<void> {
     leader: cfg.leader,
     initialConfig,
   });
+  // The brain's runtime/config views (3b step 5): the hub's fan-out targets from these live maps. Still exactly
+  // ONE SYSTEM entry each — booting from listActiveUserIds() is step 7.
+  const runtimes = new Map<string, UserRuntime>([[userId, rt]]);
+  const userConfigs = new Map<string, CopybotConfig>([[userId, initialConfig]]);
 
   const reloadConfig = async (): Promise<void> => {
     // STOP = FORCE-CLOSE (SPEC §4.3): diff the config we were RUNNING (prev, the last loaded value in memory —
@@ -211,21 +221,62 @@ async function main(): Promise<void> {
     const prev = rt.getConfig();
     const next = await configStore.load(userId);
     rt.setConfig(next);
+    userConfigs.set(userId, next); // the fan-out targets from this live view
     await rt.applyStopCloses(prev, next);
   };
 
-  // Detection-liveness (observability). The poll/reconcile timers below run with LOG-ONLY `.catch` handlers; if
-  // they throw forever the bot is silently BLIND to leader events while the heartbeat stays GREEN. These stamps +
-  // consecutive-failure counters feed the status snapshot AND the watchdog alert. wsConnected is mirrored from the
-  // WS subscriber's connection-change callback (set once `sub` exists, below).
+  // Shared detection-context emitter (SYSTEM-bound, INC3B-PLAN §3): detection is ONE on-chain fact — the hub's
+  // `detect.routed` / `detect.gap` / per-leader `system.detection_stale` and the consumer-loop errors are emitted
+  // here ONCE, never fabricated per user. Same binding the SYSTEM runtime's emitter has ⇒ identical rows today.
+  const detectionLog = log.child({ userId, wallet: cfg.ownerPubkey, process: 'brain' });
+  const detectionEvents = new CopyEvents(
+    new EventStore(db, detectionLog),
+    detectionLog,
+    { userId, wallet: cfg.ownerPubkey, process: 'brain' },
+    createAlertWebhookSink(process.env.ALERT_WEBHOOK, detectionLog),
+  );
+  // WS trigger, created EARLY (never connects until start(), below) so the hub can record its watches.
+  const sub = cfg.wsUrl ? new HeliusTxSubscriber(cfg.wsUrl, log) : undefined;
+  // Per-leader detection (3b step 4): one detector+tracker+poll-health per watched leader, ONE shared pool-meta
+  // cache across the per-leader deps, and the event fan-out (step 5) — seeded below with exactly [cfg.leader]
+  // (the config-driven leader set is step 7a).
+  const poolMetaCache = new Map<string, LoadedPoolMeta | null>();
+  const hub = new LeaderHub({
+    log,
+    events: detectionEvents,
+    makeDetector: (leader, onEvent, onGap) =>
+      new LeaderDetector(
+        makeDetectionDeps({
+          conn,
+          pk: new PublicKey(leader),
+          poolReader,
+          tokenMeta,
+          onEvent,
+          onGap,
+          poolMetaCache,
+        }),
+      ),
+    getConfigs: () => userConfigs,
+    getRuntimes: () => runtimes,
+    retainLeader: (leader) =>
+      shouldRetainLeader(
+        leader,
+        [...runtimes.values()].map((r) => r.leaderHoldings()),
+      ),
+    watcher: sub,
+  });
+
+  // Detection-liveness (observability). The poll/reconcile loops run with LOG-ONLY `.catch` handlers; if they
+  // throw forever the bot is silently BLIND to leader events while the heartbeat stays GREEN. Poll health is now
+  // PER LEADER inside the hub (its own counters + stale alerts); the wallet-level reconcile keeps its own
+  // process-level counter + alert here. wsConnected is mirrored from the WS connection-change callback (below).
   let wsConnected = false; // last-known WS trigger connectivity
-  let lastPollAt: number | null = null; // ms of the last SUCCESSFUL cursor poll
   let lastReconcileAt: number | null = null; // ms of the last SUCCESSFUL reconcile sweep
-  let pollFailures = 0; // CONSECUTIVE poll failures (reset on a success)
   let reconcileFailures = 0; // CONSECUTIVE reconcile failures (reset on a success)
-  let detectionStaleAlerted = false; // once-per-episode gate; re-armed when BOTH counters are back to 0
+  let reconcileStaleAlerted = false; // once-per-episode gate; re-armed when the counter is back to 0
   const brainStatus = (): BrainStatusDetail => {
     const open = rt.registry.openPositions();
+    const poll = hub.pollHealth(); // per-leader health, aggregated (single leader ⇒ its exact values)
     return {
       leader: cfg.leader,
       openPositions: open.length,
@@ -233,38 +284,35 @@ async function main(): Promise<void> {
       lastActionAt: rt.lastActionAt(),
       lastLatencyMs: rt.lastLatencyMs(),
       wsConnected,
-      lastPollAt,
+      lastPollAt: poll.lastPollAt,
       lastReconcileAt,
-      pollFailures,
+      pollFailures: poll.pollFailures,
       reconcileFailures,
     };
   };
-  // A detector loop (poll or reconcile) succeeded: stamp its time, zero its consecutive-failure counter, and re-arm
-  // the stale alert once detection is FULLY healthy again (both counters at 0). Observability only.
-  const onDetectionSuccess = (which: 'poll' | 'reconcile'): void => {
-    if (which === 'poll') {
-      lastPollAt = Date.now();
-      pollFailures = 0;
-    } else {
-      lastReconcileAt = Date.now();
-      reconcileFailures = 0;
-    }
-    if (detectionHealthy(pollFailures, reconcileFailures)) detectionStaleAlerted = false;
+  // The reconcile sweep succeeded: stamp, zero the counter, re-arm the reconcile-side stale alert. (The poll-side
+  // equivalent lives per leader in the hub — 3b step 4 split the two health signals.) Observability only.
+  const onReconcileSuccess = (): void => {
+    lastReconcileAt = Date.now();
+    reconcileFailures = 0;
+    if (detectionHealthy(0, reconcileFailures)) reconcileStaleAlerted = false;
   };
-  // A detector loop failed: bump its consecutive-failure counter and — after DETECTION_STALE_FAILURES in a row —
-  // emit the pinned "bot may be blind" alert ONCE per stale episode (the flag suppresses repeats until a recovery
-  // re-arms it). The existing per-loop `log.error` is kept at the call site. Observability only.
-  const onDetectionFailure = (which: 'poll' | 'reconcile'): void => {
-    if (which === 'poll') pollFailures += 1;
-    else reconcileFailures += 1;
-    if (shouldAlertDetectionStale(pollFailures, reconcileFailures, detectionStaleAlerted)) {
-      detectionStaleAlerted = true;
-      rt.events.emit('system.detection_stale', {
+  // The reconcile sweep failed: bump the counter and — after DETECTION_STALE_FAILURES in a row — emit the pinned
+  // "bot may be blind" alert ONCE per stale episode. The per-loop `log.error` is kept at the call site.
+  const onReconcileFailure = (): void => {
+    reconcileFailures += 1;
+    if (shouldAlertDetectionStale(0, reconcileFailures, reconcileStaleAlerted)) {
+      reconcileStaleAlerted = true;
+      detectionEvents.emit('system.detection_stale', {
         stage: 'failsafe',
         outcome: 'failed',
         leader: cfg.leader,
         eventKey: `detection-stale:${Date.now()}`, // fresh per episode so a later episode isn't dedup-suppressed
-        adminDetail: { pollFailures, reconcileFailures, threshold: DETECTION_STALE_FAILURES },
+        adminDetail: {
+          pollFailures: hub.pollHealth().pollFailures,
+          reconcileFailures,
+          threshold: DETECTION_STALE_FAILURES,
+        },
       });
     }
   };
@@ -336,12 +384,12 @@ async function main(): Promise<void> {
       rt.events.closed({
         stage: 'close',
         outcome: 'confirmed',
-        leader: cfg.leader,
+        leader: rt.leaderOf(m), // the MIRROR's leader (3b) — same value while the hub runs [cfg.leader]
         pool: m.pool,
         leaderPosition: m.leaderPosition,
         ourPosition: our,
         ourSizeSol: m.sizeSol,
-        eventKey: rt.closeConfirmedKey(m.pool, our),
+        eventKey: rt.closeConfirmedKey(rt.leaderOf(m), m.pool, our),
         adminDetail: { nonSolSymbol: m.nonSolSymbol, via: 'reconcile' },
       });
     }
@@ -459,16 +507,6 @@ async function main(): Promise<void> {
     }
   }
 
-  const detector = new LeaderDetector(
-    makeDetectionDeps({
-      conn,
-      pk: leaderPk,
-      poolReader,
-      tokenMeta,
-      onEvent: rt.onEvent,
-      onGap: rt.onGap,
-    }),
-  );
   await blockhashCache.start(); // prime + background-refresh so serializeUnsigned never pays a getLatestBlockhash RTT
   if (rt.oracleOn()) {
     await priorityFeeOracle.start(); // prime + background-refresh the live fee estimate (opt-in)
@@ -479,13 +517,23 @@ async function main(): Promise<void> {
 
   // --once: validates the pipeline by forcing ONE open on a live leader position (deterministic), then exits.
   if (once) {
-    await onceValidate(conn, leaderPk, poolReader, rt.handleOpen, bus, hmacKey, log);
+    await onceValidate(
+      conn,
+      leaderPk,
+      poolReader,
+      (e) => rt.handleOpen(e, cfg.leader), // the forced open copies the boot leader (3b: handleOpen takes the event's leader)
+      bus,
+      hmacKey,
+      log,
+    );
     await Promise.all([bus.quit(), control.quit()]);
     process.exit(0);
   }
 
   log.info({ leader: cfg.leader, owner: cfg.ownerPubkey, redis: cfg.redisUrl }, '🧠 brain started');
-  await detector.poll('replay'); // sets the cursor + tracker state (without publishing)
+  // Seed the hub with EXACTLY [cfg.leader] (3b steps 4-5): replay-seeds the cursor + tracker (without publishing)
+  // and records the WS watch. The config-driven leader set (computeLeaderSet) is step 7a.
+  await hub.applyLeaderSet(new Set([cfg.leader]));
   log.info('replay done — switching to live');
 
   // No-dormant-token: at boot, sweep any non-SOL balance left on the wallet (a prior downtime, a missed/
@@ -508,44 +556,27 @@ async function main(): Promise<void> {
     log.info({ restored: restored.length }, '♻️ mirrors reloaded from the DB');
     await reconcileSweep(); // close right away anything the leader closed during downtime (no grace at boot)
   }
-  if (!cfg.wsUrl) {
+  if (!cfg.wsUrl || !sub) {
     log.warn('no SOLANA_WS_URL → live impossible');
     await Promise.all([bus.quit(), control.quit()]);
     return;
   }
-  const sub = new HeliusTxSubscriber(cfg.wsUrl, log);
+  // The hub already wired watch (per leader, DLMM-filtered) + the reconnect catch-up poll at applyLeaderSet time.
   wsConnected = sub.isConnected(); // seed; the callback keeps it live (observability — status only)
   sub.onConnectionChange((c) => {
     wsConnected = c;
   });
-  sub.onReconnect(() =>
-    detector.poll().catch((e) => log.error({ e: (e as Error).message }, 'catch-up poll')),
-  );
-  sub.watch(cfg.leader, (sig, logs) => {
-    const hasDlmm = logs.some((l) => l.includes(DLMM_PROGRAM_ID));
-    log.debug({ sig, hasDlmm, nLogs: logs.length }, '📡 ws notif');
-    if (hasDlmm)
-      detector.onWsSignature(sig).catch((e) => log.error({ e: (e as Error).message }, 'ws'));
-  });
   sub.start();
-  const timer = setInterval(
-    () =>
-      detector
-        .poll()
-        .then(() => onDetectionSuccess('poll'))
-        .catch((e) => {
-          log.error({ e: (e as Error).message }, 'poll');
-          onDetectionFailure('poll');
-        }),
-    POLL_MS,
-  );
+  // One process-level poll loop: the hub iterates its per-leader detectors sequentially (per-leader failure
+  // counters + stale alerts live inside it). pollAll never rejects (per-entry try/catch).
+  const timer = setInterval(() => void hub.pollAll(), POLL_MS);
   const reconTimer = setInterval(
     () =>
       reconcileSweep()
-        .then(() => onDetectionSuccess('reconcile'))
+        .then(onReconcileSuccess)
         .catch((e) => {
           log.error({ e: (e as Error).message }, 'reconcile');
-          onDetectionFailure('reconcile');
+          onReconcileFailure();
         }),
     RECON_MS,
   );
@@ -576,17 +607,38 @@ async function main(): Promise<void> {
   let stopped = false;
   const evBus = RedisBus.connect(cfg.redisUrl);
   await evBus.ensureGroup(EV_EXECUTED_STREAM, 'brain');
-  // Per-message dispatch deps: each deferred-publish handler keeps its OWN domain-specific failure emit (open_failed /
-  // add_failed / swap.failed) via an inline `.catch()` — those are terminal (the pending-map entry is already
-  // consumed → a retry no-ops) so the message is still acked. `onCloseConfirmed` is passed WITHOUT a catch: a DB blip
-  // in markClosed must REJECT so the batch guard leaves the close UNACKED for an idempotent PEL-drain retry (never
+  // Per-message dispatch deps — now a ROUTER (3b step 5, INC3B-PLAN §3): each callback resolves the OWNING runtime
+  // (ev.userId → runtime; else position/commandId ownership — see executed-router) and dispatches with that
+  // runtime's handlers. With the single SYSTEM runtime every message resolves to it, exactly as before.
+  // Each deferred-publish handler keeps its OWN domain-specific failure emit (open_failed / add_failed /
+  // swap.failed) via an inline `.catch()` — those are terminal (the pending-map entry is already consumed → a
+  // retry no-ops) so the message is still acked. `onCloseConfirmed` is routed WITHOUT a catch: a DB blip in
+  // markClosed must REJECT so the batch guard leaves the close UNACKED for an idempotent PEL-drain retry (never
   // silently drop a close). See dispatch-executed.ts.
+  const ownerOfCommand = (commandId: string): UserRuntime | undefined =>
+    resolveExecutedTarget(runtimes, { commandId });
   const executedDeps: ExecutedBatchDeps = {
-    onCloseConfirmed: rt.onCloseConfirmed,
-    onCloseExecuted: (ev) =>
-      rt.onCloseExecuted(ev).catch((e) =>
+    onCloseConfirmed: async (ourPosition, evUserId) => {
+      const owner = resolveExecutedTarget(runtimes, {
+        userId: evUserId,
+        positionPubkey: ourPosition,
+      });
+      // A close with NO matching runtime is acked ONLY because the reconcile backstop covers closes: the mirror
+      // row (if any) is found and marked closed by the next on-chain sweep — never silently lost.
+      if (owner) await owner.onCloseConfirmed(ourPosition);
+    },
+    onCloseExecuted: async (ev) => {
+      // Close-triggered residual sell, attributed to the CLOSING user (fee/journal attribution, Inc.4-ready).
+      // No owner (deploy-window legacy message): the wallet-level safety sweep recovers the residual.
+      const owner = resolveExecutedTarget(runtimes, {
+        userId: ev.userId,
+        positionPubkey: ev.positionPubkey,
+        commandId: ev.commandId,
+      });
+      if (!owner) return;
+      await owner.onCloseExecuted(ev).catch((e) =>
         // close-residual sell build/publish failed → the swap-failed path (pinned, feed "swap manually").
-        rt.events.swapFailed({
+        owner.events.swapFailed({
           stage: 'sell',
           outcome: 'failed',
           reason: 'failed_after_retries',
@@ -595,11 +647,17 @@ async function main(): Promise<void> {
           commandId: ev.commandId,
           adminDetail: { error: (e as Error).message, pool: ev.pool },
         }),
-      ),
-    hasPendingReshapeAdd: rt.hasPendingReshapeAdd,
-    publishReshapeAddAfterBuy: (commandId) =>
-      rt.publishReshapeAddAfterBuy(commandId).catch((e) =>
-        rt.events.emit('reshape.add_failed', {
+      );
+    },
+    // Continuation PREDICATES scan every runtime (commandIds are disjoint across users by derivation, so "any"
+    // is exact); the matching publish handler then routes to the owner and no-ops when none (idempotent replay).
+    hasPendingReshapeAdd: (commandId) =>
+      [...runtimes.values()].some((r) => r.hasPendingReshapeAdd(commandId)),
+    publishReshapeAddAfterBuy: async (commandId) => {
+      const owner = ownerOfCommand(commandId);
+      if (!owner) return;
+      await owner.publishReshapeAddAfterBuy(commandId).catch((e) =>
+        owner.events.emit('reshape.add_failed', {
           stage: 'reshape',
           outcome: 'failed',
           reason: 'add_failed',
@@ -607,10 +665,13 @@ async function main(): Promise<void> {
           commandId,
           adminDetail: { error: (e as Error).message, commandId },
         }),
-      ),
-    publishTwoSidedOpenAfterBuy: (commandId) =>
-      rt.publishTwoSidedOpenAfterBuy(commandId).catch((e) =>
-        rt.events.emit('lifecycle.open_failed', {
+      );
+    },
+    publishTwoSidedOpenAfterBuy: async (commandId) => {
+      const owner = ownerOfCommand(commandId);
+      if (!owner) return;
+      await owner.publishTwoSidedOpenAfterBuy(commandId).catch((e) =>
+        owner.events.emit('lifecycle.open_failed', {
           stage: 'open',
           outcome: 'failed',
           reason: 'open_failed',
@@ -618,12 +679,16 @@ async function main(): Promise<void> {
           commandId,
           adminDetail: { error: (e as Error).message, commandId },
         }),
-      ),
-    hasPendingToken2022Deposit: rt.hasPendingToken2022Deposit,
-    publishDepositAfterPositionCreated: (commandId) =>
-      rt.publishDepositAfterPositionCreated(commandId).catch((e) =>
+      );
+    },
+    hasPendingToken2022Deposit: (commandId) =>
+      [...runtimes.values()].some((r) => r.hasPendingToken2022Deposit(commandId)),
+    publishDepositAfterPositionCreated: async (commandId) => {
+      const owner = ownerOfCommand(commandId);
+      if (!owner) return;
+      await owner.publishDepositAfterPositionCreated(commandId).catch((e) =>
         // the deposit leg of a Token-2022 OPEN failed to build/publish → the open did not complete (open_failed).
-        rt.events.emit('lifecycle.open_failed', {
+        owner.events.emit('lifecycle.open_failed', {
           stage: 'open',
           outcome: 'failed',
           reason: 'open_failed',
@@ -631,12 +696,19 @@ async function main(): Promise<void> {
           commandId,
           adminDetail: { error: (e as Error).message, commandId, leg: 'token2022_deposit' },
         }),
+      );
+    },
+    onOpenConfirmed: (ourPosition) =>
+      resolveExecutedTarget(runtimes, { positionPubkey: ourPosition })?.onOpenConfirmed(
+        ourPosition,
       ),
-    onOpenConfirmed: rt.onOpenConfirmed,
-    hasPendingToken2022Mirror: rt.hasPendingToken2022Mirror,
-    finalizeToken2022Open: (commandId) =>
-      rt.finalizeToken2022Open(commandId).catch((e) =>
-        rt.events.emit('lifecycle.open_failed', {
+    hasPendingToken2022Mirror: (commandId) =>
+      [...runtimes.values()].some((r) => r.hasPendingToken2022Mirror(commandId)),
+    finalizeToken2022Open: async (commandId) => {
+      const owner = ownerOfCommand(commandId);
+      if (!owner) return;
+      await owner.finalizeToken2022Open(commandId).catch((e) =>
+        owner.events.emit('lifecycle.open_failed', {
           stage: 'open',
           outcome: 'failed',
           reason: 'open_failed',
@@ -644,13 +716,25 @@ async function main(): Promise<void> {
           commandId,
           adminDetail: { error: (e as Error).message, commandId, leg: 'token2022_finalize' },
         }),
+      );
+    },
+    onAddConfirmed: (ourPosition, commandId) =>
+      resolveExecutedTarget(runtimes, { positionPubkey: ourPosition })?.onAddConfirmed(
+        ourPosition,
+        commandId,
       ),
-    onAddConfirmed: rt.onAddConfirmed,
-    onClaimConfirmed: rt.onClaimConfirmed,
-    onSellConfirmed: rt.onSellConfirmed,
+    onClaimConfirmed: (ourPosition, commandId) =>
+      resolveExecutedTarget(runtimes, { positionPubkey: ourPosition })?.onClaimConfirmed(
+        ourPosition,
+        commandId,
+      ),
+    // Sells are wallet-residual actions: route by the publisher's userId, else fall back to the WALLET context
+    // (the SYSTEM runtime) — the stash lives in the shared pendingSellMints either way.
+    onSellConfirmed: (ev) =>
+      (resolveExecutedTarget(runtimes, { userId: ev.userId }) ?? rt).onSellConfirmed(ev),
     ack: (id) => evBus.ack(EV_EXECUTED_STREAM, 'brain', id),
     onLoopError: (err, id) =>
-      rt.events.system('system.loop_errored', err, {
+      detectionEvents.system('system.loop_errored', err, {
         stage: 'failsafe',
         outcome: 'failed',
         reason: 'loop_errored',
@@ -693,7 +777,7 @@ async function main(): Promise<void> {
       } catch (e) {
         // CONNECTION-level failure only (a Redis-down consume/consumePending) — per-message errors are already
         // isolated inside processExecutedBatch. Record + exponential backoff + continue (Redis may recover).
-        rt.events.system('system.loop_errored', e, {
+        detectionEvents.system('system.loop_errored', e, {
           stage: 'failsafe',
           outcome: 'failed',
           reason: 'loop_errored',

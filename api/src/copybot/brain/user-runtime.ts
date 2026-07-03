@@ -7,13 +7,17 @@
  * `createUserRuntime(shared, userId, opts)` instance. The user dimension is an INSTANCE, not a key: a throw inside
  * runtime A can never corrupt runtime B's maps, and per-user failure isolation is structural.
  *
- * Process-level pieces (detection, RPC/pool/blockhash/fee/filter caches, the bus, and the wallet-level maps keyed
- * by globally-unique position pubkeys or mints) stay in `SharedBrainDeps`, shared by every runtime. The wallet-level
- * sweeps (reconcile / rug-SL / wallet sweep) STAY in brain-main this increment and drive the runtime through its
- * exposed accessors (their multi-user split is a later 3b step).
+ * Process-level pieces (RPC/pool/blockhash/fee/filter caches, the bus, and the wallet-level maps keyed by
+ * globally-unique position pubkeys or mints) stay in `SharedBrainDeps`, shared by every runtime. Detection lives
+ * in the `LeaderHub` (3b step 4): the hub applies the per-leader tracker, drops replay, and fans each event out to
+ * `onEvent(e, source, leader, …)` — event-driven paths read the EVENT's leader, mirror-driven paths read
+ * `m.leaderAddress`. The wallet-level sweeps (reconcile / rug-SL / wallet sweep) STAY in brain-main this increment
+ * and drive the runtime through its exposed accessors (their multi-user split is a later 3b step).
  *
  * Extracted MECHANICALLY from brain-main with ZERO behavior change: command IDs, event keys, log lines (the
  * on-chain harness greps some — see log-markers.ts), journal rows and publish payloads are byte-identical.
+ * (3b steps 4-5 exceptions, single-leader value-identical: the leader in keys/rows is now the event's/mirror's;
+ * the SKIP/CANCEL correlation keys fold the userId — see the key helpers below.)
  */
 import {
   type Connection,
@@ -38,6 +42,7 @@ import { type SignRequest, SignRequestSchema } from '@/domain/copybot/contracts'
 import { decideEntry } from '@/domain/copybot/decision';
 import { routeWithPending } from '@/domain/copybot/dispatch';
 import type { DetectedEvent } from '@/domain/copybot/events';
+import type { LeaderHoldings } from '@/domain/copybot/fan-out';
 import {
   type FilterContext,
   filtersActive,
@@ -50,7 +55,6 @@ import {
 import { jitoTipFor } from '@/domain/copybot/jito-tip';
 import { type JournalEntry, stageForKind } from '@/domain/copybot/journal';
 import type { EventSource } from '@/domain/copybot/leader-detector';
-import type { LeaderPositionTracker } from '@/domain/copybot/leader-position';
 import {
   type CopyCode,
   FALLBACK_CODE,
@@ -208,8 +212,6 @@ export interface SharedBrainDeps {
   filterDeps: ResolveDeps;
   control: ControlChannel;
   heartbeat: HeartbeatStore;
-  /** Detection state (shared until the LeaderHub extraction): dedup/stale tracking of the leader's positions. */
-  tracker: LeaderPositionTracker;
   /** ourPosition → ms a close was last published (reClose grace) — position pubkeys are globally unique. */
   recentlyPublishedClose: Map<string, number>;
   /** tokenMint → ms a two-sided buy was published (protects the bought token from the wallet sweep). */
@@ -233,7 +235,9 @@ export interface UserRuntimeOptions {
   ownerPk: PublicKey;
   /** Available SOL balance fed to decideEntry (today: the COPIER_BALANCE_SOL env, shared by every user). */
   balanceOf: () => number;
-  /** The single watched leader (the LeaderHub extraction makes this the per-event leader). */
+  /** The BOOT leader (cfg.leader). Since the LeaderHub extraction (3b step 4) events/mirrors carry their own
+   *  leader; this remains only as (a) the fallback for legacy mirrors persisted without a `leader` column and
+   *  (b) the prefix of the still-wallet-level paths (sell / orphan / cancel keys) until steps 6-7. */
   leader: string;
   /** The user's config as loaded/seeded at boot (brain-main owns the ConfigStore + reload wiring). */
   initialConfig: CopybotConfig;
@@ -259,7 +263,6 @@ export async function createUserRuntime(
     blockhashCache,
     priorityFeeOracle,
     filterDeps,
-    tracker,
     recentlyPublishedClose,
     inFlightBuyMints,
     pendingSellMints,
@@ -269,9 +272,8 @@ export async function createUserRuntime(
     priorityFeeOracleEnv,
     alertWebhookUrl,
   } = shared;
-  const { ownerPk, balanceOf, leader, initialConfig } = opts;
+  const { ownerPk, balanceOf, leader: bootLeader, initialConfig } = opts;
   const wallet = ownerPk.toBase58();
-  const leaderPk = new PublicKey(leader);
 
   const registry = new MirrorRegistry();
   // commandId v2 = derive(userId + eventKey) (SPEC §11, supersedes ADR-8): bound once so the same leader event
@@ -297,27 +299,40 @@ export async function createUserRuntime(
   const emitFor = (reason: string | undefined, fields: EmitInput<CopyCode>): void => {
     events.emit(resolveLegacyReason(reason) ?? FALLBACK_CODE, fields);
   };
+  // The leader a MIRROR-driven path acts for (close/claim/resync/safety-close/confirms): the mirror's own
+  // `leaderAddress` (3b step 1). A legacy row persisted before the `leader` column loads as '' — fall back to the
+  // boot leader so its keys/commandIds stay EXACTLY what the pre-3b code derived (never a ''-prefixed key, which
+  // would break close idempotency for in-flight retries across the deploy).
+  const leaderOf = (m: Pick<Mirror, 'leaderAddress'>): string => m.leaderAddress || bootLeader;
   // Per-leg detection correlation keys for the no-copy SKIP events (which carry no commandId/eventKey of their own):
   // the emit dedup keys on `(correlationId, code)`, so distinct skipped opens/reshapes need a UNIQUE eventKey or
   // they would collapse into one row under the 120s LRU. WS + cursor-poll re-detect of the SAME leg shares the key
   // (correctly collapses to one row). The leaf differs per stage so an open-skip and a reshape-skip never alias.
-  const openSkipKey = (e: DetectedEvent): string =>
-    `${leader}:${e.pool}:open-skip:${e.signature}:${e.position}`;
+  // The USERID IS FOLDED IN (3b step 5): the durable dedup index is `(wallet, correlationId, code)` and every user
+  // shares ONE wallet until Inc.4 custody — without the fold, two users skipping the SAME leader open would
+  // collapse into one journal row (the second user's skip silently lost). commandId-bearing keys don't need it
+  // (deriveCommandId already folds the userId). NOT asserted by any test/harness — safe to reshape.
+  const openSkipKey = (e: DetectedEvent, leader: string): string =>
+    `${userId}:${leader}:${e.pool}:open-skip:${e.signature}:${e.position}`;
   const reshapeSkipKey = (e: DetectedEvent, m: Mirror): string =>
-    `${leader}:${m.pool}:reshape-skip:${e.signature}:${m.ourPosition}`;
+    `${userId}:${leaderOf(m)}:${m.pool}:reshape-skip:${e.signature}:${m.ourPosition}`;
   // Per-position correlation keys for the `lifecycle.*_confirmed` FEED events. These confirmed emits carry no
   // commandId of their own, yet the emit dedup keys on `(correlationId, code)` — without a per-position key the
   // `correlationId` would be empty and two DISTINCT positions' confirms within the 120s LRU would collapse into one
   // row (lost feed). Keyed by OUR position so the SAME position's duplicate confirms (ev:executed + reconcile)
-  // correctly collapse to one row, while distinct positions stay distinct. The leaf differs per code.
-  const openConfirmedKey = (pool: string, ourPosition: string): string =>
+  // correctly collapse to one row, while distinct positions stay distinct. The leaf differs per code. (No userId
+  // fold needed: OUR position pubkeys are per-user ephemeral keys, already globally unique on the shared wallet.)
+  const openConfirmedKey = (leader: string, pool: string, ourPosition: string): string =>
     `${leader}:${pool}:open-confirmed:${ourPosition}`;
-  const closeConfirmedKey = (pool: string, ourPosition: string): string =>
+  const closeConfirmedKey = (leader: string, pool: string, ourPosition: string): string =>
     `${leader}:${pool}:close-confirmed:${ourPosition}`;
   let runtimeConfig = initialConfig; // polled + ping-reloaded live by brain-main via getConfig/setConfig
-  // Resolve the EFFECTIVE config for our (single) leader from the DB-backed config.
-  // Pure + cheap → recomputed at each point of use so a live reload always takes effect on the next event.
-  const eff = (): EffectiveConfig => effectiveFor(runtimeConfig, leader);
+  // Resolve the EFFECTIVE config for ONE leader from the DB-backed config. Pure + cheap → recomputed at each point
+  // of use so a live reload always takes effect on the next event. Decision paths pass the EVENT's/MIRROR's leader
+  // (3b fan-out); the wallet-level paths (sell economics, publish plumbing) still read the boot leader until the
+  // sweeps go multi-user (INC3B-PLAN §7 steps 6-7) — same value while the hub is seeded with [cfg.leader].
+  const effFor = (leader: string): EffectiveConfig => effectiveFor(runtimeConfig, leader);
+  const eff = (): EffectiveConfig => effFor(bootLeader);
   const rugSlTracker = new RugSlTracker(RUG_SL_RETAIN_MS); // per-position price windows for the rug-SL crash check
   const rugExitStore = new RugExitStore(db, log, userId); // durable, tenant-bound rug-exit rows (suppress re-open + pending re-close)
   const rugExited = await rugExitStore.load(); // seed across restart so a leader add can't re-enter a rug-exited position
@@ -340,6 +355,8 @@ export async function createUserRuntime(
     string,
     {
       e: DetectedEvent;
+      /** The event's leader (3b): the deferred open must derive the SAME keys the triggering event would have. */
+      leader: string;
       dist: WeightBin[];
       sizeLamports: bigint;
       solSide: 'X' | 'Y';
@@ -364,6 +381,8 @@ export async function createUserRuntime(
     string,
     {
       e: DetectedEvent;
+      /** The event's leader (3b): threads through create → deposit → mirror. */
+      leader: string;
       lower: number;
       upper: number;
       sizeSol: number;
@@ -377,6 +396,8 @@ export async function createUserRuntime(
     string,
     {
       leaderPosition: string;
+      /** The event's leader (3b): stamped on the mirror once the deposit lands. */
+      leader: string;
       ourPosition: string;
       pool: string;
       nonSolSymbol: string | null;
@@ -402,6 +423,8 @@ export async function createUserRuntime(
       ourPosition: string;
       pool: string;
       leaderPosition: string;
+      /** The mirror's leader (3b): the deferred add derives the same keys the reshape would have. */
+      leader: string;
       signature: string;
     }
   >();
@@ -467,7 +490,9 @@ export async function createUserRuntime(
       stage: journalHint?.stage ?? stageForKind(full.kind),
       outcome: journalHint?.outcome ?? 'published',
       kind: full.kind,
-      leader,
+      // The event's/mirror's leader when the caller passes it (3b); wallet-level publishes (sell/orphan) fall
+      // back to the boot leader until the sweeps go multi-user (steps 6-7).
+      leader: journalHint?.leader ?? bootLeader,
       pool: full.pool,
       leaderPosition: journalHint?.leaderPosition,
       ourPosition: full.positionPubkey,
@@ -553,12 +578,12 @@ export async function createUserRuntime(
     return expectBothLegs ? null : last;
   }
 
-  async function handleOpen(e: DetectedEvent): Promise<void> {
+  async function handleOpen(e: DetectedEvent, leader: string): Promise<void> {
     log.info(
       { position: e.position, pool: e.pool, depositSol: e.depositSol },
       '🔨 handleOpen start',
     );
-    const ec = eff();
+    const ec = effFor(leader);
     const decision = decideEntry(
       e,
       { ...ec.sizing, skipNonSolPaired: true },
@@ -575,7 +600,7 @@ export async function createUserRuntime(
         leader,
         pool: e.pool,
         leaderPosition: e.position,
-        eventKey: openSkipKey(e),
+        eventKey: openSkipKey(e, leader),
         leaderSizeSol: e.depositSol,
         adminDetail: {
           mint: e.nonSolMint,
@@ -587,7 +612,7 @@ export async function createUserRuntime(
     }
     const cap = checkCaps(
       ec.caps,
-      capsState(leader), // candidate leader = the watched leader (3b: the event's leader)
+      capsState(leader), // candidate leader = the EVENT's leader (3b fan-out)
       decision.sizeSol,
       Date.now(),
       ec.leaderMaxTotalExposureSol, // per-leader exposure ceiling (SPEC §4.2/§12)
@@ -601,7 +626,7 @@ export async function createUserRuntime(
         leader,
         pool: e.pool,
         leaderPosition: e.position,
-        eventKey: openSkipKey(e),
+        eventKey: openSkipKey(e, leader),
         leaderSizeSol: e.depositSol,
         ourSizeSol: decision.sizeSol,
         adminDetail: { mint: e.nonSolMint, nonSolSymbol: e.nonSolSymbol },
@@ -610,6 +635,7 @@ export async function createUserRuntime(
     }
 
     const poolPk = new PublicKey(e.pool);
+    const leaderPk = new PublicKey(leader); // the EVENT's leader owns the shape we copy (3b)
     // Latency budget (≤3s SLA): fire the INDEPENDENT reads in PARALLEL — the DLMM pair (~300ms, DLMM.create), the
     // slot fetch, and the entry-filter data all overlap the pool-meta read instead of running after it. (The pair
     // doesn't depend on meta; the only sequential link is shape ← pair and build ← shape.) `filterDataP` fetches
@@ -631,7 +657,7 @@ export async function createUserRuntime(
         leader,
         pool: e.pool,
         leaderPosition: e.position,
-        eventKey: openSkipKey(e),
+        eventKey: openSkipKey(e, leader),
         adminDetail: { mint: e.nonSolMint, nonSolSymbol: e.nonSolSymbol },
       });
       return;
@@ -651,7 +677,7 @@ export async function createUserRuntime(
         leader,
         pool: e.pool,
         leaderPosition: e.position,
-        eventKey: openSkipKey(e),
+        eventKey: openSkipKey(e, leader),
         adminDetail: { afterRetries: OPEN_SHAPE_READ_RETRIES },
       });
       return;
@@ -691,7 +717,7 @@ export async function createUserRuntime(
         leader,
         pool: e.pool,
         leaderPosition: e.position,
-        eventKey: openSkipKey(e),
+        eventKey: openSkipKey(e, leader),
         leaderSizeSol: e.depositSol,
         adminDetail: { mint: e.nonSolMint, nonSolSymbol: e.nonSolSymbol },
       });
@@ -724,7 +750,8 @@ export async function createUserRuntime(
         // SAFE: a two-sided leader is copied as BOTH legs or NOT AT ALL — NEVER a half (one-sided) position. 'on'
         // hands off to openTwoSided, which either replicates both legs or SKIPS cleanly if the token can't be
         // bought (no Jupiter route). Either way we return — we do NOT fall through to the one-sided SOL path.
-        if (ec.twoSidedMode === 'on') return openTwoSided(e, e.nonSolMint, meta.solSide, plan);
+        if (ec.twoSidedMode === 'on')
+          return openTwoSided(e, leader, e.nonSolMint, meta.solSide, plan);
         // 'shadow' → fall through to the SOL-only path below (shadow mode = log the two-sided plan, open SOL-only).
       }
     }
@@ -772,7 +799,7 @@ export async function createUserRuntime(
     if (wide) {
       void slotsP.catch(() => undefined); // the parallel slot fetch is unused on this path; publishSplitOpen fetches its own
       const arr = Array.isArray(built) ? built : [built]; // ≥26 bins → [pre, main, post]
-      return publishSplitOpen(e, {
+      return publishSplitOpen(e, leader, {
         createTx: arr[0] as Transaction,
         depositTx: mergeDeposit(arr.slice(1)),
         posPubkey: posKp.publicKey.toBase58(),
@@ -799,7 +826,7 @@ export async function createUserRuntime(
     };
     const mirror = registry.open({
       leaderPosition: e.position,
-      leaderAddress: leader, // single-watched-leader runtime: every open copies the watched leader (3b: the event's leader)
+      leaderAddress: leader, // the EVENT's leader (3b fan-out) — drives per-leader stop-closes/exposure/rug config
       ourPosition: sr.positionPubkey,
       pool: e.pool,
       nonSolSymbol: e.nonSolSymbol,
@@ -810,7 +837,7 @@ export async function createUserRuntime(
     });
     pendingOpens.clear(e.position); // now tracked → lift the duplicate-open reservation for this leader position
     await store.saveOpen(mirror); // persist BEFORE publishing → never an untracked open
-    await publish(sr, { leaderPosition: e.position, leaderSizeSol: e.depositSol });
+    await publish(sr, { leader, leaderPosition: e.position, leaderSizeSol: e.depositSol });
   }
 
   /** TWO-SIDED open: buy the token leg (ExactOut, deterministic) then deposit BOTH legs. Publishes the BUY first
@@ -818,11 +845,12 @@ export async function createUserRuntime(
    *  scaled by the SAME factor (our SOL / leader SOL) to preserve the leader's composition. */
   async function openTwoSided(
     e: DetectedEvent,
+    leader: string,
     tokenMint: string,
     solSide: 'X' | 'Y',
     plan: TwoSidedPlan,
   ): Promise<void> {
-    const ec = eff();
+    const ec = effFor(leader);
     // Scale BOTH legs by copyRatio of the leader's respective legs (preserves composition), SOL leg capped.
     const { solLamports: sizeLamports, tokenTarget } = sizeTwoSided(
       plan.leaderSolRaw,
@@ -869,7 +897,7 @@ export async function createUserRuntime(
         leader,
         pool: e.pool,
         leaderPosition: e.position,
-        eventKey: openSkipKey(e),
+        eventKey: openSkipKey(e, leader),
         adminDetail: { mint: tokenMint, nonSolSymbol: e.nonSolSymbol, err: (err as Error).message },
       });
       return; // SAFE: never a partial/one-sided copy
@@ -880,26 +908,37 @@ export async function createUserRuntime(
 
     // Stash the open context → built+published once the buy lands; the build reads the ACTUAL token bought (ExactIn
     // output is variable) and deposits THAT, keyed by solSide/tokenMint (not a pre-planned exact amount).
-    pendingTwoSidedOpens.set(buyCommandId, { e, dist, sizeLamports, solSide, tokenMint, sizeSol });
-    inFlightBuyMints.set(tokenMint, Date.now()); // protect this bought token from the safety-sweep until it's deposited
-    await publish({
-      commandId: buyCommandId,
-      eventKey: buyKey,
-      kind: 'buy',
-      pool: e.pool,
-      positionPubkey: ownerPk.toBase58(), // n/a for a swap — Wall B binds to owner's ATA of the bought token
-      owner: ownerPk.toBase58(),
-      txBase64: buyTxB64,
-      sizeSol: Number(buyQuote.inAmount) / LAMPORTS_PER_SOL, // the ExactIn SOL input (spend) → re-clamped against maxTradeSol by the coffre
-      targetBinRange: { lower: 0, upper: 0 },
-      issuedAtSlot,
-      deadlineSlot,
-      buy: {
-        outputMint: tokenMint,
-        exactOutAmountRaw: buyQuote.outAmount,
-        maxInLamports: buyQuote.inAmount,
-      }, // expected token (informational) + the SOL input (cap)
+    pendingTwoSidedOpens.set(buyCommandId, {
+      e,
+      leader,
+      dist,
+      sizeLamports,
+      solSide,
+      tokenMint,
+      sizeSol,
     });
+    inFlightBuyMints.set(tokenMint, Date.now()); // protect this bought token from the safety-sweep until it's deposited
+    await publish(
+      {
+        commandId: buyCommandId,
+        eventKey: buyKey,
+        kind: 'buy',
+        pool: e.pool,
+        positionPubkey: ownerPk.toBase58(), // n/a for a swap — Wall B binds to owner's ATA of the bought token
+        owner: ownerPk.toBase58(),
+        txBase64: buyTxB64,
+        sizeSol: Number(buyQuote.inAmount) / LAMPORTS_PER_SOL, // the ExactIn SOL input (spend) → re-clamped against maxTradeSol by the coffre
+        targetBinRange: { lower: 0, upper: 0 },
+        issuedAtSlot,
+        deadlineSlot,
+        buy: {
+          outputMint: tokenMint,
+          exactOutAmountRaw: buyQuote.outAmount,
+          maxInLamports: buyQuote.inAmount,
+        }, // expected token (informational) + the SOL input (cap)
+      },
+      { leader },
+    );
     log.info(
       {
         tokenMint,
@@ -921,6 +960,7 @@ export async function createUserRuntime(
    *  add2 chunk (≤70 bins). One-sided: one of totalX/totalY is 0; two-sided: both legs are funded (token bought first). */
   async function publishOpenViaCreateDeposit(
     e: DetectedEvent,
+    leader: string,
     pair: Awaited<ReturnType<typeof createDlmmPair>>,
     args: {
       dist: WeightBin[];
@@ -947,6 +987,7 @@ export async function createUserRuntime(
     const { issuedAtSlot, deadlineSlot } = await slots();
     pendingToken2022Deposits.set(createCommandId, {
       e,
+      leader,
       dist,
       totalX,
       totalY,
@@ -969,7 +1010,7 @@ export async function createUserRuntime(
         issuedAtSlot,
         deadlineSlot,
       },
-      { leaderPosition: e.position, leaderSizeSol: e.depositSol },
+      { leader, leaderPosition: e.position, leaderSizeSol: e.depositSol },
     );
     log.info(
       { our: posKp.publicKey.toBase58(), bins: dist.length },
@@ -986,6 +1027,7 @@ export async function createUserRuntime(
    *  `commandId` is derived from `eventKey` BY THE CALLER so the create's position keypair matches `createTx`. */
   async function publishSplitOpen(
     e: DetectedEvent,
+    leader: string,
     args: {
       createTx: Transaction;
       depositTx: Transaction;
@@ -1001,6 +1043,7 @@ export async function createUserRuntime(
     const { issuedAtSlot, deadlineSlot } = await slots();
     pendingToken2022Deposits.set(commandId, {
       e,
+      leader,
       lower,
       upper,
       sizeSol,
@@ -1021,7 +1064,7 @@ export async function createUserRuntime(
         issuedAtSlot,
         deadlineSlot,
       },
-      { leaderPosition: e.position, leaderSizeSol: e.depositSol },
+      { leader, leaderPosition: e.position, leaderSizeSol: e.depositSol },
     );
     log.info(
       { our: posPubkey, lower, upper },
@@ -1035,7 +1078,7 @@ export async function createUserRuntime(
     const ctx = pendingTwoSidedOpens.get(buyCommandId);
     if (!ctx) return;
     pendingTwoSidedOpens.delete(buyCommandId);
-    const { e, dist, sizeLamports, solSide, tokenMint, sizeSol } = ctx;
+    const { e, leader, dist, sizeLamports, solSide, tokenMint, sizeSol } = ctx;
     if (consumeOpenCancellation(e.position, e.pool)) return; // leader closed before the buy landed → don't open into an exited pool
     const poolPk = new PublicKey(e.pool);
     const pair = await createDlmmPair(conn, poolPk);
@@ -1064,7 +1107,7 @@ export async function createUserRuntime(
           leader,
           pool: e.pool,
           leaderPosition: e.position,
-          eventKey: openSkipKey(e),
+          eventKey: openSkipKey(e, leader),
           adminDetail: {
             mint: tokenMint,
             nonSolSymbol: e.nonSolSymbol,
@@ -1074,7 +1117,14 @@ export async function createUserRuntime(
         });
         return;
       }
-      return publishOpenViaCreateDeposit(e, pair, { dist, totalX, totalY, lower, upper, sizeSol });
+      return publishOpenViaCreateDeposit(e, leader, pair, {
+        dist,
+        totalX,
+        totalY,
+        lower,
+        upper,
+        sizeSol,
+      });
     }
 
     // CLASSIC SPL two-sided. WIDE (≥26 bins) → the atomic open chunks into [pre, main(addLiquidityByWeight), post] →
@@ -1098,7 +1148,7 @@ export async function createUserRuntime(
     );
     if (wide) {
       const arr = Array.isArray(built) ? built : [built]; // ≥26 bins → [pre, main, post]
-      return publishSplitOpen(e, {
+      return publishSplitOpen(e, leader, {
         createTx: arr[0] as Transaction,
         depositTx: mergeDeposit(arr.slice(1)),
         posPubkey: posKp.publicKey.toBase58(),
@@ -1126,7 +1176,7 @@ export async function createUserRuntime(
     if (consumeOpenCancellation(e.position, e.pool)) return; // a close arrived DURING the build → abort before the on-chain publish
     const mirror = registry.open({
       leaderPosition: e.position,
-      leaderAddress: leader, // single-watched-leader runtime: every open copies the watched leader (3b: the event's leader)
+      leaderAddress: leader, // the EVENT's leader (3b fan-out) — drives per-leader stop-closes/exposure/rug config
       ourPosition: sr.positionPubkey,
       pool: e.pool,
       nonSolSymbol: e.nonSolSymbol,
@@ -1137,7 +1187,7 @@ export async function createUserRuntime(
     });
     pendingOpens.clear(e.position); // now tracked → lift the duplicate-open reservation for this leader position
     await store.saveOpen(mirror); // persist BEFORE publishing → never an untracked open
-    await publish(sr, { leaderPosition: e.position, leaderSizeSol: e.depositSol });
+    await publish(sr, { leader, leaderPosition: e.position, leaderSizeSol: e.depositSol });
     log.info(
       { our: sr.positionPubkey, bins: dist.length },
       '🪙 two-sided OPEN published (after buy landed)',
@@ -1151,7 +1201,7 @@ export async function createUserRuntime(
     const ctx = pendingToken2022Deposits.get(createCommandId);
     if (!ctx) return;
     pendingToken2022Deposits.delete(createCommandId);
-    const { e, lower, upper, sizeSol } = ctx;
+    const { e, leader, lower, upper, sizeSol } = ctx;
     if (consumeOpenCancellation(e.position, e.pool)) return; // leader closed before the create landed → don't fund an exited pool (the empty position is orphan-closed)
     const poolPk = new PublicKey(e.pool);
     const posKp: Keypair = derivePositionKeypair(createCommandId); // SAME position the create made
@@ -1197,6 +1247,7 @@ export async function createUserRuntime(
     const { issuedAtSlot, deadlineSlot } = await slots();
     pendingToken2022Mirrors.set(depositCommandId, {
       leaderPosition: e.position,
+      leader,
       ourPosition: posKp.publicKey.toBase58(),
       pool: e.pool,
       nonSolSymbol: e.nonSolSymbol,
@@ -1219,7 +1270,7 @@ export async function createUserRuntime(
         issuedAtSlot,
         deadlineSlot,
       },
-      { leaderPosition: e.position, leaderSizeSol: e.depositSol },
+      { leader, leaderPosition: e.position, leaderSizeSol: e.depositSol },
     );
     log.info(
       {
@@ -1238,6 +1289,7 @@ export async function createUserRuntime(
     const pend = pendingToken2022Mirrors.get(depositCommandId);
     if (!pend) return;
     pendingToken2022Mirrors.delete(depositCommandId);
+    const leader = pend.leader; // the ORIGINATING event's leader, threaded create → deposit → mirror (3b)
     if (consumeOpenCancellation(pend.leaderPosition, pend.pool)) {
       // Leader closed while the deposit was in flight. The deposit already landed (this is its confirm) → capital is
       // in the pool, but we do NOT register the mirror: lift the orphan-close grace so the reconcile/orphan sweep
@@ -1247,7 +1299,7 @@ export async function createUserRuntime(
     }
     const mirror = registry.open({
       leaderPosition: pend.leaderPosition,
-      leaderAddress: leader, // single-watched-leader runtime: every open copies the watched leader (3b: the event's leader)
+      leaderAddress: leader, // the EVENT's leader (3b fan-out) — drives per-leader stop-closes/exposure/rug config
       ourPosition: pend.ourPosition,
       pool: pend.pool,
       nonSolSymbol: pend.nonSolSymbol,
@@ -1270,7 +1322,7 @@ export async function createUserRuntime(
       leaderPosition: mirror.leaderPosition,
       ourPosition: mirror.ourPosition,
       ourSizeSol: mirror.sizeSol,
-      eventKey: openConfirmedKey(mirror.pool, mirror.ourPosition),
+      eventKey: openConfirmedKey(leader, mirror.pool, mirror.ourPosition),
       adminDetail: {
         nonSolSymbol: mirror.nonSolSymbol,
         openCount: registry.openPositions().length,
@@ -1299,6 +1351,7 @@ export async function createUserRuntime(
       ourPosition,
       pool,
       leaderPosition,
+      leader,
       signature,
     } = ctx;
     // A reshape ADD is on an EXISTING (registered) mirror — NOT an open, so a leader close finds the mirror and runs
@@ -1312,7 +1365,8 @@ export async function createUserRuntime(
         pool,
         leaderPosition,
         ourPosition,
-        eventKey: `${leader}:${pool}:reshape-add-cancelled:${signature}`,
+        // userId folded: shared wallet until Inc.4 — see the skip-key rationale above.
+        eventKey: `${userId}:${leader}:${pool}:reshape-add-cancelled:${signature}`,
         adminDetail: { phase: 'mirror_closed_before_reshape_add' },
       });
       return;
@@ -1366,7 +1420,7 @@ export async function createUserRuntime(
         issuedAtSlot,
         deadlineSlot,
       },
-      { stage: 'reshape', leaderPosition },
+      { stage: 'reshape', leader, leaderPosition },
     );
     log.info(
       { our: ourPosition, bins: dist.length },
@@ -1377,14 +1431,17 @@ export async function createUserRuntime(
   // A cancelled multi-tx open surfaces as the leader-closed FAILSAFE (SAME semantics as the reClose alias
   // `leader_closed` → `failsafe.activated`): the leader closed and we protected capital by NOT completing the open.
   // Feed-visible + deduped per leader position (distinct cancels stay distinct; a cross-path double-emit collapses).
+  // userId folded (shared wallet until Inc.4 — see the skip-key rationale above). The BOOT leader prefixes it:
+  // cancels can fire from brain-main's reconcile backstop, which has no event context (steps 6-7 refine this) —
+  // correlation-only, same value while the hub is seeded with [cfg.leader].
   const openCancelledKey = (pool: string, leaderPosition: string): string =>
-    `${leader}:${pool}:open-cancelled:${leaderPosition}`;
+    `${userId}:${bootLeader}:${pool}:open-cancelled:${leaderPosition}`;
   const emitOpenCancelled = (leaderPosition: string, pool: string, dropped: number): void => {
     events.emit('failsafe.activated', {
       stage: 'open',
       outcome: 'skipped',
       reason: 'leader_closed',
-      leader,
+      leader: bootLeader,
       pool,
       leaderPosition,
       eventKey: openCancelledKey(pool, leaderPosition),
@@ -1446,6 +1503,7 @@ export async function createUserRuntime(
         cancelPendingOpen(e.position, e.pool);
       return;
     }
+    const leader = leaderOf(m); // the MIRROR's leader (3b): a close routes by ownership, not by config
     const eventKey = `${leader}:${m.pool}:close:${e.signature}`;
     const built = await buildCloseTx(
       conn,
@@ -1457,41 +1515,48 @@ export async function createUserRuntime(
     );
     const { issuedAtSlot, deadlineSlot } = await slots();
     registry.close(e.position); // in-memory fast path (caps/dedup); the DB is marked closed by the reconcile once confirmed on-chain
-    await publish({
-      commandId: commandIdFor(eventKey),
-      eventKey,
-      kind: 'close',
-      pool: m.pool,
-      positionPubkey: m.ourPosition,
-      owner: ownerPk.toBase58(),
-      txBase64: serializeUnsigned(firstTx(built)),
-      sizeSol: m.sizeSol,
-      targetBinRange: { lower: m.lowerBin, upper: m.upperBin },
-      issuedAtSlot,
-      deadlineSlot,
-    });
+    await publish(
+      {
+        commandId: commandIdFor(eventKey),
+        eventKey,
+        kind: 'close',
+        pool: m.pool,
+        positionPubkey: m.ourPosition,
+        owner: ownerPk.toBase58(),
+        txBase64: serializeUnsigned(firstTx(built)),
+        sizeSol: m.sizeSol,
+        targetBinRange: { lower: m.lowerBin, upper: m.upperBin },
+        issuedAtSlot,
+        deadlineSlot,
+      },
+      { leader },
+    );
     recentlyPublishedClose.set(m.ourPosition, Date.now()); // grace: don't let the reconcile re-close while this is landing
   }
 
   async function handleClaim(e: DetectedEvent): Promise<void> {
     const m = registry.get(e.position);
     if (!m) return;
+    const leader = leaderOf(m); // the MIRROR's leader (3b)
     const eventKey = `${leader}:${m.pool}:claim:${e.signature}`;
     const built = await buildClaimTx(conn, new PublicKey(m.pool), ownerPk, m.ourPosition);
     const { issuedAtSlot, deadlineSlot } = await slots();
-    await publish({
-      commandId: commandIdFor(eventKey),
-      eventKey,
-      kind: 'claim',
-      pool: m.pool,
-      positionPubkey: m.ourPosition,
-      owner: ownerPk.toBase58(),
-      txBase64: serializeUnsigned(firstTx(built)),
-      sizeSol: m.sizeSol,
-      targetBinRange: { lower: m.lowerBin, upper: m.upperBin },
-      issuedAtSlot,
-      deadlineSlot,
-    });
+    await publish(
+      {
+        commandId: commandIdFor(eventKey),
+        eventKey,
+        kind: 'claim',
+        pool: m.pool,
+        positionPubkey: m.ourPosition,
+        owner: ownerPk.toBase58(),
+        txBase64: serializeUnsigned(firstTx(built)),
+        sizeSol: m.sizeSol,
+        targetBinRange: { lower: m.lowerBin, upper: m.upperBin },
+        issuedAtSlot,
+        deadlineSlot,
+      },
+      { leader },
+    );
   }
 
   // The leader changed a position (add or partial remove) → RE-SYNC ours to the TARGET = copyRatio × leader's
@@ -1500,7 +1565,9 @@ export async function createUserRuntime(
   async function handleResync(e: DetectedEvent): Promise<void> {
     const m = registry.get(e.position);
     if (!m) return;
-    const ec = eff();
+    const leader = leaderOf(m); // the MIRROR's leader (3b): a resync follows the position we own
+    const leaderPk = new PublicKey(leader);
+    const ec = effFor(leader);
     const copyRatio = (ec.sizing.tradeRatioPct ?? 0) / 100; // re-sync target = ratio × leader current size (0/null = fixed-size → no resync)
     const poolPk = new PublicKey(m.pool);
     const meta = await poolReader.loadPoolMeta(m.pool);
@@ -1627,19 +1694,22 @@ export async function createUserRuntime(
         r.bps,
       );
       const eventKey = `${leader}:${m.pool}:reshape-rm${rm}:${e.signature}`;
-      await publish({
-        commandId: commandIdFor(eventKey),
-        eventKey,
-        kind: 'remove',
-        pool: m.pool,
-        positionPubkey: m.ourPosition,
-        owner: ownerPk.toBase58(),
-        txBase64: serializeUnsigned(firstTx(built)),
-        sizeSol: 0,
-        targetBinRange: { lower: r.fromBin, upper: r.toBin },
-        issuedAtSlot,
-        deadlineSlot,
-      });
+      await publish(
+        {
+          commandId: commandIdFor(eventKey),
+          eventKey,
+          kind: 'remove',
+          pool: m.pool,
+          positionPubkey: m.ourPosition,
+          owner: ownerPk.toBase58(),
+          txBase64: serializeUnsigned(firstTx(built)),
+          sizeSol: 0,
+          targetBinRange: { lower: r.fromBin, upper: r.toBin },
+          issuedAtSlot,
+          deadlineSlot,
+        },
+        { leader },
+      );
       rm++;
     }
     if (twoSidedAdd) {
@@ -1723,6 +1793,7 @@ export async function createUserRuntime(
           ourPosition: m.ourPosition,
           pool: m.pool,
           leaderPosition: m.leaderPosition,
+          leader,
           signature: e.signature,
         });
         inFlightBuyMints.set(tokenMint, Date.now()); // protect the bought token from the sweep until the reshape add deposits it
@@ -1745,7 +1816,7 @@ export async function createUserRuntime(
               maxInLamports: buyQuote.inAmount,
             },
           },
-          { stage: 'reshape', leaderPosition: m.leaderPosition },
+          { stage: 'reshape', leader, leaderPosition: m.leaderPosition },
         );
         log.info(
           { our: m.ourPosition, tokenMint, bins: dist.length },
@@ -1808,19 +1879,22 @@ export async function createUserRuntime(
           pair,
         );
         const eventKey = `${leader}:${m.pool}:reshape-add${ci}:${e.signature}`; // per-chunk key → distinct idempotent commands
-        await publish({
-          commandId: commandIdFor(eventKey),
-          eventKey,
-          kind: 'add',
-          pool: m.pool,
-          positionPubkey: m.ourPosition,
-          owner: ownerPk.toBase58(),
-          txBase64: serializeUnsigned(onlyTx(built, 'reshape add chunk')),
-          sizeSol: chunkSol,
-          targetBinRange: { lower: dist[0]!.binId, upper: dist.at(-1)!.binId },
-          issuedAtSlot,
-          deadlineSlot,
-        });
+        await publish(
+          {
+            commandId: commandIdFor(eventKey),
+            eventKey,
+            kind: 'add',
+            pool: m.pool,
+            positionPubkey: m.ourPosition,
+            owner: ownerPk.toBase58(),
+            txBase64: serializeUnsigned(onlyTx(built, 'reshape add chunk')),
+            sizeSol: chunkSol,
+            targetBinRange: { lower: dist[0]!.binId, upper: dist.at(-1)!.binId },
+            issuedAtSlot,
+            deadlineSlot,
+          },
+          { leader },
+        );
         ci++;
       }
     }
@@ -1840,6 +1914,9 @@ export async function createUserRuntime(
   // Publish a safety close for a tracked mirror (failsafe leader-closed, or rug-SL crash). Deterministic commandId
   // (per `tag`) → the vault retries it (idempotency re-claims a previously failed close) until it lands.
   async function publishSafetyClose(m: Mirror, tag: string, reason: string): Promise<void> {
+    // The MIRROR's leader (3b) prefixes the key — same commandId the pre-3b code derived for a fresh mirror, and
+    // the exact shape the failsafe idempotency depends on (`${leader}:${pool}:failsafe:${leaderPosition}`).
+    const leader = leaderOf(m);
     const eventKey = `${leader}:${m.pool}:${tag}:${m.leaderPosition}`;
     const built = await buildCloseTx(
       conn,
@@ -1864,7 +1941,7 @@ export async function createUserRuntime(
         issuedAtSlot,
         deadlineSlot,
       },
-      { stage: 'failsafe', severity: 'warn', reason, leaderPosition: m.leaderPosition },
+      { stage: 'failsafe', severity: 'warn', reason, leader, leaderPosition: m.leaderPosition },
     );
     recentlyPublishedClose.set(m.ourPosition, Date.now()); // grace; journaled as a failsafe-published event in publish()
   }
@@ -1920,7 +1997,9 @@ export async function createUserRuntime(
   // close goes through the vault's Wall B like any other (signer/destination re-verified), so it can only ever
   // close OUR own position. Deterministic commandId → idempotent if it has to be retried.
   async function publishOrphanClose(p: UserPosition): Promise<void> {
-    const eventKey = `${leader}:${p.pool}:orphan:${p.position}`;
+    // An orphan has NO leader (tracked by no mirror) — the BOOT leader prefixes it until the global orphan pass
+    // switches to a wallet prefix (INC3B-PLAN §4, step 6). Same commandId while the hub runs [cfg.leader].
+    const eventKey = `${bootLeader}:${p.pool}:orphan:${p.position}`;
     const built = await buildCloseTx(
       conn,
       new PublicKey(p.pool),
@@ -1954,7 +2033,7 @@ export async function createUserRuntime(
       stage: 'failsafe',
       outcome: 'published',
       reason: 'orphan',
-      leader,
+      leader: bootLeader,
       pool: p.pool,
       ourPosition: p.position,
       commandId,
@@ -1975,12 +2054,12 @@ export async function createUserRuntime(
     events.opened({
       stage: 'open',
       outcome: 'confirmed',
-      leader,
+      leader: leaderOf(m),
       pool: m.pool,
       leaderPosition: m.leaderPosition,
       ourPosition,
       ourSizeSol: m.sizeSol,
-      eventKey: openConfirmedKey(m.pool, ourPosition),
+      eventKey: openConfirmedKey(leaderOf(m), m.pool, ourPosition),
       adminDetail: { nonSolSymbol: m.nonSolSymbol, openCount: registry.openPositions().length },
     });
   }
@@ -1996,7 +2075,7 @@ export async function createUserRuntime(
     events.addedLiquidity({
       stage: 'reshape',
       outcome: 'confirmed',
-      leader,
+      leader: leaderOf(m),
       pool: m.pool,
       leaderPosition: m.leaderPosition,
       ourPosition,
@@ -2015,7 +2094,7 @@ export async function createUserRuntime(
     events.claimed({
       stage: 'close',
       outcome: 'confirmed',
-      leader,
+      leader: leaderOf(m),
       pool: m.pool,
       leaderPosition: m.leaderPosition,
       ourPosition,
@@ -2042,12 +2121,12 @@ export async function createUserRuntime(
     events.closed({
       stage: 'close',
       outcome: 'confirmed',
-      leader,
+      leader: leaderOf(m),
       pool: m.pool,
       leaderPosition: m.leaderPosition,
       ourPosition,
       ourSizeSol: m.sizeSol,
-      eventKey: closeConfirmedKey(m.pool, ourPosition),
+      eventKey: closeConfirmedKey(leaderOf(m), m.pool, ourPosition),
       adminDetail: { nonSolSymbol: m.nonSolSymbol, via: 'ev_executed' },
     });
   }
@@ -2067,7 +2146,7 @@ export async function createUserRuntime(
       stage: 'sell',
       outcome: 'confirmed',
       kind: 'sell',
-      leader,
+      leader: bootLeader, // sells are WALLET-level residual actions (steps 6-7 make them SYSTEM/wallet-prefixed)
       pool: ev.pool ?? stash.pool,
       commandId: ev.commandId,
       signature: ev.sig,
@@ -2095,8 +2174,8 @@ export async function createUserRuntime(
     nonSolSymbol: string | null = null,
   ): Promise<boolean> {
     const t0 = Date.now();
-    const ec = eff();
-    const eventKey = `${leader}:${pool}:${source}:${tokenMint}:${residualRaw}`; // hoisted: also keys the below-min-sell-out skip's emit dedup
+    const ec = eff(); // wallet-level economics (boot leader) until the sweeps go multi-user (steps 6-7)
+    const eventKey = `${bootLeader}:${pool}:${source}:${tokenMint}:${residualRaw}`; // hoisted: also keys the below-min-sell-out skip's emit dedup
     const quote = await getJupiterQuote(
       jupiterBaseUrl,
       tokenMint,
@@ -2109,7 +2188,7 @@ export async function createUserRuntime(
         stage: 'sell',
         outcome: 'skipped',
         reason: 'below_min_sell_out',
-        leader,
+        leader: bootLeader,
         pool,
         eventKey,
         adminDetail: { mint: tokenMint, outAmount: quote.outAmount, source },
@@ -2169,9 +2248,9 @@ export async function createUserRuntime(
         stage: 'sell',
         outcome: 'skipped',
         reason: decision.reason,
-        leader,
+        leader: bootLeader, // close-sell is a WALLET-level residual action (steps 6-7)
         pool: ev.pool,
-        eventKey: `${leader}:${ev.pool}:close-sell:${ev.positionPubkey ?? tokenMint}`,
+        eventKey: `${bootLeader}:${ev.pool}:close-sell:${ev.positionPubkey ?? tokenMint}`,
         adminDetail: { mint: tokenMint },
       });
       return;
@@ -2184,28 +2263,23 @@ export async function createUserRuntime(
     await publishSell(tokenMint, residual, ev.pool, 'close', closedMirror?.nonSolSymbol ?? null);
   }
 
-  const onEvent = (e: DetectedEvent, source: EventSource): void => {
-    // Dedup / tracker / replay-skip stay SYNCHRONOUS at enqueue time (the cursor+tracker state must advance in the
-    // order events arrive, before any handler runs). `tracker.apply` returns null for a stale/duplicate leg.
-    const pos = tracker.apply(e);
-    log.debug(
-      {
-        source,
-        position: e.position,
-        instr: e.instruction,
-        depositSol: e.depositSol,
-        posNull: !pos,
-      },
-      '👁️ onEvent in',
-    );
-    if (source === 'replay' || !pos) return; // mono-user: no copying of a past open (stale)
+  // Fan-out entry point (3b step 5): the LeaderHub already applied the per-leader tracker, dropped replay/
+  // untracked events, and emitted the shared `detect.routed` — this ONLY enqueues (synchronous, cheap) so one
+  // user's throw can never consume the event for the others. `leader` = the event's leader; `eventCount` = the
+  // hub tracker's per-position event counter (kept for the routed log's byte-identical fields).
+  const onEvent = (
+    e: DetectedEvent,
+    source: EventSource,
+    leader: string,
+    eventCount: number,
+  ): void => {
     const t0 = Date.now();
     // SERIALIZE per leader position: all handler work for ONE position runs strictly in order (no concurrent
     // handlers on the same position → no duplicate open). Route INSIDE the task (at dequeue time) so this event is
     // classified AFTER the prior same-position handler settled — its `registry.open`/pending reservation is visible.
     positionQueue.run(e.position, async () => {
       const kind = classifyInstruction(e.instruction);
-      const ecRoute = eff();
+      const ecRoute = effFor(leader);
       // tracked = already-open OR open-in-flight (pending reservation bridges the multi-tx open window) → a
       // follow-up add during an open routes to resync, never a 2nd open. `rugExited` ⇒ no re-open. Pure routing.
       const tracked = registry.hasOpen(e.position) || pendingOpens.isPending(e.position);
@@ -2224,34 +2298,17 @@ export async function createUserRuntime(
           depositSol: e.depositSol,
           withdrawSol: e.withdrawSol,
           claimSol: e.claimSol,
-          eventCount: pos.eventCount,
+          eventCount,
           tracked,
         },
         LOG_MARKER_EVENT_ROUTED,
       );
-      if (action !== 'ignore') {
-        // `eventKey` = the per-leg detection correlation (sig:position) so the emit dedup keys uniquely PER routed
-        // leg — without it every routed event shares an empty correlation and the LRU would collapse them into one
-        // row (a lost-detect regression). WS + cursor-poll re-observations of the SAME leg correctly collapse to one.
-        void events.emit('detect.routed', {
-          stage: 'detect',
-          outcome: 'detected',
-          kind: kind ?? undefined,
-          leader,
-          pool: e.pool,
-          leaderPosition: e.position,
-          signature: e.signature,
-          leaderSizeSol: e.depositSol || e.withdrawSol || e.claimSol,
-          eventKey: `${e.signature}:${e.position}`,
-          adminDetail: { action, instruction: e.instruction },
-        });
-      }
       // Reserve BEFORE handleOpen: a multi-tx open returns before `registry.open`, so without this a follow-up add
       // (a later serialized task) would see tracked=false and route to a 2nd open. Cleared at each registry.open site.
       if (action === 'open') pendingOpens.reserve(e.position);
       const act =
         action === 'open'
-          ? handleOpen(e)
+          ? handleOpen(e, leader)
           : action === 'resync'
             ? handleResync(e)
             : action === 'close'
@@ -2274,19 +2331,6 @@ export async function createUserRuntime(
     });
   };
 
-  // A signature the detector could NOT resolve after the bounded retry → force-past to avoid stalling the
-  // cursor, but emit a LOUD gap: a leader event may have been missed (the reconcile backstop still covers closes).
-  const onGap = (signature: string, attempts: number): void => {
-    events.emit('detect.gap', {
-      stage: 'detect',
-      outcome: 'failed',
-      leader,
-      signature,
-      eventKey: `gap:${signature}`,
-      adminDetail: { attempts },
-    });
-  };
-
   return {
     userId,
     events,
@@ -2306,8 +2350,8 @@ export async function createUserRuntime(
     capsState,
     commandIdFor,
     closeConfirmedKey,
+    leaderOf,
     onEvent,
-    onGap,
     handleOpen,
     onOpenConfirmed,
     onAddConfirmed,
@@ -2332,5 +2376,32 @@ export async function createUserRuntime(
     pendingOpenMapsView,
     lastActionAt: (): number | null => lastActionAt,
     lastLatencyMs: (): number | null => lastLatencyMs,
+    // ─── Fan-out ownership accessors (3b step 5) ───
+    /** Does this runtime OWN a LEADER position (open mirror, reserved open, or in-flight multi-tx stash)? The hub
+     *  unions owners into an event's targets so a close reaches a user whose leader was stopped mid-flight. */
+    ownsLeaderPosition: (leaderPosition: string): boolean =>
+      registry.hasOpen(leaderPosition) ||
+      pendingOpens.isPending(leaderPosition) ||
+      hasPendingOpenStash(leaderPosition),
+    /** Does this runtime own OUR position pubkey (mirror row — open or closed —, pending safety-close retry, or a
+     *  Token-2022 position mid-build)? Routes an ev:executed confirm without a userId (deploy-window legacy). */
+    ownsOurPosition: (ourPosition: string): boolean =>
+      registry.getByOurPosition(ourPosition) !== undefined ||
+      rugExitPending.has(ourPosition) ||
+      buildingToken2022Positions.has(ourPosition),
+    /** Does this runtime own a deferred-continuation commandId? Disjoint across users by derivation. */
+    ownsCommand: (commandId: string): boolean =>
+      pendingTwoSidedOpens.has(commandId) ||
+      pendingToken2022Deposits.has(commandId) ||
+      pendingToken2022Mirrors.has(commandId) ||
+      pendingReshapeAdds.has(commandId),
+    /** What still ties this runtime to each leader — feeds the pure `shouldRetainLeader` (a removed leader's hub
+     *  entry drains only once no mirror/pending close references it; null = unattributable ⇒ retain). */
+    leaderHoldings: (): LeaderHoldings => ({
+      openMirrorLeaders: registry.openPositions().map((m) => m.leaderAddress),
+      rugExitPendingLeaders: [...rugExitPending].map(
+        (our) => registry.getByOurPosition(our)?.leaderAddress ?? null,
+      ),
+    }),
   };
 }

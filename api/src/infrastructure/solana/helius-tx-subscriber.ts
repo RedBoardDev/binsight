@@ -94,6 +94,21 @@ export class HeliusTxSubscriber {
     if (this.connected) this.subscribe(wallet);
   }
 
+  /** Stop watching a wallet (Inc.3b leader-set changes): drop it from `watched` (reconnects re-subscribe only
+   *  remaining keys), send `transactionUnsubscribe` for its live subscription, and forget its sub/req mappings so
+   *  any in-flight notification for it is dropped in `handleMessage`. Idempotent (unknown wallet = no-op). */
+  unwatch(wallet: string): void {
+    if (!this.watched.delete(wallet)) return;
+    for (const [subId, w] of this.subToWallet) {
+      if (w !== wallet) continue;
+      this.subToWallet.delete(subId);
+      this.unsubscribe(subId);
+    }
+    // A subscribe request still awaiting its ack: forget it, so the late ack never registers the wallet again
+    // (handleMessage also re-checks `watched` — belt and suspenders).
+    for (const [reqId, w] of this.reqToWallet) if (w === wallet) this.reqToWallet.delete(reqId);
+  }
+
   private connect(): void {
     if (this.stopped) return;
     this.ws = new WebSocket(this.wsUrl);
@@ -145,6 +160,18 @@ export class HeliusTxSubscriber {
         this.ws?.close();
       }
     }, HEARTBEAT_MS);
+  }
+
+  private unsubscribe(subId: number): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    this.ws.send(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: this.nextReqId++,
+        method: 'transactionUnsubscribe',
+        params: [subId],
+      }),
+    );
   }
 
   private subscribe(wallet: string): void {

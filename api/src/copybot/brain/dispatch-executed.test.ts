@@ -29,18 +29,21 @@ function makeDeps(over: Partial<ExecutedBatchDeps> = {}): ExecutedBatchDeps {
 }
 
 describe('dispatchExecuted — routes each ev:executed kind to its handler', () => {
-  it('close → onCloseConfirmed (prompt markClosed) THEN onCloseExecuted (residual sell)', async () => {
-    // WHY: a landed close must both mark the DB closed AND trigger the residual sell — the fast path, not the 30s reconcile.
+  it('close → onCloseConfirmed (prompt markClosed) THEN onCloseExecuted (residual sell), userId threaded', async () => {
+    // WHY: a landed close must both mark the DB closed AND trigger the residual sell — the fast path, not the 30s
+    // reconcile. The coffre's `userId` (3b) must reach BOTH callbacks so the brain routes the confirm to the
+    // OWNING runtime (a close attributed to the wrong tenant would corrupt another user's mirror state).
     const deps = makeDeps();
     await dispatchExecuted(
-      { kind: 'close', pool: 'P', positionPubkey: 'OUR', commandId: 'C' },
+      { kind: 'close', pool: 'P', positionPubkey: 'OUR', commandId: 'C', userId: 'U1' },
       deps,
     );
-    expect(deps.onCloseConfirmed).toHaveBeenCalledWith('OUR');
+    expect(deps.onCloseConfirmed).toHaveBeenCalledWith('OUR', 'U1');
     expect(deps.onCloseExecuted).toHaveBeenCalledWith({
       pool: 'P',
       positionPubkey: 'OUR',
       commandId: 'C',
+      userId: 'U1',
     });
   });
 
@@ -144,7 +147,7 @@ describe('processExecutedBatch — per-message isolation + non-ack-on-throw (no-
     await processExecutedBatch(batch, deps);
 
     // The good close (1) and the sell (3) were fully handled and acked.
-    expect(deps.onCloseConfirmed).toHaveBeenCalledWith('OK1');
+    expect(deps.onCloseConfirmed).toHaveBeenCalledWith('OK1', undefined); // userId absent on this legacy payload
     expect(deps.onSellConfirmed).toHaveBeenCalledTimes(1);
     expect(deps.ack).toHaveBeenCalledWith('1');
     expect(deps.ack).toHaveBeenCalledWith('3');
