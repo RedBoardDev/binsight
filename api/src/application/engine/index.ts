@@ -446,17 +446,22 @@ export class Engine {
       //    re-write the (large, unchanged) closed history. Waits for `reconciled` so a tick before the
       //    first backfill can't wipe the open set with an empty projection.
       if (this.onchainSource && rt.needsSync) {
-        // Gate the close-notification on prior reconciliation: the FIRST sync is the historical backfill
-        // (can write ~15k closed rows) and must emit ZERO `closed` events. `sync` already returns only the
-        // genuinely newly-closed rows (open→closed transitions vs the persisted open set), so on every
-        // SUBSEQUENT sync each newly-closed position fires exactly one `closed` → one push.
+        // `sync` already returns ONLY the genuinely newly-closed rows (open→closed transitions vs the
+        // persisted prior-open set). That diff is the sole spam guard and it is sufficient on its own:
+        //  - the historical backfill (the FIRST-EVER sync of a wallet) persists ~15k closed rows but the
+        //    prior-open set is empty, so ZERO are flagged newly-closed → no backfill spam;
+        //  - a position transitions to closed at most once (the next sync no longer has it in prior-open).
+        // The old `wasReconciled` gate additionally suppressed the FIRST sync after ANY (re)start — but
+        // that sync is precisely the one that detects positions closed while the process was down, whose
+        // prior-open set was persisted before shutdown. Gating it dropped every downtime close silently on
+        // every deploy. So emit unconditionally; `reconciled` now only paces the deferred realized pass.
         const wasReconciled = rt.reconciled;
         const res = await this.positionSync.sync(rt.address, snap, valued);
         rt.needsSync = false;
         rt.lastSyncAt = Date.now();
         rt.reconciled = true;
         this.applyOpenPositions(rt, res.openPositions);
-        if (wasReconciled) for (const row of res.closedRows) this.bus.emit('closed', row);
+        for (const row of res.closedRows) this.bus.emit('closed', row);
         if (res.closed !== rt.lastClosedCount) {
           rt.lastClosedCount = res.closed;
           this.bus.emit('closedChanged', { wallet: rt.address });
