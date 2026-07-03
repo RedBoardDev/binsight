@@ -29,7 +29,7 @@ import { CopyEvents } from '@/copybot/observability/copy-events';
 import { EventStore } from '@/copybot/observability/event-store';
 import { RugExitStore } from '@/copybot/rug-exit-store';
 import { type CapsState, checkCaps } from '@/domain/copybot/caps';
-import { type EffectiveConfig, effectiveFor } from '@/domain/copybot/config';
+import { type CopybotConfig, type EffectiveConfig, effectiveFor } from '@/domain/copybot/config';
 import { type SignRequest, SignRequestSchema } from '@/domain/copybot/contracts';
 import { decideEntry } from '@/domain/copybot/decision';
 import { routeWithPending } from '@/domain/copybot/dispatch';
@@ -76,6 +76,7 @@ import {
   HEARTBEAT_INTERVAL_MS,
   shouldAlertDetectionStale,
 } from '@/domain/copybot/status';
+import { planStopCloses } from '@/domain/copybot/stop-closes';
 import { TtlCache } from '@/domain/copybot/ttl-cache';
 import {
   planTwoSided,
@@ -412,9 +413,16 @@ async function main(): Promise<void> {
   const closeConfirmedKey = (pool: string, ourPosition: string): string =>
     `${cfg.leader}:${pool}:close-confirmed:${ourPosition}`;
   const configStore = new ConfigStore(db, log);
-  let runtimeConfig = await configStore.seedIfAbsent(); // the CopybotConfig blob; polled + ping-reloaded live below
+  // Single-user runtime (increment 2): the brain reads THE SYSTEM_USER_ID row of the per-user config table.
+  // Increment 3 iterates configStore.listActiveUserIds() and runs one runtime per active user.
+  let runtimeConfig = await configStore.seedIfAbsent(SYSTEM_USER_ID); // polled + ping-reloaded live below
   const reloadConfig = async (): Promise<void> => {
-    runtimeConfig = await configStore.load();
+    // STOP = FORCE-CLOSE (SPEC §4.3): diff the config we were RUNNING (prev, the last loaded value in memory —
+    // never a stale/boot snapshot, so a restart can't replay an old stop) against the fresh load, and force-close
+    // the mirrors of every observed stop transition (leader disabled/removed, or global user.enabled off).
+    const prev = runtimeConfig;
+    runtimeConfig = await configStore.load(SYSTEM_USER_ID);
+    await applyStopCloses(prev, runtimeConfig);
   };
   // Resolve the EFFECTIVE config for our (single) leader from the DB-backed config.
   // Pure + cheap → recomputed at each point of use so a live reload always takes effect on the next event.
@@ -501,9 +509,13 @@ async function main(): Promise<void> {
 
   const capsState = (): CapsState => {
     const open = registry.openPositions();
+    const exposureSol = open.reduce((s, m) => s + m.sizeSol, 0);
     return {
       openPositions: open.length,
-      totalExposureSol: open.reduce((s, m) => s + m.sizeSol, 0),
+      totalExposureSol: exposureSol,
+      // Single-watched-leader runtime: every open mirror belongs to cfg.leader, so the per-leader exposure equals
+      // the total. Increment 3 (multi-leader runtimes) scopes this to the candidate leader's mirrors.
+      leaderExposureSol: exposureSol,
       tokenOpenCount: 0,
       openTimestampsMs: [],
     };
@@ -650,7 +662,13 @@ async function main(): Promise<void> {
       });
       return;
     }
-    const cap = checkCaps(ec.caps, capsState(), decision.sizeSol, Date.now());
+    const cap = checkCaps(
+      ec.caps,
+      capsState(),
+      decision.sizeSol,
+      Date.now(),
+      ec.leaderMaxTotalExposureSol, // per-leader exposure ceiling (SPEC §4.2/§12)
+    );
     if (cap.action === 'block') {
       // dynamic cap reason: kill_switch_* (internal) / max_open_positions / max_concurrent_per_token / max_opens_per_window / max_total_exposure (feed).
       emitFor(cap.reason, {
@@ -2043,6 +2061,47 @@ async function main(): Promise<void> {
   // Re-publish a failsafe close for a mirror still on-chain whose leader has closed.
   const publishReClose = (m: Mirror): Promise<void> =>
     publishSafetyClose(m, 'failsafe', 'leader_closed');
+
+  // STOP = FORCE-CLOSE (SPEC §4.3): close the mirrors concerned by an observed config stop transition (leader
+  // disabled/removed → its mirrors; global user.enabled off → all). Reuses the SAME deterministic safety-close
+  // publisher as the reconcile — and marks each mirror rug-exit-pending so a close that fails to land is re-closed
+  // by the reconcile until confirmed gone (the leader is still OPEN on its side, so the `leaderClosed` retry never
+  // fires for a stop; the pending set is the existing our-exit retry channel, shared with rug-SL). Config preserved.
+  async function applyStopCloses(prev: CopybotConfig, next: CopybotConfig): Promise<void> {
+    const open = registry.openPositions();
+    if (open.length === 0) return;
+    // Single-user/single-watched-leader runtime: every mirror belongs to cfg.leader (the watched leader).
+    const { toClose } = planStopCloses(
+      prev,
+      next,
+      open.map((m) => ({
+        ourPosition: m.ourPosition,
+        leaderPosition: m.leaderPosition,
+        leaderAddress: cfg.leader,
+      })),
+    );
+    for (const c of toClose) {
+      const m = open.find((x) => x.ourPosition === c.ourPosition);
+      if (!m) continue;
+      // Grace: a close already published for this mirror (failsafe/rug-SL/an earlier stop) is still landing.
+      if (Date.now() - (recentlyPublishedClose.get(m.ourPosition) ?? 0) < RECLOSE_GRACE_MS)
+        continue;
+      log.warn(
+        { our: m.ourPosition, leaderPosition: m.leaderPosition, reason: c.reason },
+        '🛑 stop → force-close',
+      );
+      // The eventKey tag is keyed by OUR position (not the leader's, unlike failsafe/rugsl): a stop leaves the
+      // LEADER position open, so the same leader position can be legitimately re-mirrored after a stop→start
+      // cycle — a leaderPosition-keyed commandId would collide with the previous stop's already-executed close
+      // and be rejected as a duplicate (the close would never land).
+      await publishSafetyClose(m, `stop:${m.ourPosition}`, c.reason).catch((err) =>
+        // The reconcile retries via rugExitPending below — set even on a failed publish (never a silent orphan).
+        log.error({ err: (err as Error).message, our: m.ourPosition }, 'stop close publish failed'),
+      );
+      rugExitPending.add(m.ourPosition); // retry-until-confirmed-gone via the reconcile (SPEC §4.3 failure branch)
+      void rugExitStore.savePending(rugExitPending); // persist so the retry survives a brain restart
+    }
+  }
 
   // Rug-SL: poll each open pool's active-bin token price (one cheap lbPair read per pool), feed the tracker, and
   // close any position whose price crashed ≥ dropPercent within the window. The leader keeps holding (it's OUR

@@ -23,6 +23,8 @@ export interface CapsConfig {
 export interface CapsState {
   openPositions: number;
   totalExposureSol: number;
+  /** SOL exposure across the CANDIDATE LEADER's open mirrors only (scope of the per-leader exposure cap). */
+  leaderExposureSol: number;
   tokenOpenCount: number; // positions open on the candidate's token
   openTimestampsMs: number[]; // wall-clock ms of ALL our opens (checkCaps filters by window)
 }
@@ -42,12 +44,15 @@ export const CAPS_DEFAULTS: CapsConfig = {
   maxTotalExposureSol: null,
 };
 
-/** Allows or blocks a NEW opening of size `sizeSol`. First block wins (kill-switch first). Pure. */
+/** Allows or blocks a NEW opening of size `sizeSol`. First block wins (kill-switch first). Pure.
+ *  `leaderMaxTotalExposureSol` is the PER-LEADER exposure ceiling (SPEC §4.2/§12) resolved from that leader's
+ *  settings — checked against `state.leaderExposureSol` (that leader's mirrors only); null = no per-leader cap. */
 export function checkCaps(
   cfg: CapsConfig,
   state: CapsState,
   sizeSol: number,
   nowMs: number,
+  leaderMaxTotalExposureSol: number | null = null,
 ): CapVerdict {
   if (cfg.killSwitchGlobal) return block('kill_switch_global');
   if (cfg.killSwitchLeader) return block('kill_switch_leader');
@@ -67,6 +72,12 @@ export function checkCaps(
     state.totalExposureSol + sizeSol > cfg.maxTotalExposureSol
   ) {
     return block('max_total_exposure');
+  }
+  if (
+    leaderMaxTotalExposureSol != null &&
+    state.leaderExposureSol + sizeSol > leaderMaxTotalExposureSol
+  ) {
+    return block('max_leader_exposure');
   }
   return ALLOW;
 }

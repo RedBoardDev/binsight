@@ -91,6 +91,22 @@ describe('LeaderDetector — "we never miss an event" robustness', () => {
     expect(sigs.filter((s) => s === 'b')).toHaveLength(1);
   });
 
+  it("FORWARD-ONLY START (SPEC §4.3): the boot catch-up is labeled 'replay' and never resurfaces as copyable", async () => {
+    // WHY: starting must not copy the leader's pre-existing activity — the brain drops 'replay'-sourced events
+    // (`source === 'replay' → return`). That guard only holds if the startup backlog is (a) labeled 'replay' and
+    // (b) COMMITTED (cursor advanced + deduped) so the next normal poll can't re-emit the same history as 'poll'
+    // events — which WOULD be copied, i.e. a stale-open replay on every (re)start or leader enable.
+    const { deps, emitted } = makeDeps(['a', 'b', 'c'], new Set(['a', 'b', 'c']));
+    const det = new LeaderDetector(deps);
+
+    await det.poll('replay'); // the brain's cold-start catch-up (sets cursor/tracker without copying)
+    expect(emitted.map((e) => e.source)).toEqual(['replay', 'replay', 'replay']);
+
+    await det.poll(); // next regular poll: the history is committed → nothing re-emitted as 'poll'
+    expect(emitted).toHaveLength(3);
+    expect(emitted.filter((e) => e.source === 'poll')).toEqual([]);
+  });
+
   it('NEVER-MISS: an event the WS missed is recovered by the poll (each event exactly once)', async () => {
     const chrono = ['a', 'b', 'c', 'd', 'e'];
     const { deps, emitted } = makeDeps(chrono, new Set(chrono)); // all DLMM

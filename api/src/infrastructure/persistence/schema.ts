@@ -66,6 +66,15 @@ export const settings = pgTable('settings', {
   value: text('value').notNull(),
 });
 
+// Copy-bot · per-user runtime config (SPEC §12): one row per user, replacing the single
+// settings['copybot.config'] blob. `config` holds the whole CopybotConfig JSON blob — ONE row write = an atomic
+// config swap (no half-applied multi-row update). Parsing fails CLOSED on a corrupt blob (see domain/copybot/config).
+export const copybotConfigs = pgTable('copybot_configs', {
+  userId: text('user_id').primaryKey(),
+  config: text('config').notNull(),
+  updatedAt: ms('updated_at').notNull(),
+});
+
 // --- Decoupled on-chain DLMM engine: raw liquidity legs decoded from chain (no Meteora API). ---
 // Each row is one deposit/withdraw/claim movement decoded from a DLMM Anchor event, with the active
 // bin at that tx (the historical price anchor). Per-position PnL is computed from these, all-history.

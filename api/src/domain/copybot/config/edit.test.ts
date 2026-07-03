@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { CONFIG_DEFAULTS } from './defaults';
-import { addLeader, coerceValue, getAtPath, MAX_LEADERS, removeLeader, setAtPath } from './edit';
+import { addLeader, coerceValue, getAtPath, removeLeader, setAtPath } from './edit';
 import { CopybotConfigSchema } from './schema';
+import { MAX_STARTED_LEADERS } from './validate';
 
 const L = (i: number): string => `Leader${i}1111111111111111111111111111111111111`;
 
@@ -51,9 +52,13 @@ describe('config edit · coerceValue', () => {
 });
 
 describe('config edit · addLeader / removeLeader', () => {
-  it('appends an enabled leader with empty overrides', () => {
+  it('appends a STOPPED leader (no overrides, no per-leader cap)', () => {
+    // WHY (SPEC §4.2/§4.3): a just-added leader must never start copying before the user presses Start —
+    // `enabled:true` here would arm a fresh leader the instant the config is saved.
     const next = addLeader({ ...CONFIG_DEFAULTS, leaders: [] }, L(1));
-    expect(next.leaders).toEqual([{ address: L(1), enabled: true, overrides: {} }]);
+    expect(next.leaders).toEqual([
+      { address: L(1), enabled: false, maxTotalExposureSol: null, overrides: {} },
+    ]);
   });
 
   it('rejects a duplicate leader', () => {
@@ -62,10 +67,13 @@ describe('config edit · addLeader / removeLeader', () => {
     );
   });
 
-  it('enforces the MAX_LEADERS SYSTEM cap', () => {
+  it('configured-but-stopped leaders are UNLIMITED (only STARTED leaders are capped — SPEC §4.3)', () => {
+    // WHY: the product caps simultaneous STARTED leaders (validateConfigWrite), not the configured list — a user
+    // can keep any number of stopped leader profiles around.
     let cfg = { ...CONFIG_DEFAULTS, leaders: [] as typeof CONFIG_DEFAULTS.leaders };
-    for (let i = 0; i < MAX_LEADERS; i++) cfg = addLeader(cfg, L(i));
-    expect(() => addLeader(cfg, L(99))).toThrow(/max/);
+    for (let i = 0; i < MAX_STARTED_LEADERS * 3; i++) cfg = addLeader(cfg, L(i));
+    expect(cfg.leaders).toHaveLength(MAX_STARTED_LEADERS * 3);
+    expect(CopybotConfigSchema.safeParse(cfg).success).toBe(true);
   });
 
   it('removes a followed leader and rejects an unknown one', () => {

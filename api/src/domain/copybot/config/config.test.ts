@@ -7,6 +7,7 @@ import {
   effectiveFor,
   isValidConfigBlob,
   parseConfig,
+  STOPPED_CONFIG_DEFAULTS,
 } from './index';
 
 const LEADER = DEFAULT_LEADER_ADDRESS;
@@ -41,7 +42,14 @@ describe('config · infiniteAdd', () => {
   it('a leader can override infiniteAdd to true (follow the leader’s adds)', () => {
     const cfg: CopybotConfig = {
       user: CONFIG_DEFAULTS.user,
-      leaders: [{ address: LEADER, enabled: true, overrides: { infiniteAdd: true } }],
+      leaders: [
+        {
+          address: LEADER,
+          enabled: true,
+          maxTotalExposureSol: null,
+          overrides: { infiniteAdd: true },
+        },
+      ],
     };
     expect(effectiveFor(cfg, LEADER).infiniteAdd).toBe(true);
     expect(effectiveFor(CONFIG_DEFAULTS, LEADER).infiniteAdd).toBe(false); // default unaffected
@@ -52,7 +60,14 @@ describe('config · rugSl', () => {
   it('a leader sparsely overrides the drop threshold, the rest inherit', () => {
     const cfg: CopybotConfig = {
       user: CONFIG_DEFAULTS.user,
-      leaders: [{ address: LEADER, enabled: true, overrides: { rugSl: { dropPercent: 25 } } }],
+      leaders: [
+        {
+          address: LEADER,
+          enabled: true,
+          maxTotalExposureSol: null,
+          overrides: { rugSl: { dropPercent: 25 } },
+        },
+      ],
     };
     const r = effectiveFor(cfg, LEADER).rugSl;
     expect(r.dropPercent).toBe(25);
@@ -65,7 +80,14 @@ describe('config · priorityFee', () => {
   it('a leader sparsely overrides the tier, the cap inherits', () => {
     const cfg: CopybotConfig = {
       user: CONFIG_DEFAULTS.user,
-      leaders: [{ address: LEADER, enabled: true, overrides: { priorityFee: { tier: 'high' } } }],
+      leaders: [
+        {
+          address: LEADER,
+          enabled: true,
+          maxTotalExposureSol: null,
+          overrides: { priorityFee: { tier: 'high' } },
+        },
+      ],
     };
     const pf = effectiveFor(cfg, LEADER).priorityFee;
     expect(pf.tier).toBe('high');
@@ -73,11 +95,35 @@ describe('config · priorityFee', () => {
   });
 });
 
-describe('config · parseConfig (fail-safe + migration)', () => {
-  it('null / empty / non-JSON → defaults', () => {
+describe('config · parseConfig (fail-safe + fail-CLOSED + migration)', () => {
+  it('null / empty (genuine first run) → the permissive defaults', () => {
     expect(parseConfig(null)).toEqual(CONFIG_DEFAULTS);
     expect(parseConfig('')).toEqual(CONFIG_DEFAULTS);
-    expect(parseConfig('}{')).toEqual(CONFIG_DEFAULTS);
+  });
+
+  it('non-JSON / non-object → STOPPED defaults (fail CLOSED, SPEC §12), never the permissive defaults', () => {
+    // WHY: only a genuinely ABSENT blob may yield the trading-enabled defaults. A blob that EXISTS but is corrupt
+    // means a stopped bot could silently re-arm if we fell back to enabled:true/killSwitchGlobal:false.
+    expect(parseConfig('}{')).toEqual(STOPPED_CONFIG_DEFAULTS);
+    expect(parseConfig('42')).toEqual(STOPPED_CONFIG_DEFAULTS);
+    expect(parseConfig('"a string"')).toEqual(STOPPED_CONFIG_DEFAULTS);
+  });
+
+  it('a corrupt blob can NEVER yield enabled:true or killSwitchGlobal:false', () => {
+    // WHY (SPEC §12): the parse-level fail-closed contract — whatever garbage is stored, the result is a STOPPED
+    // config. This is the invariant the adapter (ConfigStore) builds on.
+    const corruptBlobs = [
+      '}{',
+      'null',
+      '42',
+      '[]',
+      JSON.stringify({ user: { sizing: { maxTradeSizeSol: 'huge' } } }),
+    ];
+    for (const raw of corruptBlobs) {
+      const cfg = parseConfig(raw);
+      expect(cfg.user.enabled, raw).toBe(false);
+      expect(cfg.user.caps.killSwitchGlobal, raw).toBe(true);
+    }
   });
 
   it('a partial user block merges onto defaults — unset fields keep their default (no silent reset)', () => {
@@ -115,18 +161,36 @@ describe('config · parseConfig (fail-safe + migration)', () => {
     expect(cfg.user.twoSidedMode).toBe('on');
     expect(cfg.leaders).toHaveLength(1);
     expect(cfg.leaders[0]!.address).toBe('LegacyLeader1111111111111111111111111111111');
+    // WHY: the flat blob means the bot was RUNNING that leader — the migration must not silently stop it
+    // (stopped-by-default applies to newly-added leaders only, never to a live config upgrade).
+    expect(cfg.leaders[0]!.enabled).toBe(true);
   });
 
-  it('a structurally invalid value → full defaults', () => {
+  it('a structurally invalid value → STOPPED defaults (fail CLOSED, SPEC §12)', () => {
     expect(parseConfig(JSON.stringify({ user: { sizing: { maxTradeSizeSol: 'huge' } } }))).toEqual(
-      CONFIG_DEFAULTS,
+      STOPPED_CONFIG_DEFAULTS,
     );
+  });
+
+  it('a leader persisted WITHOUT an enabled bit merges as STOPPED (never silently started)', () => {
+    // WHY (SPEC §4.3): a just-added leader must never start copying before the user presses Start — the merge
+    // default is the last line of defense when a writer forgets the flag.
+    const cfg = parseConfig(JSON.stringify({ leaders: [{ address: LEADER }] }));
+    expect(cfg.leaders[0]!.enabled).toBe(false);
+    expect(cfg.leaders[0]!.maxTotalExposureSol).toBeNull(); // new knob backfills to "no per-leader cap"
   });
 
   it('round-trips a full valid two-tier blob', () => {
     const custom: CopybotConfig = {
       user: { ...CONFIG_DEFAULTS.user, twoSidedMode: 'shadow' },
-      leaders: [{ address: LEADER, enabled: false, overrides: { twoSidedMode: 'on' } }],
+      leaders: [
+        {
+          address: LEADER,
+          enabled: false,
+          maxTotalExposureSol: 0.75,
+          overrides: { twoSidedMode: 'on' },
+        },
+      ],
     };
     expect(parseConfig(JSON.stringify(custom))).toEqual(custom);
   });
@@ -161,6 +225,7 @@ describe('config · effectiveFor', () => {
         {
           address: LEADER,
           enabled: true,
+          maxTotalExposureSol: null,
           overrides: { twoSidedMode: 'on', sizing: { tradeRatioPct: 10 } },
         },
       ],
@@ -179,12 +244,24 @@ describe('config · effectiveFor', () => {
     };
     const raise: CopybotConfig = {
       user,
-      leaders: [{ address: LEADER, enabled: true, overrides: { sizing: { maxTradeSizeSol: 5 } } }],
+      leaders: [
+        {
+          address: LEADER,
+          enabled: true,
+          maxTotalExposureSol: null,
+          overrides: { sizing: { maxTradeSizeSol: 5 } },
+        },
+      ],
     };
     const lower: CopybotConfig = {
       user,
       leaders: [
-        { address: LEADER, enabled: true, overrides: { sizing: { maxTradeSizeSol: 0.3 } } },
+        {
+          address: LEADER,
+          enabled: true,
+          maxTotalExposureSol: null,
+          overrides: { sizing: { maxTradeSizeSol: 0.3 } },
+        },
       ],
     };
     expect(effectiveFor(raise, LEADER).sizing.maxTradeSizeSol).toBe(1.0); // raise rejected → clamped to ceiling
@@ -194,7 +271,7 @@ describe('config · effectiveFor', () => {
   it('a disabled leader resolves to killSwitchLeader=true (so checkCaps blocks its opens)', () => {
     const cfg: CopybotConfig = {
       user: CONFIG_DEFAULTS.user,
-      leaders: [{ address: LEADER, enabled: false, overrides: {} }],
+      leaders: [{ address: LEADER, enabled: false, maxTotalExposureSol: null, overrides: {} }],
     };
     const eff = effectiveFor(cfg, LEADER);
     expect(eff.leaderEnabled).toBe(false);
@@ -209,10 +286,28 @@ describe('config · effectiveFor', () => {
     expect(effectiveFor(cfg, LEADER).caps.killSwitchGlobal).toBe(true);
   });
 
-  it('an unknown leader address falls back to user defaults, treated as enabled', () => {
+  it('an unknown leader address falls back to user defaults, treated as STOPPED (fail closed)', () => {
+    // WHY (SPEC §4.3): a leader REMOVED from the list counts as stopped. If an unconfigured address resolved as
+    // enabled, removing a leader (or watching one never added) would keep copying it — the stop model failing OPEN.
     const eff = effectiveFor(CONFIG_DEFAULTS, 'UnknownLeaderXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX');
-    expect(eff.leaderEnabled).toBe(true);
+    expect(eff.leaderEnabled).toBe(false);
+    expect(eff.caps.killSwitchLeader).toBe(true); // checkCaps blocks its opens
     expect(eff.sizing).toEqual(CONFIG_DEFAULTS.user.sizing);
+  });
+
+  it('resolves the per-leader exposure ceiling (its own leader only; unknown/uncapped ⇒ null)', () => {
+    // WHY: the per-leader cap (SPEC §4.2/§12) must reach checkCaps scoped to THAT leader — and be absent (null),
+    // not 0, when unset: 0 would block every open.
+    const capped: CopybotConfig = {
+      user: CONFIG_DEFAULTS.user,
+      leaders: [{ address: LEADER, enabled: true, maxTotalExposureSol: 2.5, overrides: {} }],
+    };
+    expect(effectiveFor(capped, LEADER).leaderMaxTotalExposureSol).toBe(2.5);
+    expect(effectiveFor(CONFIG_DEFAULTS, LEADER).leaderMaxTotalExposureSol).toBeNull();
+    expect(
+      effectiveFor(capped, 'UnknownLeaderXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX')
+        .leaderMaxTotalExposureSol,
+    ).toBeNull();
   });
 });
 
@@ -225,7 +320,14 @@ describe('config · execution group', () => {
     // WHY: a volatile-token leader may need more slippage without touching the other execution tunables.
     const cfg: CopybotConfig = {
       user: CONFIG_DEFAULTS.user,
-      leaders: [{ address: LEADER, enabled: true, overrides: { execution: { slippageBps: 300 } } }],
+      leaders: [
+        {
+          address: LEADER,
+          enabled: true,
+          maxTotalExposureSol: null,
+          overrides: { execution: { slippageBps: 300 } },
+        },
+      ],
     };
     const ex = effectiveFor(cfg, LEADER).execution;
     expect(ex.slippageBps).toBe(300);

@@ -4,6 +4,7 @@ import { CAPS_DEFAULTS, type CapsConfig, type CapsState, checkCaps } from './cap
 const state = (over: Partial<CapsState> = {}): CapsState => ({
   openPositions: 0,
   totalExposureSol: 0,
+  leaderExposureSol: 0,
   tokenOpenCount: 0,
   openTimestampsMs: [],
   ...over,
@@ -114,6 +115,39 @@ describe('checkCaps — caps + kill-switch envelope', () => {
       expect(checkCaps(CAPS_DEFAULTS, state({ totalExposureSol: 9999 }), 100, NOW).action).toBe(
         'allow',
       );
+    });
+  });
+
+  describe('leaderMaxTotalExposureSol (per-leader cap, SPEC §4.2/§12)', () => {
+    it('leader exposure + new size > the per-leader cap → block max_leader_exposure', () => {
+      // WHY: the per-leader ceiling protects against ONE leader eating the whole wallet even when the account-wide
+      // exposure cap is off — it must be enforced against THAT leader's mirrors only.
+      expect(checkCaps(CAPS_DEFAULTS, state({ leaderExposureSol: 0.8 }), 0.3, NOW, 1)).toEqual({
+        action: 'block',
+        reason: 'max_leader_exposure',
+      });
+    });
+    it('scoped to the leader: a big GLOBAL exposure does not trip the per-leader cap', () => {
+      const s = state({ totalExposureSol: 100, leaderExposureSol: 0.1 });
+      expect(checkCaps(CAPS_DEFAULTS, s, 0.3, NOW, 1).action).toBe('allow');
+    });
+    it('leader exposure + size == cap → allow (boundary included, same rule as the global cap)', () => {
+      expect(checkCaps(CAPS_DEFAULTS, state({ leaderExposureSol: 0.7 }), 0.3, NOW, 1).action).toBe(
+        'allow',
+      );
+    });
+    it('null / omitted (no per-leader cap) → allow whatever the leader exposure', () => {
+      const s = state({ leaderExposureSol: 9999 });
+      expect(checkCaps(CAPS_DEFAULTS, s, 100, NOW, null).action).toBe('allow');
+      expect(checkCaps(CAPS_DEFAULTS, s, 100, NOW).action).toBe('allow'); // default param = no cap
+    });
+    it('the ACCOUNT-wide cap still wins first when both would block (first block wins)', () => {
+      const cfg = { ...CAPS_DEFAULTS, maxTotalExposureSol: 5 };
+      const s = state({ totalExposureSol: 5, leaderExposureSol: 5 });
+      expect(checkCaps(cfg, s, 1, NOW, 1)).toEqual({
+        action: 'block',
+        reason: 'max_total_exposure',
+      });
     });
   });
 

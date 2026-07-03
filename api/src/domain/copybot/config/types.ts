@@ -75,8 +75,11 @@ export type LeaderOverride = {
 /** One followed leader. */
 export interface LeaderSettings {
   address: string;
-  /** Per-leader pause switch (others unaffected). Bridges the resolved `caps.killSwitchLeader`. */
+  /** Per-leader start/stop switch (others unaffected). Bridges the resolved `caps.killSwitchLeader`.
+   *  A NEW leader is created STOPPED (SPEC §4.3): it must never copy before the user presses Start. */
   enabled: boolean;
+  /** Max total SOL exposure across THIS leader's open mirrors (SPEC §4.2/§12). null = no per-leader cap. */
+  maxTotalExposureSol: number | null;
   overrides: LeaderOverride;
 }
 
@@ -94,4 +97,6 @@ export interface EffectiveConfig extends Overridable {
   userEnabled: boolean;
   /** This leader's own switch. */
   leaderEnabled: boolean;
+  /** This leader's own exposure ceiling (scoped to ITS mirrors — `checkCaps` enforces it). null = no cap. */
+  leaderMaxTotalExposureSol: number | null;
 }

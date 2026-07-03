@@ -1,14 +1,16 @@
 /**
- * Copy-bot · config-management CLI. Reads/edits the DB-backed runtime config (settings → copybot.config) WITHOUT
- * the web, then publishes the `copybot:control` ping so a running bot reloads instantly.
+ * Copy-bot · config-management CLI. Reads/edits the DB-backed runtime config (the SYSTEM user's row in
+ * `copybot_configs` — the single-user runtime of increment 2) WITHOUT the web, then publishes the
+ * `copybot:control` ping so a running bot reloads instantly.
  *
  *   node --import tsx --env-file=../.env scripts/copybot-config.ts <command>
  *
  *   show                     pretty-print the full config
  *   get <path>               read a dotted path (e.g. user.sizing.tradeRatioPct, leaders.0.enabled)
  *   set <path> <value>       set a path (value coerced: 100, true, "medium", '["A","B"]'); validated then saved
- *   add-leader <address>     follow a new leader (≤ MAX_LEADERS)
- *   remove-leader <address>  stop following a leader
+ *   add-leader <address>     follow a new leader — created STOPPED (SPEC §4.3); start it with
+ *                            `set leaders.<i>.enabled true` (≤ MAX_STARTED_LEADERS enabled at once)
+ *   remove-leader <address>  stop following a leader (a running bot force-closes its open mirrors)
  *   import <file>            replace the config from a JSON file (validated)
  *   export [file]            write the config JSON to a file, or stdout
  *
@@ -18,15 +20,18 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { pino } from 'pino';
 import { ConfigStore } from '@/copybot/config-store';
+import { SYSTEM_USER_ID } from '@/copybot/journal-store';
 import {
   addLeader,
   coerceValue,
   CopybotConfigSchema,
   getAtPath,
+  InvalidConfigWriteError,
   isValidConfigBlob,
   parseConfig,
   removeLeader,
   setAtPath,
+  validateConfigWrite,
 } from '@/domain/copybot/config';
 import { ControlChannel } from '@/infrastructure/bus/control-channel';
 import { openDatabase } from '@/infrastructure/persistence/database';
@@ -47,12 +52,14 @@ async function main(): Promise<void> {
   const [cmd, a0, a1] = process.argv.slice(2);
   const log = pino({ level: 'warn' }); // quiet — CLI output goes to console
   const store = new ConfigStore(openDatabase(DB_URL), log);
-  const config = await store.seedIfAbsent();
+  const config = await store.seedIfAbsent(SYSTEM_USER_ID); // increment 2: the CLI edits the SYSTEM user's row
 
   // Validate, persist, then ping the running bot to reload immediately (5s poll is the backstop).
   const persist = async (next: CopybotConfig): Promise<void> => {
     const valid = CopybotConfigSchema.parse(next); // throws ZodError on invalid → never persist junk
-    await store.save(valid);
+    const writeErrors = validateConfigWrite(valid); // product rules (≤ MAX_STARTED_LEADERS enabled, SPEC §4.3)
+    if (writeErrors.length > 0) throw new InvalidConfigWriteError(writeErrors);
+    await store.save(SYSTEM_USER_ID, valid);
     const control = ControlChannel.connect(REDIS_URL);
     await control.publish({ type: 'config-changed' });
     await control.quit();

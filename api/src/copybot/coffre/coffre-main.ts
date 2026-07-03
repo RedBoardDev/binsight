@@ -126,13 +126,14 @@ async function main(): Promise<void> {
     alertSink,
   );
   const configStore = new ConfigStore(db, log);
-  let runtimeConfig = await configStore.seedIfAbsent(); // DB-backed config; the maxTradeSol re-clamp ceiling is read live (env wins when set)
+  // Single-user runtime (increment 2): read the SYSTEM_USER_ID row of the per-user config table (SPEC §12).
+  let runtimeConfig = await configStore.seedIfAbsent(SYSTEM_USER_ID); // DB-backed config; the maxTradeSol re-clamp ceiling is read live (env wins when set)
   const maxTradeSol = (): number => cfg.maxTradeSolEnv ?? runtimeConfig.user.sizing.maxTradeSizeSol;
   // Jito bundle landing is active only when jitoEnabled (env override else DB config) AND a block-engine URL is set.
   const jitoBundleUrl = (): string | undefined =>
     (cfg.jitoEnabledEnv ?? runtimeConfig.user.jitoEnabled) ? cfg.jitoBundleUrl : undefined; // user ceiling (per-leader can only lower it)
   const reloadConfig = async (): Promise<void> => {
-    runtimeConfig = await configStore.load();
+    runtimeConfig = await configStore.load(SYSTEM_USER_ID);
   };
   const control = ControlChannel.connect(cfg.redisUrl); // instant config-reload pings (re-clamp ceiling in <100ms)
   const heartbeat = new HeartbeatStore(db, log, 'coffre'); // process status the web reads (vault online + signing state)

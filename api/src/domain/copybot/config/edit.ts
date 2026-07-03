@@ -7,9 +7,6 @@
  */
 import type { CopybotConfig, LeaderSettings } from './types';
 
-/** Max followed leaders (SYSTEM cap — spec §1.3). */
-export const MAX_LEADERS = 4;
-
 /** Read the value at a dotted path, or `undefined` if any segment is missing. Pure. */
 export function getAtPath(root: unknown, path: string): unknown {
   let cur: unknown = root;
@@ -49,12 +46,18 @@ export function coerceValue(raw: string): unknown {
   }
 }
 
-/** Append a leader (enabled, no overrides). Throws on duplicate or when the SYSTEM cap is reached. Pure. */
+/** Append a leader — STOPPED, no overrides, no per-leader exposure cap. A just-added leader must never start
+ *  copying before the user presses Start (SPEC §4.2/§4.3); configured-but-stopped leaders are unlimited (only
+ *  STARTED leaders are capped — see `validateConfigWrite`). Throws on duplicate. Pure. */
 export function addLeader(config: CopybotConfig, address: string): CopybotConfig {
   if (config.leaders.some((l) => l.address === address))
     throw new Error(`leader already followed: ${address}`);
-  if (config.leaders.length >= MAX_LEADERS) throw new Error(`max ${MAX_LEADERS} leaders reached`);
-  const leader: LeaderSettings = { address, enabled: true, overrides: {} };
+  const leader: LeaderSettings = {
+    address,
+    enabled: false,
+    maxTotalExposureSol: null,
+    overrides: {},
+  };
   return { ...config, leaders: [...config.leaders, leader] };
 }
 

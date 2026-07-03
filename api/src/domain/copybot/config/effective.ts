@@ -44,12 +44,14 @@ function mergeRugSl(base: RugSlConfig, ov?: Partial<RugSlConfig>): RugSlConfig {
   return ov ? { ...base, ...ov } : base;
 }
 
-/** Resolve the config for ONE leader. Unknown address ⇒ user defaults with the leader treated as enabled. */
+/** Resolve the config for ONE leader. Unknown address ⇒ user defaults with the leader treated as STOPPED:
+ *  a leader REMOVED from the list counts as stopped (SPEC §4.3) — treating it as enabled would keep copying a
+ *  leader the user deleted (the start/stop model would fail OPEN). */
 export function effectiveFor(cfg: CopybotConfig, address: string): EffectiveConfig {
   const user = cfg.user;
   const leader = cfg.leaders.find((l) => l.address === address);
   const ov = leader?.overrides ?? {};
-  const leaderEnabled = leader?.enabled ?? true;
+  const leaderEnabled = leader?.enabled ?? false;
   const caps: CapsConfig = {
     ...user.caps,
     killSwitchGlobal: user.caps.killSwitchGlobal || !user.enabled, // master switch off ⇒ no opens
@@ -67,5 +69,6 @@ export function effectiveFor(cfg: CopybotConfig, address: string): EffectiveConf
     caps,
     userEnabled: user.enabled,
     leaderEnabled,
+    leaderMaxTotalExposureSol: leader?.maxTotalExposureSol ?? null,
   };
 }

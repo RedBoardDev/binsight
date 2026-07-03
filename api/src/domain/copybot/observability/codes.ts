@@ -311,6 +311,15 @@ const RAW_CODE_REGISTRY = {
     render: 'skipped-cap',
     coalesceMs: FEED_COALESCE_MS,
   },
+  // Per-leader exposure ceiling (SPEC §4.2/§12) — the leader-scoped sibling of `cap.max_total_exposure`.
+  'cap.max_leader_exposure': {
+    category: 'CAP',
+    severity: 'warn',
+    audience: 'feed',
+    title: 'No Copy — Max Leader Exposure',
+    render: 'skipped-cap',
+    coalesceMs: FEED_COALESCE_MS,
+  },
   // FUTURE: skip an add because infinite-add is off — no dedicated producer yet. Uses the `add` template's
   // skipped-add branch (SPEC §3.2 `⏭️ Skipped Add — infinite-add off`), not the generic cap line.
   'cap.infinite_add_skipped': {
@@ -566,6 +575,12 @@ export const CODE_REGISTRY: Record<CopyCode, CodeMeta> = RAW_CODE_REGISTRY;
 export const LEGACY_REASON_ALIASES = {
   leader_closed: 'failsafe.activated',
   orphan: 'failsafe.orphan_closed',
+  // Stop = force-close (SPEC §4.3): a user/leader stop (or leader removal) force-closes the concerned mirrors
+  // through the same deterministic safety-close publisher — surfaced under the existing pinned failsafe code
+  // until the stop flow gets dedicated feed codes in the web increment.
+  user_stopped: 'failsafe.activated',
+  leader_stopped: 'failsafe.activated',
+  leader_removed: 'failsafe.activated',
   non_sol_pool: 'eligibility.non_sol_paired',
   twosided_unbuyable: 'eligibility.twosided.unbuyable',
   // §2.3 lists `twosided_unbuyable` but not its sibling; the §2.2-test-2 invariant ("every current journaled

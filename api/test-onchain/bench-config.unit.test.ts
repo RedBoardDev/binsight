@@ -18,7 +18,9 @@ describe('bench-config · buildBenchConfig (DB-seeded bench config, replaces the
 
   it('follows the test leader (LEADER_TEST), enabled, no per-leader overrides', () => {
     const cfg = buildBenchConfig();
-    expect(cfg.leaders).toEqual([{ address: LEADER_TEST.toBase58(), enabled: true, overrides: {} }]);
+    expect(cfg.leaders).toEqual([
+      { address: LEADER_TEST.toBase58(), enabled: true, maxTotalExposureSol: null, overrides: {} },
+    ]);
   });
 
   it('validates against CopybotConfigSchema (the same guard ConfigStore.save enforces)', () => {

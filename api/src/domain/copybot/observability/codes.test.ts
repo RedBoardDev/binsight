@@ -82,6 +82,7 @@ describe('codes · legacy reason migration (SPEC §2.2 test 2)', () => {
     'max_concurrent_per_token',
     'max_opens_per_window',
     'max_total_exposure',
+    'max_leader_exposure',
     // sizing / balance (balance via alias)
     'below_min_floor',
     'insufficient_balance',
@@ -120,6 +121,10 @@ describe('codes · legacy reason migration (SPEC §2.2 test 2)', () => {
     'leader_closed',
     'orphan',
     'rug_sl',
+    // stop = force-close (SPEC §4.3, via alias)
+    'user_stopped',
+    'leader_stopped',
+    'leader_removed',
     // detect
     'leader_position_not_found',
     'not_on_chain_yet',

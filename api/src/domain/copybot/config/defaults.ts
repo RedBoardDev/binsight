@@ -38,5 +38,21 @@ export const USER_DEFAULTS: UserSettings = {
 
 export const CONFIG_DEFAULTS: CopybotConfig = {
   user: USER_DEFAULTS,
-  leaders: [{ address: DEFAULT_LEADER_ADDRESS, enabled: true, overrides: {} }],
+  leaders: [
+    { address: DEFAULT_LEADER_ADDRESS, enabled: true, maxTotalExposureSol: null, overrides: {} },
+  ],
+};
+
+/**
+ * The fail-CLOSED parse fallback (SPEC §12): a STRUCTURALLY INVALID stored blob must never re-arm a stopped bot,
+ * so `parseConfig` yields the defaults in a STOPPED state — master switch OFF and global kill switch ON. A genuine
+ * first run (no blob at all) still gets the permissive `CONFIG_DEFAULTS`; only corruption lands here.
+ */
+export const STOPPED_CONFIG_DEFAULTS: CopybotConfig = {
+  ...CONFIG_DEFAULTS,
+  user: {
+    ...USER_DEFAULTS,
+    enabled: false,
+    caps: { ...USER_DEFAULTS.caps, killSwitchGlobal: true },
+  },
 };

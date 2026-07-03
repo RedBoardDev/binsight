@@ -1,11 +1,13 @@
 /**
  * Copy-bot · on-chain bench — DB config seed. The bench used to drive the bot via COPYBOT_* env vars (a temporary
- * env-override bridge, now removed); it seeds the SAME effective config directly into the DB `copybot.config` row,
- * which the brain reads on boot via `ConfigStore.seedIfAbsent()` and hot-reloads via `load()`. Overwriting the row is
- * fine here — the bench DB is disposable (never prod), so a clean overwrite each (re)start is the intended reset.
+ * env-override bridge, now removed); it seeds the SAME effective config directly into the SYSTEM user's
+ * `copybot_configs` row, which the brain reads on boot via `ConfigStore.seedIfAbsent()` and hot-reloads via
+ * `load()`. Overwriting the row is fine here — the bench DB is disposable (never prod), so a clean overwrite each
+ * (re)start is the intended reset.
  */
 import type { Logger } from 'pino';
 import { ConfigStore } from '@/copybot/config-store';
+import { SYSTEM_USER_ID } from '@/copybot/journal-store';
 import type { CapsConfig } from '@/domain/copybot/caps';
 import { CONFIG_DEFAULTS, type CopybotConfig, type UserSettings } from '@/domain/copybot/config';
 import type { openDatabase } from '@/infrastructure/persistence/database';
@@ -46,15 +48,23 @@ export function buildBenchConfig(capsPatch: Partial<CapsConfig> = {}): CopybotCo
     execution: { ...base.execution, dustTokenRaw: BENCH_DUST_TOKEN_RAW },
     caps: { ...base.caps, ...capsPatch },
   };
-  return { user, leaders: [{ address: LEADER_TEST.toBase58(), enabled: true, overrides: {} }] };
+  // The bench leader is explicitly STARTED (enabled:true): the bot must copy it the moment the brain boots —
+  // the product's stopped-by-default rule applies to user-added leaders, not the bench seed.
+  return {
+    user,
+    leaders: [
+      { address: LEADER_TEST.toBase58(), enabled: true, maxTotalExposureSol: null, overrides: {} },
+    ],
+  };
 }
 
 /**
- * Overwrite the DB `copybot.config` row with the bench config (validated by `ConfigStore.save`) BEFORE the brain
- * boots, so `seedIfAbsent()`/`load()` return it. `capsPatch` swaps caps for a specific test (default = base bench).
+ * Overwrite the SYSTEM user's `copybot_configs` row with the bench config (validated by `ConfigStore.save`) BEFORE
+ * the brain boots, so `seedIfAbsent()`/`load()` return it. `capsPatch` swaps caps for a specific test (default =
+ * base bench).
  */
 export async function seedBenchConfig(db: Db, log: Logger, capsPatch: Partial<CapsConfig> = {}): Promise<CopybotConfig> {
   const cfg = buildBenchConfig(capsPatch);
-  await new ConfigStore(db, log).save(cfg);
+  await new ConfigStore(db, log).save(SYSTEM_USER_ID, cfg); // the single-user runtime row the brain/coffre read
   return cfg;
 }
