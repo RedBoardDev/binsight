@@ -48,4 +48,52 @@ export class PrivyServer {
     });
     return res.data.signed_transaction;
   }
+
+  /** Look up a wallet by its Privy id — used at provisioning to confirm the wallet, and later to read its signers. */
+  async getWallet(walletId: string): Promise<PrivyWalletRef> {
+    const w = await this.client.wallets().get(walletId);
+    return { walletId: w.id, address: w.address };
+  }
+
+  /**
+   * Look up a wallet by its on-chain address → its Privy wallet id (the id the coffre signs by). VERIFIED against
+   * @privy-io/node 0.24.0 (`client.wallets().getWalletByAddress({ address })` → Wallet with `id` + `address`). This
+   * is the primary provisioning path: the web wizard reports the user's embedded-wallet address and the server
+   * resolves the id from it.
+   */
+  async getWalletByAddress(address: string): Promise<PrivyWalletRef> {
+    const w = await this.client.wallets().getWalletByAddress({ address });
+    return { walletId: w.id, address: w.address };
+  }
+
+  /**
+   * Resolve the account's Privy embedded Solana wallet (id + address) at provisioning.
+   *  - With a client-reported `address` → `getWalletByAddress` (VERIFIED, exercised path).
+   *  - DID-only → the exact user-by-DID retrieval + Solana-embedded-wallet selection is finalized on the devnet
+   *    run (§2.5.3); 0.24.0's typed public surface exposes user lookup by linked identifiers but not a plain
+   *    get-by-DID, and PRIVY_SIGNING_ENABLED is OFF so this path is never hit until then.
+   */
+  async resolveEmbeddedWallet(input: { did: string; address?: string }): Promise<PrivyWalletRef> {
+    if (input.address) return this.getWalletByAddress(input.address);
+    // TODO(devnet-4f): finalize the get-user-by-DID → Solana embedded-wallet id/address lookup against the live API.
+    throw new PrivyProvisioningUnavailableError(input.did);
+  }
+}
+
+/** A resolved Privy wallet reference — the id the coffre signs by + its on-chain address. */
+export interface PrivyWalletRef {
+  walletId: string;
+  address: string;
+}
+
+/**
+ * The DID-only embedded-wallet lookup isn't wired against the live Privy API until devnet 4f; a caller reaching it
+ * (only possible with the flag ON and no client-reported address) surfaces this typed error instead of a silent
+ * mis-provision. The wizard always supplies the address, so the exercised path never throws.
+ */
+export class PrivyProvisioningUnavailableError extends Error {
+  constructor(readonly did: string) {
+    super(`Privy embedded-wallet lookup by DID is not wired until devnet 4f (did=${did})`);
+    this.name = 'PrivyProvisioningUnavailableError';
+  }
 }

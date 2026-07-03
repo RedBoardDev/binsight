@@ -10,8 +10,9 @@ export type SelectedPosition = {
   closed?: ClosedPosition;
 } | null;
 
-/** Top-level dashboard view. Default 'positions' so a reload lands straight on the live positions. */
-export type Tab = 'positions' | 'stats' | 'history';
+/** Top-level dashboard view. Default 'positions' so a reload lands straight on the live positions.
+ *  'bot' is the copy-bot custody/activation surface (desktop-only, SPEC §13). */
+export type Tab = 'positions' | 'stats' | 'history' | 'bot';
 
 type UiState = {
   selected: SelectedPosition;

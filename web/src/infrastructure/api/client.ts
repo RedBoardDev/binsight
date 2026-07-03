@@ -130,6 +130,18 @@ async function getBlob(path: string, accept: string, signal?: AbortSignal): Prom
   return res.blob();
 }
 
+/** POST a JSON body and parse a typed JSON response, THROWING a typed {@link ApiError} on a non-2xx (unlike
+ *  {@link send}'s boolean) — so a caller that needs the response payload never reads an optimistic result. */
+async function postJson<T>(path: string, body?: unknown): Promise<T> {
+  const res = await authedFetch(path, {
+    method: 'POST',
+    headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!res.ok) throw new ApiError(`POST ${path} failed (${res.status})`, res.status);
+  return (await res.json()) as T;
+}
+
 type ClosedPage = { rows: ClosedPosition[]; total: number };
 
 /** The caller's own identity (the registered branch of `/auth/me`). */
@@ -298,6 +310,84 @@ export const adminApi = {
     });
     if (!res.ok) throw new ApiError(`POST admin/copybot/kill failed (${res.status})`, res.status);
     return (await res.json()) as CopybotKillResult;
+  },
+};
+
+// ── Copy-bot custody activation + leaders (per-account — Inc.4b) ──────────────────────────────────────
+/** Resumable activation wizard step (mirrors the API's `activation_step`). */
+export type ActivationStep = 'consent' | 'deposit' | 'export' | 'done';
+
+/** The persisted activation row (null until provisioned). */
+export type ActivationRow = {
+  userId: string;
+  privyWalletId: string;
+  policyId: string | null;
+  signerAdded: boolean;
+  signingDisabled: boolean;
+  activationStep: ActivationStep;
+  fundedAt: number | null;
+  exportAckAt: number | null;
+  withdrawalAckAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+/** The activation snapshot the wizard reads (row + live balance + the derived signing-ready verdict). */
+export type ActivationView = {
+  activation: ActivationRow | null;
+  address: string | null;
+  balanceLamports: number;
+  balanceSol: number;
+  minActivationSol: number;
+  startedLeaderCount: number;
+  signingReady: boolean;
+};
+
+/** Why a pasted leader is rejected (stable functional codes — the wizard renders a message per code). */
+export type LeaderRejectReason =
+  | 'invalid_address'
+  | 'own_wallet'
+  | 'duplicate'
+  | 'no_dlmm_activity';
+export type LeaderValidation = { ok: true } | { ok: false; reason: LeaderRejectReason };
+
+/** The wizard-configured fields sent to create a leader (STOPPED). */
+export type NewLeaderBody = {
+  address: string;
+  maxTradeSizeSol: number;
+  tradeRatioPct: number;
+  maxTotalExposureSol: number | null;
+  twoSidedMode: 'off' | 'shadow' | 'on';
+};
+
+/** Copy-bot custody activation + leader onboarding (behind the Privy-DID hook, per-account). */
+export const copybotApi = {
+  /** Provision the account's custody wallet (idempotent) — `address` = the embedded Solana wallet address. */
+  provision: (address?: string) => postJson<ActivationView>('copybot/provision', { address }),
+
+  /** The resumable activation state (row + live SOL balance + signing-ready verdict). */
+  activationState: () => get<ActivationView>('copybot/activation/state'),
+
+  /** Mark the coffre session-signer consent complete (the client ran addSigners). */
+  consentComplete: () => postJson<ActivationView>('copybot/activation/consent-complete'),
+
+  /** Acknowledge the key-export offer (exported or skipped). */
+  exportAck: () => postJson<ActivationView>('copybot/activation/export-ack'),
+
+  /** Validate a pasted leader address before adding it. */
+  validateLeader: (address: string) =>
+    postJson<LeaderValidation>('copybot/leader/validate', { address }),
+
+  /** Add a wizard-configured leader (created STOPPED). Resolves to a typed rejection on a 409. */
+  async addLeader(body: NewLeaderBody): Promise<LeaderValidation> {
+    const res = await authedFetch('copybot/leaders', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) return { ok: true };
+    const data = (await res.json().catch(() => ({}))) as { reason?: LeaderRejectReason };
+    return { ok: false, reason: data.reason ?? 'invalid_address' };
   },
 };
 

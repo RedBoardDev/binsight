@@ -9,14 +9,25 @@
  * pool is referenced, so instead we bind the swap to owner's ATA of the residual token being sold.
  * (Fine-grained bin intent-bind + Jupiter route decode + INV-6 rate-limit = later hardening.)
  */
-import { DLMM_PROGRAM_ID, SOL_MINT } from '@binsight/shared';
 import { PublicKey, type Transaction } from '@solana/web3.js';
 import { JITO_TIP_ACCOUNTS } from '@/domain/copybot/jito-tip';
+// Program IDs come from the SINGLE SOURCE (`program-ids.ts`) that Wall A also imports, so the two firewalls
+// provably share one allowlist. Values are byte-identical to the previous inline literals.
+import {
+  ATA_PROGRAM_ID,
+  COMPUTE_BUDGET_PROGRAM_ID,
+  DLMM_PROGRAM_ID,
+  JUPITER_V6_PROGRAM_ID,
+  SOL_MINT,
+  SYSTEM_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
+} from '@/domain/copybot/program-ids';
 
-const SYSTEM = '11111111111111111111111111111111';
-const TOKEN = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
-const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
-const ATA_PROGRAM = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
+const SYSTEM = SYSTEM_PROGRAM_ID;
+const TOKEN = TOKEN_PROGRAM_ID;
+const TOKEN_2022 = TOKEN_2022_PROGRAM_ID;
+const ATA_PROGRAM = new PublicKey(ATA_PROGRAM_ID);
 const TOKEN_PROGRAM = new PublicKey(TOKEN);
 const TOKEN_2022_PROGRAM = new PublicKey(TOKEN_2022);
 const WSOL = new PublicKey(SOL_MINT);
@@ -34,7 +45,7 @@ const MAX_JITO_TIP_LAMPORTS = 10_000_000; // 0.01 SOL hard ceiling (far above th
 // bypasses the foreign-destination + wrap-cap checks. The brain caps it (applyPriorityFee/maxCapSol), but Wall B
 // must NOT trust the brain: an inflated `setComputeUnitPrice` is a drain vector symmetric to (and larger than) the
 // Jito tip, which IS already capped. Bound the worst-case fee (price × CU-limit) independently here.
-const COMPUTE_BUDGET = 'ComputeBudget111111111111111111111111111111';
+const COMPUTE_BUDGET = COMPUTE_BUDGET_PROGRAM_ID;
 const CB_SET_UNIT_LIMIT = 2; // ComputeBudget instruction discriminator (SetComputeUnitLimit): [2, u32 units]
 const CB_SET_UNIT_PRICE = 3; // ComputeBudget instruction discriminator (SetComputeUnitPrice): [3, u64 microLamports/CU]
 const MICRO_LAMPORTS_PER_LAMPORT = 1_000_000n;
@@ -46,9 +57,9 @@ const ALLOWED_PROGRAMS = new Set([
   SYSTEM,
   TOKEN,
   TOKEN_2022, // Token-2022 (residual pump.fun-style legs route through it)
-  'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL',
+  ATA_PROGRAM_ID,
   DLMM_PROGRAM_ID,
-  'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4', // Jupiter v6 (residual token→SOL re-swap)
+  JUPITER_V6_PROGRAM_ID, // Jupiter v6 (residual token→SOL re-swap)
 ]);
 
 export interface WallBIntent {

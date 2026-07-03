@@ -400,8 +400,29 @@ export const users = pgTable('users', {
   // The account's Privy embedded Solana wallet address — filled by the custody increment (nullable
   // until then). Unique: one wallet is one account's trading identity.
   address: text('address').unique(),
+  // The Privy WALLET id (not the address) — the coffre signs by wallet id (Inc.4). Filled at provisioning
+  // alongside `address`; nullable until then.
+  privyWalletId: text('privy_wallet_id'),
   isOwner: boolean('is_owner').notNull().default(false),
   createdAt: ms('created_at').notNull(),
+});
+
+// Copy-bot · Inc.4b — per-account custody activation (SPEC §3). One row per user, home of the resumable
+// activation-wizard state AND the per-account `signing_disabled` kill switch the coffre reads at sign time.
+// `signing_disabled` starts ON (true) and is cleared only by the SYSTEM reconciler once the account is provably
+// ready to sign live (consent done + funded ≥ 1 SOL + ≥ 1 started leader — see domain/copybot/activation.ts).
+export const copybotActivation = pgTable('copybot_activation', {
+  userId: text('user_id').primaryKey(), // FK → users.id
+  privyWalletId: text('privy_wallet_id'), // the account's Privy embedded-wallet id (nullable until provisioned)
+  policyId: text('policy_id'), // the per-user Wall A policy id (created at provisioning; nullable until then)
+  signerAdded: boolean('signer_added').notNull().default(false), // client ran addSigners → the coffre may sign
+  signingDisabled: boolean('signing_disabled').notNull().default(true), // per-user kill switch; starts ON
+  activationStep: text('activation_step').notNull().default('consent'), // consent | deposit | export | done
+  fundedAt: ms('funded_at'), // first time the wallet was seen holding ≥ the activation minimum
+  exportAckAt: ms('export_ack_at'), // user acknowledged the key-export offer (or exported)
+  withdrawalAckAt: ms('withdrawal_ack_at'), // user completed a withdrawal (teardown gate, wave 4e)
+  createdAt: ms('created_at').notNull(),
+  updatedAt: ms('updated_at').notNull(),
 });
 
 /** Which user watches which wallet. A wallet is monitored by the engine iff ≥1 row references it. */

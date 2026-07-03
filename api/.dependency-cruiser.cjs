@@ -3,6 +3,8 @@
  *  F1: ONLY the coffre imports the key (`coffre/keypair.ts`) — the brain cannot name the key.
  *  F1b: ONLY the coffre imports the Privy signing authority (`@privy-io/node`, `coffre/signer.ts`,
  *       `infrastructure/privy/privy-server.ts`) — the brain can never reach the signer (Inc.4a).
+ *  F1c: NEITHER the coffre nor the brain imports the GOVERNANCE-key module (`infrastructure/privy/policy-admin.ts`) —
+ *       it is API-only (per-user Wall A policy creation); the bot zone must never reach the governance credential (Inc.4b).
  *  F3: the coffre NEVER loads the DLMM SDK (nor the modules that load it) — Wall B re-decodes without the SDK.
  * Run from api/:  yarn depcruise src/copybot --config .dependency-cruiser.cjs
  */
@@ -33,6 +35,15 @@ module.exports = {
       to: {
         path: '(@privy-io/node|src/copybot/coffre/signer\\.ts$|src/infrastructure/privy/privy-server\\.ts$)',
       },
+    },
+    {
+      name: 'F1c-no-policy-governance-key-in-bot',
+      comment:
+        'The per-user Wall A policy governance key (infrastructure/privy/policy-admin.ts) is API-only. The coffre ' +
+        'and the brain must never import it — a distinct off-host credential from the coffre session signer.',
+      severity: 'error',
+      from: { path: 'src/copybot/' },
+      to: { path: 'src/infrastructure/privy/policy-admin\\.ts$' },
     },
     {
       name: 'F3-no-dlmm-sdk-in-coffre',

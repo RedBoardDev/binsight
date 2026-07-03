@@ -7,13 +7,17 @@ import {
   WalletSchema,
 } from '@binsight/shared';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { CopybotActivationService } from '@/application/copybot-activation';
 import type { CopybotAdminService } from '@/application/copybot-admin';
+import type { CopybotLeadersService } from '@/application/copybot-leaders';
 import type { Engine } from '@/application/engine';
 import type { EventBus } from '@/application/event-bus';
 import type { NotificationManager } from '@/application/notification/manager';
 import { BUCKET_MS, type Bucket, isBucket, profitHistory } from '@/application/profit-history';
 import type { ResidualBackfill } from '@/application/residual-backfill';
 import type { WalletPnlService } from '@/application/wallet-pnl-service';
+import { TWO_SIDED_MODES, type TwoSidedMode } from '@/domain/copybot/config/types';
+import type { NewLeaderInput } from '@/domain/copybot/leader-onboard';
 import type { AccountRepository, ConfigRepository, PositionRepository } from '@/domain/ports';
 import type { GeckoTerminalGateway } from '@/infrastructure/geckoterminal/geckoterminal-gateway';
 import type { PresenceTracker } from '@/infrastructure/notifications/presence';
@@ -61,6 +65,10 @@ export type RouteDeps = {
   sendTestPush: (userId: string) => Promise<number>;
   /** Copy-bot operator admin: process health, GLOBAL KILL, quarantine/alerts (owner-only — SPEC §10/§13). */
   copybotAdmin: CopybotAdminService;
+  /** Copy-bot custody activation (per-account provisioning + wizard state + signing gate — SPEC §3). */
+  copybotActivation: CopybotActivationService;
+  /** Copy-bot leader onboarding (validate a pasted leader + add it STOPPED — SPEC §4.3). */
+  copybotLeaders: CopybotLeadersService;
 };
 
 /** Owner-only guard for operational/notification routes. Returns false (and replies 403) otherwise. */
@@ -89,6 +97,8 @@ export function registerRoutes(app: FastifyInstance, deps: RouteDeps): void {
     vapidPublicKey,
     sendTestPush,
     copybotAdmin,
+    copybotActivation,
+    copybotLeaders,
   } = deps;
 
   // A watchlist changes only on add/remove (which invalidate below), so cache it briefly instead of
@@ -582,4 +592,110 @@ export function registerRoutes(app: FastifyInstance, deps: RouteDeps): void {
     const limit = req.query.limit ? Number(req.query.limit) : undefined;
     return copybotAdmin.quarantine(limit);
   });
+
+  // ── Copy-bot custody activation (per-account — behind the Privy-DID hook, SPEC §3) ───────────────────────
+  // Provision the account's Privy custody wallet + create its activation row + per-user Wall A policy. Idempotent:
+  // a repeat call returns the existing state. `address` = the client-reported embedded-wallet address (the verified
+  // getWalletByAddress path); DID-only resolution is finalized on devnet 4f.
+  app.post<{ Body: { address?: unknown } }>('/copybot/provision', async (req, reply) => {
+    const me = req.account!;
+    const address = typeof req.body?.address === 'string' ? req.body.address : undefined;
+    if (address !== undefined && !isValidSolanaAddress(address)) {
+      return reply.code(400).send({ error: 'invalid wallet address' });
+    }
+    return copybotActivation.provision(me.id, me.privyUserId, { address });
+  });
+
+  // The resumable activation state (row + live SOL balance + the derived signing-ready verdict). Reconciles the
+  // per-account signing gate as a side effect (clears signing_disabled once ready — SPEC §3).
+  app.get('/copybot/activation/state', async (req) => copybotActivation.state(req.account!.id));
+
+  // The client ran addSigners (added the coffre session signer) → mark consent complete, advance to 'deposit'.
+  app.post('/copybot/activation/consent-complete', async (req) =>
+    copybotActivation.consentComplete(req.account!.id),
+  );
+
+  // The user acknowledged the key-export offer (exported or skipped) → advance the wizard to 'done'.
+  app.post('/copybot/activation/export-ack', async (req) =>
+    copybotActivation.exportAck(req.account!.id),
+  );
+
+  // ── Copy-bot leaders (per-account — SPEC §4.3) ───────────────────────────────────────────────────────────
+  // Validate a pasted leader address before adding it: rejects a malformed address, the user's own bot wallet,
+  // a duplicate, or a wallet with no DLMM activity.
+  app.post<{ Body: { address?: unknown } }>('/copybot/leader/validate', async (req, reply) => {
+    const address = typeof req.body?.address === 'string' ? req.body.address.trim() : '';
+    if (!address) return reply.code(400).send({ error: 'address is required' });
+    return copybotLeaders.validate(req.account!.id, address, req.account!.address);
+  });
+
+  // Add a wizard-configured leader — created STOPPED (the user presses Start later). Re-validates deterministically
+  // before persisting; 409 on a rejected candidate (duplicate/own-wallet/invalid), 400 on a malformed body.
+  app.post<{
+    Body: {
+      address?: unknown;
+      maxTradeSizeSol?: unknown;
+      tradeRatioPct?: unknown;
+      maxTotalExposureSol?: unknown;
+      twoSidedMode?: unknown;
+    };
+  }>('/copybot/leaders', async (req, reply) => {
+    const parsed = parseNewLeaderBody(req.body);
+    if (!parsed.ok) return reply.code(400).send({ error: parsed.error });
+    const result = await copybotLeaders.create(req.account!.id, parsed.value, req.account!.address);
+    if (!result.ok)
+      return reply.code(409).send({ error: 'leader rejected', reason: result.reason });
+    return { ok: true };
+  });
+}
+
+/** A finite number ≥ 0 (rejects NaN/Infinity/negatives/non-numbers). */
+function isNonNegativeNumber(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0;
+}
+
+/**
+ * Parse + validate the leader-create body into a typed `NewLeaderInput` (fail-closed): a valid address, a positive
+ * maxTradeSizeSol, a positive tradeRatioPct (>100 allowed to amplify; NEVER blank), a nullable non-negative
+ * maxTotalExposureSol, and a known twoSidedMode. Returns a typed error string the route turns into a 400.
+ */
+function parseNewLeaderBody(
+  body:
+    | {
+        address?: unknown;
+        maxTradeSizeSol?: unknown;
+        tradeRatioPct?: unknown;
+        maxTotalExposureSol?: unknown;
+        twoSidedMode?: unknown;
+      }
+    | undefined,
+): { ok: true; value: NewLeaderInput } | { ok: false; error: string } {
+  const address = typeof body?.address === 'string' ? body.address.trim() : '';
+  if (!isValidSolanaAddress(address)) return { ok: false, error: 'invalid leader address' };
+  if (!isNonNegativeNumber(body?.maxTradeSizeSol) || body.maxTradeSizeSol <= 0) {
+    return { ok: false, error: 'maxTradeSizeSol must be a positive number' };
+  }
+  if (!isNonNegativeNumber(body?.tradeRatioPct) || body.tradeRatioPct <= 0) {
+    return { ok: false, error: 'tradeRatioPct must be a positive number' };
+  }
+  const exposureRaw = body?.maxTotalExposureSol;
+  const maxTotalExposureSol =
+    exposureRaw === null || exposureRaw === undefined ? null : exposureRaw;
+  if (maxTotalExposureSol !== null && !isNonNegativeNumber(maxTotalExposureSol)) {
+    return { ok: false, error: 'maxTotalExposureSol must be a non-negative number or null' };
+  }
+  const twoSidedMode = body?.twoSidedMode;
+  if (!TWO_SIDED_MODES.includes(twoSidedMode as TwoSidedMode)) {
+    return { ok: false, error: `twoSidedMode must be one of ${TWO_SIDED_MODES.join(', ')}` };
+  }
+  return {
+    ok: true,
+    value: {
+      address,
+      maxTradeSizeSol: body.maxTradeSizeSol,
+      tradeRatioPct: body.tradeRatioPct,
+      maxTotalExposureSol,
+      twoSidedMode: twoSidedMode as TwoSidedMode,
+    },
+  };
 }

@@ -1,8 +1,10 @@
 import type { RuntimeSettings } from '@binsight/shared';
-import { Connection } from '@solana/web3.js';
+import { Connection, PublicKey } from '@solana/web3.js';
 import { createRemoteJWKSet } from 'jose';
 import { pino } from 'pino';
+import { CopybotActivationService } from './application/copybot-activation';
 import { CopybotAdminService } from './application/copybot-admin';
+import { CopybotLeadersService } from './application/copybot-leaders';
 import { DlmmPositionPnl } from './application/dlmm-position-pnl';
 import { Engine } from './application/engine/index';
 import { StrategyService } from './application/engine/strategy-service';
@@ -32,6 +34,7 @@ import { PresenceTracker } from './infrastructure/notifications/presence';
 import { WebPushChannel } from './infrastructure/notifications/web-push-channel';
 import { PostgresAccountRepository } from './infrastructure/persistence/account-repository';
 import { PostgresConfigRepository } from './infrastructure/persistence/config-repository';
+import { CopybotActivationRepository } from './infrastructure/persistence/copybot-activation-repository';
 import { closeDatabase, openDatabase, runMigrations } from './infrastructure/persistence/database';
 import { DlmmLegRepository } from './infrastructure/persistence/dlmm-leg-repository';
 import { NetworthSnapshotRepository } from './infrastructure/persistence/networth-snapshot-repository';
@@ -41,8 +44,11 @@ import { RpcCreditLedgerRepository } from './infrastructure/persistence/rpc-cred
 import { SwapFlowRepository } from './infrastructure/persistence/swap-flow-repository';
 import { WalletFlowRepository } from './infrastructure/persistence/wallet-flow-repository';
 import { WalletStreamCursorRepository } from './infrastructure/persistence/wallet-stream-cursor-repository';
+import { PolicyAdmin } from './infrastructure/privy/policy-admin';
+import { PrivyServer } from './infrastructure/privy/privy-server';
 import { CreditMeter } from './infrastructure/solana/credit-meter';
 import { DlmmIngest } from './infrastructure/solana/dlmm/dlmm-ingest';
+import { readUserPositionPubkeys } from './infrastructure/solana/dlmm/leader-position-reader';
 import { OnchainDlmmGateway } from './infrastructure/solana/dlmm/onchain-gateway';
 import { OnchainPoolMetaReader } from './infrastructure/solana/dlmm/pool-meta';
 import { StrategyResolver } from './infrastructure/solana/dlmm/strategy-resolver';
@@ -55,6 +61,11 @@ import { TransactionStream } from './infrastructure/solana/transaction-stream';
 
 /** Cadence to flush the CreditMeter's since-last-drain deltas into the rpc_credit_daily rollup. */
 const CREDIT_FLUSH_INTERVAL_MS = 60_000;
+
+/** Coarse per-transfer ceiling baked into every user's Wall A policy (defense in depth). Wall B enforces the EXACT
+ *  per-intent wrap cap from the user's sizing; this is only a gross backstop (no single transfer moves > 100 SOL).
+ *  Finalized on the devnet run (§2.5.3). */
+const WALL_A_MAX_TRANSFER_LAMPORTS = 100 * 1_000_000_000;
 
 export interface App {
   start(): Promise<void>;
@@ -267,6 +278,57 @@ export function compose(config: AppConfig): App {
     logger,
   );
 
+  // Copy-bot custody activation (Inc.4b). The Privy provisioning touch points are wired ONLY when configured:
+  //  - the embedded-wallet resolver needs the app secret (else provisioning surfaces a clear error);
+  //  - the Wall A policy admin needs the off-host governance key + operator fee sink (else provisioning proceeds
+  //    policy-less — Wall B stays authoritative — until the devnet 4f wiring). Neither is exercised until the flag
+  //    flips; the DB/state/gate logic is proven by tests. resolveUserWallet in the coffre reads the SAME rows via the
+  //    Privy-free repository (firewall F1b/F1c).
+  const copybotActivationRepo = new CopybotActivationRepository(db);
+  const provisioningPrivy =
+    config.PRIVY_APP_ID && config.PRIVY_APP_SECRET
+      ? new PrivyServer({ appId: config.PRIVY_APP_ID, appSecret: config.PRIVY_APP_SECRET })
+      : undefined;
+  const walletResolver = provisioningPrivy ?? {
+    resolveEmbeddedWallet: () => {
+      throw new Error('Privy provisioning not configured (set PRIVY_APP_SECRET)');
+    },
+  };
+  const policyAdmin =
+    config.PRIVY_APP_ID &&
+    config.PRIVY_APP_SECRET &&
+    config.PRIVY_POLICY_GOVERNANCE_KEY &&
+    config.OPERATOR_FEE_ADDRESS
+      ? new PolicyAdmin({
+          appId: config.PRIVY_APP_ID,
+          appSecret: config.PRIVY_APP_SECRET,
+          governanceKey: config.PRIVY_POLICY_GOVERNANCE_KEY,
+          operatorFeeAddress: config.OPERATOR_FEE_ADDRESS,
+          maxTransferLamports: WALL_A_MAX_TRANSFER_LAMPORTS,
+        })
+      : undefined;
+  const copybotActivation = new CopybotActivationService({
+    repo: copybotActivationRepo,
+    walletResolver,
+    policyAdmin,
+    // Live SOL balance (lamports) from the shared live-lane Connection (rate-limited).
+    balances: (address) => connection.getBalance(new PublicKey(address)),
+    // Started (enabled) leaders for the user — the third signing-ready condition (SPEC §3).
+    startedLeaderCount: async (userId) =>
+      (await copybotConfigStore.load(userId)).leaders.filter((l) => l.enabled).length,
+    log: logger,
+  });
+  const copybotLeaders = new CopybotLeadersService({
+    configStore: copybotConfigStore,
+    // DLMM activity = the wallet currently holds ≥1 on-chain DLMM position (heavy GPA, one-off on add). A leader
+    // that closed everything reads as inactive — an accepted v1 limitation (SPEC §4.3); refined later if needed.
+    hasDlmmActivity: (address) =>
+      readUserPositionPubkeys(connection, new PublicKey(address))
+        .then((p) => p.length > 0)
+        .catch(() => false),
+    log: logger,
+  });
+
   return {
     async start() {
       await runMigrations(db, './drizzle');
@@ -296,6 +358,8 @@ export function compose(config: AppConfig): App {
         vapidPublicKey: config.VAPID_PUBLIC_KEY,
         sendTestPush: (userId) => pushRepo.forUser(userId).then((subs) => webPush.sendTest(subs)),
         copybotAdmin,
+        copybotActivation,
+        copybotLeaders,
         // Privy access-token verifier: the remote JWKS is fetched lazily + cached by jose.
         privyVerifier: createPrivyVerifier({
           appId: config.PRIVY_APP_ID,

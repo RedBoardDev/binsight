@@ -34,6 +34,7 @@ import type { CopyCode } from '@/domain/copybot/observability/codes';
 import { HEARTBEAT_INTERVAL_MS } from '@/domain/copybot/status';
 import { ControlChannel } from '@/infrastructure/bus/control-channel';
 import { type ConsumedMessage, RedisBus } from '@/infrastructure/bus/redis-bus';
+import { CopybotActivationRepository } from '@/infrastructure/persistence/copybot-activation-repository';
 import { openDatabase } from '@/infrastructure/persistence/database';
 import { PrivyServer } from '@/infrastructure/privy/privy-server';
 import { BlockhashCache } from '@/infrastructure/solana/blockhash-cache';
@@ -370,9 +371,13 @@ async function main(): Promise<void> {
         authorizationKey: privyCfg.authorizationKey,
       })
     : undefined;
-  // Real-user wallet lookup: the activation table lands in wave 4b — 4a resolves null for every user (no real user is
-  // signable yet), so production only ever builds the SYSTEM signer; the Privy/DryRun branches ship proven by tests.
-  const resolveUserWallet = async (_userId: string): Promise<UserWallet | null> => null;
+  // Real-user wallet lookup (4b): read the activation row — a provisioned user resolves to (walletId, address,
+  // signingDisabled). With PRIVY_SIGNING_ENABLED OFF the resolver still routes to a DryRunSigner (nothing signed);
+  // when the flag flips a provisioned+ready user (signing_disabled cleared by the SYSTEM reconciler) signs live.
+  // Privy-FREE path: the coffre reads the state through the repository only, never the provisioning/policy modules.
+  const activationRepo = new CopybotActivationRepository(db);
+  const resolveUserWallet = (userId: string): Promise<UserWallet | null> =>
+    activationRepo.resolveSignableWallet(userId);
   const signerFor = createSignerResolver({
     systemSigner,
     privySigningEnabled: privyCfg.signingEnabled,

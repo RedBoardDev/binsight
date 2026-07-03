@@ -12,6 +12,16 @@ const EnvSchema = z.object({
   /** The Privy application id — the audience every access token must carry, and the key of the
    *  per-app JWKS endpoint the verifier reads. REQUIRED: without it no token can be verified. */
   PRIVY_APP_ID: z.string().min(1, 'PRIVY_APP_ID is required (the Privy application id)'),
+  /** The Privy application SECRET — needed server-side to resolve a user's embedded wallet + create its Wall A
+   *  policy at custody provisioning (Inc.4b). Empty this wave ⇒ provisioning against the live API is unavailable
+   *  (the DB/state/policy logic is exercised only by tests); set it to enable provisioning. */
+  PRIVY_APP_SECRET: z.string().default(''),
+  /** The single off-host GOVERNANCE key (P-256, base64 PKCS8) that owns + creates the per-user Wall A policies.
+   *  Empty ⇒ provisioning proceeds policy-less (Wall B stays authoritative); the policy is attached at devnet 4f. */
+  PRIVY_POLICY_GOVERNANCE_KEY: z.string().default(''),
+  /** The operator fee sink (5% of positive realized PnL, wave 4d) — an allowed System.Transfer destination in
+   *  every user's Wall A policy. Empty this wave (the fee outflow lands in 4d). */
+  OPERATOR_FEE_ADDRESS: z.string().default(''),
   /** The operator's Privy DID (`did:privy:...`): redeeming an invite with this identity creates the
    *  account flagged `isOwner` (the bootstrap). Empty = no owner bootstrap on this deployment. */
   OWNER_PRIVY_DID: z
