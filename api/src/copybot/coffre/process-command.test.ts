@@ -22,6 +22,7 @@ import * as schema from '@/infrastructure/persistence/schema';
 import { executions } from '@/infrastructure/persistence/schema';
 import type { BlockhashCache } from '@/infrastructure/solana/blockhash-cache';
 import { type Ctx, process1 } from './process-command';
+import { DryRunSigner, LocalKeypairSigner } from './signer';
 
 // Fresh in-memory Postgres (PGlite) with the real Drizzle migrations applied — exercises the multi-tenant
 // executions PK (user_id, command_id) exactly as production creates it.
@@ -103,7 +104,10 @@ function ctxFor(conn: Connection, bus: RedisBus): Ctx {
     conn,
     db,
     bus,
-    copier,
+    // SYSTEM/bench path: the resolved signer is a LocalKeypairSigner over the SAME `copier` keypair the pre-Inc.4
+    // Ctx.copier held — so every existing assertion stays byte-identical (LocalKeypairSigner reproduces the old
+    // `fresh.sign(copier, ...co)` exactly). Dedicated tests below override `signerFor` to exercise the new branches.
+    signerFor: async () => new LocalKeypairSigner(copier),
     blockhashCache,
     events,
     // Per-user sign-time policy (SPEC §11): the default fixture serves ONE flat cap for any user; the dedicated
@@ -604,5 +608,74 @@ describe('process1 — #7: recovery pre-check re-signs ONLY a provably-dead tx (
     const verdict = await process1(sr, ctxFor(conn, bus), true);
     expect(land).toHaveBeenCalledTimes(1); // safe re-sign (nothing was broadcast)
     expect(verdict).toEqual({ ok: true, reason: 'submitted', kind: 'close' });
+  });
+});
+
+// --- Inc.4a: the SIGNER port. process1 no longer holds a static keypair — it resolves `signerFor(userId)` and both
+// the Wall B owner check and the sign step go through it. The SYSTEM path (LocalKeypairSigner over `copier`) stays
+// byte-identical (every test above uses it); these prove the NEW branches.
+describe('process1 — Inc.4a: the SIGNER port (signerFor drives owner + sign)', () => {
+  it('the Wall B owner check uses the RESOLVED signer pubkey — a signer for a DIFFERENT wallet → owner_mismatch', async () => {
+    // WHY: post-Inc.4 `ourOwner` is the wallet we will ACTUALLY sign for (signerFor), not a static copier. A request
+    // whose `owner` ≠ the resolved signer must be rejected BEFORE any signature — a forged owner/userId can never
+    // route the tx to another wallet.
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const conn = fakeConn(() => ({ value: { confirmationStatus: 'confirmed' } }));
+    const other = Keypair.generate(); // resolved signer signs for `other`, but the request claims `copier` as owner
+    const ctx: Ctx = { ...ctxFor(conn, bus), signerFor: async () => new LocalKeypairSigner(other) };
+    const verdict = await process1(closeReq(), ctx); // sr.owner = copier.publicKey ≠ other.publicKey
+    expect(verdict).toMatchObject({ ok: false, reason: 'owner_mismatch', kind: 'close' });
+    expect(ctx.onSubmitted).not.toHaveBeenCalled();
+  });
+
+  it('a DryRunSigner (real user, live flag OFF) → finalizes skipped: pipeline runs end-to-end, nothing broadcast', async () => {
+    // WHY: with PRIVY_SIGNING_ENABLED off a real user's pipeline must run end-to-end (claim → Wall B → sign step) but
+    // NEVER sign — the signer throws DryRunSkip, which process1 turns into a benign 'skipped' (the lane ACKs it, the
+    // confirm worker never sees it). This exercises real-user detection/execution without funds at risk.
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const conn = fakeConn(() => ({ value: { confirmationStatus: 'confirmed' } }));
+    // The DryRunSigner exposes copier.publicKey so the owner check passes; signingEnabled stays true (the COFFRE signs
+    // for SYSTEM) — the per-user dry-run is the DryRunSigner, distinct from the coffre-wide signingEnabled flag.
+    const ctx: Ctx = {
+      ...ctxFor(conn, bus),
+      signerFor: async () => new DryRunSigner(copier.publicKey, log),
+    };
+    const sr = closeReq();
+    const verdict = await process1(sr, ctx);
+    expect(verdict).toMatchObject({ ok: true, reason: 'dry-run', kind: 'close' });
+    expect(ctx.onSubmitted).not.toHaveBeenCalled(); // nothing on the wire
+    expect(bus.publish).not.toHaveBeenCalled();
+    const row = (
+      await db
+        .select()
+        .from(executions)
+        .where(eq(executions.commandId, sr.commandId as string))
+    )[0];
+    expect(row?.state).toBe('skipped'); // benign terminal — NOT 'submitted' (worker ignores) and NOT 'failed'
+  });
+
+  it('signerFor THROWS (user not provisioned) → finalize failed (signer_unavailable), per-user isolation, never signs', async () => {
+    // WHY (SPEC §17.4): a per-user resolution failure (no activation row / signing disabled) is isolated to THAT user
+    // — finalize 'failed' (re-claimable) and skip — never a global stop and never a signature. The claim ran first,
+    // so the row EXISTS for the finalize.
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const conn = fakeConn(() => ({ value: { confirmationStatus: 'confirmed' } }));
+    const ctx: Ctx = {
+      ...ctxFor(conn, bus),
+      signerFor: async () => {
+        throw new Error('not activated');
+      },
+    };
+    const sr = closeReq();
+    const verdict = await process1(sr, ctx);
+    expect(verdict).toMatchObject({ ok: false, reason: 'signer_unavailable', kind: 'close' });
+    expect(ctx.onSubmitted).not.toHaveBeenCalled();
+    const row = (
+      await db
+        .select()
+        .from(executions)
+        .where(eq(executions.commandId, sr.commandId as string))
+    )[0];
+    expect(row?.state).toBe('failed');
   });
 });

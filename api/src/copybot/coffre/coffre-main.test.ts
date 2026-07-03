@@ -1,14 +1,22 @@
+import { Keypair } from '@solana/web3.js';
 import { pino } from 'pino';
 import { describe, expect, it, vi } from 'vitest';
+import { SYSTEM_USER_ID } from '@/copybot/journal-store';
 import { CODE_REGISTRY } from '@/domain/copybot/observability/codes';
 import type { ConsumedMessage } from '@/infrastructure/bus/redis-bus';
 import {
   createMessageHandler,
+  createSignerResolver,
   deadLetterCode,
   type MessageHandlerDeps,
   routeVerdict,
+  type SignerResolverDeps,
+  SigningDisabledError,
+  type UserWallet,
+  UserWalletUnresolvedError,
 } from './coffre-main';
 import { laneKeyOf, SigningLanes } from './lanes';
+import type { Signer } from './signer';
 
 // FIX A — DLQ routing for rejected/poison cmd:sign verdicts. These pure helpers decide what the vault loop does with
 // a processed message; the loop performs the I/O (ack / dead-letter / leave pending). Encodes the WHY: a poison/forged
@@ -151,6 +159,105 @@ describe('coffre createMessageHandler — ACK only AFTER the lane task reached a
       expect.anything(),
       expect.anything(),
     );
+  });
+});
+
+// Inc.4a — createSignerResolver: resolve + CACHE one Signer per SIGNED tenant. SYSTEM keeps the local-keypair signer
+// (bench untouched); a real user routes by PRIVY_SIGNING_ENABLED (live PrivySessionSigner vs DryRunSigner) and every
+// failure (not provisioned / signing disabled) is per-user isolated. All deps injected — no Privy, no keypair.
+const stubSigner = (): Signer => ({
+  publicKey: Keypair.generate().publicKey,
+  sign: async () => ({ raw: Buffer.alloc(0), signature: 'stub' }),
+});
+
+describe('coffre createSignerResolver — per-user signer routing + caching (Inc.4a)', () => {
+  const sys = stubSigner();
+  function deps(over: Partial<SignerResolverDeps> = {}): SignerResolverDeps {
+    return {
+      systemSigner: sys,
+      privySigningEnabled: false,
+      resolveUserWallet: vi.fn(async () => null),
+      buildLiveSigner: vi.fn(() => stubSigner()),
+      buildDryRunSigner: vi.fn(() => stubSigner()),
+      log: silentLog,
+      ...over,
+    };
+  }
+  const walletFor = (signingDisabled = false): UserWallet => ({
+    walletId: 'wallet-9',
+    address: Keypair.generate().publicKey.toBase58(),
+    signingDisabled,
+  });
+
+  it('SYSTEM → the cached local-keypair signer, WITHOUT a wallet lookup (bench path untouched)', async () => {
+    const resolveUserWallet = vi.fn(async () => null);
+    const signerFor = createSignerResolver(deps({ resolveUserWallet }));
+    expect(await signerFor(SYSTEM_USER_ID)).toBe(sys);
+    expect(resolveUserWallet).not.toHaveBeenCalled(); // SYSTEM never hits the user lookup
+  });
+
+  it('caches per user — the SAME instance is returned and resolveUserWallet runs at most once', async () => {
+    // WHY: the resolver is called on the hot sign path (once per cmd:sign); a live Privy user must not re-hit the
+    // wallet lookup (or rebuild a signer) on every command.
+    const wallet = walletFor();
+    const resolveUserWallet = vi.fn(async () => wallet);
+    const built = stubSigner();
+    const signerFor = createSignerResolver(
+      deps({ privySigningEnabled: true, resolveUserWallet, buildLiveSigner: () => built }),
+    );
+    const a = await signerFor('u1');
+    const b = await signerFor('u1');
+    expect(a).toBe(built);
+    expect(b).toBe(a); // cached instance
+    expect(resolveUserWallet).toHaveBeenCalledTimes(1);
+  });
+
+  it('flag OFF + a resolved wallet → a DryRunSigner over the wallet ADDRESS (pipeline runs, nothing signed)', async () => {
+    const wallet = walletFor();
+    const buildDryRunSigner = vi.fn(() => stubSigner());
+    const signerFor = createSignerResolver(
+      deps({
+        privySigningEnabled: false,
+        resolveUserWallet: async () => wallet,
+        buildDryRunSigner,
+      }),
+    );
+    await signerFor('u1');
+    expect(buildDryRunSigner).toHaveBeenCalledWith(wallet.address);
+  });
+
+  it('flag ON + a resolved, enabled wallet → a live PrivySessionSigner', async () => {
+    const wallet = walletFor();
+    const buildLiveSigner = vi.fn(() => stubSigner());
+    const signerFor = createSignerResolver(
+      deps({ privySigningEnabled: true, resolveUserWallet: async () => wallet, buildLiveSigner }),
+    );
+    await signerFor('u1');
+    expect(buildLiveSigner).toHaveBeenCalledWith(wallet);
+  });
+
+  it('flag ON + signing_disabled → SigningDisabledError (skip THAT user), never builds a signer', async () => {
+    const buildLiveSigner = vi.fn(() => stubSigner());
+    const signerFor = createSignerResolver(
+      deps({
+        privySigningEnabled: true,
+        resolveUserWallet: async () => walletFor(true),
+        buildLiveSigner,
+      }),
+    );
+    await expect(signerFor('u1')).rejects.toBeInstanceOf(SigningDisabledError);
+    expect(buildLiveSigner).not.toHaveBeenCalled();
+  });
+
+  it('no activation row (null, the 4a default) → UserWalletUnresolvedError (skip THAT user), whatever the flag', async () => {
+    // WHY: in 4a resolveUserWallet ALWAYS returns null — no real user is signable yet. Both flag states must skip that
+    // user (no address ⇒ nothing to sign OR dry-run); production therefore only ever serves the SYSTEM signer.
+    for (const privySigningEnabled of [false, true]) {
+      const signerFor = createSignerResolver(
+        deps({ privySigningEnabled, resolveUserWallet: async () => null }),
+      );
+      await expect(signerFor('u1')).rejects.toBeInstanceOf(UserWalletUnresolvedError);
+    }
   });
 });
 

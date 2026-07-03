@@ -167,6 +167,7 @@ __metadata:
     "@fastify/websocket": "npm:^11.0.1"
     "@meteora-ag/dlmm": "npm:1.9.10"
     "@napi-rs/canvas": "npm:^1.0.0"
+    "@privy-io/node": "npm:0.24.0"
     "@solana/web3.js": "npm:1.98.4"
     "@types/bn.js": "npm:5.2.0"
     "@types/node": "npm:^22.10.5"
@@ -1635,6 +1636,31 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@hpke/chacha20poly1305@npm:^1.7.1":
+  version: 1.8.0
+  resolution: "@hpke/chacha20poly1305@npm:1.8.0"
+  dependencies:
+    "@hpke/common": "npm:^1.10.0"
+  checksum: 10/fa0f5518137ac1335b21206c432696a78f8e4fdbcdb7af9bbb3fa96a60892d6e9ba44e8c2a8e23b43c4869f07fa59f69fb71cb44e70cbb7cd86f3fbf19abf03d
+  languageName: node
+  linkType: hard
+
+"@hpke/common@npm:^1.10.0":
+  version: 1.10.1
+  resolution: "@hpke/common@npm:1.10.1"
+  checksum: 10/5279be394dbab880bbb5635de493e2bcd688bb16789026257a8a101c309432af03b202f9748c568467be9e0d5f2342cd7f8c80511374bab4ef098fd5dfd20922
+  languageName: node
+  linkType: hard
+
+"@hpke/core@npm:^1.7.5":
+  version: 1.9.0
+  resolution: "@hpke/core@npm:1.9.0"
+  dependencies:
+    "@hpke/common": "npm:^1.10.0"
+  checksum: 10/e859c8a41ee2b92968415184dd42be305fdbba315b2b60c930e3c1f764bee6fbb819a1ef5a3e6541173233afe44beb59806f0c3ccccb89aa6dc0c2e2cd84ac02
+  languageName: node
+  linkType: hard
+
 "@img/colour@npm:^1.0.0":
   version: 1.1.0
   resolution: "@img/colour@npm:1.1.0"
@@ -2702,6 +2728,40 @@ __metadata:
     viem:
       optional: true
   checksum: 10/8412c9e93c58548b622ac6cacd5d4b435be1b8a336a6adb7e5cc1ea9f696521f010c12f9df948e3102b6646f9298d0b846ebd5463ba11d12be3237d34ce08559
+  languageName: node
+  linkType: hard
+
+"@privy-io/node@npm:0.24.0":
+  version: 0.24.0
+  resolution: "@privy-io/node@npm:0.24.0"
+  dependencies:
+    "@hpke/chacha20poly1305": "npm:^1.7.1"
+    "@hpke/core": "npm:^1.7.5"
+    "@noble/curves": "npm:^1.9.7"
+    "@noble/hashes": "npm:^1.8.0"
+    "@scure/base": "npm:^1.2.5"
+    canonicalize: "npm:^2.1.0"
+    jose: "npm:^6.1.0"
+    lru-cache: "npm:^11.1.0"
+    svix: "npm:^1.92.2"
+  peerDependencies:
+    "@solana/kit": ^5.1.0
+    "@x402/evm": ^2.3.0
+    "@x402/fetch": ^2.3.0
+    "@x402/svm": ^2.3.0
+    viem: ^2.44.2
+  peerDependenciesMeta:
+    "@solana/kit":
+      optional: true
+    "@x402/evm":
+      optional: true
+    "@x402/fetch":
+      optional: true
+    "@x402/svm":
+      optional: true
+    viem:
+      optional: true
+  checksum: 10/7d10b06772cc1d7367a0b81b4148d9180b36e8a9fd481eb799c58e2f35ac72631a107c7c7437b3dc6c928eb567c6942867bd25d6f07ef50302e06679783d32c4
   languageName: node
   linkType: hard
 
@@ -5470,6 +5530,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@stablelib/base64@npm:^1.0.0":
+  version: 1.0.1
+  resolution: "@stablelib/base64@npm:1.0.1"
+  checksum: 10/93f3edb05d5a828a775d23ebde49884abeb456b8946942acbe6a0815630e769c59c06c7275983031c8707bdcefc1c62917aaa99522ff1ec5f457704c83b686da
+  languageName: node
+  linkType: hard
+
 "@swc/helpers@npm:0.5.15":
   version: 0.5.15
   resolution: "@swc/helpers@npm:0.5.15"
@@ -7375,7 +7442,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"canonicalize@npm:^2.0.0":
+"canonicalize@npm:^2.0.0, canonicalize@npm:^2.1.0":
   version: 2.1.0
   resolution: "canonicalize@npm:2.1.0"
   bin:
@@ -8989,6 +9056,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"fast-sha256@npm:^1.3.0":
+  version: 1.3.0
+  resolution: "fast-sha256@npm:1.3.0"
+  checksum: 10/3bef0491f10a254348ec11dcddb26e4d951cfd3b4c0662ea5843ad1be3fe184ed74d640df68565fcc60f6437548cddf49e3ac886f88a69e05b5142e862840bf9
+  languageName: node
+  linkType: hard
+
 "fast-stable-stringify@npm:^1.0.0":
   version: 1.0.0
   resolution: "fast-stable-stringify@npm:1.0.0"
@@ -9788,7 +9862,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"jose@npm:6.2.3, jose@npm:^6.2.0":
+"jose@npm:6.2.3, jose@npm:^6.1.0, jose@npm:^6.2.0":
   version: 6.2.3
   resolution: "jose@npm:6.2.3"
   checksum: 10/876974613c5ee988d43b65a34c96ce440dbf7706a2f07f465b8874af16ee532102e224459a7068d2c6ef044affe49690667d23ca12770c279804baec95a09608
@@ -10159,7 +10233,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"lru-cache@npm:^11.2.7":
+"lru-cache@npm:^11.1.0, lru-cache@npm:^11.2.7":
   version: 11.5.1
   resolution: "lru-cache@npm:11.5.1"
   checksum: 10/02c4f73967d91fb101f4accf8ebac9e0541e08e16d987bdb9e9737f13e5f2c4bc33c593b98ec30e4486bf899bc97edb36fbd133684b36087336559e41edafdea
@@ -12442,6 +12516,16 @@ __metadata:
   languageName: node
   linkType: hard
 
+"standardwebhooks@npm:1.0.0":
+  version: 1.0.0
+  resolution: "standardwebhooks@npm:1.0.0"
+  dependencies:
+    "@stablelib/base64": "npm:^1.0.0"
+    fast-sha256: "npm:^1.3.0"
+  checksum: 10/02b74a3e4cd131affe8bf18945360747a5a0bf81c1d62a7bbbea3d40976b4fef4bb37de71a35cdc0fdc4d6f0d951a3b6031052e78bd086dc9b09b629b82d3919
+  languageName: node
+  linkType: hard
+
 "statuses@npm:~2.0.1, statuses@npm:~2.0.2":
   version: 2.0.2
   resolution: "statuses@npm:2.0.2"
@@ -12664,6 +12748,15 @@ __metadata:
   version: 1.0.0
   resolution: "supports-preserve-symlinks-flag@npm:1.0.0"
   checksum: 10/a9dc19ae2220c952bd2231d08ddeecb1b0328b61e72071ff4000c8384e145cc07c1c0bdb3b5a1cb06e186a7b2790f1dee793418b332f6ddf320de25d9125be7e
+  languageName: node
+  linkType: hard
+
+"svix@npm:^1.92.2":
+  version: 1.96.1
+  resolution: "svix@npm:1.96.1"
+  dependencies:
+    standardwebhooks: "npm:1.0.0"
+  checksum: 10/a756fa50bee197122a29cb2bd7995b51b1079313b94213f6e53f2a8c540e10ecd42f8b2b71ee748f8a53228bdf0167c2e4c810b11672ed784ea84150cceda476
   languageName: node
   linkType: hard
 

@@ -10,13 +10,13 @@
  *  would strand it as a dormant position — only 'failed' is re-claimable, and a premature ev:executed makes the
  *  brain forget it). No lane ever waits for a confirmation (ULTRACODE #22/#31 head-of-line kill).
  */
-import { utils } from '@coral-xyz/anchor';
 import { type Connection, type Keypair, Transaction } from '@solana/web3.js';
 import { and, eq, inArray } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import { claimExecution } from '@/copybot/coffre/idempotency';
 import { landViaJito } from '@/copybot/coffre/jito-landing';
 import { land } from '@/copybot/coffre/landing';
+import { DryRunSkip, type Signer } from '@/copybot/coffre/signer';
 import { verifyTx } from '@/copybot/coffre/wall-b';
 import { deriveCommandId } from '@/copybot/command-id';
 import { derivePositionKeypair } from '@/copybot/ephemeral-position';
@@ -76,7 +76,13 @@ export interface Ctx {
   conn: Connection;
   db: Db;
   bus: RedisBus;
-  copier: Keypair;
+  /**
+   * Resolve the SIGNER for the REQUEST's user (SPEC §11): SYSTEM → a local keypair (bench, byte-identical), a real
+   * user → a Privy session signer (or a dry-run signer while the live flag is OFF). Replaces the pre-Inc.4 static
+   * `copier: Keypair`. May throw a per-user error (not provisioned / signing disabled) → the lane finalizes 'failed'
+   * for THAT command only.
+   */
+  signerFor: (userId: string) => Promise<Signer>;
   blockhashCache: BlockhashCache;
   events: CopyEvents; // typed observability emitter (replaces the legacy Journal port — P2)
   /** Resolve the sign-time policy for the REQUEST's user (never a hardcoded tenant — SPEC §11). */
@@ -350,8 +356,7 @@ export async function process1(
   ctx: Ctx,
   recovering = false,
 ): Promise<{ ok: boolean; reason?: string; kind?: string; retryLater?: boolean }> {
-  const { conn, db, copier, blockhashCache, events, log } = ctx;
-  const ourOwner = copier.publicKey.toBase58();
+  const { conn, db, blockhashCache, events, log } = ctx;
   if (payload == null) return { ok: false, reason: 'bad_hmac_or_hop' }; // 1-4 failed (bus)
   const parsed = SignRequestSchema.safeParse(payload); // 5
   if (!parsed.success) return { ok: false, reason: 'bad_schema' };
@@ -395,6 +400,26 @@ export async function process1(
     forceReclaim,
   );
   if (!owned) return { ok: false, reason: 'duplicate', kind: sr.kind };
+
+  // Resolve the SIGNER for the SIGNED tenant (SPEC §11): the request's userId selects the wallet + its signing
+  // authority. Done AFTER the claim so a per-user resolution failure finalizes THIS command 'failed' (re-claimable)
+  // and is isolated to THAT user — never a global stop (SPEC §17.4). `ourOwner` (the wallet we will actually sign
+  // FOR) then gates the Wall B owner check below: a forged owner/userId can never route the tx to another wallet.
+  let signer: Signer;
+  try {
+    signer = await ctx.signerFor(sr.userId);
+  } catch (e) {
+    log.warn(
+      { userId: sr.userId, kind: sr.kind, error: (e as Error).message },
+      'signer unavailable for this user — skipping (per-user isolation)',
+    );
+    return finalize(db, sr.userId, sr.commandId, 'failed', {
+      ok: false,
+      reason: 'signer_unavailable',
+      kind: sr.kind,
+    });
+  }
+  const ourOwner = signer.publicKey.toBase58();
 
   if (sr.sizeSol > maxTradeSol) {
     events.emit('sign.over_max_trade', {
@@ -494,18 +519,21 @@ export async function process1(
   };
   let broadcastSig: string | undefined;
   let broadcastLvbh = 0;
+  let dryRunSkipped = false; // the signer declined (DryRunSkip): finalize a benign 'skipped', NOT a land failure
   for (let attempt = 0; attempt <= ctx.retryMax; attempt++) {
     try {
       const tSign = Date.now();
       const fresh = Transaction.from(Buffer.from(sr.txBase64, 'base64')); // fresh tx per attempt
       // First attempt: cached blockhash + expiry (no RTT). Retries: fetch fresh in case the cached one went stale.
       const bh = attempt === 0 ? blockhashCache.get() : await conn.getLatestBlockhash();
-      fresh.feePayer = copier.publicKey;
+      // feePayer + blockhash freeze the MESSAGE before signing (the owner + any co-signer sign the same bytes).
+      fresh.feePayer = signer.publicKey;
       fresh.recentBlockhash = bh.blockhash;
-      const signers: Keypair[] =
-        sr.kind === 'open' ? [copier, derivePositionKeypair(sr.commandId)] : [copier];
-      fresh.sign(...signers);
-      const sig = utils.bytes.bs58.encode(fresh.signature as Buffer); // deterministic once signed (== land()'s return)
+      // Only an OPEN needs the ephemeral position co-signer; the OWNER is signed by the resolved signer (local key or
+      // Privy TEE). `signature` is the owner signature (== land()'s return), the exactly-once pin. The SYSTEM/local
+      // path reproduces the pre-Inc.4 `fresh.sign(copier, ...co)` bytes exactly.
+      const coSigners: Keypair[] = sr.kind === 'open' ? [derivePositionKeypair(sr.commandId)] : [];
+      const { raw, signature } = await signer.sign(fresh, coSigners);
       // EXACTLY-ONCE (#7): persist signature + blockhash expiry (+ the worker's publish context, 3c) to 'submitted'
       // BEFORE broadcasting. A crash after land() but before the worker finalizes is then recoverable — the worker
       // re-reads 'submitted' rows and boot recovery re-signs ONLY a provably-dead tx.
@@ -513,28 +541,50 @@ export async function process1(
         db,
         sr.userId,
         sr.commandId,
-        sig,
+        signature,
         bh.lastValidBlockHeight,
         Date.now(),
         publishCtx,
       );
-      const raw = fresh.serialize();
       // Land via a Jito bundle when configured (anti-sandwich; falls back to plain RPC internally), else plain RPC.
-      if (jitoBundleUrl) await landViaJito(conn, jitoBundleUrl, raw, sig);
+      if (jitoBundleUrl) await landViaJito(conn, jitoBundleUrl, raw, signature);
       else await land(conn, raw);
       // Tx ON THE WIRE — this is the CONTROLLABLE latency endpoint (event → submitted), the price-relevant moment.
       // Logged here so latency tracking reflects submission speed, not chain-confirm time (harness contract).
-      log.info({ kind: sr.kind, sig, busMs, submitMs: Date.now() - tSign }, LOG_MARKER_SUBMITTED);
+      log.info(
+        { kind: sr.kind, sig: signature, busMs, submitMs: Date.now() - tSign },
+        LOG_MARKER_SUBMITTED,
+      );
       // Broadcast → TERMINAL for the lane. Record it and LEAVE the retry scope; the worker hand-off runs below
       // where a failure can no longer re-sign/re-land.
-      broadcastSig = sig;
+      broadcastSig = signature;
       broadcastLvbh = bh.lastValidBlockHeight;
       break;
     } catch (e) {
+      if (e instanceof DryRunSkip) {
+        // The signer declined (a real user while the live flag is OFF): NOT a land failure — never retried, and the
+        // throw is BEFORE markSubmitted so NOTHING is on the wire. Finalize a benign 'skipped' below.
+        dryRunSkipped = true;
+        break;
+      }
       lastErr = e as Error;
       log.warn({ kind: sr.kind, attempt, error: lastErr.message }, 'sign/land failed — retry');
       if (attempt < ctx.retryMax) await sleep(ctx.retryDelayMs);
     }
+  }
+
+  if (dryRunSkipped) {
+    // A benign, non-poison terminal outcome (like the coffre-wide dry-run above): the lane ACKs it and the confirm
+    // worker never picks it up (only 'submitted' rows carry a broadcast). The pipeline ran end-to-end, nothing signed.
+    log.info(
+      { kind: sr.kind, pool: sr.pool, our: sr.positionPubkey, busMs },
+      '✍️  (dry-run) signer declined — finalizing skipped',
+    );
+    return finalize(db, sr.userId, sr.commandId, 'skipped', {
+      ok: true,
+      reason: 'dry-run',
+      kind: sr.kind,
+    });
   }
 
   if (broadcastSig) {

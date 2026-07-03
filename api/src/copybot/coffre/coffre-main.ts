@@ -10,7 +10,7 @@
  *   node --import tsx --env-file=../.env src/copybot/coffre/coffre-main.ts
  */
 import { randomUUID } from 'node:crypto';
-import { Connection } from '@solana/web3.js';
+import { Connection, PublicKey } from '@solana/web3.js';
 import type { Logger } from 'pino';
 import { pino } from 'pino';
 import { createDiscordAlertSink } from '@/copybot/alert';
@@ -19,6 +19,12 @@ import { ConfirmWorker } from '@/copybot/coffre/confirm-worker';
 import { loadCopierKeypair } from '@/copybot/coffre/keypair';
 import { laneKeyOf, SigningLanes } from '@/copybot/coffre/lanes';
 import { type Ctx, process1, type UserSignPolicy } from '@/copybot/coffre/process-command';
+import {
+  DryRunSigner,
+  LocalKeypairSigner,
+  PrivySessionSigner,
+  type Signer,
+} from '@/copybot/coffre/signer';
 import { ConfigStore } from '@/copybot/config-store';
 import { HeartbeatStore } from '@/copybot/heartbeat-store';
 import { SYSTEM_USER_ID } from '@/copybot/journal-store';
@@ -29,6 +35,7 @@ import { HEARTBEAT_INTERVAL_MS } from '@/domain/copybot/status';
 import { ControlChannel } from '@/infrastructure/bus/control-channel';
 import { type ConsumedMessage, RedisBus } from '@/infrastructure/bus/redis-bus';
 import { openDatabase } from '@/infrastructure/persistence/database';
+import { PrivyServer } from '@/infrastructure/privy/privy-server';
 import { BlockhashCache } from '@/infrastructure/solana/blockhash-cache';
 
 const STREAM = 'copybot:cmd:sign';
@@ -86,6 +93,70 @@ export function routeVerdict(verdict: {
   if (verdict.retryLater) return { action: 'retain' }; // must stay in the PEL (a prior broadcast may still land)
   if (verdict.ok) return { action: 'ack' };
   return { action: 'deadLetter', code: deadLetterCode(verdict.reason) };
+}
+
+/** A real user's Privy wallet identity (the activation table lands in wave 4b; 4a resolves null for every user). */
+export interface UserWallet {
+  walletId: string; // Privy wallet id — signTransaction needs the id, not the address
+  address: string; // the wallet's Solana address (the tx owner / feePayer)
+  signingDisabled: boolean; // per-user kill switch (#21/#55): true ⇒ skip THAT user, never sign
+}
+
+/** A real user has no activation row yet (4a) — skip THAT user, never a global stop (SPEC §17.4). */
+export class UserWalletUnresolvedError extends Error {
+  constructor(readonly userId: string) {
+    super(`no Privy wallet resolved for user ${userId} (not activated)`);
+    this.name = 'UserWalletUnresolvedError';
+  }
+}
+
+/** A user's signing is disabled (revoked delegation / operator kill, #21/#55) — skip THAT user, never a global stop. */
+export class SigningDisabledError extends Error {
+  constructor(readonly userId: string) {
+    super(`signing is disabled for user ${userId}`);
+    this.name = 'SigningDisabledError';
+  }
+}
+
+/** Everything `createSignerResolver` needs — all injected so the routing + caching are unit-testable without Privy. */
+export interface SignerResolverDeps {
+  systemSigner: Signer; // the SYSTEM/bench local-keypair signer (cached, unchanged)
+  privySigningEnabled: boolean; // PRIVY_SIGNING_ENABLED: real users get a live PrivySessionSigner; else a DryRunSigner
+  resolveUserWallet: (userId: string) => Promise<UserWallet | null>; // the single source of a user's (walletId, address)
+  buildLiveSigner: (wallet: UserWallet) => Signer; // PrivySessionSigner over the resolved wallet
+  buildDryRunSigner: (address: string) => Signer; // DryRunSigner over the resolved address (flag OFF)
+  log: Logger;
+}
+
+async function resolveSigner(userId: string, deps: SignerResolverDeps): Promise<Signer> {
+  if (userId === SYSTEM_USER_ID) return deps.systemSigner;
+  const wallet = await deps.resolveUserWallet(userId);
+  if (!wallet) throw new UserWalletUnresolvedError(userId); // not provisioned yet (real-user provisioning = wave 4b)
+  if (!deps.privySigningEnabled) return deps.buildDryRunSigner(wallet.address); // flag OFF → run the pipeline, skip the sign
+  if (wallet.signingDisabled) throw new SigningDisabledError(userId); // per-user kill switch → skip THAT user
+  return deps.buildLiveSigner(wallet); // live per-user Privy signing
+}
+
+/**
+ * Build `signerFor(userId)` (SPEC §11): resolve + CACHE one Signer per SIGNED tenant.
+ *  - SYSTEM → the cached local-keypair signer (bench, byte-identical).
+ *  - any other user → resolve its wallet (the single source of the address, needed by BOTH the live and the dry-run
+ *    path for the Wall B owner check). No activation row (null, always in 4a) ⇒ UserWalletUnresolvedError; then the
+ *    flag chooses OFF → DryRunSigner (pipeline runs end-to-end, nothing signed) vs ON → signingDisabled ⇒
+ *    SigningDisabledError, else a live PrivySessionSigner.
+ * Every error is per-user (isolated): the caller (process-command) finalizes 'failed' for THAT command only.
+ */
+export function createSignerResolver(
+  deps: SignerResolverDeps,
+): (userId: string) => Promise<Signer> {
+  const cache = new Map<string, Signer>();
+  return async (userId) => {
+    const cached = cache.get(userId);
+    if (cached) return cached;
+    const signer = await resolveSigner(userId, deps);
+    cache.set(userId, signer);
+    return signer;
+  };
 }
 
 /** What the lane task needs to route ONE message to its terminal I/O (ack / dead-letter / retain). */
@@ -162,6 +233,16 @@ const cfg = {
   jitoBundleUrl: process.env.COPYBOT_JITO_BUNDLE_URL, // block-engine URL; absent ⇒ never bundle (plain RPC land)
   jitoEnabledEnv:
     process.env.COPYBOT_JITO !== undefined ? process.env.COPYBOT_JITO === 'true' : undefined, // env override of the DB jitoEnabled
+};
+
+// Inc.4a — per-user Privy signing (default OFF). While OFF, a real user's pipeline runs end-to-end via a DryRunSigner
+// (nothing signed) and the SYSTEM/bench wallet always signs with its LOCAL keypair (byte-identical); NO Privy
+// credentials are read/needed. When ON (post-devnet 4f), a real user's OWNER signature comes from Privy's TEE.
+const privyCfg = {
+  signingEnabled: process.env.PRIVY_SIGNING_ENABLED === 'true', // default false
+  appId: process.env.PRIVY_APP_ID ?? '',
+  appSecret: process.env.PRIVY_APP_SECRET ?? '',
+  authorizationKey: process.env.PRIVY_AUTHORIZATION_KEY, // coffre session-signer P-256 (off-host); undefined until 4f
 };
 
 const log = pino({ level: process.env.LOG_LEVEL ?? 'info' });
@@ -278,6 +359,38 @@ async function main(): Promise<void> {
     log.info({ resumed }, '🔎 confirm worker resumed in-flight broadcasts from durable state');
   confirmWorker.start();
 
+  // Inc.4a — signerFor: the SYSTEM/bench wallet signs with its LOCAL keypair (byte-identical to pre-Inc.4); a real
+  // user gets a live PrivySessionSigner when PRIVY_SIGNING_ENABLED, else a DryRunSigner (pipeline runs end-to-end,
+  // nothing signed). The Privy facade is constructed ONLY when live signing is ON (no credentials needed for bench).
+  const systemSigner = new LocalKeypairSigner(copier);
+  const privyServer = privyCfg.signingEnabled
+    ? new PrivyServer({
+        appId: privyCfg.appId,
+        appSecret: privyCfg.appSecret,
+        authorizationKey: privyCfg.authorizationKey,
+      })
+    : undefined;
+  // Real-user wallet lookup: the activation table lands in wave 4b — 4a resolves null for every user (no real user is
+  // signable yet), so production only ever builds the SYSTEM signer; the Privy/DryRun branches ship proven by tests.
+  const resolveUserWallet = async (_userId: string): Promise<UserWallet | null> => null;
+  const signerFor = createSignerResolver({
+    systemSigner,
+    privySigningEnabled: privyCfg.signingEnabled,
+    resolveUserWallet,
+    buildLiveSigner: (wallet) => {
+      if (!privyServer)
+        throw new Error('unreachable: live signer requested while the Privy facade is unset');
+      return new PrivySessionSigner(
+        privyServer,
+        wallet.walletId,
+        wallet.address,
+        privyCfg.authorizationKey,
+      );
+    },
+    buildDryRunSigner: (address) => new DryRunSigner(new PublicKey(address), log),
+    log,
+  });
+
   // CRASH RECOVERY (no-miss): re-process any cmd:sign a prior (crashed) instance read but never ACKed — its PEL,
   // re-read with XREADGROUP id '0'. Exactly-once is guaranteed by the executions table (a landed command is a
   // duplicate; a stranded 'claimed' one is re-claimable). Without this, a vault crash mid-sign would STRAND an
@@ -286,7 +399,7 @@ async function main(): Promise<void> {
     conn,
     db,
     bus,
-    copier,
+    signerFor,
     blockhashCache,
     events,
     policyFor, // per-message, per-USER sign-time policy (reads the live per-user config cache — SPEC §11)
