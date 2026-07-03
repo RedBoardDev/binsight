@@ -66,8 +66,13 @@ export function sizeTwoSided(
   pct: number,
   maxSolLamports: bigint,
 ): { solLamports: bigint; tokenTarget: bigint } {
-  let solLamports = (leaderSolRaw * BigInt(pct)) / 100n;
-  let tokenTarget = (leaderTokenRaw * BigInt(pct)) / 100n;
+  // Scale via BASIS POINTS, not `BigInt(pct)`: a fractional ratio the UI accepts (12.5%, 0.5%) would make
+  // `BigInt(12.5)` throw a RangeError → EVERY two-sided open silently dropped (mirror error, no feed row).
+  // `pct × 100` rounded to an integer bps, divided by 10000, keeps the domain function TOTAL for any ratio
+  // (ULTRACODE #38/#49).
+  const bps = BigInt(Math.round(pct * 100));
+  let solLamports = (leaderSolRaw * bps) / 10_000n;
+  let tokenTarget = (leaderTokenRaw * bps) / 10_000n;
   if (maxSolLamports > 0n && solLamports > maxSolLamports) {
     tokenTarget = (tokenTarget * maxSolLamports) / solLamports; // cap the SOL leg, scale token by the same factor
     solLamports = maxSolLamports;

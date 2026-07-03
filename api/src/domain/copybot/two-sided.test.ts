@@ -103,6 +103,20 @@ describe('sizeTwoSided — scale BOTH legs by the leader-leg ratio (NOT total va
   it('no cap (maxSol 0) → pure ratio, no clamp', () => {
     expect(sizeTwoSided(100n, 80n, 50, 0n)).toEqual({ solLamports: 50n, tokenTarget: 40n });
   });
+
+  it('FRACTIONAL ratio (12.5%) does NOT throw and scales via bps (ULTRACODE #38/#49)', () => {
+    // WHY: `BigInt(12.5)` throws a RangeError — a UI-valid fractional ratio would silently drop EVERY
+    // two-sided open (swallowed as a generic "mirror error"). The domain function must be TOTAL for any ratio.
+    expect(() => sizeTwoSided(1_000_000n, 800_000n, 12.5, 0n)).not.toThrow();
+    expect(sizeTwoSided(1_000_000n, 800_000n, 12.5, 0n)).toEqual({
+      solLamports: 125_000n, // 1_000_000 × 1250bps / 10000
+      tokenTarget: 100_000n, // 800_000 × 1250bps / 10000
+    });
+  });
+
+  it('sub-percent ratio (0.5%) also holds (bps rounding is total)', () => {
+    expect(sizeTwoSided(1_000_000n, 0n, 0.5, 0n)).toEqual({ solLamports: 5_000n, tokenTarget: 0n });
+  });
 });
 
 describe('planTwoSidedReshape — proportional removes (both legs) + per-leg token ADD deficit', () => {
