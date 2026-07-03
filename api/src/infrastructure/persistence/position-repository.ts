@@ -175,6 +175,25 @@ export class PostgresPositionRepository implements PositionRepository {
     return rows.map(rowToOpen);
   }
 
+  async getOpenOrPendingClose(wallet: string): Promise<OpenPosition[]> {
+    // 'pending_close' = a position that disappeared from the on-chain open set but whose close hasn't
+    // been fetched/reprojected yet. It's still logically an OPEN position for the purpose of detecting the
+    // open→closed transition that fires a close notification: if the cadence refreshOpen marks it
+    // pending_close BEFORE the ingest-triggered sync computes the prior-open set, a plain `getOpen` (which
+    // filters to 'open' only) would drop it and the sync would never emit `closed` — a silently-lost push.
+    const rows = await this.db
+      .select()
+      .from(positionsTable)
+      .where(
+        and(
+          eq(positionsTable.wallet, wallet),
+          inArray(positionsTable.status, ['open', 'pending_close']),
+        ),
+      )
+      .orderBy(desc(positionsTable.pnlSol));
+    return rows.map(rowToOpen);
+  }
+
   async positionStatusForWallet(
     wallet: string,
   ): Promise<Map<string, { status: string; closedAt: number | null }>> {

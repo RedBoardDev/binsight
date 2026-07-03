@@ -84,7 +84,7 @@ describe('PositionSync — chain → positions table', () => {
     const repo = {
       replaceOpenForWallet,
       upsertClosed,
-      getOpen: vi.fn(async (): Promise<OpenPosition[]> => []),
+      getOpenOrPendingClose: vi.fn(async (): Promise<OpenPosition[]> => []),
       getStrategies: vi.fn(async () => new Map<string, never>()),
     };
 
@@ -101,7 +101,7 @@ describe('PositionSync — chain → positions table', () => {
     const sync = new PositionSync(legPnl, metadata, repo, silent);
     const res = await sync.sync('W', snapshot, valued());
 
-    // No prior persisted open row for CLOSED (getOpen → []), so it's NOT a newly-closed transition:
+    // No prior persisted open row for CLOSED (getOpenOrPendingClose → []), so it's NOT a newly-closed transition:
     // closedRows is empty even though the closed COUNT is 1 (this is the backfill-safety property).
     expect(res.open).toBe(1);
     expect(res.closed).toBe(1);
@@ -141,7 +141,9 @@ describe('PositionSync — chain → positions table', () => {
         openRows.push(...rows);
       }),
       upsertClosed: vi.fn(async () => {}),
-      getOpen: vi.fn(async () => [{ positionAddress: 'OPEN', outOfRangeSince: 1234 }]),
+      getOpenOrPendingClose: vi.fn(async () => [
+        { positionAddress: 'OPEN', outOfRangeSince: 1234 },
+      ]),
       getStrategies: vi.fn(async () => new Map()),
     };
     // active bin above range → out_up → OOR clock applies, must keep 1234 not reset to now
@@ -174,7 +176,7 @@ describe('PositionSync — chain → positions table', () => {
     const repo = {
       replaceOpenForWallet,
       upsertClosed,
-      getOpen: vi.fn(async () => []),
+      getOpenOrPendingClose: vi.fn(async () => []),
       getStrategies: vi.fn(async () => new Map<string, never>()),
     };
     const snapshot: OnchainWalletSnapshot = {
@@ -203,26 +205,46 @@ describe('PositionSync — chain → positions table', () => {
 });
 
 /**
- * The close-notification wiring (PositionSync.sync.closedRows ⊕ the engine's `wasReconciled` gate).
- * This is the LIVE push-notification path: a backfill that spams or a duplicated close = notification spam.
- * We drive a stateful repo (the persisted open set evolves exactly as production does) and reproduce the
- * exact emit decision from engine/index.ts so the test fails the moment that decision regresses.
+ * The close-notification wiring — PositionSync.sync.closedRows, the LIVE push/Bark/in-app path. A backfill
+ * that spams, a duplicate, OR a silently-dropped close are all regressions here. We drive a stateful repo
+ * that reproduces the REAL status machine (open → pending_close → closed) so the prior-open set evolves
+ * exactly as production does, and mirror the engine seam that emits one `closed` per newly-closed row.
  */
-describe('PositionSync — close-notification wiring (no backfill spam, no duplicates)', () => {
+describe('PositionSync — close-notification wiring (no backfill spam, no duplicates, no lost closes)', () => {
   const metadata = {
     resolve: vi.fn(async (m: string[]) => new Map(m.map((x) => [x, { symbol: 'S' }]))),
   };
 
-  /** A repo whose persisted open set mutates through replaceOpenForWallet — like the real DB does. */
+  type Status = 'open' | 'pending_close' | 'closed';
+
+  /** A repo mirroring the DB status machine: replaceOpenForWallet flags disappeared opens 'pending_close'
+   *  (like the real set-diff) and upsertClosed settles them to 'closed'. getOpenOrPendingClose returns both
+   *  open + pending_close — the prior-open set the sync must diff against. */
   const statefulRepo = (initialOpen: OpenPosition[]) => {
-    let open = [...initialOpen];
+    const byAddr = new Map<string, { row: OpenPosition; status: Status }>();
+    for (const p of initialOpen) byAddr.set(p.positionAddress, { row: p, status: 'open' });
+    const withStatus = (...s: Status[]) =>
+      [...byAddr.values()].filter((v) => s.includes(v.status)).map((v) => v.row);
     return {
       replaceOpenForWallet: vi.fn(async (_w: string, rows: OpenPosition[]) => {
-        open = [...rows];
+        const keep = new Set(rows.map((r) => r.positionAddress));
+        for (const r of rows) byAddr.set(r.positionAddress, { row: r, status: 'open' });
+        for (const v of byAddr.values())
+          if (v.status === 'open' && !keep.has(v.row.positionAddress)) v.status = 'pending_close';
       }),
-      upsertClosed: vi.fn(async () => {}),
-      getOpen: vi.fn(async () => open),
+      upsertClosed: vi.fn(async (rows: { positionAddress: string }[]) => {
+        for (const r of rows) {
+          const v = byAddr.get(r.positionAddress);
+          if (v) v.status = 'closed';
+        }
+      }),
+      getOpenOrPendingClose: vi.fn(async () => withStatus('open', 'pending_close')),
       getStrategies: vi.fn(async () => new Map<string, never>()),
+      /** Test-only helper to force the cadence's pending_close mark without a full refreshOpen. */
+      _markPendingClose: (addr: string) => {
+        const v = byAddr.get(addr);
+        if (v) v.status = 'pending_close';
+      },
     };
   };
 
@@ -236,22 +258,19 @@ describe('PositionSync — close-notification wiring (no backfill spam, no dupli
     complete: true,
   });
 
-  /** Mirror of the engine seam: capture reconciled state, sync, then emit one `closed` per newly-closed
-   *  row ONLY if the wallet was already reconciled. Returns the emitted closed addresses for assertions. */
+  /** Mirror of the engine seam AFTER the #98 fix: sync, then emit one `closed` per newly-closed row —
+   *  UNCONDITIONALLY (the prior-open diff is the sole spam guard). Returns the emitted closed addresses. */
   const runSync = async (
     sync: PositionSync,
     snapshot: OnchainWalletSnapshot,
-    wasReconciled: boolean,
   ): Promise<string[]> => {
     const res = await sync.sync('W', snapshot, valued());
-    const emitted: string[] = [];
-    if (wasReconciled) for (const row of res.closedRows) emitted.push(row.positionAddress);
-    return emitted;
+    return res.closedRows.map((row) => row.positionAddress);
   };
 
   it('(a) the INITIAL backfill sync emits ZERO closed events even with a non-empty closed set', async () => {
-    // Wallet onboarding: many historical closes land at once. Nothing was persisted as open before, and
-    // wasReconciled is false → ZERO notifications. (Both guards independently prevent the 15k-row spam.)
+    // Wallet onboarding: many historical closes land at once. Nothing was persisted as open before → the
+    // prior-open diff flags ZERO newly-closed → no notifications. (This is the sole backfill-spam guard.)
     const legPnl: LegProjectionSource = {
       pnlByPosition: vi.fn(async () => [
         proj({ position: 'OPEN', depositSol: 6 }),
@@ -264,7 +283,7 @@ describe('PositionSync — close-notification wiring (no backfill spam, no dupli
     // biome-ignore lint/suspicious/noExplicitAny: partial repo stub for a focused unit test
     const sync = new PositionSync(legPnl, metadata, repo as any, silent);
 
-    const emitted = await runSync(sync, snap(['OPEN']), /* wasReconciled */ false);
+    const emitted = await runSync(sync, snap(['OPEN']));
     expect(emitted).toEqual([]); // no backfill spam
     // And even the raw closedRows are empty: no historical close was ever in the persisted open set.
     const res = await sync.sync('W', snap(['OPEN']), valued());
@@ -273,9 +292,9 @@ describe('PositionSync — close-notification wiring (no backfill spam, no dupli
   });
 
   it('(b)+(c) a position closing on a later live sync emits exactly ONE closed event, never again', async () => {
-    // OPEN was reconciled earlier and is persisted as open. On the next sync the snapshot no longer lists
-    // it → open→closed transition → exactly one `closed`. The sync AFTER that must NOT re-emit, because
-    // sync 1 already dropped OPEN from the persisted open set (so it's no longer a transition).
+    // OPEN is persisted as open. On the next sync the snapshot no longer lists it → open→closed transition
+    // → exactly one `closed`. The sync AFTER that must NOT re-emit: upsertClosed settled OPEN to 'closed',
+    // so it's no longer in the prior-open set.
     const legPnl: LegProjectionSource = {
       pnlByPosition: vi.fn(async () => [
         proj({
@@ -295,7 +314,7 @@ describe('PositionSync — close-notification wiring (no backfill spam, no dupli
     // biome-ignore lint/suspicious/noExplicitAny: partial repo stub for a focused unit test
     const sync = new PositionSync(legPnl, metadata, repo as any, silent);
 
-    // Sync 1 — snapshot no longer contains OPEN → it closes. wasReconciled true → emit exactly one.
+    // Sync 1 — snapshot no longer contains OPEN → it closes → emit exactly one.
     const first = await sync.sync('W', snap([]), valued());
     expect(first.closedRows).toHaveLength(1); // (b) exactly one newly-closed row
     const payload = first.closedRows[0]!;
@@ -308,11 +327,57 @@ describe('PositionSync — close-notification wiring (no backfill spam, no dupli
     });
     expect(typeof payload.pnlSol).toBe('number');
     expect(typeof payload.feesSol).toBe('number');
-    expect(await runSync(sync, snap([]), /* wasReconciled */ true)).toEqual([]); // already consumed above
 
-    // Sync 2 — OPEN was dropped from the persisted open set by sync 1, so it's no longer a transition.
+    // Sync 2 — OPEN was settled to 'closed' by sync 1's upsertClosed, so it's no longer a transition.
     const second = await sync.sync('W', snap([]), valued());
-    expect(second.closedRows).toEqual([]); // (c) no duplicate, even when still wasReconciled === true
-    expect(await runSync(sync, snap([]), /* wasReconciled */ true)).toEqual([]);
+    expect(second.closedRows).toEqual([]); // (c) no duplicate
+    expect(await runSync(sync, snap([]))).toEqual([]);
+  });
+
+  it('(d) the FIRST sync after a restart emits closes for positions closed while the process was down', async () => {
+    // Regression #98: `reconciled` is an in-memory flag reset to false on every boot, so the first post-
+    // restart sync had wasReconciled=false. But that sync is EXACTLY the one detecting downtime closes —
+    // whose open set was persisted before shutdown. The old gate suppressed them, silently, on every
+    // deploy. With the gate removed, the persisted prior-open diff alone must still emit the close.
+    const legPnl: LegProjectionSource = {
+      pnlByPosition: vi.fn(async () => [
+        proj({ position: 'DOWN', pnlSol: -0.2, depositSol: 6, withdrawSol: 5.8 }),
+      ]),
+      pnlForPositions: vi.fn(async () => []),
+    };
+    // DOWN was persisted 'open' before the crash; on-chain it closed during downtime.
+    const repo = statefulRepo([
+      // biome-ignore lint/suspicious/noExplicitAny: minimal persisted-open stub
+      { positionAddress: 'DOWN', outOfRangeSince: null } as any,
+    ]);
+    // biome-ignore lint/suspicious/noExplicitAny: partial repo stub for a focused unit test
+    const sync = new PositionSync(legPnl, metadata, repo as any, silent);
+
+    // First sync after boot — snapshot no longer lists DOWN → it must emit exactly one close.
+    expect(await runSync(sync, snap([]))).toEqual(['DOWN']);
+  });
+
+  it('(e) a close survives the pending_close race between the cadence refreshOpen and the ingest sync', async () => {
+    // Regression #97: the 30s cadence refreshOpen can flag a just-closed position 'pending_close' BEFORE
+    // the WS-triggered ingest sync reprojects it. If the prior-open set were built from status='open' only
+    // (getOpen), the pending_close row would be dropped → no open→closed transition → the `closed` event is
+    // silently lost (no push/Bark/in-app). getOpenOrPendingClose keeps it, so the transition still fires.
+    const legPnl: LegProjectionSource = {
+      pnlByPosition: vi.fn(async () => [
+        proj({ position: 'RACE', pnlSol: 0.3, depositSol: 6, withdrawSol: 6.3 }),
+      ]),
+      pnlForPositions: vi.fn(async () => []),
+    };
+    const repo = statefulRepo([
+      // biome-ignore lint/suspicious/noExplicitAny: minimal persisted-open stub
+      { positionAddress: 'RACE', outOfRangeSince: null } as any,
+    ]);
+    // The cadence already marked RACE pending_close (position vanished on-chain, close not yet reprojected).
+    repo._markPendingClose('RACE');
+    // biome-ignore lint/suspicious/noExplicitAny: partial repo stub for a focused unit test
+    const sync = new PositionSync(legPnl, metadata, repo as any, silent);
+
+    // The ingest sync now reprojects RACE as closed → the close MUST still be emitted (was lost before).
+    expect(await runSync(sync, snap([]))).toEqual(['RACE']);
   });
 });

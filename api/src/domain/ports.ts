@@ -113,6 +113,11 @@ export interface PositionRepository {
   /** replace the full open set for a wallet (positions absent are no longer open). */
   replaceOpenForWallet(wallet: string, positions: OpenPosition[]): Promise<void>;
   getOpen(wallet: string): Promise<OpenPosition[]>;
+  /** Open positions PLUS those transiting through 'pending_close' (disappeared on-chain, close not yet
+   *  reprojected). This is the prior-open set for close-notification detection: a position must still count
+   *  as open here while it settles, or the sync that reprojects its close would miss the open→closed
+   *  transition and never emit `closed` (lost push/Bark/in-app). */
+  getOpenOrPendingClose(wallet: string): Promise<OpenPosition[]>;
   getClosed(
     wallets: string[],
     opts: {

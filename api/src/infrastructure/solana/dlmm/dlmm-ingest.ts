@@ -65,11 +65,15 @@ export class DlmmIngest implements DlmmIngestPort {
     const stopSig = toppingUp ? cursor.newestSig : null;
     let before: string | undefined = resuming ? (cursor.oldestSig ?? undefined) : undefined;
 
-    // newest signature of this wallet: captured on the first page of a fresh backfill / top-up; on a
-    // resume we don't revisit the top, so keep what the cursor already recorded.
-    let newestSig: string | null = resuming ? cursor.newestSig : null;
+    // The newest signature actually paged THIS run (page[0] of the first successfully-fetched page). The
+    // stored cursor top is derived from it below, but only advanced when the run provably closed the gap
+    // to the old top (hitKnownTop) or reached genesis — see the setCursor block.
+    let runTopSig: string | null = null;
     let oldestSig: string | null = cursor?.oldestSig ?? null;
     let reachedGenesis = false;
+    // Run-level: a top-up reconnected to the previously-ingested top (or ran clean to genesis). Only then
+    // may the stored top advance; otherwise a mid-run failure left a gap we must re-page next time.
+    let hitKnownTop = false;
     let totalLegs = 0;
     let totalTxs = 0;
 
@@ -81,10 +85,10 @@ export class DlmmIngest implements DlmmIngestPort {
       }
 
       const sigs: string[] = [];
-      let hitKnownTop = false;
+      let pageReachedKnownTop = false;
       for (const s of page) {
         if (stopSig && s.signature === stopSig) {
-          hitKnownTop = true;
+          pageReachedKnownTop = true;
           break;
         }
         if (s.err) continue; // failed tx — no state change to decode
@@ -106,11 +110,14 @@ export class DlmmIngest implements DlmmIngestPort {
         break;
       }
       await this.repo.replaceForSignatures(wallet, sigs, legs);
-      // Advance the "newest seen" ONLY AFTER a page is successfully fetched + persisted. Setting it BEFORE
-      // the fetch (the old bug) let a FAILED fetch — e.g. a free-tier batch-403 abort — move the top PAST
-      // un-ingested txs, which were then NEVER re-fetched: a silent no-miss gap that dropped a leader's
-      // RemoveLiquidity withdraw (→ wrong PnL). On the first successful page, page[0] is the true newest sig.
-      if (newestSig === null) newestSig = page[0]!.signature;
+      // Record the run's top ONLY AFTER a page is successfully fetched + persisted. On the first successful
+      // page, page[0] is the newest sig this run saw. Whether it becomes the STORED top is decided after the
+      // loop (a top-up must reconnect to the old top first) — see the setCursor block.
+      if (runTopSig === null) runTopSig = page[0]!.signature;
+      // Only NOW — after the page's new sigs (those before the known top) are persisted — may we record the
+      // reconnect. Recording it during the scan would let a page whose decode then FAILED still advance the
+      // stored top past its un-ingested sigs (the same silent-gap class this guard prevents).
+      if (pageReachedKnownTop) hitKnownTop = true;
       totalLegs += legs.length;
       totalTxs += txs;
       opts.onProgress?.(totalTxs);
@@ -125,7 +132,7 @@ export class DlmmIngest implements DlmmIngestPort {
         if (oldestBt != null && oldestBt < sinceSec) break;
       }
 
-      if (hitKnownTop) break;
+      if (pageReachedKnownTop) break;
       if (page.length < SIG_PAGE) {
         reachedGenesis = true;
         break;
@@ -134,9 +141,23 @@ export class DlmmIngest implements DlmmIngestPort {
     }
 
     const complete = reachedGenesis || cursor?.complete === true;
+    // A top-up may ONLY advance the stored top once it reconnected to the previously-ingested top
+    // (hitKnownTop) or ran clean to genesis. A decode/fetch failure mid-run left a gap between the new top
+    // and the old one; advancing here would top-up from the NEW top forever and NEVER re-request that gap —
+    // silently dropping the DLMM legs (opens/adds/removes/closes/claims) in it. So keep the OLD top and let
+    // the next top-up re-page (and close) the gap. Mirrors WalletFlowIngest's guard.
+    const topUpCaughtUp = hitKnownTop || reachedGenesis;
+    const newestSig = resuming
+      ? (cursor?.newestSig ?? null) // resume never revisits the top
+      : toppingUp
+        ? topUpCaughtUp
+          ? (runTopSig ?? cursor?.newestSig ?? null)
+          : (cursor?.newestSig ?? null) // gap left behind → keep the old top, retry next run
+        : (runTopSig ?? cursor?.newestSig ?? null); // fresh backfill: the first page's top is the true top
     await this.repo.setCursor(wallet, {
-      newestSig: newestSig ?? cursor?.newestSig ?? null,
-      oldestSig,
+      newestSig,
+      // A top-up stops above genesis, so it must not clobber the true genesis oldest recorded at backfill.
+      oldestSig: toppingUp ? (cursor?.oldestSig ?? null) : oldestSig,
       complete,
     });
     this.logger.info({ wallet, legs: totalLegs, txs: totalTxs, complete }, 'dlmm ingest: done');

@@ -13,7 +13,7 @@ export interface LegProjectionSource {
 
 type SyncRepo = Pick<
   PositionRepository,
-  'replaceOpenForWallet' | 'upsertClosed' | 'getOpen' | 'getStrategies'
+  'replaceOpenForWallet' | 'upsertClosed' | 'getOpenOrPendingClose' | 'getStrategies'
 >;
 
 const fallbackSymbol = (mint: string) => `${mint.slice(0, 4)}…${mint.slice(-4)}`;
@@ -96,7 +96,10 @@ export class PositionSync {
     const strategy = await this.repo.getStrategies(wallet); // scoped: only this wallet's positions
     // The persisted open set right before this sync — the source of truth for open→closed transitions
     // (in on-chain mode `rt.open` is frozen at registration and never refreshed, so it can't be used).
-    const prior = await this.repo.getOpen(wallet);
+    // Includes 'pending_close' rows: a position the cadence refreshOpen already flagged (disappeared
+    // on-chain) is still an OPEN→closed transition when this sync reprojects its close — using `getOpen`
+    // here would drop it and silently lose the close notification (the pending_close race).
+    const prior = await this.repo.getOpenOrPendingClose(wallet);
     const priorOpenAddrs = new Set<string>();
     const priorOorSince = new Map<string, number | null>();
     for (const o of prior) {
