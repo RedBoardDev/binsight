@@ -383,7 +383,7 @@ export async function process1(
   // by the HMAC envelope — selects the caps/config row. Never a hardcoded SYSTEM user.
   const { maxTradeSol, jitoBundleUrl } = await ctx.policyFor(sr.userId);
 
-  const action = sr.eventKey.split(':')[2]; // `${leader}:${pool}:${action}:${id}` — leader/pool are base58 (no ':')
+  const action = sr.eventKey.split(':')[2]; // `${leader}:${pool}:${action}:${position}:${signature}` — action stays at index 2 (all fields base58, no ':')
   const forceReclaim = sr.kind === 'close' && (action === 'failsafe' || action === 'orphan');
 
   // EXACTLY-ONCE recovery pre-check (#7) — BEFORE staleness/claim: a prior instance may have crashed after putting

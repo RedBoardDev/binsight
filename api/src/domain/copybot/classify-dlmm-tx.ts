@@ -1,8 +1,9 @@
 /**
  * Copy-bot · P1 — PURE part of classifying a tx (extracted from `watch-leader.ts` `classify()`).
  *
- * Given a parsed transaction + a SYNCHRONOUS pool-meta lookup (already loaded), produces the
- * `DetectedEvent` valued in SOL — or `null` if it isn't a DLMM tx. Leg routing (deposit →
+ * Given a parsed transaction + a SYNCHRONOUS pool-meta lookup (already loaded), produces ONE
+ * `DetectedEvent` valued in SOL PER leader position the tx touches — `[]` if it isn't a DLMM tx (finding
+ * #37: a multi-position tx must not collapse to one merged event). Leg routing (deposit →
  * `depositSol`, withdraw → `withdrawSol`, claim → `claimSol`) and the pool's non-SOL side live HERE, so they
  * are tested WITHOUT the network (cf. `classify-dlmm-tx.test.ts`, golden on open/close/claim/partial withdrawal).
  *
@@ -28,58 +29,88 @@ export function poolsOf(tx: ParsedTransactionWithMeta | null): string[] {
 }
 
 /**
- * Builds the `DetectedEvent` of ONE tx. `null` if it isn't a DLMM tx (no tx, or no DLMM Event-CPI). A pool
- * that is present but not valuable in SOL (`solSide === null` / meta absent) keeps the action with amounts at
- * 0 and `nonSolMint = null` — we never lose the event, we only lose the amount.
+ * Builds the `DetectedEvent`s of ONE tx — ONE event PER leader position touched (finding #37). `[]` if it isn't
+ * a DLMM tx (no tx, or no DLMM Event-CPI). A pool that is present but not valuable in SOL (`solSide === null` /
+ * meta absent) keeps the action with amounts at 0 and `nonSolMint = null` — we never lose the event, only the amount.
+ *
+ * WHY per-position (not per-tx): a single leader tx can touch TWO positions (close A + open B, an on-chain
+ * rebalance across positions, a multi-position bot tx). Collapsing to one event (last-leg-wins + amounts summed
+ * across positions) attributes the merged amounts to the last-decoded position and DROPS the other position's
+ * action entirely — a full close of A would fall back to the 30s reconcile (delayed close = fund risk) and a
+ * PARTIAL remove of A would be silently lost forever (the copy stays oversized). So we GROUP the decoded legs by
+ * `leg.position` and build one event per group; amounts are summed only WITHIN a position.
+ *
+ * Single-position identity: a tx that touches exactly one position yields exactly ONE event, byte-identical to
+ * the pre-#37 behavior (every real DLMM leg carries its own position; the standalone-close marker carries it too).
  *
  * DLMM-ness is gated on the decoded events (`hasDlmmEvents`), NOT on `logMessages`: Solana truncates logs at
  * 10KB, so a DLMM instruction that runs after a big bundle (e.g. a Jupiter zap) has no DLMM string in the
  * truncated logs — gating on logs would return null and PERMANENTLY MISS that leader open/close. `instruction`
  * stays a best-effort LABEL from the logs (`'(DLMM)'` when truncated); routing keys off `closed`, not the label.
  */
-export function buildDetectedEvent(
+export function buildDetectedEvents(
   signature: string,
   tx: ParsedTransactionWithMeta | null,
   poolMeta: PoolMetaLookup,
-): DetectedEvent | null {
-  if (!tx || !hasDlmmEvents(tx)) return null;
+): DetectedEvent[] {
+  if (!tx || !hasDlmmEvents(tx)) return [];
 
   const instruction = parseInstruction(tx.meta?.logMessages ?? []) ?? '(DLMM)';
-  let depositSol = 0;
-  let depositTokenRaw = 0; // raw NON-SOL units deposited — authoritative two-sided signal (decode, not the shape read)
-  let withdrawSol = 0;
-  let claimSol = 0;
-  let closed = false; // a decoded 'close' leg (PositionClose) → robust close signal, independent of the log label
-  let pool = '';
-  let position = '';
-  let nonSolMint: string | null = null;
-  for (const leg of decodeDlmmLegs(tx)) {
-    if (leg.kind === 'close') closed = true; // PositionClose leg → the leader closed the position
-    if (leg.lbPair) pool = leg.lbPair; // a zero-amount close marker carries no pool → don't clobber the real one
-    if (leg.position) position = leg.position; // P2 tracker key; legs of the same tx share the position
-    const meta = poolMeta(leg.lbPair);
-    if (!meta || !meta.solSide) continue; // pool not valuable in SOL → action kept, without amount
-    nonSolMint = meta.mintX === SOL_MINT ? meta.mintY : meta.mintX;
-    const sol = legValueSol(leg, { binStep: meta.binStep, solSide: meta.solSide });
-    if (leg.kind === 'deposit') {
-      depositSol += sol;
-      depositTokenRaw += Number(meta.mintX === SOL_MINT ? leg.amountY : leg.amountX); // the non-SOL leg's raw amount
-    } else if (leg.kind === 'withdraw') withdrawSol += sol;
-    else claimSol += sol;
+  const blockTime = tx.blockTime ?? null;
+  const legs = decodeDlmmLegs(tx);
+
+  // Group the legs by their position pubkey (the aggregation key). Real DLMM events (open/add/remove/claim/close)
+  // all decode a `position`; an empty-position leg is a decoder degenerate. To keep the single-position identity
+  // exact, when the tx touches at most ONE distinct position we route EVERY leg (including any stray empty-position
+  // marker) into that single group — so a one-position tx is one event, identical to before.
+  const distinct = [...new Set(legs.map((l) => l.position).filter((p) => p !== ''))];
+  const soleGroup = distinct.length <= 1 ? (distinct[0] ?? '') : null;
+  const groups = new Map<string, typeof legs>();
+  for (const leg of legs) {
+    const key = soleGroup ?? leg.position;
+    const bucket = groups.get(key);
+    if (bucket) bucket.push(leg);
+    else groups.set(key, [leg]);
   }
 
-  return {
-    signature,
-    blockTime: tx.blockTime ?? null,
-    instruction,
-    depositSol,
-    depositTokenRaw,
-    withdrawSol,
-    claimSol,
-    closed,
-    pool,
-    position,
-    nonSolMint,
-    nonSolSymbol: null,
-  };
+  const events: DetectedEvent[] = [];
+  for (const [groupPosition, groupLegs] of groups) {
+    let depositSol = 0;
+    let depositTokenRaw = 0; // raw NON-SOL units deposited — authoritative two-sided signal (decode, not the shape read)
+    let withdrawSol = 0;
+    let claimSol = 0;
+    let closed = false; // a decoded 'close' leg (PositionClose) → robust close signal, independent of the log label
+    let pool = '';
+    let nonSolMint: string | null = null;
+    for (const leg of groupLegs) {
+      if (leg.kind === 'close') closed = true; // PositionClose leg → the leader closed the position
+      if (leg.lbPair) pool = leg.lbPair; // a zero-amount close marker carries no pool → don't clobber the real one
+      const meta = poolMeta(leg.lbPair);
+      if (!meta || !meta.solSide) continue; // pool not valuable in SOL → action kept, without amount
+      nonSolMint = meta.mintX === SOL_MINT ? meta.mintY : meta.mintX;
+      const sol = legValueSol(leg, { binStep: meta.binStep, solSide: meta.solSide });
+      if (leg.kind === 'deposit') {
+        depositSol += sol;
+        depositTokenRaw += Number(meta.mintX === SOL_MINT ? leg.amountY : leg.amountX); // the non-SOL leg's raw amount
+      } else if (leg.kind === 'withdraw') withdrawSol += sol;
+      else claimSol += sol;
+    }
+
+    events.push({
+      signature,
+      blockTime,
+      instruction,
+      depositSol,
+      depositTokenRaw,
+      withdrawSol,
+      claimSol,
+      closed,
+      pool,
+      position: groupPosition, // P2 tracker key; the group key IS the position (empty only for a degenerate no-position tx)
+      nonSolMint,
+      nonSolSymbol: null,
+    });
+  }
+
+  return events;
 }

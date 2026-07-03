@@ -44,16 +44,21 @@ export interface LeaderPosition {
 
 export class LeaderPositionTracker {
   private readonly positions = new Map<string, LeaderPosition>();
-  private readonly appliedSigs = new Set<string>();
+  /** Keyed by `signature|position`, NOT by signature alone: one tx can carry TWO position-events (finding #37 —
+   *  close A + open B), and each must apply exactly once. A per-signature guard would drop the 2nd position's
+   *  event (missing its close/remove); a per-(sig,position) guard still collapses WS+poll re-observations. */
+  private readonly appliedEvents = new Set<string>();
 
   /**
    * Applies a detected event. Returns the updated position, or `undefined` if the event carries no
    * position (tx with no decodable leg, e.g. a pure `InitializePosition` — it carries no capital anyway).
-   * Idempotent per signature: re-applying the same event double-counts nothing (replay/live safety).
+   * Idempotent per (signature, position): re-applying the same event double-counts nothing (replay/live safety),
+   * yet two DISTINCT positions of the SAME signature each apply once (finding #37: no per-sig collapse).
    */
   apply(event: DetectedEvent): LeaderPosition | undefined {
     if (!event.position) return undefined; // no key → not traceable (and no capital)
-    if (this.appliedSigs.has(event.signature)) return this.positions.get(event.position);
+    const applyKey = `${event.signature}|${event.position}`;
+    if (this.appliedEvents.has(applyKey)) return this.positions.get(event.position);
 
     const pos = this.positions.get(event.position) ?? this.create(event.position);
 
@@ -83,7 +88,7 @@ export class LeaderPositionTracker {
 
     pos.lastSignature = event.signature;
     pos.eventCount += 1;
-    this.appliedSigs.add(event.signature);
+    this.appliedEvents.add(applyKey);
     return pos;
   }
 

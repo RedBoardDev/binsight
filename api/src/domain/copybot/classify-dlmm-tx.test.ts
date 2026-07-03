@@ -4,7 +4,21 @@ import type { ParsedTransactionWithMeta } from '@solana/web3.js';
 import { describe, expect, it } from 'vitest';
 import type { LoadedPoolMeta } from '../dlmm';
 import { classifyInstruction } from '../dlmm';
-import { buildDetectedEvent, type PoolMetaLookup, poolsOf } from './classify-dlmm-tx';
+import { buildDetectedEvents, type PoolMetaLookup, poolsOf } from './classify-dlmm-tx';
+import type { DetectedEvent } from './events';
+
+// Single-position golden helper: a one-position tx must yield EXACTLY one event (finding #37 must not have
+// split a single position into many), identical to the pre-#37 `buildDetectedEvent`. Returns that lone event
+// (or null for a non-DLMM/empty tx, matching the old `null` contract) and asserts the ≤1 invariant.
+const buildDetectedEvent = (
+  signature: string,
+  tx: Parameters<typeof buildDetectedEvents>[1],
+  poolMeta: PoolMetaLookup,
+): DetectedEvent | null => {
+  const evs = buildDetectedEvents(signature, tx, poolMeta);
+  expect(evs.length).toBeLessThanOrEqual(1); // one position → one event, never a spurious split
+  return evs[0] ?? null;
+};
 
 // --- Event-CPI event builders at the REAL byte layout (same technique as dlmm-event-decoder.test.ts:
 // [8 self-CPI tag][8 disc][borsh]) → we exercise the real decoding path, without the network. lb_pair = PK(1). ---
@@ -357,5 +371,128 @@ describe('buildDetectedEvent — routing DLMM legs into SOL (golden: open/close/
   it('poolsOf lists the touched lbPairs (meta pre-loading) and tolerates null', () => {
     expect(poolsOf(tx('ClaimFee2', [claimFee2(0n, 1n, 0)]))).toEqual([LB_PAIR]);
     expect(poolsOf(null)).toEqual([]);
+  });
+});
+
+// --- Finding #37: a tx touching TWO positions must fan out to ONE event PER position, never merge to one ---
+// (last-leg-wins for `position` + amounts summed across positions). Builders parametrised by position/lb_pair byte.
+const addLiquidityFor = (x: bigint, y: bigint, bin: number, posB: number, pairB: number): string =>
+  cpi(
+    [31, 94, 125, 90, 227, 52, 61, 186],
+    Buffer.concat([PK(pairB), PK(2), PK(posB), amounts(x, y), binBuf(bin)]),
+  );
+const removeLiquidityFor = (
+  x: bigint,
+  y: bigint,
+  bin: number,
+  posB: number,
+  pairB: number,
+): string =>
+  cpi(
+    [116, 244, 97, 232, 103, 31, 152, 58],
+    Buffer.concat([PK(pairB), PK(2), PK(posB), amounts(x, y), binBuf(bin)]),
+  );
+// PositionClose of a SPECIFIC position (position, owner — no lb_pair).
+const closePositionFor = (posB: number): string =>
+  cpi([255, 196, 16, 107, 28, 202, 53, 128], Buffer.concat([PK(posB), PK(9)]));
+
+const POSITION_B = utils.bytes.bs58.encode(PK(4)); // a 2nd, distinct leader position
+const LB_PAIR_B = utils.bytes.bs58.encode(PK(5)); // opened in a DIFFERENT pool
+
+describe('buildDetectedEvents — ONE event PER position on a multi-position tx (finding #37)', () => {
+  // THE HEADLINE BUG: a leader tx that CLOSES position A and OPENS position B in one signature. The old
+  // per-tx classifier kept only B (last leg) and SUMMED A's withdraw into B's event → A's close was NEVER
+  // routed on the fast path (only the 30s reconcile caught it = delayed close = fund risk).
+  it('close A + open B in one tx → TWO events, A={close, withdraw} and B={open, deposit}, neither merged', () => {
+    const events = buildDetectedEvents(
+      'sigCloseAOpenB',
+      // A: remove all + PositionClose (pool A). B: fresh add (pool B). Interleaved in one tx.
+      tx('MultiPosition', [
+        removeLiquidityFor(0n, 2_000_000_000n, 0, 3, 1),
+        closePositionFor(3),
+        addLiquidityFor(0n, 1_500_000_000n, 0, 4, 5),
+      ]),
+      lookupSolY,
+    );
+    expect(events).toHaveLength(2); // NOT collapsed to one
+
+    const a = events.find((e) => e.position === POSITION);
+    const b = events.find((e) => e.position === POSITION_B);
+    // A — the close is routed as its OWN event (no longer swallowed by B).
+    expect(a).toBeDefined();
+    expect(a?.closed).toBe(true);
+    expect(a?.withdrawSol).toBeCloseTo(2, 9);
+    expect(a?.depositSol).toBe(0); // B's deposit did NOT bleed into A
+    expect(a?.pool).toBe(LB_PAIR);
+    // B — the open keeps its own deposit, unpolluted by A's withdraw.
+    expect(b).toBeDefined();
+    expect(b?.closed).toBe(false);
+    expect(b?.depositSol).toBeCloseTo(1.5, 9);
+    expect(b?.withdrawSol).toBe(0);
+    expect(b?.pool).toBe(LB_PAIR_B);
+  });
+
+  // A PARTIAL remove of A used to be the WORST case: no close leg, merged into the last position → silently
+  // dropped forever, the copy staying oversized. Two partial removes in one tx must each surface per position.
+  it('rebalance-style tx: partial remove of A + partial remove of B → per-position withdraws, none dropped', () => {
+    const events = buildDetectedEvents(
+      'sigRebalanceTwoPos',
+      tx('MultiPosition', [
+        removeLiquidityFor(0n, 500_000_000n, 0, 3, 1),
+        removeLiquidityFor(0n, 750_000_000n, 0, 4, 5),
+      ]),
+      lookupSolY,
+    );
+    expect(events).toHaveLength(2);
+    const a = events.find((e) => e.position === POSITION);
+    const b = events.find((e) => e.position === POSITION_B);
+    expect(a?.withdrawSol).toBeCloseTo(0.5, 9); // A's partial remove is NOT merged into B
+    expect(a?.closed).toBe(false);
+    expect(b?.withdrawSol).toBeCloseTo(0.75, 9);
+    expect(b?.closed).toBe(false);
+  });
+
+  // THE COORDINATOR'S CASE: a leader closing TWO laddered positions on the SAME pool in one tx (review #41: leaders
+  // commonly run several positions per pair). Grouping yields two events sharing the pool but with DISTINCT positions
+  // — the per-position pubkey is what disambiguates the routed eventKey/commandId (…:close:${position}:${sig}).
+  it('close TWO distinct positions on the SAME pool in one tx → TWO events, same pool, DISTINCT positions', () => {
+    const events = buildDetectedEvents(
+      'sigCloseTwoSamePool',
+      tx('MultiPosition', [
+        removeLiquidityFor(0n, 1_000_000_000n, 0, 3, 1), // position A, pool 1
+        closePositionFor(3),
+        removeLiquidityFor(0n, 2_000_000_000n, 0, 4, 1), // position B, SAME pool 1
+        closePositionFor(4),
+      ]),
+      lookupSolY,
+    );
+    expect(events).toHaveLength(2);
+    const a = events.find((e) => e.position === POSITION);
+    const b = events.find((e) => e.position === POSITION_B);
+    expect(a?.pool).toBe(LB_PAIR);
+    expect(b?.pool).toBe(LB_PAIR); // SAME pool — so pool alone can NOT distinguish them (why the eventKey needs position)
+    expect(a?.position).not.toBe(b?.position); // DISTINCT positions
+    expect(a?.closed).toBe(true);
+    expect(b?.closed).toBe(true);
+    expect(a?.withdrawSol).toBeCloseTo(1, 9); // each close keeps its OWN withdraw — neither is dropped nor merged
+    expect(b?.withdrawSol).toBeCloseTo(2, 9);
+  });
+
+  // Same-position legs (remove + re-add of ONE position, e.g. an on-chain rebalance of a single position) MERGE
+  // into ONE event — they must NOT split. This is why no per-(sig,position,action) event-index is needed: a
+  // position appears in at most one event per tx, so its routed eventKey (…:action:signature) stays unique.
+  it('remove + re-add of the SAME position → ONE event summing both legs (no spurious split)', () => {
+    const events = buildDetectedEvents(
+      'sigRebalanceSamePos',
+      tx('MultiPosition', [
+        removeLiquidityFor(0n, 1_000_000_000n, 0, 3, 1),
+        addLiquidityFor(0n, 800_000_000n, 0, 3, 1),
+      ]),
+      lookupSolY,
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0]?.position).toBe(POSITION);
+    expect(events[0]?.withdrawSol).toBeCloseTo(1, 9);
+    expect(events[0]?.depositSol).toBeCloseTo(0.8, 9);
   });
 });

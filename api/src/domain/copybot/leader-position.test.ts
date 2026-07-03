@@ -107,11 +107,31 @@ describe('LeaderPositionTracker — per-position lifecycle aggregation', () => {
     expect(p).toMatchObject({ status: 'closed', openSizeKnown: false });
   });
 
-  it('idempotent per signature: re-applying the same event does not double-count', () => {
+  it('idempotent per (signature, position): re-applying the same event does not double-count', () => {
     const t = new LeaderPositionTracker();
     t.apply(ev({ sig: '1', instr: 'AddLiquidityByStrategy2', deposit: 5 }));
     t.apply(ev({ sig: '1', instr: 'AddLiquidityByStrategy2', deposit: 5 })); // duplicate (replay/live overlap)
     expect(t.get('POS')).toMatchObject({ depositedSol: 5, eventCount: 1 });
+  });
+
+  it('finding #37: TWO distinct positions in the SAME signature EACH apply (no per-signature collapse)', () => {
+    // A leader tx that closes A and opens B carries two DetectedEvents under ONE signature. A per-signature
+    // dedup would let only the first apply and DROP the second — silently missing B's open (or, reversed, A's
+    // close, the cardinal sin). The dedup is per (signature, position), so both project into their own state.
+    const t = new LeaderPositionTracker();
+    const a = t.apply(ev({ sig: 'sig1', instr: 'ClosePosition2', withdraw: 3, position: 'A' }));
+    const b = t.apply(
+      ev({ sig: 'sig1', instr: 'AddLiquidityByStrategy2', deposit: 4, position: 'B' }),
+    );
+    expect(a).toMatchObject({ status: 'closed', withdrawnSol: 3 }); // A's close is NOT swallowed
+    expect(b).toMatchObject({ status: 'open', depositedSol: 4, openSizeKnown: true }); // B's open applied too
+    expect(t.all()).toHaveLength(2);
+
+    // …and it stays idempotent PER position: re-observing the same (sig, position) via WS+poll overlap is a no-op.
+    t.apply(ev({ sig: 'sig1', instr: 'ClosePosition2', withdraw: 3, position: 'A' }));
+    t.apply(ev({ sig: 'sig1', instr: 'AddLiquidityByStrategy2', deposit: 4, position: 'B' }));
+    expect(t.get('A')).toMatchObject({ withdrawnSol: 3, eventCount: 1 });
+    expect(t.get('B')).toMatchObject({ depositedSol: 4, eventCount: 1 });
   });
 
   it('positions independent per pubkey; openPositions() returns only the open ones', () => {

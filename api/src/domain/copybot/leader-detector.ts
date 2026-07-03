@@ -24,8 +24,9 @@ export type EventSource = 'replay' | 'ws' | 'poll';
 
 /** Outcome of classifying a batch. A sig is in AT MOST one set; a resolved NON-DLMM tx is in NEITHER. */
 export interface ClassifyResult {
-  /** sig → DetectedEvent for DLMM tx ONLY. */
-  events: Map<string, DetectedEvent>;
+  /** sig → the 1..N position-events the DLMM tx produced (finding #37: one event PER leader position; a
+   *  multi-position tx is fanned out, not merged). Absent/empty for a resolved non-DLMM tx. */
+  events: Map<string, DetectedEvent[]>;
   /** Sigs whose transaction could NOT be fetched (still null after the retry loop — the WS outran the RPC). */
   unresolved: Set<string>;
 }
@@ -107,11 +108,11 @@ export class LeaderDetector {
     try {
       const result = await this.deps.classify(freshChronological);
       unresolved = result.unresolved;
-      // Sort by blockTime: the signature order returned by the RPC is not strictly monotonic in
-      // time, so we order the emission (and persistence) by the tx's real timestamp.
+      // Fan out each signature's 1..N position-events (finding #37) in signature order, then sort by blockTime:
+      // the RPC signature order is not strictly monotonic in time, so we order emission (and persistence) by the
+      // tx's real timestamp. A stable sort keeps same-sig events in their deterministic per-position build order.
       detected = freshChronological
-        .map((s) => result.events.get(s))
-        .filter((e): e is DetectedEvent => e !== undefined)
+        .flatMap((s) => result.events.get(s) ?? [])
         .sort((a, b) => (a.blockTime ?? 0) - (b.blockTime ?? 0));
       // Persist BEFORE committing: if the log fails, we rollback and the next poll retries.
       if (this.deps.persist && detected.length > 0) await this.deps.persist(detected, source);

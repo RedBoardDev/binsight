@@ -9,27 +9,29 @@ import { describe, expect, it, vi } from 'vitest';
 // break detection.test.ts' non-DLMM cases, hence a dedicated file.)
 vi.mock('../domain/copybot/classify-dlmm-tx', () => ({
   poolsOf: (tx: unknown) => (tx ? ['POOL'] : []),
-  buildDetectedEvent: (
+  buildDetectedEvents: (
     signature: string,
     tx: unknown,
     poolMeta: (p: string) => { mintY: string } | null,
   ) => {
-    if (!tx) return null;
+    if (!tx) return [];
     const meta = poolMeta('POOL');
-    return {
-      signature,
-      blockTime: 1,
-      instruction: '(DLMM)',
-      depositSol: 0,
-      depositTokenRaw: 0,
-      withdrawSol: 0,
-      claimSol: 0,
-      closed: false,
-      pool: 'POOL',
-      position: 'POS',
-      nonSolMint: meta ? meta.mintY : null, // VALUED only once the pool meta resolves
-      nonSolSymbol: null,
-    };
+    return [
+      {
+        signature,
+        blockTime: 1,
+        instruction: '(DLMM)',
+        depositSol: 0,
+        depositTokenRaw: 0,
+        withdrawSol: 0,
+        claimSol: 0,
+        closed: false,
+        pool: 'POOL',
+        position: 'POS',
+        nonSolMint: meta ? meta.mintY : null, // VALUED only once the pool meta resolves
+        nonSolSymbol: null,
+      },
+    ];
   },
 }));
 
@@ -71,13 +73,13 @@ describe('makeDetectionDeps.classify — pool-meta null cache policy (#46)', () 
 
     // Read 1 — meta null → the event is valued DEGRADED (no amounts) and the operator is warned once.
     const first = await deps.classify(['s1']);
-    expect(first.events.get('s1')?.nonSolMint).toBeNull();
+    expect(first.events.get('s1')?.[0]?.nonSolMint).toBeNull();
     expect(degraded).toEqual(['POOL']);
     expect(loadPoolMeta).toHaveBeenCalledTimes(1);
 
     // Read 2 within the TTL — the negative cache is warm → NO re-read (don't hammer RPC), still degraded, no re-warn.
     const second = await deps.classify(['s2']);
-    expect(second.events.get('s2')?.nonSolMint).toBeNull();
+    expect(second.events.get('s2')?.[0]?.nonSolMint).toBeNull();
     expect(loadPoolMeta).toHaveBeenCalledTimes(1);
     expect(degraded).toEqual(['POOL']);
 
@@ -86,11 +88,11 @@ describe('makeDetectionDeps.classify — pool-meta null cache policy (#46)', () 
     clock += POOL_META_NULL_TTL_MS;
     const third = await deps.classify(['s3']);
     expect(loadPoolMeta).toHaveBeenCalledTimes(2); // re-read after TTL (the null was never permanent)
-    expect(third.events.get('s3')?.nonSolMint).toBe('MINT'); // valued → the open is copyable again
+    expect(third.events.get('s3')?.[0]?.nonSolMint).toBe('MINT'); // valued → the open is copyable again
 
     // Resolved metas are immutable → cached forever, no further reads.
     const fourth = await deps.classify(['s4']);
     expect(loadPoolMeta).toHaveBeenCalledTimes(2);
-    expect(fourth.events.get('s4')?.nonSolMint).toBe('MINT');
+    expect(fourth.events.get('s4')?.[0]?.nonSolMint).toBe('MINT');
   });
 });

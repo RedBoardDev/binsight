@@ -43,8 +43,8 @@ function makeDeps(
         .map((signature) => ({ signature }));
     },
     async classify(signatures: string[]): Promise<ClassifyResult> {
-      const m = new Map<string, DetectedEvent>();
-      for (const s of signatures) if (dlmm.has(s)) m.set(s, fakeEvent(s, blockTimes[s] ?? null));
+      const m = new Map<string, DetectedEvent[]>();
+      for (const s of signatures) if (dlmm.has(s)) m.set(s, [fakeEvent(s, blockTimes[s] ?? null)]);
       return { events: m, unresolved: new Set() }; // non-DLMM sigs are RESOLVED (committed), never unresolved
     },
     onEvent(event, source) {
@@ -137,8 +137,8 @@ describe('LeaderDetector — "we never miss an event" robustness', () => {
         return [{ signature: 'x' }];
       },
       async classify(sigs: string[]): Promise<ClassifyResult> {
-        const m = new Map<string, DetectedEvent>();
-        if (txReady) for (const s of sigs) m.set(s, fakeEvent(s, 1));
+        const m = new Map<string, DetectedEvent[]>();
+        if (txReady) for (const s of sigs) m.set(s, [fakeEvent(s, 1)]);
         // before txReady: the tx is not yet queryable → UNRESOLVED (null), NOT a resolved non-DLMM tx.
         return { events: m, unresolved: txReady ? new Set() : new Set(sigs) };
       },
@@ -176,7 +176,7 @@ describe('LeaderDetector — "we never miss an event" robustness', () => {
       },
       async classify(sigs) {
         return {
-          events: new Map(sigs.map((s) => [s, fakeEvent(s)])),
+          events: new Map(sigs.map((s) => [s, [fakeEvent(s)]])),
           unresolved: new Set<string>(),
         };
       },
@@ -210,7 +210,7 @@ describe('LeaderDetector — "we never miss an event" robustness', () => {
       },
       async classify(sigs) {
         return {
-          events: new Map(sigs.map((s) => [s, fakeEvent(s)])),
+          events: new Map(sigs.map((s) => [s, [fakeEvent(s)]])),
           unresolved: new Set<string>(),
         };
       },
@@ -234,6 +234,90 @@ describe('LeaderDetector — "we never miss an event" robustness', () => {
     expect(det.cursorSignature).toBe('a');
   });
 
+  it('finding #37: ONE signature carrying TWO position-events fans BOTH out, cursor advances ONCE, no duplicate', async () => {
+    // A single leader tx closes A and opens B → classify returns two events under the SAME signature. Both must
+    // reach onEvent (the close of A is never dropped), yet the sig is still ONE dedup/cursor unit: a WS+poll
+    // overlap of that sig emits the pair exactly once and the cursor advances a single time to the sig.
+    const closeA: DetectedEvent = {
+      ...fakeEvent('sig1', 10),
+      position: 'A',
+      closed: true,
+      withdrawSol: 2,
+      depositSol: 0,
+    };
+    const openB: DetectedEvent = {
+      ...fakeEvent('sig1', 10),
+      position: 'B',
+      closed: false,
+      depositSol: 1.5,
+    };
+    const emitted: Array<{ signature: string; position: string }> = [];
+    const persistBatches: string[][] = [];
+    const deps: DetectorDeps = {
+      async listSignaturesSince(until) {
+        return until === undefined ? [{ signature: 'sig1' }] : [];
+      },
+      async classify(sigs) {
+        const m = new Map<string, DetectedEvent[]>();
+        for (const s of sigs) if (s === 'sig1') m.set(s, [closeA, openB]);
+        return { events: m, unresolved: new Set<string>() };
+      },
+      onEvent(e) {
+        emitted.push({ signature: e.signature, position: e.position });
+      },
+      async persist(events) {
+        persistBatches.push(events.map((e) => e.position));
+      },
+    };
+    const det = new LeaderDetector(deps);
+
+    await det.onWsSignature('sig1'); // WS delivers the sig first (no cursor advance)
+    await det.poll(); // poll re-lists sig1 — deduped, must NOT re-emit
+
+    expect(emitted).toEqual([
+      { signature: 'sig1', position: 'A' },
+      { signature: 'sig1', position: 'B' },
+    ]); // BOTH position-events, deterministic order, exactly once across WS+poll
+    expect(persistBatches).toEqual([['A', 'B']]); // the whole sig's event set persisted as one batch, once
+    expect(det.cursorSignature).toBe('sig1'); // the sig is a single cursor unit
+  });
+
+  it('finding #37: a persist failure rolls back the WHOLE signature — BOTH position-events re-swept', async () => {
+    // The rollback backbone stays per SIGNATURE: if writing the pair fails, neither the close of A nor the open
+    // of B may be lost — the next poll re-lists sig1 and re-emits both.
+    const closeA: DetectedEvent = { ...fakeEvent('sig1', 10), position: 'A', closed: true };
+    const openB: DetectedEvent = { ...fakeEvent('sig1', 10), position: 'B' };
+    const persisted: string[][] = [];
+    let failOnce = true;
+    const deps: DetectorDeps = {
+      async listSignaturesSince(until) {
+        return until === undefined ? [{ signature: 'sig1' }] : [];
+      },
+      async classify(sigs) {
+        const m = new Map<string, DetectedEvent[]>();
+        for (const s of sigs) if (s === 'sig1') m.set(s, [closeA, openB]);
+        return { events: m, unresolved: new Set<string>() };
+      },
+      onEvent() {},
+      async persist(events) {
+        if (failOnce) {
+          failOnce = false;
+          throw new Error('db down');
+        }
+        persisted.push(events.map((e) => e.position));
+      },
+    };
+    const det = new LeaderDetector(deps);
+
+    await expect(det.poll()).rejects.toThrow('db down');
+    expect(det.cursorSignature).toBeUndefined(); // both events held, sig re-swept
+    expect(persisted).toEqual([]);
+
+    await det.poll();
+    expect(persisted).toEqual([['A', 'B']]); // BOTH recovered together on the retry
+    expect(det.cursorSignature).toBe('sig1');
+  });
+
   it('NEVER-MISS on read: a signature listing that fails (RPC down / poll cap) → cursor not advanced', async () => {
     // Covers a `listSignaturesSince` failure (RPC that throws, or watch-leader's MAX_POLL_PAGES guard).
     // The window must NEVER be considered covered: the cursor stays behind → re-swept.
@@ -248,7 +332,7 @@ describe('LeaderDetector — "we never miss an event" robustness', () => {
       },
       async classify(sigs) {
         return {
-          events: new Map(sigs.map((s) => [s, fakeEvent(s)])),
+          events: new Map(sigs.map((s) => [s, [fakeEvent(s)]])),
           unresolved: new Set<string>(),
         };
       },
@@ -296,7 +380,7 @@ describe('LeaderDetector — "we never miss an event" robustness', () => {
       },
       async classify(sigs) {
         return {
-          events: new Map(sigs.map((s) => [s, fakeEvent(s)])),
+          events: new Map(sigs.map((s) => [s, [fakeEvent(s)]])),
           unresolved: new Set<string>(),
         };
       },
@@ -354,7 +438,7 @@ describe('LeaderDetector — cursor race (never advance past an unresolved / in-
       async classify(sigs) {
         if (!resolved) return { events: new Map(), unresolved: new Set(sigs) }; // null tx → unresolved, no throw
         return {
-          events: new Map(sigs.map((s) => [s, fakeEvent(s, 1)])),
+          events: new Map(sigs.map((s) => [s, [fakeEvent(s, 1)]])),
           unresolved: new Set<string>(),
         };
       },
@@ -392,7 +476,7 @@ describe('LeaderDetector — cursor race (never advance past an unresolved / in-
           });
         }
         return Promise.resolve({
-          events: new Map(sigs.map((s) => [s, fakeEvent(s, 1)])),
+          events: new Map(sigs.map((s) => [s, [fakeEvent(s, 1)]])),
           unresolved: new Set<string>(),
         });
       },
@@ -459,7 +543,7 @@ describe('LeaderDetector — cursor race (never advance past an unresolved / in-
         return new Promise<ClassifyResult>((res) => {
           resolve1 = () =>
             res({
-              events: new Map(sigs.map((s) => [s, fakeEvent(s, 1)])),
+              events: new Map(sigs.map((s) => [s, [fakeEvent(s, 1)]])),
               unresolved: new Set<string>(),
             });
         });

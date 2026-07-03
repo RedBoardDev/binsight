@@ -319,6 +319,10 @@ export async function createUserRuntime(
   const registry = new MirrorRegistry();
   // commandId v2 = derive(userId + eventKey) (SPEC §11, supersedes ADR-8): bound once so the same leader event
   // copied for two users never collides into one idempotency slot, and no call site threads the tenant by hand.
+  // WS-driven per-position eventKey grammar: `${leader}:${pool}:${action}:${position}:${signature}` — the leader
+  // POSITION sits AFTER the action (finding #37): two DISTINCT leader positions closed/opened on the SAME pool in
+  // ONE signature would otherwise share `${leader}:${pool}:${action}:${signature}` → one commandId → the 2nd copy
+  // dropped as a duplicate (a MISSED close). Position keeps `.split(':')[2]` = action stable for the coffre.
   const commandIdFor = (eventKey: string): string => deriveCommandId(userId, eventKey);
   const store = new MirrorStore(db, userId); // no-dormant persistence (survives restarts)
   // ONE observability emitter bound to this tenant: a tenant-scoped pino child is its logger. The runtime's call
@@ -891,8 +895,8 @@ export async function createUserRuntime(
     // create's position keypair matches the one baked into the SDK build. Narrow opens (≤25) keep the atomic 1-tx path.
     const wide = isWideOpen(dist.length);
     const eventKey = wide
-      ? `${leader}:${e.pool}:open-create:${e.signature}`
-      : `${leader}:${e.pool}:open:${e.signature}`;
+      ? `${leader}:${e.pool}:open-create:${e.position}:${e.signature}`
+      : `${leader}:${e.pool}:open:${e.position}:${e.signature}`;
     const commandId = commandIdFor(eventKey);
     const posKp: Keypair = derivePositionKeypair(commandId);
     const built = await buildOpenByWeight(
@@ -1011,7 +1015,7 @@ export async function createUserRuntime(
       });
       return; // SAFE: never a partial/one-sided copy
     }
-    const buyKey = `${leader}:${e.pool}:buy:${e.signature}`;
+    const buyKey = `${leader}:${e.pool}:buy:${e.position}:${e.signature}`;
     const buyCommandId = commandIdFor(buyKey);
     const { issuedAtSlot, deadlineSlot } = await slots();
     // #33 — snapshot the token balance BEFORE the buy lands: the post-buy read deposits only the BOUGHT delta
@@ -1087,7 +1091,7 @@ export async function createUserRuntime(
     },
   ): Promise<void> {
     const { dist, totalX, totalY, lower, upper, sizeSol } = args;
-    const createEventKey = `${leader}:${e.pool}:open-create:${e.signature}`;
+    const createEventKey = `${leader}:${e.pool}:open-create:${e.position}:${e.signature}`;
     const createCommandId = commandIdFor(createEventKey);
     const posKp: Keypair = derivePositionKeypair(createCommandId); // the coffre signs 'open' with derivePositionKeypair(commandId) → MUST match
     const built = await buildCreateEmptyPosition(
@@ -1269,8 +1273,8 @@ export async function createUserRuntime(
     // → CU estimation works). v1 addLiquidityByWeight is correct for a CLASSIC two-sided deposit (both legs span active).
     const wide = isWideOpen(dist.length);
     const eventKey = wide
-      ? `${leader}:${e.pool}:open-create:${e.signature}`
-      : `${leader}:${e.pool}:open:${e.signature}`;
+      ? `${leader}:${e.pool}:open-create:${e.position}:${e.signature}`
+      : `${leader}:${e.pool}:open:${e.position}:${e.signature}`;
     const commandId = commandIdFor(eventKey);
     const posKp: Keypair = derivePositionKeypair(commandId);
     const built = await buildOpenByWeight(
@@ -1379,7 +1383,7 @@ export async function createUserRuntime(
       depositTx = txs[0] as Transaction;
     }
     if (consumeOpenCancellation(e.position, e.pool)) return; // a close arrived DURING the deposit build → abort before the on-chain deposit
-    const depositEventKey = `${leader}:${e.pool}:open-deposit:${e.signature}`;
+    const depositEventKey = `${leader}:${e.pool}:open-deposit:${e.position}:${e.signature}`;
     const depositCommandId = commandIdFor(depositEventKey);
     const { issuedAtSlot, deadlineSlot } = await slots();
     pendingToken2022Mirrors.set(depositCommandId, {
@@ -1667,7 +1671,7 @@ export async function createUserRuntime(
       return;
     }
     const leader = leaderOf(m); // the MIRROR's leader (3b): a close routes by ownership, not by config
-    const eventKey = `${leader}:${m.pool}:close:${e.signature}`;
+    const eventKey = `${leader}:${m.pool}:close:${e.position}:${e.signature}`;
     const built = await buildCloseTx(
       conn,
       new PublicKey(m.pool),
@@ -1701,7 +1705,7 @@ export async function createUserRuntime(
     const m = registry.get(e.position);
     if (!m) return;
     const leader = leaderOf(m); // the MIRROR's leader (3b)
-    const eventKey = `${leader}:${m.pool}:claim:${e.signature}`;
+    const eventKey = `${leader}:${m.pool}:claim:${e.position}:${e.signature}`;
     const built = await buildClaimTx(conn, new PublicKey(m.pool), ownerPk, m.ourPosition);
     const { issuedAtSlot, deadlineSlot } = await slots();
     await publish(
@@ -1865,7 +1869,7 @@ export async function createUserRuntime(
         r.toBin,
         r.bps,
       );
-      const eventKey = `${leader}:${m.pool}:reshape-rm${rm}:${e.signature}`;
+      const eventKey = `${leader}:${m.pool}:reshape-rm${rm}:${e.position}:${e.signature}`;
       await publish(
         {
           commandId: commandIdFor(eventKey),
@@ -1947,7 +1951,7 @@ export async function createUserRuntime(
           ec.execution.slippageBps,
         );
         const buyTxB64 = await buildJupiterSwapTx(jupiterBaseUrl, buyQuote, ownerPk.toBase58());
-        const buyKey = `${leader}:${m.pool}:reshape-buy:${e.signature}`;
+        const buyKey = `${leader}:${m.pool}:reshape-buy:${e.position}:${e.signature}`;
         const buyCommandId = commandIdFor(buyKey);
         // #33 — pre-buy snapshot so the deferred add deposits only the BOUGHT delta (never a pre-existing residual).
         const preBuyTokenRaw = await readOwnerTokenBalance(conn, ownerPk, new PublicKey(tokenMint));
@@ -2050,7 +2054,7 @@ export async function createUserRuntime(
           dist,
           pair,
         );
-        const eventKey = `${leader}:${m.pool}:reshape-add${ci}:${e.signature}`; // per-chunk key → distinct idempotent commands
+        const eventKey = `${leader}:${m.pool}:reshape-add${ci}:${e.position}:${e.signature}`; // per-chunk key → distinct idempotent commands
         await publish(
           {
             commandId: commandIdFor(eventKey),

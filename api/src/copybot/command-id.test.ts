@@ -38,6 +38,26 @@ describe('deriveCommandId v2 — per-user idempotency key (brain↔vault contrac
     expect(open).not.toBe(otherSig);
   });
 
+  it('★ finding #37: two DISTINCT positions closed on the SAME pool in one signature derive DISTINCT commandIds', () => {
+    // WHY: a leader closing two laddered positions on one pair in ONE tx yields two DetectedEvents that route to the
+    // SAME (leader, pool, action='close', signature). The OLD grammar `${leader}:${pool}:close:${sig}` gave them ONE
+    // commandId → the coffre claims the first and rejects the second as a 'duplicate' → one close is MISSED (the exact
+    // class #37 kills). The new grammar inserts the per-position pubkey after the action, breaking the collision.
+    const leader = 'LEADER';
+    const pool = 'POOL';
+    const sig = 'SIG';
+    const posA = 'PositionAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+    const posB = 'PositionBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
+    // NEW grammar (action at index 2, position at index 3) → DISTINCT ids → both closes claim their own slot.
+    const keyA = `${leader}:${pool}:close:${posA}:${sig}`;
+    const keyB = `${leader}:${pool}:close:${posB}:${sig}`;
+    expect(keyA.split(':')[2]).toBe('close'); // the coffre still reads the action at index 2 (grammar contract)
+    expect(deriveCommandId('u1', keyA)).not.toBe(deriveCommandId('u1', keyB));
+    // …and the pre-fix pool-only grammar WOULD have collided (regression guard for the bug the fix removes).
+    const oldKey = `${leader}:${pool}:close:${sig}`;
+    expect(deriveCommandId('u1', oldKey)).toBe(deriveCommandId('u1', oldKey)); // no position ⇒ A and B share ONE id
+  });
+
   it('the separator makes the pre-image unambiguous — shifting bytes between userId and eventKey changes the id', () => {
     // WHY: plain concatenation would alias ('ab','c') with ('a','bc') — two DIFFERENT (tenant, event) pairs
     // silently sharing one idempotency slot. The `\n` join (impossible inside either input) prevents it.

@@ -6,7 +6,7 @@
 import { DLMM_PROGRAM_ID } from '@binsight/shared';
 import type { Connection, PublicKey } from '@solana/web3.js';
 import {
-  buildDetectedEvent,
+  buildDetectedEvents,
   type PoolMetaLookup,
   poolsOf,
 } from '../domain/copybot/classify-dlmm-tx';
@@ -116,19 +116,23 @@ export function makeDetectionDeps(args: {
       await Promise.all([...pools].map((pl) => getPoolMeta(pl)));
       const poolMeta: PoolMetaLookup = (lbPair) => poolMetaCache.get(lbPair) ?? null;
 
-      const map = new Map<string, DetectedEvent>();
+      // ONE entry per signature (the no-miss backbone stays keyed BY SIGNATURE); its payload is the 1..N
+      // position-events the tx produced (finding #37: a multi-position tx no longer collapses to one event).
+      const map = new Map<string, DetectedEvent[]>();
       for (let i = 0; i < signatures.length; i++) {
         const sig = signatures[i];
         if (!sig) continue;
-        const e = buildDetectedEvent(sig, txs[i] ?? null, poolMeta);
-        if (e) map.set(sig, e);
+        const evs = buildDetectedEvents(sig, txs[i] ?? null, poolMeta);
+        if (evs.length > 0) map.set(sig, evs);
       }
+      // Symbol resolution: one batched call over EVERY position-event across all signatures.
+      const allEvents = [...map.values()].flat();
       const mints = [
-        ...new Set([...map.values()].map((e) => e.nonSolMint).filter((m): m is string => !!m)),
+        ...new Set(allEvents.map((e) => e.nonSolMint).filter((m): m is string => !!m)),
       ];
       if (mints.length > 0) {
         const metas = await tokenMeta.resolve(mints);
-        for (const e of map.values()) {
+        for (const e of allEvents) {
           if (e.nonSolMint) e.nonSolSymbol = metas.get(e.nonSolMint)?.symbol ?? null;
         }
       }
