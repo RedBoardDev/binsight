@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import dlmmIdl from '@/infrastructure/solana/dlmm/dlmm-idl.json';
-import { ATOMIC_BY_WEIGHT_BIN_LIMIT, isWideOpen, MAX_SINGLE_POSITION_BINS } from './open-routing';
+import {
+  ATOMIC_BY_WEIGHT_BIN_LIMIT,
+  activeBinSlippagePctFromBps,
+  isWideOpen,
+  MAX_SINGLE_POSITION_BINS,
+} from './open-routing';
 
 describe('isWideOpen — when an open must be sequenced (create → deposit) vs the atomic single-tx open', () => {
   // WHY: the atomic by-weight open chunks at 26 bins and the deposit is NOT the first chunk — publishing only the
@@ -20,6 +25,23 @@ describe('isWideOpen — when an open must be sequenced (create → deposit) vs 
     expect(isWideOpen(26)).toBe(true);
     expect(isWideOpen(50)).toBe(true);
     expect(isWideOpen(70)).toBe(true);
+  });
+});
+
+describe('activeBinSlippagePctFromBps — config BPS → the DLMM deposit slippage PERCENT (ULTRACODE #47)', () => {
+  // WHY: the deposit builders pass this value as the SDK `slippage` param, which the SDK reads as a PERCENTAGE and
+  // converts to a price-normalized active-bin count via the pool binStep. Our config carries slippage in BPS (like
+  // the Jupiter tolerance). Getting the unit wrong (passing BPS as if it were a percent) would either bake a tiny
+  // tolerance or a 100×-too-wide one — the exact deterministic-deposit-failure this finding fixes. So the BPS→percent
+  // conversion is load-bearing and must be exact.
+  it('divides basis points by 100 to get a percent (100 bps = 1%, 50 bps = 0.5%)', () => {
+    expect(activeBinSlippagePctFromBps(100)).toBe(1);
+    expect(activeBinSlippagePctFromBps(50)).toBe(0.5);
+    expect(activeBinSlippagePctFromBps(300)).toBe(3);
+  });
+
+  it('0 bps → 0 percent (a truthy 0 would let the SDK fall back to its non-normalized 3-bin default)', () => {
+    expect(activeBinSlippagePctFromBps(0)).toBe(0);
   });
 });
 

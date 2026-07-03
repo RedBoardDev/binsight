@@ -284,6 +284,8 @@ function makeRugRt(
   const calls = {
     recorded: [] as Array<{ key: string; price: number }>,
     safetyCloses: [] as string[],
+    pendingPersisted: [] as string[],
+    forgotten: [] as string[],
   };
   const rt: RugSweepRuntime = {
     userId,
@@ -292,10 +294,15 @@ function makeRugRt(
     rugSlTracker: {
       record: (key, price) => calls.recorded.push({ key, price }),
       check: (key) => checkResult(key),
-      forget: () => {},
+      forget: (key) => calls.forgotten.push(key),
     },
     rugExitPending: new Set<string>(),
-    rugExitStore: { addPending: async () => {}, addExited: async () => {} },
+    rugExitStore: {
+      addPending: async (our) => {
+        calls.pendingPersisted.push(our);
+      },
+      addExited: async () => {},
+    },
     rugExited: new Set<string>(),
     publishSafetyClose: async (m) => {
       if (opts.publishThrows) throw new Error('publish down');
@@ -417,6 +424,28 @@ describe('runRugSlSweep — pool-grouped across runtimes (Inc.3b S6)', () => {
     await runRugSlSweep(deps);
     expect(a.safetyCloses).toEqual([]);
     expect(b.safetyCloses).toEqual(['OUR_B']); // B's exit fired despite A's failure
+  });
+
+  it('a FAILED rug-SL publish STILL arms the retry state (persisted) so the reconcile re-closes (ULTRACODE #11/#15)', async () => {
+    // WHY: the rug-SL close is our INDEPENDENT crash exit — the leader keeps holding, so `leaderClosed` never fires a
+    // retry. If a failing publish (the rug case lands worst under congestion, and publish() re-throws non-connection
+    // failures) skipped arming rugExitPending, the position would sit dormant full of a rugging token until the leader
+    // closes (possibly days) — the exact loss rug-SL exists to prevent. So the pending set MUST be armed even when the
+    // publish throws; the reconcile then re-closes each tick until the position is confirmed gone.
+    const { rt, calls } = makeRugRt(
+      'user-a',
+      [mirror({ ourPosition: 'OUR_RUG' })],
+      configWithRugSl(true),
+      () => true,
+      { publishThrows: true },
+    );
+    const { deps } = rugDeps([rt], 0.1);
+    await runRugSlSweep(deps);
+    expect(calls.safetyCloses).toEqual([]); // the publish threw → nothing landed
+    expect(rt.rugExitPending.has('OUR_RUG')).toBe(true); // ...but the reconcile-retry channel IS armed
+    expect(calls.pendingPersisted).toContain('OUR_RUG'); // ...and persisted so the retry survives a brain restart
+    expect(rt.rugExited.has(LP)).toBe(true); // and the leader is suppressed from re-opening a rugged position
+    expect(calls.forgotten).toContain('OUR_RUG'); // price-window forgotten → grace + reconcile own the retry
   });
 
   it('a null price read records NOTHING (a transient RPC blip can never fabricate a crash)', async () => {

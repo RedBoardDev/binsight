@@ -20,3 +20,17 @@ export const MAX_SINGLE_POSITION_BINS = 70;
 export function isWideOpen(binCount: number): boolean {
   return binCount >= ATOMIC_BY_WEIGHT_BIN_LIMIT;
 }
+
+/** Basis points per percent — our execution config carries slippage in BPS (like the Jupiter swap tolerance). */
+const BPS_PER_PERCENT = 100;
+
+/**
+ * Convert our config's `slippageBps` into the PERCENTAGE the DLMM SDK's deposit `slippage` param expects. The SDK
+ * normalizes tolerance across pools by converting that percentage → an active-bin count via the pool's binStep
+ * (`ceil(pct / (binStep/100))`); omitting it falls back to the SDK default of 3 bins, which is 0.03% on a binStep-1
+ * pool but 3% on binStep-100 — NOT price-normalized, so a fast pool drifts >3 bins between build and land and the
+ * deposit fails deterministically (ULTRACODE #47). Passing a config-driven percent makes the tolerance consistent.
+ */
+export function activeBinSlippagePctFromBps(slippageBps: number): number {
+  return slippageBps / BPS_PER_PERCENT;
+}

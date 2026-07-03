@@ -582,6 +582,49 @@ describe('UserRuntime — Inc.4d performance-fee collection (SPEC §9)', () => {
     expect(published).toHaveLength(0);
   });
 
+  it('a bus.publish FAILURE still journals the intent (loud) + re-throws — never a silent dropped command (ULTRACODE #42)', async () => {
+    // WHY: the journal emit historically sat AFTER bus.publish inside publish(), so a throwing publish dropped a live
+    // open/resync/claim with ONLY a log line — no audit row, no loud signal (the never-miss pillar is for opens too,
+    // and only closes are backstopped by the reconcile). ioredis already retries connection blips, so a genuine throw
+    // must (a) leave an error-severity `lifecycle.publish_failed` journal row and (b) PROPAGATE so the caller never
+    // treats an unpublished command as sent. publishFee routes through the SAME publish() closure every intent uses.
+    const bus = {
+      publish: async () => {
+        throw new Error('redis down at publish');
+      },
+    } as unknown as RedisBus;
+    const blockhashCache = new BlockhashCache(async () => ({
+      blockhash: FEE_BLOCKHASH,
+      lastValidBlockHeight: 0,
+    }));
+    await blockhashCache.start();
+    const conn = { getSlot: async () => 0 } as unknown as Connection;
+    const rt = await createUserRuntime(
+      { ...shared, bus, blockhashCache, conn, operatorFeeAddress: OPERATOR_FEE },
+      'test-runtime-pubfail-user',
+      opts,
+    );
+    const OUR = 'OUR_PUBFAIL';
+    // (b) fail loud — the publish failure propagates to the caller, never swallowed.
+    await expect(rt.publishFee(OUR, 1_000_000)).rejects.toThrow('redis down at publish');
+    // (a) ...and the intent is journaled DESPITE the failed publish, as a LOUD error-severity row.
+    const [row] = await waitFor(
+      () =>
+        db
+          .select({
+            code: schema.copyJournal.code,
+            severity: schema.copyJournal.severity,
+            outcome: schema.copyJournal.outcome,
+          })
+          .from(schema.copyJournal)
+          .where(inArray(schema.copyJournal.eventKey, [`fee:${OUR}`])),
+      (r) => r.length > 0,
+    );
+    expect(row?.code).toBe('lifecycle.publish_failed');
+    expect(row?.outcome).toBe('failed');
+    expect(row?.severity).toBe('error');
+  });
+
   it('onFeeConfirmed flips the fee landed + emits fee.landed once (a duplicate confirm is a no-op)', async () => {
     const OUR = 'OUR_FEE_LAND';
     const { rt } = await feeRuntime();

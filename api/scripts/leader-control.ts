@@ -244,7 +244,7 @@ async function main(): Promise<void> {
       const pair = await createDlmmPair(conn, pk);
       const active = (await pair.getActiveBin()).binId;
       const w = customDistribution(dist, active, solSide);
-      const built = await buildOpenByWeight(conn, pk, leader.publicKey, position.publicKey, solSide === 'X' ? sol : 0n, solSide === 'Y' ? sol : 0n, w, pair);
+      const built = await buildOpenByWeight(conn, pk, leader.publicKey, position.publicKey, solSide === 'X' ? sol : 0n, solSide === 'Y' ? sol : 0n, w, 1, pair); // 1 = active-bin slippage percent (test driver)
       const sigs = await signLandConfirm(built, [position]);
       console.log(`🟢 OPEN [custom ${dist}] position=${position.publicKey.toBase58()} range=[${Math.min(...w.map((b) => b.binId))},${Math.max(...w.map((b) => b.binId))}] sigs=${sigs.join(',')}`);
       return;
@@ -284,7 +284,7 @@ async function main(): Promise<void> {
       // Anchor the add ASCENDING from the position's lower bin so it always lands INSIDE the existing fixed range
       // (the active bin may have drifted out of it since the open → an active-anchored add would be out-of-range).
       const w = customDistribution(dist, active, solSide, shape.lowerBinId);
-      const built = await buildAddByWeight(conn, pk, leader.publicKey, new PublicKey(shape.positionPubkey), solSide === 'X' ? sol : 0n, solSide === 'Y' ? sol : 0n, w, pair);
+      const built = await buildAddByWeight(conn, pk, leader.publicKey, new PublicKey(shape.positionPubkey), solSide === 'X' ? sol : 0n, solSide === 'Y' ? sol : 0n, w, 1, pair); // 1 = active-bin slippage percent (test driver)
       console.log(`➕ ADD [custom ${dist}] ${arg('sol') ?? '0.05'} range=[${Math.min(...w.map((b) => b.binId))},${Math.max(...w.map((b) => b.binId))}] sigs=${(await signLandConfirm(built)).join(',')}`);
       return;
     }

@@ -63,7 +63,11 @@ import {
 } from '@/domain/copybot/observability/codes';
 import type { CopyEvent } from '@/domain/copybot/observability/event';
 import type { EmitInput } from '@/domain/copybot/observability/input';
-import { ATOMIC_BY_WEIGHT_BIN_LIMIT, isWideOpen } from '@/domain/copybot/open-routing';
+import {
+  ATOMIC_BY_WEIGHT_BIN_LIMIT,
+  activeBinSlippagePctFromBps,
+  isWideOpen,
+} from '@/domain/copybot/open-routing';
 import {
   chunkBySpan,
   fillContiguousWeights,
@@ -130,6 +134,9 @@ import type { WalletBalanceCache } from './wallet-balance-cache';
 
 const STREAM = 'copybot:cmd:sign';
 const HOP = 'cmd:sign';
+/** Journal reason stamped when a bus.publish itself throws (a 'failed' journal row requires a reason). Used only when
+ *  the intent carries no more specific reason (a plain open/add); a failsafe/rug-SL close keeps its own reason. */
+const BUS_PUBLISH_FAILED_REASON = 'bus_publish_failed';
 /** Wait this long after publishing a close before a reconcile re-close (let it land). Shared with brain-main's
  *  wallet-level sweeps (reconcile / rug-SL), which apply the same grace. */
 export const RECLOSE_GRACE_MS = 60_000;
@@ -379,6 +386,11 @@ export async function createUserRuntime(
   // economics = the SYSTEM config (per-leader overrides don't apply to leaderless actions by construction).
   const effFor = (leader: string): EffectiveConfig => effectiveFor(runtimeConfig, leader);
   const eff = (): EffectiveConfig => effFor(bootLeader);
+  // Config-driven active-bin slippage PERCENT for a DLMM by-weight deposit, resolved per-leader (SPEC §9). Threaded
+  // into every copy open/add build so the SDK derives a price-normalized bin tolerance instead of baking its 3-bin
+  // default (ULTRACODE #47 — a fast pool drifts >3 bins between build and land and the deposit fails deterministically).
+  const depositSlippagePct = (leader: string): number =>
+    activeBinSlippagePctFromBps(effFor(leader).execution.slippageBps);
   const rugSlTracker = new RugSlTracker(RUG_SL_RETAIN_MS); // per-position price windows for the rug-SL crash check
   const rugExitStore = new RugExitStore(db, log, userId); // durable, tenant-bound rug-exit rows (suppress re-open + pending re-close)
   const rugExited = await rugExitStore.load(); // seed across restart so a leader add can't re-enter a rug-exited position
@@ -551,41 +563,65 @@ export async function createUserRuntime(
     // publish time (latency).
     const full: SignRequest = { ...sr, userId, issuedAtMs: Date.now() };
     SignRequestSchema.parse(full); // local guardrail: we only publish a valid contract
-    const id = await bus.publish(STREAM, HOP, hmacKey, full);
+    // Activity journal: EVERY published intent is recorded here (single backstop). A context-specific publish (a
+    // failsafe / orphan / rug-SL re-close) passes a `reason` hint that resolves to the pinned `failsafe.*` code
+    // (SPEC §2.1) — every other publish is a plain internal `lifecycle.open_published` trace (the on-chain
+    // confirmation arrives later as `lifecycle.*_confirmed`, never here). The leaf == the verbatim hint reason.
+    // NB: `severity` is denormalized from the resolved code in the typed model (the failsafe codes are already
+    // warn/error), so the legacy `journalHint.severity` is no longer plumbed — the registry now governs it.
+    // The emit is FACTORED so BOTH the success path AND a bus.publish FAILURE journal the intent: a publish throw on
+    // the hot path must NEVER drop a live open/resync/claim with only a log line (never-miss pillar) — the row is the
+    // durable audit backstop and the failure branch raises the code to error-severity `lifecycle.publish_failed`.
+    const reason = journalHint?.reason;
+    const successCode = reason
+      ? (resolveLegacyReason(reason) ?? FALLBACK_CODE)
+      : 'lifecycle.open_published';
+    const journal = (
+      code: CopyCode,
+      outcome: JournalEntry['outcome'],
+      journaledReason: string | undefined,
+      streamId?: string,
+    ): void =>
+      events.emit(code, {
+        stage: journalHint?.stage ?? stageForKind(full.kind),
+        outcome,
+        kind: full.kind,
+        // The event's/mirror's leader when the caller passes it (3b); wallet-level publishes (sell/orphan) keep the
+        // boot-leader fallback as a correlation-only label (documented wallet-context path — their eventKeys/
+        // commandIds are what matter, and the orphan's is wallet-prefixed since step 6).
+        leader: journalHint?.leader ?? bootLeader,
+        pool: full.pool,
+        leaderPosition: journalHint?.leaderPosition,
+        ourPosition: full.positionPubkey,
+        commandId: full.commandId,
+        eventKey: full.eventKey,
+        leaderSizeSol: journalHint?.leaderSizeSol,
+        ourSizeSol: full.sizeSol,
+        reason: journaledReason,
+        adminDetail: { targetBinRange: full.targetBinRange, streamId, ...journalHint?.detail },
+      });
+
+    let id: string;
+    try {
+      id = await bus.publish(STREAM, HOP, hmacKey, full);
+    } catch (err) {
+      // ioredis (maxRetriesPerRequest:null + offline queue) already retries CONNECTION failures indefinitely, so a
+      // throw here is a genuine non-connection failure. Journal the intent as FAILED (error-severity, auditable) and
+      // log LOUD, then RE-THROW — the caller must never treat an unpublished command as sent (fail loud, no swallow).
+      journal('lifecycle.publish_failed', 'failed', reason ?? BUS_PUBLISH_FAILED_REASON);
+      log.error(
+        { err: (err as Error).message, kind: full.kind, our: full.positionPubkey, pool: full.pool },
+        '📤❌ bus publish FAILED — intent journaled, command NOT sent',
+      );
+      throw err;
+    }
     // Machine-readable publish marker: the EXACT copy pubkey + kind we just published (the journal's formatted line
     // carries neither as a field). Ops visibility + lets a consumer track the published copy without RPC enumeration.
     log.info(
       { kind: full.kind, our: full.positionPubkey, pool: full.pool, streamId: id },
       '📤 published',
     );
-    // Activity journal: EVERY published intent is recorded once here (single backstop). A context-specific publish
-    // (a failsafe / orphan / rug-SL re-close) passes a `reason` hint that resolves to the pinned `failsafe.*` code
-    // (SPEC §2.1) — every other publish is a plain internal `lifecycle.open_published` trace (the on-chain
-    // confirmation arrives later as `lifecycle.*_confirmed`, never here). The leaf == the verbatim hint reason.
-    // NB: `severity` is denormalized from the resolved code in the typed model (the failsafe codes are already
-    // warn/error), so the legacy `journalHint.severity` is no longer plumbed — the registry now governs it.
-    const reason = journalHint?.reason;
-    const code = reason
-      ? (resolveLegacyReason(reason) ?? FALLBACK_CODE)
-      : 'lifecycle.open_published';
-    events.emit(code, {
-      stage: journalHint?.stage ?? stageForKind(full.kind),
-      outcome: journalHint?.outcome ?? 'published',
-      kind: full.kind,
-      // The event's/mirror's leader when the caller passes it (3b); wallet-level publishes (sell/orphan) keep the
-      // boot-leader fallback as a correlation-only label (documented wallet-context path — their eventKeys/
-      // commandIds are what matter, and the orphan's is wallet-prefixed since step 6).
-      leader: journalHint?.leader ?? bootLeader,
-      pool: full.pool,
-      leaderPosition: journalHint?.leaderPosition,
-      ourPosition: full.positionPubkey,
-      commandId: full.commandId,
-      eventKey: full.eventKey,
-      leaderSizeSol: journalHint?.leaderSizeSol,
-      ourSizeSol: full.sizeSol,
-      reason,
-      adminDetail: { targetBinRange: full.targetBinRange, streamId: id, ...journalHint?.detail },
-    });
+    journal(successCode, journalHint?.outcome ?? 'published', reason, id);
   }
 
   // Jito on = env override (bench) else the user-level DB flag; mirrors the coffre's landing decision so the tip
@@ -907,6 +943,7 @@ export async function createUserRuntime(
       totalX,
       totalY,
       dist,
+      depositSlippagePct(leader),
       pair,
     );
     if (wide) {
@@ -1285,6 +1322,7 @@ export async function createUserRuntime(
       totalX,
       totalY,
       dist,
+      depositSlippagePct(leader),
       pair,
     );
     if (wide) {
@@ -1366,6 +1404,7 @@ export async function createUserRuntime(
             ctx.totalX as bigint,
             ctx.totalY as bigint,
             ctx.dist as WeightBin[],
+            depositSlippagePct(leader),
             pair,
           );
         } catch (err) {
@@ -1557,6 +1596,7 @@ export async function createUserRuntime(
             totalX,
             totalY,
             dist,
+            depositSlippagePct(leader),
             pair,
           )
         : await buildAddByWeight(
@@ -1567,6 +1607,7 @@ export async function createUserRuntime(
             totalX,
             totalY,
             dist,
+            depositSlippagePct(leader),
             pair,
           );
     const { issuedAtSlot, deadlineSlot } = await slots();
@@ -2052,6 +2093,7 @@ export async function createUserRuntime(
           solSide === 'X' ? chunkLamports : 0n,
           solSide === 'Y' ? chunkLamports : 0n,
           dist,
+          depositSlippagePct(leader),
           pair,
         );
         const eventKey = `${leader}:${m.pool}:reshape-add${ci}:${e.position}:${e.signature}`; // per-chunk key → distinct idempotent commands

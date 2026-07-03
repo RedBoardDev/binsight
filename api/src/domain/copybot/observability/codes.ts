@@ -69,6 +69,10 @@ export interface CodeMeta {
 const RAW_CODE_REGISTRY = {
   // ── lifecycle (LIFECYCLE) — brain owns all *_confirmed / *_failed (only it has the Mirror) ─────────────────
   'lifecycle.open_published': { category: 'LIFECYCLE', severity: 'info', audience: 'internal' },
+  // A bus.publish threw on the hot path (a genuine non-connection failure — ioredis already retries connection
+  // blips): the intent is journaled here as a LOUD error-severity row so a dropped open/resync/claim leaves an audit
+  // trail, not just a log line. Admin-only (the reconcile still backstops closes); the brain re-throws to the caller.
+  'lifecycle.publish_failed': { category: 'LIFECYCLE', severity: 'error', audience: 'internal' },
   'lifecycle.open_confirmed': {
     category: 'LIFECYCLE',
     severity: 'info',

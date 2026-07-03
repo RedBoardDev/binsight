@@ -59,6 +59,10 @@ export async function buildOpenByWeight(
   totalXLamports: bigint,
   totalYLamports: bigint,
   distribution: WeightBin[],
+  // Config-driven active-bin slippage PERCENT (see activeBinSlippagePctFromBps). The SDK converts it → a bin count
+  // via the pool binStep; omitting it would bake the SDK default 3-bin tolerance, which is NOT price-normalized and
+  // fails deterministically on a fast pool (ULTRACODE #47). Required so no build silently keeps the 3-bin default.
+  slippagePct: number,
   pair?: DlmmPair, // reuse a pre-created instance to skip a second DLMM.create (latency)
 ): Promise<Transaction | Transaction[]> {
   const dlmm = pair ?? (await DLMM.create(conn, pool));
@@ -72,6 +76,7 @@ export async function buildOpenByWeight(
       xAmountBpsOfTotal: new BN(d.xBps),
       yAmountBpsOfTotal: new BN(d.yBps),
     })),
+    slippage: slippagePct,
   });
 }
 
@@ -85,6 +90,7 @@ export async function buildAddByWeight(
   totalXLamports: bigint,
   totalYLamports: bigint,
   distribution: WeightBin[],
+  slippagePct: number, // config-driven active-bin slippage percent (see buildOpenByWeight / ULTRACODE #47)
   pair?: DlmmPair,
 ): Promise<Transaction | Transaction[]> {
   const dlmm = pair ?? (await DLMM.create(conn, pool));
@@ -99,6 +105,7 @@ export async function buildAddByWeight(
       xAmountBpsOfTotal: new BN(d.xBps),
       yAmountBpsOfTotal: new BN(d.yBps),
     })),
+    slippage: slippagePct,
   };
   // Token-2022 leg → the v2 ix `addLiquidityByWeight2` (routes the token program from the mint's real owner + carries
   // transfer-hook accounts), the ONLY by-weight deposit that works for Token-2022. Classic SPL → keep the proven v1
@@ -124,6 +131,7 @@ export async function buildAddByWeight2(
   totalXLamports: bigint,
   totalYLamports: bigint,
   distribution: WeightBin[],
+  slippagePct: number, // config-driven active-bin slippage percent (see buildOpenByWeight / ULTRACODE #47)
   pair?: DlmmPair,
 ): Promise<Transaction[]> {
   const dlmm = pair ?? (await DLMM.create(conn, pool));
@@ -137,6 +145,7 @@ export async function buildAddByWeight2(
       xAmountBpsOfTotal: new BN(d.xBps),
       yAmountBpsOfTotal: new BN(d.yBps),
     })),
+    slippage: slippagePct,
   });
 }
 

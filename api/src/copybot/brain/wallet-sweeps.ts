@@ -381,16 +381,26 @@ export async function runRugSlSweep(deps: RugSlSweepDeps): Promise<void> {
         if (now - (deps.recentlyPublishedClose.get(m.ourPosition) ?? 0) < deps.recloseGraceMs)
           continue; // a close is already in flight
         if (!rt.rugSlTracker.check(m.ourPosition, rugCfg, now)) continue;
-        await rt.publishSafetyClose(m, 'rugsl', 'rug_sl');
-        // Keep the mirror TRACKED (do NOT registry.close here): a failed rug-SL close (congestion — the rug case)
-        // must be re-published by the reconcile until the position is confirmed gone on-chain. Marking it
-        // rug-exit-pending drives that retry independent of `leaderClosed` (the leader still holds it — rug-SL is
-        // OUR exit). The reconcile clears the pending flag + registry.close + DB markClosed once the close lands.
+        // ARM the retry-until-confirmed-gone state BEFORE publishing (matches the STOP-close path). A rug-SL close
+        // that FAILS to publish (a genuine non-connection failure — the rug case lands worst under congestion, and
+        // publish() re-throws such failures) MUST still be re-closed by the reconcile until the position is confirmed
+        // gone. rug-SL is OUR independent exit — the leader still holds, so the `leaderClosed` retry never fires; the
+        // pending set is the ONLY retry channel, so arming it must not hinge on the publish succeeding. Keep the mirror
+        // TRACKED (do NOT registry.close): the reconcile clears the pending flag + registry.close + DB markClosed once
+        // the close lands.
         rt.rugExitPending.add(m.ourPosition);
         void rt.rugExitStore.addPending(m.ourPosition); // persist so the retry survives a brain restart
         rt.rugSlTracker.forget(m.ourPosition); // stop price re-triggering (grace + reconcile now own the retry)
         rt.rugExited.add(m.leaderPosition); // suppress re-opening this leader position on its next add
         void rt.rugExitStore.addExited(m.leaderPosition); // persist so the suppression survives a brain restart
+        await rt.publishSafetyClose(m, 'rugsl', 'rug_sl').catch((err) =>
+          // Retry state already armed above → the reconcile re-closes even on a failed publish (never a silent dormant
+          // rugging position). Log LOUD; per-entry isolation holds (this branch never throws to the pool loop).
+          deps.log.error(
+            { err: (err as Error).message, userId: rt.userId, our: m.ourPosition },
+            'rug-sl: safety close publish failed → reconcile will re-close (rugExitPending armed)',
+          ),
+        );
       } catch (e) {
         deps.log.error(
           { e: (e as Error).message, userId: rt.userId, our: m.ourPosition },
