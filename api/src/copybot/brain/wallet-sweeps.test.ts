@@ -65,6 +65,7 @@ function makeReconcileRt(
     markClosed: [] as string[],
     registryClosed: [] as string[],
     reClosed: [] as string[],
+    reCloseAttempts: [] as Array<number | undefined>, // the per-tick discriminator stamp threaded to publishReClose (#64)
     closedEvents: [] as unknown[],
     cancelled: [] as string[],
     orphanClosed: [] as string[],
@@ -97,8 +98,9 @@ function makeReconcileRt(
     rugExitPending: new Set<string>(),
     rugExitStore: { removePending: async () => {} },
     buildingToken2022Positions: new Map<string, number>(),
-    publishReClose: async (m) => {
+    publishReClose: async (m, reCloseAttempt) => {
       calls.reClosed.push(m.ourPosition);
+      calls.reCloseAttempts.push(reCloseAttempt);
     },
     leaderOf: (m) => m.leaderAddress,
     closeConfirmedKey: (leader, pool, our) => `${leader}:${pool}:close-confirmed:${our}`,
@@ -177,6 +179,31 @@ describe('runReconcileSweep — shared-wallet attribution (Inc.3b S6)', () => {
     await runReconcileSweep(deps);
     expect(a.reClosed).toEqual(['OUR_A']);
     expect(b.reClosed).toEqual(['OUR_B']);
+  });
+
+  it('#64 retry-audit: each reconcile tick threads its OWN stamp to publishReClose (distinct ticks ⇒ distinct rows; one tick ⇒ dedup)', async () => {
+    // WHY: a leader-closed reClose reuses the SAME deterministic commandId every retry tick (so the vault idempotency
+    // re-signs the SAME close until it lands). The journal dedup index is (wallet, correlationId, code) with
+    // correlationId defaulting to commandId — so WITHOUT a per-tick discriminator every retry collapses onto the first
+    // tick's audit row (a genuine retry silently lost). The sweep stamps its tick `now` onto publishReClose; the
+    // event-store then turns distinct stamps into distinct correlationIds (see event-store.test.ts "keeps rows with a
+    // DISTINCT correlationId"). A within-tick re-publish would share the stamp ⇒ correctly dedups.
+    const { rt, calls } = makeReconcileRt('user-a', [mirror({ ourPosition: 'OUR_A' })]);
+    const { deps } = makeDeps([rt], [pos('OUR_A')], { OUR_A: {}, [LP]: null }); // leader gone ⇒ reClose every tick
+
+    const TICK_1 = NOW;
+    const TICK_2 = NOW + RECLOSE_GRACE_MS + 1; // a LATER reconcile tick (past the reclose grace)
+    deps.nowMs = () => TICK_1;
+    await runReconcileSweep(deps);
+    deps.nowMs = () => TICK_2;
+    await runReconcileSweep(deps);
+
+    // One reClose per tick (a given close is never double-published within one tick), each carrying THAT tick's
+    // stamp — so the two retries differ (⇒ distinct correlationIds ⇒ distinct audit rows), while a within-tick
+    // duplicate would share the stamp (⇒ dedup).
+    expect(calls.reClosed).toEqual(['OUR_A', 'OUR_A']);
+    expect(calls.reCloseAttempts).toEqual([TICK_1, TICK_2]);
+    expect(TICK_1).not.toBe(TICK_2);
   });
 
   it('read-cache dedup: the shared leaderPosition is read ONCE for two users (O(distinct positions))', async () => {

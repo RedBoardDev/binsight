@@ -39,7 +39,7 @@ export interface ReconcileRuntime {
   rugExitPending: Set<string>;
   rugExitStore: Pick<RugExitStore, 'removePending'>;
   buildingToken2022Positions: Map<string, number>;
-  publishReClose(m: Mirror): Promise<void>;
+  publishReClose(m: Mirror, reCloseAttempt?: number): Promise<void>;
   leaderOf(m: Pick<Mirror, 'leaderAddress'>): string;
   closeConfirmedKey(leader: string, pool: string, ourPosition: string): string;
   cancelPendingOpen(leaderPosition: string, pool: string): void;
@@ -59,7 +59,7 @@ export interface ReconcileSweepDeps {
   /** Shared wallet-level re-close grace map (position pubkeys are globally unique on the one wallet). */
   recentlyPublishedClose: Map<string, number>;
   /** Publish a close for a position NO user tracks — SYSTEM-bound (wallet maintenance, INC3B-PLAN §4). */
-  publishOrphanClose(p: UserPosition): Promise<void>;
+  publishOrphanClose(p: UserPosition, reCloseAttempt?: number): Promise<void>;
   openGraceMs: number;
   recloseGraceMs: number;
   token2022DepositGraceMs: number;
@@ -143,7 +143,7 @@ async function reconcileUser(
     if (now - (deps.recentlyPublishedClose.get(rc.ourPosition) ?? 0) < deps.recloseGraceMs)
       continue;
     const m = tracked.find((x) => x.ourPosition === rc.ourPosition);
-    if (m) await rt.publishReClose(m);
+    if (m) await rt.publishReClose(m, now); // `now` = the sweep tick stamp → each retry tick is a distinct audit row (#64)
   }
   return {
     tracked: trackedOurs,
@@ -231,7 +231,8 @@ export async function runReconcileSweep(
       const p = held.find((h) => h.position === orphan);
       if (p && now - (deps.recentlyPublishedClose.get(orphan) ?? 0) >= deps.recloseGraceMs) {
         await deps
-          .publishOrphanClose(p)
+          // `now` stamp → each retry tick is a distinct audit row (#64).
+          .publishOrphanClose(p, now)
           .catch((e) =>
             deps.log.error(
               { e: (e as Error).message, position: orphan },
@@ -272,7 +273,7 @@ export interface WalletReconcileRuntime extends ReconcileRuntime {
   /** ownerPk.toBase58() — SYSTEM = the bench wallet; a real user = their provisioned Privy wallet (distinct). */
   readonly wallet: string;
   /** Force-close a STRAY position on THIS runtime's wallet (published as this user — wallet maintenance). */
-  publishOrphanClose(p: UserPosition): Promise<void>;
+  publishOrphanClose(p: UserPosition, reCloseAttempt?: number): Promise<void>;
 }
 
 export interface WalletReconcileSweepDeps {
@@ -319,7 +320,7 @@ export async function runReconcileSweepByWallet(
       enumeratePositions: () => deps.enumerateForWallet(wallet),
       readAccountInfo: deps.readAccountInfo,
       recentlyPublishedClose: deps.recentlyPublishedClose,
-      publishOrphanClose: (p) => owner.publishOrphanClose(p),
+      publishOrphanClose: (p, reCloseAttempt) => owner.publishOrphanClose(p, reCloseAttempt),
       openGraceMs: deps.openGraceMs,
       recloseGraceMs: deps.recloseGraceMs,
       token2022DepositGraceMs: deps.token2022DepositGraceMs,
@@ -339,7 +340,12 @@ export interface RugSweepRuntime {
   rugExitPending: Set<string>;
   rugExitStore: Pick<RugExitStore, 'addPending' | 'addExited'>;
   rugExited: Set<string>;
-  publishSafetyClose(m: Mirror, tag: string, reason: string): Promise<void>;
+  publishSafetyClose(
+    m: Mirror,
+    tag: string,
+    reason: string,
+    reCloseAttempt?: number,
+  ): Promise<void>;
 }
 
 export interface RugSlSweepDeps {
@@ -393,7 +399,8 @@ export async function runRugSlSweep(deps: RugSlSweepDeps): Promise<void> {
         rt.rugSlTracker.forget(m.ourPosition); // stop price re-triggering (grace + reconcile now own the retry)
         rt.rugExited.add(m.leaderPosition); // suppress re-opening this leader position on its next add
         void rt.rugExitStore.addExited(m.leaderPosition); // persist so the suppression survives a brain restart
-        await rt.publishSafetyClose(m, 'rugsl', 'rug_sl').catch((err) =>
+        // `now` stamp → each retry tick is a distinct audit row (#64).
+        await rt.publishSafetyClose(m, 'rugsl', 'rug_sl', now).catch((err) =>
           // Retry state already armed above → the reconcile re-closes even on a failed publish (never a silent dormant
           // rugging position). Log LOUD; per-entry isolation holds (this branch never throws to the pool loop).
           deps.log.error(

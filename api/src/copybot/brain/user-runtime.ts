@@ -137,6 +137,9 @@ const HOP = 'cmd:sign';
 /** Journal reason stamped when a bus.publish itself throws (a 'failed' journal row requires a reason). Used only when
  *  the intent carries no more specific reason (a plain open/add); a failsafe/rug-SL close keeps its own reason. */
 const BUS_PUBLISH_FAILED_REASON = 'bus_publish_failed';
+/** Separator between a retry-close's stable commandId and its per-tick attempt stamp on `correlationId` (#64). The
+ *  same `#` grammar the observability dedup tests pin (e.g. `CMD#<tick>`) — a duplicate within one tick still dedups. */
+const RETRY_CORRELATION_SEP = '#';
 /** Wait this long after publishing a close before a reconcile re-close (let it land). Shared with brain-main's
  *  wallet-level sweeps (reconcile / rug-SL), which apply the same grace. */
 export const RECLOSE_GRACE_MS = 60_000;
@@ -331,6 +334,18 @@ export async function createUserRuntime(
   // ONE signature would otherwise share `${leader}:${pool}:${action}:${signature}` → one commandId → the 2nd copy
   // dropped as a duplicate (a MISSED close). Position keeps `.split(':')[2]` = action stable for the coffre.
   const commandIdFor = (eventKey: string): string => deriveCommandId(userId, eventKey);
+  // A reconcile / rug-SL / orphan RE-CLOSE deliberately reuses its DETERMINISTIC commandId every retry tick (so the
+  // vault idempotency re-claims + re-signs the SAME close until it lands). The observability dedup index is
+  // `(wallet, correlationId, code)` and correlationId defaults to the commandId — so WITHOUT a discriminator every
+  // retry of that close collapses onto the FIRST tick's audit row (a genuine retry silently lost, #64). Stamping the
+  // per-sweep tick onto correlationId makes each DISTINCT tick a DISTINCT audit row, while two publishes of the same
+  // close within ONE tick (same stamp) still correctly dedup to one row. Absent stamp ⇒ undefined ⇒ correlationId
+  // falls back to commandId exactly as before (non-retry publishes are byte-identical).
+  const retryCorrelationId = (
+    commandId: string,
+    tickStamp: number | undefined,
+  ): string | undefined =>
+    tickStamp === undefined ? undefined : `${commandId}${RETRY_CORRELATION_SEP}${tickStamp}`;
   const store = new MirrorStore(db, userId); // no-dormant persistence (survives restarts)
   // ONE observability emitter bound to this tenant: a tenant-scoped pino child is its logger. The runtime's call
   // sites emit TYPED codes through it directly; every row back-fills user/wallet/correlation. Operator-actionable
@@ -558,6 +573,10 @@ export async function createUserRuntime(
   async function publish(
     sr: Omit<SignRequest, 'issuedAtMs' | 'userId'>,
     journalHint?: Partial<JournalEntry>,
+    // Explicit correlationId for the RETRY-capable close stages (#64): a reconcile/rug-SL/orphan re-close stamps its
+    // per-tick attempt here so a genuine retry persists as a DISTINCT audit row. Undefined for every other publish ⇒
+    // the emit falls back to `correlationId = commandId` exactly as before (byte-identical).
+    correlationId?: string,
   ): Promise<void> {
     // The tenant is injected HERE, once (the runtime binding) — no call site carries it by hand; timestamped at
     // publish time (latency).
@@ -595,6 +614,7 @@ export async function createUserRuntime(
         ourPosition: full.positionPubkey,
         commandId: full.commandId,
         eventKey: full.eventKey,
+        correlationId, // retry-close discriminator (#64); undefined ⇒ correlationId = commandId (unchanged)
         leaderSizeSol: journalHint?.leaderSizeSol,
         ourSizeSol: full.sizeSol,
         reason: journaledReason,
@@ -2131,11 +2151,17 @@ export async function createUserRuntime(
 
   // Publish a safety close for a tracked mirror (failsafe leader-closed, or rug-SL crash). Deterministic commandId
   // (per `tag`) → the vault retries it (idempotency re-claims a previously failed close) until it lands.
-  async function publishSafetyClose(m: Mirror, tag: string, reason: string): Promise<void> {
+  async function publishSafetyClose(
+    m: Mirror,
+    tag: string,
+    reason: string,
+    reCloseAttempt?: number,
+  ): Promise<void> {
     // The MIRROR's leader (3b) prefixes the key — same commandId the pre-3b code derived for a fresh mirror, and
     // the exact shape the failsafe idempotency depends on (`${leader}:${pool}:failsafe:${leaderPosition}`).
     const leader = leaderOf(m);
     const eventKey = `${leader}:${m.pool}:${tag}:${m.leaderPosition}`;
+    const commandId = commandIdFor(eventKey);
     const built = await buildCloseTx(
       conn,
       new PublicKey(m.pool),
@@ -2147,7 +2173,7 @@ export async function createUserRuntime(
     const { issuedAtSlot, deadlineSlot } = await slots();
     await publish(
       {
-        commandId: commandIdFor(eventKey),
+        commandId,
         eventKey,
         kind: 'close',
         pool: m.pool,
@@ -2160,13 +2186,15 @@ export async function createUserRuntime(
         deadlineSlot,
       },
       { stage: 'failsafe', severity: 'warn', reason, leader, leaderPosition: m.leaderPosition },
+      retryCorrelationId(commandId, reCloseAttempt),
     );
     recentlyPublishedClose.set(m.ourPosition, Date.now()); // grace; journaled as a failsafe-published event in publish()
   }
 
-  // Re-publish a failsafe close for a mirror still on-chain whose leader has closed.
-  const publishReClose = (m: Mirror): Promise<void> =>
-    publishSafetyClose(m, 'failsafe', 'leader_closed');
+  // Re-publish a failsafe close for a mirror still on-chain whose leader has closed. `reCloseAttempt` = the reconcile
+  // tick stamp (#64) so each RETRY tick persists as a distinct audit row.
+  const publishReClose = (m: Mirror, reCloseAttempt?: number): Promise<void> =>
+    publishSafetyClose(m, 'failsafe', 'leader_closed', reCloseAttempt);
 
   // STOP = FORCE-CLOSE (SPEC §4.3): close the mirrors concerned by an observed config stop transition (leader
   // disabled/removed → its mirrors; global user.enabled off → all). Reuses the SAME deterministic safety-close
@@ -2214,7 +2242,7 @@ export async function createUserRuntime(
   // Force-close a STRAY (untracked) position on our wallet — pool + bins come from the on-chain enumerator. The
   // close goes through the vault's Wall B like any other (signer/destination re-verified), so it can only ever
   // close OUR own position. Deterministic commandId → idempotent if it has to be retried.
-  async function publishOrphanClose(p: UserPosition): Promise<void> {
+  async function publishOrphanClose(p: UserPosition, reCloseAttempt?: number): Promise<void> {
     // An orphan has NO leader (tracked by no mirror) — its keys live in the WALLET context (INC3B-PLAN §4): the
     // `wallet:` prefix replaces a leader address so the commandId never aliases a leader-scoped close and never
     // fabricates an attribution. Published as SYSTEM (brain-main routes every orphan through the SYSTEM runtime).
@@ -2229,6 +2257,8 @@ export async function createUserRuntime(
     );
     const { issuedAtSlot, deadlineSlot } = await slots();
     const commandId = commandIdFor(eventKey);
+    // Per-tick discriminator (#64) so each RETRY of this deterministic orphan close persists as a distinct audit row.
+    const correlationId = retryCorrelationId(commandId, reCloseAttempt);
     await publish(
       {
         commandId,
@@ -2244,10 +2274,12 @@ export async function createUserRuntime(
         deadlineSlot,
       },
       { stage: 'failsafe', reason: 'orphan' },
+      correlationId,
     );
     recentlyPublishedClose.set(p.position, Date.now());
     // Orphan auto-close → the pinned, feed-visible `failsafe.orphan_closed` (was a generic `alert()`). Same
-    // commandId as the publish marker above ⇒ the emit dedup collapses the two into ONE orphan-closed row.
+    // commandId AND correlationId as the publish marker above ⇒ the emit dedup collapses the two into ONE
+    // orphan-closed row (per tick — a genuine retry on a later tick is a distinct row via `correlationId`).
     events.emit('failsafe.orphan_closed', {
       stage: 'failsafe',
       outcome: 'published',
@@ -2257,6 +2289,7 @@ export async function createUserRuntime(
       ourPosition: p.position,
       commandId,
       eventKey,
+      correlationId,
       adminDetail: { position: p.position, pool: p.pool },
     });
   }

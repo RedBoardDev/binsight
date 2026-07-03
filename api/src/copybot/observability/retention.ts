@@ -20,12 +20,7 @@ import { copyJournal, networthSnapshots } from '@/infrastructure/persistence/sch
 
 type Db = ReturnType<typeof openDatabase>;
 
-// TODO(#65 wiring): schedule `pruneOldRows(db, Date.now())` on a periodic timer next to the other brain jobs in
-// `src/copybot/brain/brain-main.ts` (the `setInterval` block ~L549-578, e.g. a `PRUNE_MS = 6 * 60 * 60 * 1000`
-// daily-ish cadence with a `.catch()` like `feeSweep`). Left un-wired here because brain-main.ts is owned by
-// another agent / outside this change's file scope.
-
-/** Suggested prune cadence for the periodic wiring (see the TODO above): a few hours is ample for append-only tables. */
+/** Prune cadence for the periodic wiring (wired in brain-main.ts next to the other sweeps): a few hours is ample for append-only tables. */
 export const PRUNE_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 /** Epoch-ms in one day — the unit for every retention window below. */

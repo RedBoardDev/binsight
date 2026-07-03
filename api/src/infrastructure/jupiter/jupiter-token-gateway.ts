@@ -5,7 +5,7 @@
  * network / timeout) ⇒ `null` so the enabled filters skip rather than throw on the open path.
  */
 import { z } from 'zod';
-import type { TokenSnapshot, TokenSnapshotProvider } from '../source';
+import type { TokenSnapshot, TokenSnapshotProvider } from '@/domain/copybot/filters/sources/source';
 
 /** lite-api = keyless (rate-limited; fine for the PoC). `api.jup.ag` needs an `x-api-key` (scale). */
 export const DEFAULT_JUPITER_TOKEN_BASE_URL = 'https://lite-api.jup.ag';

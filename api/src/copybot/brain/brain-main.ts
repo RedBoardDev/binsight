@@ -25,11 +25,11 @@ import { HeartbeatStore } from '@/copybot/heartbeat-store';
 import { SYSTEM_USER_ID } from '@/copybot/journal-store';
 import { CopyEvents } from '@/copybot/observability/copy-events';
 import { EventStore } from '@/copybot/observability/event-store';
+import { PRUNE_INTERVAL_MS, pruneOldRows } from '@/copybot/observability/retention';
 import type { CopybotConfig } from '@/domain/copybot/config';
 import type { DetectedEvent } from '@/domain/copybot/events';
 import { computeLeaderSet, shouldRetainLeader } from '@/domain/copybot/fan-out';
 import type { TokenSnapshot } from '@/domain/copybot/filters';
-import { JupiterTokenGateway } from '@/domain/copybot/filters/sources/jupiter-token/jupiter-token-gateway';
 import { LeaderDetector } from '@/domain/copybot/leader-detector';
 import {
   assembleBrainStatus,
@@ -43,6 +43,7 @@ import { TtlCache } from '@/domain/copybot/ttl-cache';
 import type { LoadedPoolMeta } from '@/domain/dlmm';
 import { ControlChannel } from '@/infrastructure/bus/control-channel';
 import { RedisBus } from '@/infrastructure/bus/redis-bus';
+import { JupiterTokenGateway } from '@/infrastructure/jupiter/jupiter-token-gateway';
 import { CopybotActivationRepository } from '@/infrastructure/persistence/copybot-activation-repository';
 import { openDatabase } from '@/infrastructure/persistence/database';
 import { FeeLedgerRepository } from '@/infrastructure/persistence/fee-ledger-repository';
@@ -576,6 +577,14 @@ async function main(): Promise<void> {
     () => void heartbeat.beat(brainStatus()),
     HEARTBEAT_INTERVAL_MS,
   );
+  // Retention prune (#65): periodically enforce the append-only-table retention policy (copy_journal internal
+  // debug rows / networth_snapshots downsampling — see retention.ts). Best-effort like the other sweeps: a prune
+  // failure NEVER touches the hot path, it just logs and retries next tick.
+  const pruneTimer = setInterval(() => {
+    void pruneOldRows(db, Date.now()).catch((e) =>
+      log.warn({ e: (e as Error).message }, 'retention prune failed'),
+    );
+  }, PRUNE_INTERVAL_MS);
 
   // ev:executed consumer on a SEPARATE Redis connection (a blocking XREAD must never stall publishes). Crash-proof.
   let stopped = false;
@@ -783,6 +792,7 @@ async function main(): Promise<void> {
     clearInterval(feeTimer);
     clearInterval(configTimer);
     clearInterval(heartbeatTimer);
+    clearInterval(pruneTimer);
     blockhashCache.stop();
     sub.stop();
     await Promise.all([bus.quit(), evBus.quit(), control.quit()]);
