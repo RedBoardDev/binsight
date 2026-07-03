@@ -29,6 +29,19 @@ export interface CapsState {
   openTimestampsMs: number[]; // wall-clock ms of ALL our opens (checkCaps filters by window)
 }
 
+/** The mirror slice the per-leader exposure sum reads (structural: the brain passes its `Mirror` objects). */
+export interface LeaderScopedMirror {
+  /** wallet address of the leader this mirror copies ('' for a legacy row — matches no real leader). */
+  leaderAddress: string;
+  sizeSol: number;
+}
+
+/** SOL exposure across ONE leader's open mirrors — the `leaderExposureSol` input of `checkCaps` (SPEC §4.2/§12).
+ *  Scoped per leader so leader A's open positions never consume leader B's exposure budget. Pure. */
+export function exposureFor(mirrors: readonly LeaderScopedMirror[], leader: string): number {
+  return mirrors.reduce((s, m) => (m.leaderAddress === leader ? s + m.sizeSol : s), 0);
+}
+
 export type CapVerdict = { action: 'allow' } | { action: 'block'; reason: string };
 const block = (reason: string): CapVerdict => ({ action: 'block', reason });
 const ALLOW: CapVerdict = { action: 'allow' };

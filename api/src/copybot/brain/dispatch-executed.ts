@@ -23,6 +23,10 @@ export interface ExecutedEvent {
   positionPubkey?: string;
   commandId?: string;
   sig?: string;
+  /** Tenant of the landed command (3b fan-out: routes the confirm to that user's runtime — not read yet).
+   *  OPTIONAL: messages already in flight across a deploy predate the field; the router falls back to
+   *  position/commandId ownership for those. */
+  userId?: string;
 }
 
 /** The handler callbacks the dispatch routes to. The async ones may reject on a transient failure (the caller's

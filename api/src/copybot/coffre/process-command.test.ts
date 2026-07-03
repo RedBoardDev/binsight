@@ -126,6 +126,13 @@ describe('process1 — a returned signature is NOT execution (no dormant-positio
     const verdict = await process1(sr, ctxFor(conn, bus));
     expect(verdict).toEqual({ ok: true, kind: 'close' });
     expect(bus.publish).toHaveBeenCalledTimes(1);
+    // ev:executed carries the SIGNED tenant (3b fan-out: the brain routes the confirm to that user's runtime —
+    // without it a multi-user brain could ack another user's close as its own).
+    expect(vi.mocked(bus.publish).mock.calls[0]?.[3]).toMatchObject({
+      commandId: sr.commandId,
+      kind: 'close',
+      userId: USER,
+    });
     const row = await db
       .select()
       .from(executions)
@@ -548,6 +555,13 @@ describe('process1 — #7: recovery pre-check re-signs ONLY a provably-dead tx (
     expect(land).not.toHaveBeenCalled(); // ← FAILS on the pre-#7 code (it re-signs the landed tx)
     expect(verdict).toEqual({ ok: true, kind: 'close' });
     expect(bus.publish).toHaveBeenCalledTimes(1); // ev:executed re-published (idempotent downstream)
+    // The recovery RE-publish carries the tenant too (3b fan-out): a confirm replayed after a coffre restart must
+    // still route to the owning user's runtime, exactly like a fresh land.
+    expect(vi.mocked(bus.publish).mock.calls[0]?.[3]).toMatchObject({
+      commandId: sr.commandId,
+      sig: PRIOR_SIG,
+      userId: USER,
+    });
     const row = await db
       .select()
       .from(executions)

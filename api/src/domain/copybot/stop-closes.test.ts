@@ -117,6 +117,24 @@ describe('planStopCloses · no-op transitions (forward-only start, SPEC §4.3)',
     expect(planStopCloses(prev, next, []).toClose).toEqual([]);
   });
 
+  it("a legacy mirror (leaderAddress '') is STOPPED by definition: no per-leader close, only a global stop", () => {
+    // WHY (the MirrorStore NULL→'' fallback contract): a pre-3b row has no persisted leader, so the loader yields
+    // ''. '' matches no leader address → isStarted(prev, '') is false → per-leader transitions must never close it
+    // (we cannot know it belongs to the stopped leader). The GLOBAL stop still catches it — never an unreachable row.
+    const legacy: StopCloseMirror = {
+      ourPosition: 'ourL',
+      leaderPosition: 'lpL',
+      leaderAddress: '',
+    };
+    const prev = cfg(true, [leader(A, true)]);
+    const perLeaderStop = cfg(true, [leader(A, false)]);
+    expect(planStopCloses(prev, perLeaderStop, [legacy]).toClose).toEqual([]);
+    const globalStop = cfg(false, [leader(A, true)]);
+    expect(planStopCloses(prev, globalStop, [legacy]).toClose).toEqual([
+      { ...legacy, reason: 'user_stopped' },
+    ]);
+  });
+
   it('a mirror of a leader ABSENT from prev is not closed (no boot-from-stale-prev force-close)', () => {
     // WHY: prev must be the config the brain actually ran. A mirror whose leader is in neither config belongs to
     // an earlier transition (downtime reconciliation is increment-3 territory) — planning a close here would mean

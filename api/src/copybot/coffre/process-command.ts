@@ -175,6 +175,7 @@ export async function recoveryPreCheck(
       pool: sr.pool,
       positionPubkey: sr.positionPubkey,
       owner: sr.owner,
+      userId: sr.userId, // tenant of the landed command (3b: the brain routes the confirm to that user's runtime)
     });
   } catch (e) {
     log.error(
@@ -403,6 +404,7 @@ export async function process1(
         pool: sr.pool,
         positionPubkey: sr.positionPubkey,
         owner: sr.owner,
+        userId: sr.userId, // tenant of the landed command (3b: the brain routes the confirm to that user's runtime)
       });
     } catch (e) {
       // A lost ev:executed AFTER a confirmed land is a degraded (reconcile/PEL-backstopped) outcome — strictly better

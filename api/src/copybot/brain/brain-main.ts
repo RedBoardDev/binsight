@@ -28,7 +28,7 @@ import { LOG_MARKER_EVENT_ROUTED } from '@/copybot/log-markers';
 import { CopyEvents } from '@/copybot/observability/copy-events';
 import { EventStore } from '@/copybot/observability/event-store';
 import { purgeRugExitPending, RugExitStore } from '@/copybot/rug-exit-store';
-import { type CapsState, checkCaps } from '@/domain/copybot/caps';
+import { type CapsState, checkCaps, exposureFor } from '@/domain/copybot/caps';
 import { type CopybotConfig, type EffectiveConfig, effectiveFor } from '@/domain/copybot/config';
 import { type SignRequest, SignRequestSchema } from '@/domain/copybot/contracts';
 import { decideEntry } from '@/domain/copybot/decision';
@@ -515,15 +515,14 @@ async function main(): Promise<void> {
   const filterDeps = { jupiterToken, snapshotCache };
   log.info({ filters: eff().filters }, '🧪 entry filters loaded');
 
-  const capsState = (): CapsState => {
+  const capsState = (candidateLeader: string): CapsState => {
     const open = registry.openPositions();
-    const exposureSol = open.reduce((s, m) => s + m.sizeSol, 0);
     return {
       openPositions: open.length,
-      totalExposureSol: exposureSol,
-      // Single-watched-leader runtime: every open mirror belongs to cfg.leader, so the per-leader exposure equals
-      // the total. Increment 3 (multi-leader runtimes) scopes this to the candidate leader's mirrors.
-      leaderExposureSol: exposureSol,
+      totalExposureSol: open.reduce((s, m) => s + m.sizeSol, 0),
+      // Per-leader scope (3b): only the CANDIDATE leader's mirrors count toward its exposure cap — another
+      // leader's open positions must never consume this leader's `maxTotalExposureSol` budget.
+      leaderExposureSol: exposureFor(open, candidateLeader),
       tokenOpenCount: 0,
       openTimestampsMs: [],
     };
@@ -674,7 +673,7 @@ async function main(): Promise<void> {
     }
     const cap = checkCaps(
       ec.caps,
-      capsState(),
+      capsState(cfg.leader), // candidate leader = the watched leader (3b: the event's leader)
       decision.sizeSol,
       Date.now(),
       ec.leaderMaxTotalExposureSol, // per-leader exposure ceiling (SPEC §4.2/§12)
@@ -886,6 +885,7 @@ async function main(): Promise<void> {
     };
     const mirror = registry.open({
       leaderPosition: e.position,
+      leaderAddress: cfg.leader, // single-watched-leader runtime: every open copies cfg.leader (3b: the event's leader)
       ourPosition: sr.positionPubkey,
       pool: e.pool,
       nonSolSymbol: e.nonSolSymbol,
@@ -1212,6 +1212,7 @@ async function main(): Promise<void> {
     if (consumeOpenCancellation(e.position, e.pool)) return; // a close arrived DURING the build → abort before the on-chain publish
     const mirror = registry.open({
       leaderPosition: e.position,
+      leaderAddress: cfg.leader, // single-watched-leader runtime: every open copies cfg.leader (3b: the event's leader)
       ourPosition: sr.positionPubkey,
       pool: e.pool,
       nonSolSymbol: e.nonSolSymbol,
@@ -1332,6 +1333,7 @@ async function main(): Promise<void> {
     }
     const mirror = registry.open({
       leaderPosition: pend.leaderPosition,
+      leaderAddress: cfg.leader, // single-watched-leader runtime: every open copies cfg.leader (3b: the event's leader)
       ourPosition: pend.ourPosition,
       pool: pend.pool,
       nonSolSymbol: pend.nonSolSymbol,
@@ -2080,14 +2082,16 @@ async function main(): Promise<void> {
   async function applyStopCloses(prev: CopybotConfig, next: CopybotConfig): Promise<void> {
     const open = registry.openPositions();
     if (open.length === 0) return;
-    // Single-user/single-watched-leader runtime: every mirror belongs to cfg.leader (the watched leader).
+    // Per-mirror leader (3b): each mirror carries the leader it copies, so a stop of leader A closes ONLY A's
+    // mirrors even when several leaders are watched. A legacy '' leaderAddress is stopped-by-definition for
+    // planStopCloses (isStarted('') is false) → only a global stop closes it.
     const { toClose } = planStopCloses(
       prev,
       next,
       open.map((m) => ({
         ourPosition: m.ourPosition,
         leaderPosition: m.leaderPosition,
-        leaderAddress: cfg.leader,
+        leaderAddress: m.leaderAddress,
       })),
     );
     for (const c of toClose) {
@@ -2127,8 +2131,10 @@ async function main(): Promise<void> {
     for (const [pool, mirrors] of byPool) {
       const price = await readActiveTokenPrice(conn, new PublicKey(pool));
       if (price === null) continue; // never record a garbage price → no false trigger
-      const rugCfg = eff().rugSl;
       for (const m of mirrors) {
+        // Per-mirror leader config (3b): the rug-SL trigger reads the settings of the leader THIS mirror copies —
+        // leader A's rug config must never fire (or mute) a close on leader B's mirror.
+        const rugCfg = effectiveFor(runtimeConfig, m.leaderAddress).rugSl;
         rugSlTracker.record(m.ourPosition, price, now);
         if (!rugCfg.enabled) continue;
         if (now - (recentlyPublishedClose.get(m.ourPosition) ?? 0) < RECLOSE_GRACE_MS) continue; // a close is already in flight

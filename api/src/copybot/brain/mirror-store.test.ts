@@ -20,6 +20,7 @@ const USER_2 = 'test-user-2';
 const LP = '__test_mirror_store__';
 const mirror: Mirror = {
   leaderPosition: LP,
+  leaderAddress: 'LEADER_A',
   ourPosition: 'OUR',
   pool: 'POOL',
   nonSolSymbol: 'TOK',
@@ -41,6 +42,39 @@ describe('MirrorStore — no-dormant persistence, per user', () => {
       lowerBin: -45,
       status: 'open',
     });
+  });
+
+  it('round-trips leaderAddress — the mirror→leader mapping survives a restart (3b per-leader ops)', async () => {
+    // WHY: per-leader stop-closes, per-leader exposure caps and per-leader rug-SL config all resolve from
+    // m.leaderAddress. If it did not survive a restart, a stop of leader A after a reboot could close (or spare)
+    // the WRONG leader's mirrors.
+    const fresh = new MirrorStore(db, USER);
+    expect((await fresh.loadOpen()).find((m) => m.leaderPosition === LP)?.leaderAddress).toBe(
+      'LEADER_A',
+    );
+  });
+
+  it("legacy pre-3b row (leader NULL) loads with leaderAddress '' → planStopCloses treats it as STOPPED", async () => {
+    // WHY: '' matches no real leader address, so isStarted(prev, '') is false → a per-leader stop transition
+    // never force-closes a row whose leader we cannot know; only a GLOBAL stop does. Loading anything else
+    // (e.g. cfg.leader) could close a legacy mirror on an unrelated leader's stop.
+    const LEGACY_LP = '__test_legacy_null_leader__';
+    await db.insert(schema.copyPositions).values({
+      userId: USER,
+      leaderPosition: LEGACY_LP,
+      leader: null, // a row written before the 3b `leader` column existed
+      ourPosition: 'OUR_LEGACY',
+      pool: 'POOL',
+      nonSolSymbol: 'TOK',
+      sizeSol: 0.1,
+      lowerBin: -1,
+      upperBin: 1,
+      status: 'open',
+      openedAt: 1_700_000_000_000,
+      closedAt: null,
+    });
+    const open = await store.loadOpen();
+    expect(open.find((m) => m.leaderPosition === LEGACY_LP)?.leaderAddress).toBe('');
   });
 
   it('RESTART SIMULATION: a NEW store bound to the same user reloads the open mirror (survives a restart)', async () => {

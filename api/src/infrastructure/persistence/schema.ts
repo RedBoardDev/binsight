@@ -188,6 +188,10 @@ export const copyPositions = pgTable(
   {
     userId: text('user_id').notNull(), // tenant FK → users.id; single-user runtime binds SYSTEM_USER_ID at boot
     leaderPosition: text('leader_position').notNull(),
+    // Wallet address of the LEADER this mirror copies (3b: per-leader stop-closes/exposure/rug config).
+    // Nullable: legacy pre-3b rows have no leader — the loader falls back to '' which planStopCloses
+    // treats as stopped (only a global stop force-closes such a row).
+    leader: text('leader'),
     ourPosition: text('our_position').notNull(),
     pool: text('pool').notNull(),
     nonSolSymbol: text('non_sol_symbol'),

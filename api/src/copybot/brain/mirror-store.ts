@@ -25,6 +25,7 @@ export class MirrorStore {
       .values({
         userId: this.userId,
         leaderPosition: m.leaderPosition,
+        leader: m.leaderAddress,
         ourPosition: m.ourPosition,
         pool: m.pool,
         nonSolSymbol: m.nonSolSymbol,
@@ -61,6 +62,10 @@ export class MirrorStore {
       .where(and(eq(copyPositions.userId, this.userId), eq(copyPositions.status, 'open')));
     return rows.map((r) => ({
       leaderPosition: r.leaderPosition,
+      // Legacy pre-3b row (leader NULL) → '': planStopCloses.isStarted('') is false (no leader has an empty
+      // address), so per-leader stop transitions never touch it — only a GLOBAL stop force-closes it. That is the
+      // safe default for a row whose leader we cannot know (fresh-start DB per SPEC §15 makes this transient).
+      leaderAddress: r.leader ?? '',
       ourPosition: r.ourPosition,
       pool: r.pool,
       nonSolSymbol: r.nonSolSymbol,

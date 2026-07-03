@@ -3,6 +3,7 @@ import { type Mirror, MirrorRegistry } from './mirror-registry';
 
 const m = (over: Partial<Omit<Mirror, 'status'>> = {}): Omit<Mirror, 'status'> => ({
   leaderPosition: 'L',
+  leaderAddress: 'LEADER_A',
   ourPosition: 'O',
   pool: 'POOL',
   nonSolSymbol: 'TOK',

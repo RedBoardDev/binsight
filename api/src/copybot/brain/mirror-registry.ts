@@ -9,6 +9,10 @@ export interface Mirror {
   leaderPosition: string;
   /** pubkey of OUR position (generated at open). */
   ourPosition: string;
+  /** wallet address of the LEADER this mirror copies (3b) — drives per-leader stop-closes, per-leader
+   *  exposure caps and per-leader rug-SL config. `''` for a legacy pre-3b row (NULL in the DB): treated as
+   *  STOPPED by `planStopCloses.isStarted`, so only a global stop force-closes it (never a per-leader flip). */
+  leaderAddress: string;
   pool: string;
   nonSolSymbol: string | null;
   sizeSol: number;

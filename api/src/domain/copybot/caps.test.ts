@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CAPS_DEFAULTS, type CapsConfig, type CapsState, checkCaps } from './caps';
+import { CAPS_DEFAULTS, type CapsConfig, type CapsState, checkCaps, exposureFor } from './caps';
 
 const state = (over: Partial<CapsState> = {}): CapsState => ({
   openPositions: 0,
@@ -169,5 +169,28 @@ describe('checkCaps — caps + kill-switch envelope', () => {
       windowMinutes: 10,
       maxTotalExposureSol: null,
     });
+  });
+});
+
+describe('exposureFor — per-leader exposure sum (the leaderExposureSol input, SPEC §4.2/§12)', () => {
+  const mirrors = [
+    { leaderAddress: 'A', sizeSol: 0.5 },
+    { leaderAddress: 'B', sizeSol: 2 },
+    { leaderAddress: 'A', sizeSol: 0.25 },
+  ];
+  it("sums ONLY the candidate leader's mirrors — leader B's positions never consume A's budget", () => {
+    // WHY: the per-leader cap makes maxTotalExposureSol a real per-leader ceiling; summing all mirrors would let
+    // leader B's exposure block (or exhaust) leader A's opens — the exact bug the mirror→leader mapping prevents.
+    expect(exposureFor(mirrors, 'A')).toBe(0.75);
+    expect(exposureFor(mirrors, 'B')).toBe(2);
+  });
+  it('an unknown leader (or no mirrors) has zero exposure', () => {
+    expect(exposureFor(mirrors, 'C')).toBe(0);
+    expect(exposureFor([], 'A')).toBe(0);
+  });
+  it("legacy mirrors (leaderAddress '') never leak into a real leader's exposure", () => {
+    // WHY: '' is the NULL-fallback of a pre-3b row — attributing it to a real leader would inflate that leader's
+    // exposure and wrongly block its opens.
+    expect(exposureFor([{ leaderAddress: '', sizeSol: 5 }], 'A')).toBe(0);
   });
 });
