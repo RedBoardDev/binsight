@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { deriveCommandId } from '@/copybot/command-id';
+import { SYSTEM_USER_ID } from '@/copybot/journal-store';
 import { openDatabase } from '@/infrastructure/persistence/database';
 import { executions } from '@/infrastructure/persistence/schema';
 import { ensureBotStarted, killBrain, restartBrain } from './bot-controller';
@@ -52,11 +53,12 @@ describe.runIf(process.env.ONCHAIN_READY === 'true')('on-chain · fail-safe — 
     //    close that was logged but never actually removed the position). This is the state the soak never produced.
     for (const o of opened) {
       const eventKey = `${LEADER_TEST.toBase58()}:${o.pool}:failsafe:${o.leaderPos}`;
-      const commandId = deriveCommandId(eventKey);
+      // v2 derivation (SPEC §11): the brain runs the SYSTEM user, so its failsafe close derives from that tenant.
+      const commandId = deriveCommandId(SYSTEM_USER_ID, eventKey);
       await db
         .insert(executions)
-        .values({ commandId, eventKey, state: 'landed', deadlineSlot: 0, createdAt: Date.now(), updatedAt: Date.now() })
-        .onConflictDoUpdate({ target: executions.commandId, set: { state: 'landed', updatedAt: Date.now() } });
+        .values({ userId: SYSTEM_USER_ID, commandId, eventKey, state: 'landed', deadlineSlot: 0, createdAt: Date.now(), updatedAt: Date.now() })
+        .onConflictDoUpdate({ target: [executions.userId, executions.commandId], set: { state: 'landed', updatedAt: Date.now() } });
       console.error(`[failsafe] seeded stale 'landed' close for ${o.label} (cmd ${commandId.slice(0, 10)}…)`);
     }
 

@@ -1,11 +1,13 @@
 /**
  * Copy-bot · vault idempotency claim (pure DB, no SDK). One command = one execution, claimed BEFORE signing.
  *
- * A command is identified by its deterministic `commandId`. The claim INSERTs an `executions` row; on conflict
- * it only re-claims when the existing row is in the terminal `'failed'` state — so a previously FAILED close
- * (or open) can be retried by a later re-publish (the reconcile re-emits the same commandId), while an already
- * `'landed'`/`'claimed'`/`'skipped'` command is rejected as a duplicate. This is what makes failsafe re-closes
- * actually retry instead of being blocked forever by their own failed row.
+ * A command is identified by its deterministic `(userId, commandId)` pair (SPEC §11): the tenant is part of the
+ * key so the same leader event copied for two users claims two INDEPENDENT slots — user #2 is never rejected as
+ * user #1's duplicate. The claim INSERTs an `executions` row; on conflict it only re-claims when the existing row
+ * is in the terminal `'failed'` state — so a previously FAILED close (or open) can be retried by a later
+ * re-publish (the reconcile re-emits the same commandId), while an already `'landed'`/`'claimed'`/`'skipped'`
+ * command is rejected as a duplicate. This is what makes failsafe re-closes actually retry instead of being
+ * blocked forever by their own failed row.
  */
 import { eq, inArray } from 'drizzle-orm';
 import type { openDatabase } from '@/infrastructure/persistence/database';
@@ -25,6 +27,7 @@ type Database = ReturnType<typeof openDatabase>;
  */
 export async function claimExecution(
   db: Database,
+  userId: string,
   commandId: string,
   eventKey: string,
   deadlineSlot: number,
@@ -44,9 +47,12 @@ export async function claimExecution(
   const reclaimable = recovering
     ? inArray(executions.state, ['failed', 'claimed', 'submitted'])
     : eq(executions.state, 'failed');
+  // Conflict target = the composite PK (user_id, command_id): the claim is PER TENANT (SPEC §11).
+  const target = [executions.userId, executions.commandId];
   const claimed = await db
     .insert(executions)
     .values({
+      userId,
       commandId,
       eventKey,
       state: 'claimed',
@@ -54,11 +60,7 @@ export async function claimExecution(
       createdAt: nowMs,
       updatedAt: nowMs,
     })
-    .onConflictDoUpdate(
-      forceReclaim
-        ? { target: executions.commandId, set }
-        : { target: executions.commandId, set, setWhere: reclaimable },
-    )
+    .onConflictDoUpdate(forceReclaim ? { target, set } : { target, set, setWhere: reclaimable })
     .returning({ commandId: executions.commandId });
   return claimed.length > 0;
 }

@@ -7,7 +7,11 @@ import { z } from 'zod';
 
 export const SignRequestSchema = z
   .object({
-    /** = derive(eventKey); the coffre's idempotency key (executions table). */
+    /** Tenant this command executes FOR (SPEC §11) — SIGNED (inside the HMAC envelope body). The coffre selects
+     *  this user's caps/config row, keys the executions claim by (userId, commandId), and re-derives the
+     *  commandId from it (v2) so a cross-tenant replay can never pass check #7. */
+    userId: z.string().min(1),
+    /** = derive(userId, eventKey); the coffre's per-user idempotency key (executions (user_id, command_id)). */
     commandId: z.string().min(1),
     /** leader:pool:event:slot:txSig — the originating leader event. */
     eventKey: z.string().min(1),

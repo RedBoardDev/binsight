@@ -1,15 +1,16 @@
 /**
  * Copy-bot · VAULT critical section (extracted from coffre-main so it is UNIT-TESTABLE in isolation — no top-level
  * side effects, all I/O injected via Ctx). Applies the ordered checks 5→13 BEFORE any signature:
- *  5 Zod strict · 6 staleness (slot ≤ deadline) · 7 commandId == derive(eventKey) · 8 idempotence (claim BEFORE
- *  signing; only a 'failed' command is re-claimable) · 9 re-clamp size (local config) · 10-11 Wall B (decode WITHOUT
+ *  5 Zod strict · 6 staleness (slot ≤ deadline) · 7 commandId == derive(userId + eventKey) · 8 idempotence (claim
+ *  BEFORE signing, keyed (userId, commandId); only a 'failed' command is re-claimable) · 9 re-clamp size (the SIGNED
+ *  userId's config row — SPEC §11) · 10-11 Wall B (decode WITHOUT
  *  the SDK) · 12 SIGN · 13 LAND + CONFIRM. A returned signature is NOT execution: we confirm on-chain before marking
  *  'landed'/publishing ev:executed, so a dropped/erroring CLOSE is never recorded as success (which would strand it
  *  as a dormant position — only 'failed' is re-claimable, and a premature ev:executed makes the brain forget it).
  */
 import { utils } from '@coral-xyz/anchor';
 import { type Connection, type Keypair, Transaction } from '@solana/web3.js';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import { claimExecution } from '@/copybot/coffre/idempotency';
 import { landViaJito } from '@/copybot/coffre/jito-landing';
@@ -38,6 +39,12 @@ const WALL_B_RENT_MARGIN_LAMPORTS = 5_000_000; // 0.005 SOL: WSOL-ATA rent + buf
 const wallBMaxLamports = (maxTradeSol: number): number =>
   Math.ceil(maxTradeSol * LAMPORTS_PER_SOL * WALL_B_OVERSPEND_FACTOR) + WALL_B_RENT_MARGIN_LAMPORTS;
 
+/** Per-user sign-time policy, resolved from the SIGNED `userId`'s config row (SPEC §11/§12). */
+export interface UserSignPolicy {
+  maxTradeSol: number; // live re-clamp ceiling (this user's DB config; env override wins when set)
+  jitoBundleUrl?: string; // when set, land via a Jito bundle (anti-sandwich) with a fallback to plain RPC
+}
+
 /** Everything the critical section needs — all injected so the function has no hidden module state (testable). */
 export interface Ctx {
   conn: Connection;
@@ -46,8 +53,8 @@ export interface Ctx {
   copier: Keypair;
   blockhashCache: BlockhashCache;
   events: CopyEvents; // typed observability emitter (replaces the legacy Journal port — P2)
-  maxTradeSol: number; // live re-clamp ceiling (DB config, env override) snapshotted per message
-  jitoBundleUrl?: string; // when set, land via a Jito bundle (anti-sandwich) with a fallback to plain RPC
+  /** Resolve the sign-time policy for the REQUEST's user (never a hardcoded tenant — SPEC §11). */
+  policyFor: (userId: string) => Promise<UserSignPolicy>;
   signingEnabled: boolean; // false ⇒ dry-run (log "I would sign")
   hmacKey: string; // ev:executed envelope key
   retryMax: number; // sign+land attempts when land THROWS (no signature produced)
@@ -68,9 +75,10 @@ function resolveWallbCode(leaf: string): CopyCode {
   );
 }
 
-/** Persist the terminal state of a command (the idempotency record). */
+/** Persist the terminal state of a command (the idempotency record — keyed per tenant, SPEC §11). */
 export async function finalize<T extends { ok: boolean }>(
   db: Db,
+  userId: string,
   commandId: string,
   state: string,
   verdict: T,
@@ -78,7 +86,7 @@ export async function finalize<T extends { ok: boolean }>(
   await db
     .update(executions)
     .set({ state, updatedAt: Date.now() })
-    .where(eq(executions.commandId, commandId));
+    .where(and(eq(executions.userId, userId), eq(executions.commandId, commandId)));
   return verdict;
 }
 
@@ -89,6 +97,7 @@ export async function finalize<T extends { ok: boolean }>(
  */
 export async function markSubmitted(
   db: Db,
+  userId: string,
   commandId: string,
   signature: string,
   lastValidBlockHeight: number,
@@ -97,7 +106,7 @@ export async function markSubmitted(
   await db
     .update(executions)
     .set({ state: 'submitted', signature, lastValidBlockHeight, updatedAt: nowMs })
-    .where(eq(executions.commandId, commandId));
+    .where(and(eq(executions.userId, userId), eq(executions.commandId, commandId)));
 }
 
 /** The fate of a previously-broadcast tx, decided from the chain (exactly-once recovery pre-check). */
@@ -149,7 +158,7 @@ export async function recoveryPreCheck(
       lastValidBlockHeight: executions.lastValidBlockHeight,
     })
     .from(executions)
-    .where(eq(executions.commandId, sr.commandId));
+    .where(and(eq(executions.userId, sr.userId), eq(executions.commandId, sr.commandId)));
   const prior = rows[0];
   // Nothing was broadcast (no row, no stored signature, or a terminal state) → safe to (re-)claim + sign normally.
   if (!prior?.signature || (prior.state !== 'submitted' && prior.state !== 'claimed')) return null;
@@ -189,7 +198,7 @@ export async function recoveryPreCheck(
     { kind: sr.kind, sig: prior.signature },
     '🔁 recovery: prior tx already landed — finalized without re-signing',
   );
-  return finalize(db, sr.commandId, 'landed', { ok: true, kind: sr.kind });
+  return finalize(db, sr.userId, sr.commandId, 'landed', { ok: true, kind: sr.kind });
 }
 
 /** The critical section 5→13 (1-4 done by the bus). Returns a loggable verdict. Effects = DB + log + (when enabled) sign/land. */
@@ -198,12 +207,15 @@ export async function process1(
   ctx: Ctx,
   recovering = false,
 ): Promise<{ ok: boolean; reason?: string; kind?: string; retryLater?: boolean }> {
-  const { conn, db, bus, copier, blockhashCache, events, maxTradeSol, jitoBundleUrl, log } = ctx;
+  const { conn, db, bus, copier, blockhashCache, events, log } = ctx;
   const ourOwner = copier.publicKey.toBase58();
   if (payload == null) return { ok: false, reason: 'bad_hmac_or_hop' }; // 1-4 failed (bus)
   const parsed = SignRequestSchema.safeParse(payload); // 5
   if (!parsed.success) return { ok: false, reason: 'bad_schema' };
   const sr = parsed.data;
+  // Sign-time policy for the SIGNED tenant (SPEC §11): the request's userId — validated by the schema and covered
+  // by the HMAC envelope — selects the caps/config row. Never a hardcoded SYSTEM user.
+  const { maxTradeSol, jitoBundleUrl } = await ctx.policyFor(sr.userId);
 
   const action = sr.eventKey.split(':')[2]; // `${leader}:${pool}:${action}:${id}` — leader/pool are base58 (no ':')
   const forceReclaim = sr.kind === 'close' && (action === 'failsafe' || action === 'orphan');
@@ -220,8 +232,10 @@ export async function process1(
   const slot = await conn.getSlot(); // 6 staleness
   if (slot > sr.deadlineSlot) return { ok: false, reason: 'stale', kind: sr.kind };
 
-  if (sr.commandId !== deriveCommandId(sr.eventKey))
-    return { ok: false, reason: 'commandId_mismatch', kind: sr.kind }; // 7
+  // 7 — commandId v2 = derive(userId + eventKey): re-derived from the SIGNED pair, so a tampered userId (or a
+  // cross-tenant replay of another user's command) can never bind to this commandId's idempotency slot.
+  if (sr.commandId !== deriveCommandId(sr.userId, sr.eventKey))
+    return { ok: false, reason: 'commandId_mismatch', kind: sr.kind };
 
   // 8 idempotency: claim BEFORE signing; only a previously 'failed' command may be re-claimed (retry). EXCEPTION: a
   // reconcile-driven failsafe/orphan CLOSE (eventKey action 'failsafe'/'orphan') is emitted only while the position
@@ -229,6 +243,7 @@ export async function process1(
   const now = Date.now();
   const owned = await claimExecution(
     db,
+    sr.userId,
     sr.commandId,
     sr.eventKey,
     sr.deadlineSlot,
@@ -249,7 +264,7 @@ export async function process1(
       commandId: sr.commandId,
       ourSizeSol: sr.sizeSol,
     });
-    return finalize(db, sr.commandId, 'failed', {
+    return finalize(db, sr.userId, sr.commandId, 'failed', {
       ok: false,
       reason: 'over_max_trade',
       kind: sr.kind,
@@ -261,14 +276,14 @@ export async function process1(
   try {
     tx = Transaction.from(Buffer.from(sr.txBase64, 'base64'));
   } catch {
-    return finalize(db, sr.commandId, 'failed', {
+    return finalize(db, sr.userId, sr.commandId, 'failed', {
       ok: false,
       reason: 'undecodable_tx',
       kind: sr.kind,
     });
   }
   if (sr.owner !== ourOwner)
-    return finalize(db, sr.commandId, 'failed', {
+    return finalize(db, sr.userId, sr.commandId, 'failed', {
       ok: false,
       reason: 'owner_mismatch',
       kind: sr.kind,
@@ -300,7 +315,7 @@ export async function process1(
         ? { program: wb.reason.slice(wb.reason.indexOf(':') + 1) }
         : undefined,
     });
-    return finalize(db, sr.commandId, 'failed', {
+    return finalize(db, sr.userId, sr.commandId, 'failed', {
       ok: false,
       reason: `wallb:${wb.reason}`,
       kind: sr.kind,
@@ -314,7 +329,11 @@ export async function process1(
       { kind: sr.kind, pool: sr.pool, our: sr.positionPubkey, sizeSol: sr.sizeSol, busMs },
       '✍️  (dry-run) I would sign+land',
     );
-    return finalize(db, sr.commandId, 'skipped', { ok: true, reason: 'dry-run', kind: sr.kind });
+    return finalize(db, sr.userId, sr.commandId, 'skipped', {
+      ok: true,
+      reason: 'dry-run',
+      kind: sr.kind,
+    });
   }
   // Retry config (fresh blockhash on each attempt), then ALERT "verify/close manually" (Valhalla-style).
   let lastErr: Error | undefined;
@@ -340,7 +359,7 @@ export async function process1(
       const sig = utils.bytes.bs58.encode(fresh.signature as Buffer); // deterministic once signed (== land()'s return)
       // EXACTLY-ONCE (#7): persist signature + blockhash expiry to 'submitted' BEFORE broadcasting. A crash after
       // land() but before finalize('landed') is then recoverable — boot recovery re-signs ONLY a provably-dead tx.
-      await markSubmitted(db, sr.commandId, sig, bh.lastValidBlockHeight, Date.now());
+      await markSubmitted(db, sr.userId, sr.commandId, sig, bh.lastValidBlockHeight, Date.now());
       const raw = fresh.serialize();
       // Land via a Jito bundle when configured (anti-sandwich; falls back to plain RPC internally), else plain RPC.
       if (jitoBundleUrl) await landViaJito(conn, jitoBundleUrl, raw, sig);
@@ -416,7 +435,7 @@ export async function process1(
       },
       '🚀 signed + landed (confirmed)',
     );
-    return finalize(db, sr.commandId, 'landed', { ok: true, kind: sr.kind });
+    return finalize(db, sr.userId, sr.commandId, 'landed', { ok: true, kind: sr.kind });
   }
   // Definitive failure (land threw after retries, OR landed-but-unconfirmed) → emergency. Two rows: the INTERNAL
   // sign trace (`sign.land_failed`) and the FEED-VISIBLE pinned lifecycle/failsafe alert the user must act on
@@ -450,7 +469,7 @@ export async function process1(
     commandId: sr.commandId,
     adminDetail: { error: lastErr?.message, meteoraUrl, position: sr.positionPubkey },
   });
-  return finalize(db, sr.commandId, 'failed', {
+  return finalize(db, sr.userId, sr.commandId, 'failed', {
     ok: false,
     reason: 'sign_land_failed',
     kind: sr.kind,

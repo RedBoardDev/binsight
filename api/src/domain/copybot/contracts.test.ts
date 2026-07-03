@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { SignRequestSchema } from './contracts';
 
 const valid = {
+  userId: 'system',
   commandId: 'cmd1',
   eventKey: 'leader:pool:open:42:sig',
   kind: 'open' as const,
@@ -28,6 +29,14 @@ describe('SignRequestSchema', () => {
   it('rejects a missing field', () => {
     const { deadlineSlot, ...missing } = valid;
     expect(SignRequestSchema.safeParse(missing).success).toBe(false);
+  });
+
+  it('rejects a missing/empty userId (SPEC §11: the tenant is a REQUIRED, signed part of the contract)', () => {
+    // WHY: the coffre selects the caps/config row and keys the executions claim by the SIGNED userId — a
+    // command without a tenant could fall back to a hardcoded user and cross tenants silently.
+    const { userId, ...missing } = valid;
+    expect(SignRequestSchema.safeParse(missing).success).toBe(false);
+    expect(SignRequestSchema.safeParse({ ...valid, userId: '' }).success).toBe(false);
   });
 
   it('rejects an unknown kind (outside open/close/claim/sell/add/remove)', () => {

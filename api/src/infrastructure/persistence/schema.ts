@@ -135,6 +135,7 @@ export const copyDecisions = pgTable(
   'copy_decisions',
   {
     id: serial('id').primaryKey(),
+    userId: text('user_id').notNull(), // tenant FK → users.id; single-user runtime binds SYSTEM_USER_ID at boot
     signature: text('signature').notNull(), // leader tx that triggered the decision
     leader: text('leader').notNull(),
     pool: text('pool'),
@@ -148,41 +149,85 @@ export const copyDecisions = pgTable(
     decidedAt: ms('decided_at').notNull(), // when WE decided (Date.now)
   },
   (t) => [
-    uniqueIndex('uq_copy_decisions_signature').on(t.signature),
+    // Per-user idempotence (SPEC §11): two users deciding on the SAME leader tx are two rows — a signature-only
+    // unique would reject user #2's decision as user #1's duplicate.
+    uniqueIndex('uq_copy_decisions_user_signature').on(t.userId, t.signature),
     index('idx_copy_decisions_leader').on(t.leader),
   ],
 );
 
-// Copy-bot · coffre — execution idempotency registry. The coffre claims `command_id` via INSERT ON
+// Copy-bot · coffre — execution idempotency registry. The coffre claims `(user_id, command_id)` via INSERT ON
 // CONFLICT DO NOTHING BEFORE signing → a replay (crash/redelivery) never double-signs (spec 10 §3.3).
-export const executions = pgTable('executions', {
-  commandId: text('command_id').primaryKey(),
-  eventKey: text('event_key').notNull(),
-  state: text('state').notNull(), // claimed | submitted | landed | failed | skipped
-  deadlineSlot: bigint('deadline_slot', { mode: 'number' }),
-  // Exactly-once money path (#7): persisted BEFORE broadcast so boot recovery can check the chain and only
-  // re-sign a PROVABLY-dead tx. `signature` = the broadcast tx sig; `lastValidBlockHeight` = its blockhash expiry.
-  signature: text('signature'),
-  lastValidBlockHeight: bigint('last_valid_block_height', { mode: 'number' }),
-  createdAt: ms('created_at').notNull(),
-  updatedAt: ms('updated_at').notNull(),
-});
+// PK includes user_id (SPEC §11): the same leader event copied for two users is TWO independent commands —
+// keying by command_id alone would reject user #2's copy as user #1's duplicate (ULTRACODE #25/#27).
+export const executions = pgTable(
+  'executions',
+  {
+    userId: text('user_id').notNull(), // tenant FK → users.id; single-user runtime binds SYSTEM_USER_ID at boot
+    commandId: text('command_id').notNull(),
+    eventKey: text('event_key').notNull(),
+    state: text('state').notNull(), // claimed | submitted | landed | failed | skipped
+    deadlineSlot: bigint('deadline_slot', { mode: 'number' }),
+    // Exactly-once money path (#7): persisted BEFORE broadcast so boot recovery can check the chain and only
+    // re-sign a PROVABLY-dead tx. `signature` = the broadcast tx sig; `lastValidBlockHeight` = its blockhash expiry.
+    signature: text('signature'),
+    lastValidBlockHeight: bigint('last_valid_block_height', { mode: 'number' }),
+    createdAt: ms('created_at').notNull(),
+    updatedAt: ms('updated_at').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.commandId] })],
+);
 
 // Copy-bot · brain — positions we COPY (PERSISTENT source of truth, survives restarts). Without it
 // the in-memory registry would be lost on restart → DORMANT positions (open on our side while the leader
 // has closed). The failsafe reconciles these rows (status='open') against the leader's on-chain state.
-export const copyPositions = pgTable('copy_positions', {
-  leaderPosition: text('leader_position').primaryKey(),
-  ourPosition: text('our_position').notNull(),
-  pool: text('pool').notNull(),
-  nonSolSymbol: text('non_sol_symbol'),
-  sizeSol: doublePrecision('size_sol').notNull(),
-  lowerBin: integer('lower_bin').notNull(),
-  upperBin: integer('upper_bin').notNull(),
-  status: text('status').notNull(), // open | closed
-  openedAt: ms('opened_at').notNull(),
-  closedAt: ms('closed_at'),
-});
+// PK includes user_id (SPEC §11): two users mirroring the SAME leader position are two independent mirrors —
+// a leader_position-only PK would silently drop user #2's row (onConflictDoNothing) = a lost mirror.
+export const copyPositions = pgTable(
+  'copy_positions',
+  {
+    userId: text('user_id').notNull(), // tenant FK → users.id; single-user runtime binds SYSTEM_USER_ID at boot
+    leaderPosition: text('leader_position').notNull(),
+    ourPosition: text('our_position').notNull(),
+    pool: text('pool').notNull(),
+    nonSolSymbol: text('non_sol_symbol'),
+    sizeSol: doublePrecision('size_sol').notNull(),
+    lowerBin: integer('lower_bin').notNull(),
+    upperBin: integer('upper_bin').notNull(),
+    status: text('status').notNull(), // open | closed
+    openedAt: ms('opened_at').notNull(),
+    closedAt: ms('closed_at'),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.leaderPosition] })],
+);
+
+// Copy-bot · brain — LEADER positions we rug-SL-exited, ONE ROW PER EXIT (SPEC §12: replaces the settings-KV
+// JSON blob, which failed OPEN — a corrupt blob loaded as an EMPTY set, silently dropping the re-open
+// suppression). Row-level inserts are atomic and corruption-proof; bounded by the number of distinct rug exits
+// (a NEW leader open uses a new pubkey, never matched).
+export const rugExits = pgTable(
+  'rug_exits',
+  {
+    userId: text('user_id').notNull(), // tenant FK → users.id; single-user runtime binds SYSTEM_USER_ID at boot
+    leaderPosition: text('leader_position').notNull(), // the LEADER position we exited → suppress RE-OPEN
+    exitedAt: ms('exited_at').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.leaderPosition] })],
+);
+
+// Copy-bot · brain — OUR positions rug-SL/stop-closed but NOT yet confirmed gone on-chain: the reconcile
+// re-closes them until the close is confirmed (never-miss-close), then the row is DELETED (close-confirm or
+// reconcile purge). Separate from rug_exits: a STOP close must retry-until-gone WITHOUT permanently
+// suppressing the leader position (a stop→start cycle may legitimately re-mirror it).
+export const rugExitPendings = pgTable(
+  'rug_exit_pending',
+  {
+    userId: text('user_id').notNull(), // tenant FK → users.id; single-user runtime binds SYSTEM_USER_ID at boot
+    ourPosition: text('our_position').notNull(), // OUR mirror position whose close must be confirmed gone
+    createdAt: ms('created_at').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.ourPosition] })],
+);
 
 // Copy-bot activity journal — append-only, lifecycle-wide record of every meaningful action across BOTH processes
 // (brain + coffre). Source of truth for the web activity feed. Taxonomy is compositional: (stage, outcome[, reason]).

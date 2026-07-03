@@ -13,7 +13,7 @@ import { pino } from 'pino';
 import { createAlertWebhookSink } from '@/copybot/alert';
 import { assertBusKey } from '@/copybot/bus-key-guard';
 import { loadCopierKeypair } from '@/copybot/coffre/keypair';
-import { type Ctx, process1 } from '@/copybot/coffre/process-command';
+import { type Ctx, process1, type UserSignPolicy } from '@/copybot/coffre/process-command';
 import { ConfigStore } from '@/copybot/config-store';
 import { HeartbeatStore } from '@/copybot/heartbeat-store';
 import { SYSTEM_USER_ID } from '@/copybot/journal-store';
@@ -126,14 +126,34 @@ async function main(): Promise<void> {
     alertSink,
   );
   const configStore = new ConfigStore(db, log);
-  // Single-user runtime (increment 2): read the SYSTEM_USER_ID row of the per-user config table (SPEC §12).
-  let runtimeConfig = await configStore.seedIfAbsent(SYSTEM_USER_ID); // DB-backed config; the maxTradeSol re-clamp ceiling is read live (env wins when set)
-  const maxTradeSol = (): number => cfg.maxTradeSolEnv ?? runtimeConfig.user.sizing.maxTradeSizeSol;
-  // Jito bundle landing is active only when jitoEnabled (env override else DB config) AND a block-engine URL is set.
-  const jitoBundleUrl = (): string | undefined =>
-    (cfg.jitoEnabledEnv ?? runtimeConfig.user.jitoEnabled) ? cfg.jitoBundleUrl : undefined; // user ceiling (per-leader can only lower it)
+  // PER-USER config cache (SPEC §11/§12): the SIGNED userId of each cmd:sign selects ITS caps/config row — never a
+  // hardcoded SYSTEM read at sign time. Lazily loaded on first use (fail-closed ConfigStore.load; a missing row =
+  // defaults, no row created), refreshed live by the poll + control pings. The SYSTEM row is still seeded at boot
+  // (the single-user brain publishes for it today); user #2 just becomes another cache entry.
+  const userConfigs = new Map<string, Awaited<ReturnType<typeof configStore.load>>>();
+  userConfigs.set(SYSTEM_USER_ID, await configStore.seedIfAbsent(SYSTEM_USER_ID));
+  const configFor = async (
+    userId: string,
+  ): Promise<Awaited<ReturnType<typeof configStore.load>>> => {
+    const cached = userConfigs.get(userId);
+    if (cached) return cached;
+    const loaded = await configStore.load(userId);
+    userConfigs.set(userId, loaded);
+    return loaded;
+  };
+  // Sign-time policy for ONE user: the maxTradeSol re-clamp ceiling (env wins when set) + Jito bundle landing
+  // (active only when jitoEnabled — env override else THIS user's DB config — AND a block-engine URL is set).
+  const policyFor = async (userId: string): Promise<UserSignPolicy> => {
+    const c = await configFor(userId);
+    return {
+      maxTradeSol: cfg.maxTradeSolEnv ?? c.user.sizing.maxTradeSizeSol,
+      jitoBundleUrl: (cfg.jitoEnabledEnv ?? c.user.jitoEnabled) ? cfg.jitoBundleUrl : undefined,
+    };
+  };
   const reloadConfig = async (): Promise<void> => {
-    runtimeConfig = await configStore.load(SYSTEM_USER_ID);
+    // Refresh EVERY cached user's row (today: the SYSTEM row) so web edits apply live for each tenant.
+    for (const userId of userConfigs.keys())
+      userConfigs.set(userId, await configStore.load(userId));
   };
   const control = ControlChannel.connect(cfg.redisUrl); // instant config-reload pings (re-clamp ceiling in <100ms)
   const heartbeat = new HeartbeatStore(db, log, 'coffre'); // process status the web reads (vault online + signing state)
@@ -183,13 +203,14 @@ async function main(): Promise<void> {
   // re-read with XREADGROUP id '0'. Exactly-once is guaranteed by the executions table (a landed command is a
   // duplicate; a stranded 'claimed' one is re-claimable). Without this, a vault crash mid-sign would STRAND an
   // in-flight open/close forever (XREADGROUP '>' never re-delivers it) → a missed copy.
-  const ctxBase = {
+  const ctx: Ctx = {
     conn,
     db,
     bus,
     copier,
     blockhashCache,
     events,
+    policyFor, // per-message, per-USER sign-time policy (reads the live per-user config cache — SPEC §11)
     signingEnabled: cfg.signingEnabled,
     hmacKey,
     retryMax: cfg.retryMax,
@@ -206,7 +227,6 @@ async function main(): Promise<void> {
   ): Promise<void> => {
     for (const msg of msgs) {
       try {
-        const ctx: Ctx = { ...ctxBase, maxTradeSol: maxTradeSol(), jitoBundleUrl: jitoBundleUrl() };
         const verdict = await process1(msg.payload, ctx, recovering);
         log.info(
           { id: msg.id, recovering, ...verdict },

@@ -27,7 +27,7 @@ import { SYSTEM_USER_ID } from '@/copybot/journal-store';
 import { LOG_MARKER_EVENT_ROUTED } from '@/copybot/log-markers';
 import { CopyEvents } from '@/copybot/observability/copy-events';
 import { EventStore } from '@/copybot/observability/event-store';
-import { RugExitStore } from '@/copybot/rug-exit-store';
+import { purgeRugExitPending, RugExitStore } from '@/copybot/rug-exit-store';
 import { type CapsState, checkCaps } from '@/domain/copybot/caps';
 import { type CopybotConfig, type EffectiveConfig, effectiveFor } from '@/domain/copybot/config';
 import { type SignRequest, SignRequestSchema } from '@/domain/copybot/contracts';
@@ -375,16 +375,24 @@ async function main(): Promise<void> {
   const tracker = new LeaderPositionTracker();
   const registry = new MirrorRegistry();
   const db = openDatabase(cfg.dbUrl);
-  const store = new MirrorStore(db); // no-dormant persistence (survives restarts)
+  // Single-tenant binding (Inc.3a — SPEC §11): the brain still runs ONE user, bound ONCE here and threaded through
+  // everything tenant-scoped (commandId derivation, SignRequest.userId, mirror/rug-exit rows, config,
+  // observability) — never hardcoded deep in call chains. The multi-user fan-out (next increment) turns this into
+  // one runtime per active user.
+  const userId = SYSTEM_USER_ID;
+  // commandId v2 = derive(userId + eventKey) (SPEC §11, supersedes ADR-8): bound once so the same leader event
+  // copied for two users never collides into one idempotency slot, and no call site threads the tenant by hand.
+  const commandIdFor = (eventKey: string): string => deriveCommandId(userId, eventKey);
+  const store = new MirrorStore(db, userId); // no-dormant persistence (survives restarts)
   // ONE observability emitter bound to this tenant (mono-user PoC): a tenant-scoped pino child is its logger. The
   // brain's call sites emit TYPED codes through it directly; every row back-fills user/wallet/correlation. Operator-
   // actionable (pinned) events also fan out to the external ALERT_WEBHOOK via the injected sink (no-op when unset).
-  const tlog = log.child({ userId: SYSTEM_USER_ID, wallet: cfg.ownerPubkey, process: 'brain' });
+  const tlog = log.child({ userId, wallet: cfg.ownerPubkey, process: 'brain' });
   const alertSink = createAlertWebhookSink(process.env.ALERT_WEBHOOK, tlog);
   const events = new CopyEvents(
     new EventStore(db, tlog),
     tlog,
-    { userId: SYSTEM_USER_ID, wallet: cfg.ownerPubkey, process: 'brain' },
+    { userId, wallet: cfg.ownerPubkey, process: 'brain' },
     alertSink,
   );
   // P2: emit a TYPED event for a call site whose `reason` is RUNTIME-DYNAMIC (decision.reason, cap.reason, the
@@ -415,20 +423,20 @@ async function main(): Promise<void> {
   const configStore = new ConfigStore(db, log);
   // Single-user runtime (increment 2): the brain reads THE SYSTEM_USER_ID row of the per-user config table.
   // Increment 3 iterates configStore.listActiveUserIds() and runs one runtime per active user.
-  let runtimeConfig = await configStore.seedIfAbsent(SYSTEM_USER_ID); // polled + ping-reloaded live below
+  let runtimeConfig = await configStore.seedIfAbsent(userId); // polled + ping-reloaded live below
   const reloadConfig = async (): Promise<void> => {
     // STOP = FORCE-CLOSE (SPEC §4.3): diff the config we were RUNNING (prev, the last loaded value in memory —
     // never a stale/boot snapshot, so a restart can't replay an old stop) against the fresh load, and force-close
     // the mirrors of every observed stop transition (leader disabled/removed, or global user.enabled off).
     const prev = runtimeConfig;
-    runtimeConfig = await configStore.load(SYSTEM_USER_ID);
+    runtimeConfig = await configStore.load(userId);
     await applyStopCloses(prev, runtimeConfig);
   };
   // Resolve the EFFECTIVE config for our (single) leader from the DB-backed config.
   // Pure + cheap → recomputed at each point of use so a live reload always takes effect on the next event.
   const eff = (): EffectiveConfig => effectiveFor(runtimeConfig, cfg.leader);
   const rugSlTracker = new RugSlTracker(RUG_SL_RETAIN_MS); // per-position price windows for the rug-SL crash check
-  const rugExitStore = new RugExitStore(db, log); // durable set of LEADER positions we rug-exited (suppress re-open)
+  const rugExitStore = new RugExitStore(db, log, userId); // durable, tenant-bound rug-exit rows (suppress re-open + pending re-close)
   const rugExited = await rugExitStore.load(); // seed across restart so a leader add can't re-enter a rug-exited position
   const rugExitPending = await rugExitStore.loadPending(); // seed across restart so a failed rug-SL close keeps being re-closed until confirmed gone
   const control = ControlChannel.connect(cfg.redisUrl); // instant config-reload pings (kill-switch applies in <100ms)
@@ -522,10 +530,12 @@ async function main(): Promise<void> {
   };
 
   async function publish(
-    sr: Omit<SignRequest, 'issuedAtMs'>,
+    sr: Omit<SignRequest, 'issuedAtMs' | 'userId'>,
     journalHint?: Partial<JournalEntry>,
   ): Promise<void> {
-    const full: SignRequest = { ...sr, issuedAtMs: Date.now() }; // timestamp at publish time (latency)
+    // The tenant is injected HERE, once (the boot binding) — no call site carries it by hand; timestamped at
+    // publish time (latency).
+    const full: SignRequest = { ...sr, userId, issuedAtMs: Date.now() };
     SignRequestSchema.parse(full); // local guardrail: we only publish a valid contract
     const id = await bus.publish(STREAM, HOP, hmacKey, full);
     // Machine-readable publish marker: the EXACT copy pubkey + kind we just published (the journal's formatted line
@@ -834,7 +844,7 @@ async function main(): Promise<void> {
     const eventKey = wide
       ? `${cfg.leader}:${e.pool}:open-create:${e.signature}`
       : `${cfg.leader}:${e.pool}:open:${e.signature}`;
-    const commandId = deriveCommandId(eventKey);
+    const commandId = commandIdFor(eventKey);
     const posKp: Keypair = derivePositionKeypair(commandId);
     const built = await buildOpenByWeight(
       conn,
@@ -861,7 +871,7 @@ async function main(): Promise<void> {
       });
     }
     const { issuedAtSlot, deadlineSlot } = await slotsP;
-    const sr: Omit<SignRequest, 'issuedAtMs'> = {
+    const sr: Omit<SignRequest, 'issuedAtMs' | 'userId'> = {
       commandId,
       eventKey,
       kind: 'open',
@@ -951,7 +961,7 @@ async function main(): Promise<void> {
       return; // SAFE: never a partial/one-sided copy
     }
     const buyKey = `${cfg.leader}:${e.pool}:buy:${e.signature}`;
-    const buyCommandId = deriveCommandId(buyKey);
+    const buyCommandId = commandIdFor(buyKey);
     const { issuedAtSlot, deadlineSlot } = await slots();
 
     // Stash the open context → built+published once the buy lands; the build reads the ACTUAL token bought (ExactIn
@@ -1009,7 +1019,7 @@ async function main(): Promise<void> {
   ): Promise<void> {
     const { dist, totalX, totalY, lower, upper, sizeSol } = args;
     const createEventKey = `${cfg.leader}:${e.pool}:open-create:${e.signature}`;
-    const createCommandId = deriveCommandId(createEventKey);
+    const createCommandId = commandIdFor(createEventKey);
     const posKp: Keypair = derivePositionKeypair(createCommandId); // the coffre signs 'open' with derivePositionKeypair(commandId) → MUST match
     const built = await buildCreateEmptyPosition(
       conn,
@@ -1160,7 +1170,7 @@ async function main(): Promise<void> {
     const eventKey = wide
       ? `${cfg.leader}:${e.pool}:open-create:${e.signature}`
       : `${cfg.leader}:${e.pool}:open:${e.signature}`;
-    const commandId = deriveCommandId(eventKey);
+    const commandId = commandIdFor(eventKey);
     const posKp: Keypair = derivePositionKeypair(commandId);
     const built = await buildOpenByWeight(
       conn,
@@ -1186,7 +1196,7 @@ async function main(): Promise<void> {
       });
     }
     const { issuedAtSlot, deadlineSlot } = await slots();
-    const sr: Omit<SignRequest, 'issuedAtMs'> = {
+    const sr: Omit<SignRequest, 'issuedAtMs' | 'userId'> = {
       commandId,
       eventKey,
       kind: 'open',
@@ -1268,7 +1278,7 @@ async function main(): Promise<void> {
     }
     if (consumeOpenCancellation(e.position, e.pool)) return; // a close arrived DURING the deposit build → abort before the on-chain deposit
     const depositEventKey = `${cfg.leader}:${e.pool}:open-deposit:${e.signature}`;
-    const depositCommandId = deriveCommandId(depositEventKey);
+    const depositCommandId = commandIdFor(depositEventKey);
     const { issuedAtSlot, deadlineSlot } = await slots();
     pendingToken2022Mirrors.set(depositCommandId, {
       leaderPosition: e.position,
@@ -1426,7 +1436,7 @@ async function main(): Promise<void> {
     const addKey = `${cfg.leader}:${pool}:reshape-add:${signature}`;
     await publish(
       {
-        commandId: deriveCommandId(addKey),
+        commandId: commandIdFor(addKey),
         eventKey: addKey,
         kind: 'add',
         pool,
@@ -1531,7 +1541,7 @@ async function main(): Promise<void> {
     const { issuedAtSlot, deadlineSlot } = await slots();
     registry.close(e.position); // in-memory fast path (caps/dedup); the DB is marked closed by the reconcile once confirmed on-chain
     await publish({
-      commandId: deriveCommandId(eventKey),
+      commandId: commandIdFor(eventKey),
       eventKey,
       kind: 'close',
       pool: m.pool,
@@ -1553,7 +1563,7 @@ async function main(): Promise<void> {
     const built = await buildClaimTx(conn, new PublicKey(m.pool), ownerPk, m.ourPosition);
     const { issuedAtSlot, deadlineSlot } = await slots();
     await publish({
-      commandId: deriveCommandId(eventKey),
+      commandId: commandIdFor(eventKey),
       eventKey,
       kind: 'claim',
       pool: m.pool,
@@ -1701,7 +1711,7 @@ async function main(): Promise<void> {
       );
       const eventKey = `${cfg.leader}:${m.pool}:reshape-rm${rm}:${e.signature}`;
       await publish({
-        commandId: deriveCommandId(eventKey),
+        commandId: commandIdFor(eventKey),
         eventKey,
         kind: 'remove',
         pool: m.pool,
@@ -1784,7 +1794,7 @@ async function main(): Promise<void> {
         );
         const buyTxB64 = await buildJupiterSwapTx(cfg.jupiterBaseUrl, buyQuote, ownerPk.toBase58());
         const buyKey = `${cfg.leader}:${m.pool}:reshape-buy:${e.signature}`;
-        const buyCommandId = deriveCommandId(buyKey);
+        const buyCommandId = commandIdFor(buyKey);
         pendingReshapeAdds.set(buyCommandId, {
           dist,
           addLamports,
@@ -1882,7 +1892,7 @@ async function main(): Promise<void> {
         );
         const eventKey = `${cfg.leader}:${m.pool}:reshape-add${ci}:${e.signature}`; // per-chunk key → distinct idempotent commands
         await publish({
-          commandId: deriveCommandId(eventKey),
+          commandId: commandIdFor(eventKey),
           eventKey,
           kind: 'add',
           pool: m.pool,
@@ -1972,7 +1982,7 @@ async function main(): Promise<void> {
       registry.close(m.leaderPosition);
       recentlyPublishedClose.delete(our);
       rugSlTracker.forget(our);
-      if (rugExitPending.delete(our)) void rugExitStore.savePending(rugExitPending); // rug-SL close CONFIRMED gone → stop retrying
+      void purgeRugExitPending(rugExitPending, rugExitStore, our); // rug-SL/stop close CONFIRMED gone → stop retrying
 
       events.closed({
         stage: 'close',
@@ -2041,7 +2051,7 @@ async function main(): Promise<void> {
     const { issuedAtSlot, deadlineSlot } = await slots();
     await publish(
       {
-        commandId: deriveCommandId(eventKey),
+        commandId: commandIdFor(eventKey),
         eventKey,
         kind: 'close',
         pool: m.pool,
@@ -2099,7 +2109,7 @@ async function main(): Promise<void> {
         log.error({ err: (err as Error).message, our: m.ourPosition }, 'stop close publish failed'),
       );
       rugExitPending.add(m.ourPosition); // retry-until-confirmed-gone via the reconcile (SPEC §4.3 failure branch)
-      void rugExitStore.savePending(rugExitPending); // persist so the retry survives a brain restart
+      void rugExitStore.addPending(m.ourPosition); // persist so the retry survives a brain restart
     }
   }
 
@@ -2129,10 +2139,10 @@ async function main(): Promise<void> {
         // rug-exit-pending drives that retry independent of `leaderClosed` (the leader still holds it — rug-SL is OUR
         // exit). The reconcile clears the pending flag + registry.close + DB markClosed once the close lands.
         rugExitPending.add(m.ourPosition);
-        void rugExitStore.savePending(rugExitPending); // persist so the retry survives a brain restart
+        void rugExitStore.addPending(m.ourPosition); // persist so the retry survives a brain restart
         rugSlTracker.forget(m.ourPosition); // stop price re-triggering (recentlyPublishedClose + reconcile now own the retry)
         rugExited.add(m.leaderPosition); // suppress re-opening this leader position on its next add (we rug-exited it)
-        void rugExitStore.save(rugExited); // persist so the suppression survives a brain restart
+        void rugExitStore.addExited(m.leaderPosition); // persist so the suppression survives a brain restart
       }
     }
   }
@@ -2151,7 +2161,7 @@ async function main(): Promise<void> {
       p.upperBinId,
     );
     const { issuedAtSlot, deadlineSlot } = await slots();
-    const commandId = deriveCommandId(eventKey);
+    const commandId = commandIdFor(eventKey);
     await publish(
       {
         commandId,
@@ -2250,6 +2260,10 @@ async function main(): Promise<void> {
   // wait for the periodic reconcile, which the open-grace can defer up to ~grace+cadence). Orphan close (no
   // tracked mirror) → nothing to do. The reconcile + orphan-sweep stay the backstop if this ev was ever missed.
   async function onCloseConfirmed(ourPosition: string): Promise<void> {
+    // Purge a pending rug-SL/stop re-close FIRST (before the mirror lookup, which can already be unregistered):
+    // the coffre CONFIRMED this close landed, so the retry entry is now stale. Without this, only the reconcile
+    // purged it — an entry whose mirror was gone by then sat inert (and durable) forever.
+    void purgeRugExitPending(rugExitPending, rugExitStore, ourPosition);
     const m = registry.getByOurPosition(ourPosition);
     if (!m) return;
     await store.markClosed(m.leaderPosition);
@@ -2335,7 +2349,7 @@ async function main(): Promise<void> {
     }
     const txBase64 = await buildJupiterSwapTx(cfg.jupiterBaseUrl, quote, ownerPk.toBase58());
 
-    const commandId = deriveCommandId(eventKey);
+    const commandId = commandIdFor(eventKey);
     // Stash the sold token keyed by the sell's commandId so the `ev:executed{kind:'sell'}` confirm can name it in
     // the FEED `swap.executed` line without an extra RPC (deleted on confirm; see onSellConfirmed). Set BEFORE the
     // publish so an instant confirm can never race ahead of the stash.

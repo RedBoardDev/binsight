@@ -1,4 +1,5 @@
 import { DLMM_PROGRAM_ID } from '@binsight/shared';
+import { PGlite } from '@electric-sql/pglite';
 import {
   type Connection,
   Keypair,
@@ -7,32 +8,35 @@ import {
   Transaction,
   TransactionInstruction,
 } from '@solana/web3.js';
-import { eq, inArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/pglite';
+import { migrate } from 'drizzle-orm/pglite/migrator';
 import { pino } from 'pino';
-import { afterAll, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { deriveCommandId } from '@/copybot/command-id';
 import { derivePositionKeypair } from '@/copybot/ephemeral-position';
 import type { CopyEvents } from '@/copybot/observability/copy-events';
 import type { RedisBus } from '@/infrastructure/bus/redis-bus';
-import { openDatabase } from '@/infrastructure/persistence/database';
+import type { Database } from '@/infrastructure/persistence/database';
+import * as schema from '@/infrastructure/persistence/schema';
 import { executions } from '@/infrastructure/persistence/schema';
 import type { BlockhashCache } from '@/infrastructure/solana/blockhash-cache';
 import { type Ctx, process1 } from './process-command';
 
-// Integration: requires local Postgres (:5435) for the executions idempotency table.
-const URL = process.env.DATABASE_URL ?? 'postgres://meteora:meteora@localhost:5435/meteora';
-const db = openDatabase(URL);
+// Fresh in-memory Postgres (PGlite) with the real Drizzle migrations applied — exercises the multi-tenant
+// executions PK (user_id, command_id) exactly as production creates it.
+const db = await (async () => {
+  const d = drizzle(new PGlite(), { schema });
+  await migrate(d, { migrationsFolder: './drizzle' });
+  return d as unknown as Database;
+})();
 const log = pino({ level: 'silent' });
 const copier = Keypair.generate();
 const DLMM = new PublicKey(DLMM_PROGRAM_ID);
 const pool = Keypair.generate().publicKey;
 const position = Keypair.generate().publicKey;
-const usedCommandIds: string[] = [];
-
-afterAll(async () => {
-  if (usedCommandIds.length)
-    await db.delete(executions).where(inArray(executions.commandId, usedCommandIds));
-});
+const USER = 'test-user-1'; // the SIGNED tenant every request carries (SPEC §11)
+const usedCommandIds: string[] = []; // uniqueness counter for per-request event keys
 
 /** A close tx that PASSES Wall B: feePayer = owner (copier), a DLMM ix touching the pool + position, no foreign dest. */
 function closeTxBase64(): string {
@@ -55,9 +59,10 @@ function closeTxBase64(): string {
 
 function closeReq(): Record<string, unknown> {
   const eventKey = `test:${pool.toBase58()}:close:${copier.publicKey.toBase58()}:${usedCommandIds.length}:${process.hrtime.bigint()}`;
-  const commandId = deriveCommandId(eventKey);
+  const commandId = deriveCommandId(USER, eventKey);
   usedCommandIds.push(commandId);
   return {
+    userId: USER,
     commandId,
     eventKey,
     kind: 'close',
@@ -101,7 +106,9 @@ function ctxFor(conn: Connection, bus: RedisBus): Ctx {
     copier,
     blockhashCache,
     events,
-    maxTradeSol: 1.0,
+    // Per-user sign-time policy (SPEC §11): the default fixture serves ONE flat cap for any user; the dedicated
+    // per-user tests below override it to prove the coffre reads the REQUEST's user row.
+    policyFor: async () => ({ maxTradeSol: 1.0 }),
     signingEnabled: true,
     hmacKey: 'k',
     retryMax: 0,
@@ -175,6 +182,78 @@ describe('process1 — a returned signature is NOT execution (no dormant-positio
   });
 });
 
+describe('process1 — multi-tenant identity (SPEC §11: the SIGNED userId drives derivation + policy)', () => {
+  it('a request WITHOUT a userId is rejected bad_schema (the tenant is a required bus-contract field)', async () => {
+    // WHY: without a mandatory tenant the coffre would have to fall back to a hardcoded user — the exact
+    // ambiguity the v2 contract removes.
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const conn = fakeConn(() => ({ value: { confirmationStatus: 'confirmed' } }));
+    const { userId, ...withoutUser } = closeReq();
+    const verdict = await process1(withoutUser, ctxFor(conn, bus));
+    expect(verdict).toMatchObject({ ok: false, reason: 'bad_schema' });
+    expect(bus.publish).not.toHaveBeenCalled();
+  });
+
+  it('★ a CROSS-TENANT replay (user B re-sends user A commandId) is rejected commandId_mismatch, never signed', async () => {
+    // WHY (check #7 v2): the coffre re-derives commandId from the SIGNED (userId, eventKey). Re-labelling user
+    // A's command with user B's identity would bind B's config/idempotency slot to A's tx — the re-derivation
+    // makes that impossible: derive(B, eventKey) ≠ derive(A, eventKey) = sr.commandId.
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const conn = fakeConn(() => ({ value: { confirmationStatus: 'confirmed' } }));
+    const sr = closeReq(); // commandId = derive(USER, eventKey)
+    const verdict = await process1({ ...sr, userId: 'other-user' }, ctxFor(conn, bus));
+    expect(verdict).toMatchObject({ ok: false, reason: 'commandId_mismatch' });
+    expect(bus.publish).not.toHaveBeenCalled();
+  });
+
+  it("★ the re-clamp uses the REQUEST user's own cap — user B small cap rejects what user A cap allows", async () => {
+    // WHY: the coffre must select the caps/config row of the SIGNED userId (per-user config store), not a
+    // hardcoded SYSTEM row — else every tenant would trade under one user's ceiling.
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const conn = fakeConn(() => ({ value: { confirmationStatus: 'confirmed' } }));
+    const caps: Record<string, number> = { [USER]: 1.0, 'small-user': 0.05 };
+    const perUserCtx: Ctx = {
+      ...ctxFor(conn, bus),
+      policyFor: async (userId) => ({ maxTradeSol: caps[userId] ?? 0 }),
+    };
+    // user A (cap 1.0): a 0.1 SOL close passes the re-clamp and lands.
+    expect((await process1(closeReq(), perUserCtx)).ok).toBe(true);
+    // user B (cap 0.05): the SAME 0.1 SOL size is over ITS cap → rejected before any signature.
+    const eventKey = `test:${pool.toBase58()}:close:small:${process.hrtime.bigint()}`;
+    const smallUserReq = {
+      ...closeReq(),
+      userId: 'small-user',
+      eventKey,
+      commandId: deriveCommandId('small-user', eventKey),
+    };
+    const verdict = await process1(smallUserReq, perUserCtx);
+    expect(verdict).toMatchObject({ ok: false, reason: 'over_max_trade' });
+  });
+
+  it('★ the SAME eventKey copied for TWO users signs TWICE (independent idempotency slots — ULTRACODE #25/#27)', async () => {
+    // WHY (the user-#2-duplicate-rejection bug class): pre-v2, both users' commands for one leader event shared
+    // one commandId → the second was rejected 'duplicate' and that user silently missed the copy. With
+    // derive(userId, eventKey) + the (user_id, command_id) claim, both land.
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const conn = fakeConn(() => ({ value: { confirmationStatus: 'confirmed' } }));
+    const sharedEventKey = `test:${pool.toBase58()}:close:shared:${process.hrtime.bigint()}`;
+    const forUser = (userId: string): Record<string, unknown> => ({
+      ...closeReq(),
+      userId,
+      eventKey: sharedEventKey,
+      commandId: deriveCommandId(userId, sharedEventKey),
+    });
+    expect((await process1(forUser('user-a'), ctxFor(conn, bus))).ok).toBe(true);
+    const second = await process1(forUser('user-b'), ctxFor(conn, bus));
+    expect(second).toEqual({ ok: true, kind: 'close' }); // NOT { ok:false, reason:'duplicate' }
+    // …while the same user replaying the same event stays a duplicate (idempotency intact):
+    expect(await process1(forUser('user-a'), ctxFor(conn, bus))).toMatchObject({
+      ok: false,
+      reason: 'duplicate',
+    });
+  });
+});
+
 describe('process1 — #3: a confirmed land is TERMINAL (a post-confirm failure never re-signs/re-lands)', () => {
   it('a post-confirm bus.publish failure does NOT re-sign/re-land (no double execution)', async () => {
     // WHY (the money-path bug): once confirmLanded returns true the on-chain action already applied and is
@@ -226,7 +305,7 @@ const ownerWsolAta = (owner: PublicKey): PublicKey =>
  *  position (derived from commandId, as the coffre will) is a required signer so Wall B's open check passes. */
 function openReq(wrapLamports: number, sizeSol = 0.1): Record<string, unknown> {
   const eventKey = `test:${pool.toBase58()}:open:${copier.publicKey.toBase58()}:${usedCommandIds.length}:${process.hrtime.bigint()}`;
-  const commandId = deriveCommandId(eventKey);
+  const commandId = deriveCommandId(USER, eventKey);
   usedCommandIds.push(commandId);
   const ephemeral = derivePositionKeypair(commandId).publicKey;
   const t = new Transaction();
@@ -249,6 +328,7 @@ function openReq(wrapLamports: number, sizeSol = 0.1): Record<string, unknown> {
     }),
   );
   return {
+    userId: USER,
     commandId,
     eventKey,
     kind: 'open',
@@ -298,7 +378,7 @@ describe('process1 — OPEN: position-signer + the #3 Wall-B SOL-spend cap end-t
 const JUP = new PublicKey('JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4');
 function buyReq(outputMint: PublicKey): Record<string, unknown> {
   const eventKey = `test:${pool.toBase58()}:buy:${copier.publicKey.toBase58()}:${usedCommandIds.length}:${process.hrtime.bigint()}`;
-  const commandId = deriveCommandId(eventKey);
+  const commandId = deriveCommandId(USER, eventKey);
   usedCommandIds.push(commandId);
   const t = new Transaction();
   t.feePayer = copier.publicKey;
@@ -321,6 +401,7 @@ function buyReq(outputMint: PublicKey): Record<string, unknown> {
     }),
   );
   return {
+    userId: USER,
     commandId,
     eventKey,
     kind: 'buy',
@@ -375,6 +456,7 @@ async function seedSubmitted(
   lastValidBlockHeight: number,
 ): Promise<void> {
   await db.insert(executions).values({
+    userId: sr.userId as string,
     commandId: sr.commandId as string,
     eventKey: sr.eventKey as string,
     state: signature ? 'submitted' : 'claimed',
