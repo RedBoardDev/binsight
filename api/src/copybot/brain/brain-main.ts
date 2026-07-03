@@ -307,6 +307,13 @@ async function main(): Promise<void> {
           onEvent,
           onGap,
           poolMetaCache,
+          // Degraded-valuation signal: a pool meta read returned null, so THIS leader's events on that pool are valued
+          // with amounts 0 until the meta resolves (a short-TTL retry re-reads it — never a permanent null; #46).
+          onPoolMetaUnavailable: (lbPair) =>
+            log.warn(
+              { leader, pool: lbPair },
+              'pool meta unavailable — events valued degraded until it resolves',
+            ),
         }),
       ),
     getConfigs: () => userConfigs,

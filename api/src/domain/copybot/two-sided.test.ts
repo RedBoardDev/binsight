@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { BinSol } from './position-adjust';
 import {
+  inRangeTokenAdds,
   type LeaderBinLegs,
   planTwoSided,
   planTwoSidedReshape,
+  resolveTwoSidedTokenDeposit,
   sizeTwoSided,
   twoSidedLegTotals,
 } from './two-sided';
@@ -249,5 +251,90 @@ describe('twoSidedLegTotals — SOL/token → pool X/Y mapping (ULTRACODE #16)',
   it('the SOL amount is NEVER placed on the token side (the #16 invariant), both sides', () => {
     expect(twoSidedLegTotals('X', SOL, TOK).totalX).toBe(SOL);
     expect(twoSidedLegTotals('Y', SOL, TOK).totalY).toBe(SOL);
+  });
+});
+
+describe('inRangeTokenAdds — token deficits mapped into OUR fixed range (#48)', () => {
+  it('a token add OUTSIDE our range OR rounding to 0 raw is dropped; in-range positive survives', () => {
+    // our range: bins [100, 102]. offsets: 0→100, 1→101, 2→102, 3→103 (out), -1→99 (out).
+    const ops = [
+      { offset: 3, addSol: 500 }, // → bin 103, above upper → dropped
+      { offset: -1, addSol: 500 }, // → bin 99, below lower → dropped
+      { offset: 0, addSol: 0.4 }, // rounds to 0 raw → dropped (no real token to deposit)
+      { offset: 1, addSol: 12 }, // → bin 101, raw 12 → kept
+    ];
+    expect(inRangeTokenAdds(ops, 100, 102)).toEqual([{ binId: 101, raw: 12 }]);
+  });
+
+  it('WHY the gate matters: an all-out-of-range token deficit yields ZERO adds → caller must NOT go two-sided', () => {
+    // Every token add falls above our fixed upper bin (leader extended its range). If the caller still entered the
+    // two-sided BUY branch it would price a 0-token leg, throw, and drop the SOL-leg adds. Empty result = fall through.
+    const ops = [
+      { offset: 5, addSol: 1000 },
+      { offset: 6, addSol: 1000 },
+    ];
+    expect(inRangeTokenAdds(ops, 100, 102)).toEqual([]);
+  });
+});
+
+describe('resolveTwoSidedTokenDeposit — never deposit a stale/short token leg (#33)', () => {
+  const EXPECTED = 1_000_000n;
+  const SLIPPAGE_BPS = 100; // 1% → floor = 990_000
+
+  it('a stale read still at the PRE-buy balance is NOT ready (read-after-write lag) → retry, no half copy', () => {
+    // The buy landed on the coffre's connection but the brain's read lags: balance unchanged from pre-buy.
+    const r = resolveTwoSidedTokenDeposit({
+      actualBalance: 5n,
+      preBuyBalance: 5n,
+      expectedOut: EXPECTED,
+      slippageBps: SLIPPAGE_BPS,
+    });
+    expect(r.ready).toBe(false);
+    expect(r.depositRaw).toBe(0n);
+  });
+
+  it('a partial (below-floor) read is NOT ready → never deposits a short leg', () => {
+    const r = resolveTwoSidedTokenDeposit({
+      actualBalance: 900_000n, // bought 900_000 < floor 990_000
+      preBuyBalance: 0n,
+      expectedOut: EXPECTED,
+      slippageBps: SLIPPAGE_BPS,
+    });
+    expect(r.ready).toBe(false);
+  });
+
+  it('a settled read (bought ≥ floor) is ready and deposits min(bought, expected)', () => {
+    const r = resolveTwoSidedTokenDeposit({
+      actualBalance: 995_000n,
+      preBuyBalance: 0n,
+      expectedOut: EXPECTED,
+      slippageBps: SLIPPAGE_BPS,
+    });
+    expect(r.ready).toBe(true);
+    expect(r.depositRaw).toBe(995_000n); // bought < expected → deposit the real bought amount
+  });
+
+  it('a PRE-EXISTING residual of the same mint is NOT co-deposited (uses bought = actual − preBuy)', () => {
+    // preBuy already holds 400_000 of the token; the buy adds 1_000_000. Deposit only the bought delta, capped at
+    // expected — never the residual (which would over-grow the token leg past the leader composition).
+    const r = resolveTwoSidedTokenDeposit({
+      actualBalance: 1_400_000n,
+      preBuyBalance: 400_000n,
+      expectedOut: EXPECTED,
+      slippageBps: SLIPPAGE_BPS,
+    });
+    expect(r.ready).toBe(true);
+    expect(r.depositRaw).toBe(1_000_000n); // min(bought=1_000_000, expected=1_000_000)
+  });
+
+  it('a positive-slippage overfill is capped at expected (remainder swept, composition preserved)', () => {
+    const r = resolveTwoSidedTokenDeposit({
+      actualBalance: 1_050_000n, // received MORE than quoted
+      preBuyBalance: 0n,
+      expectedOut: EXPECTED,
+      slippageBps: SLIPPAGE_BPS,
+    });
+    expect(r.ready).toBe(true);
+    expect(r.depositRaw).toBe(EXPECTED); // min(bought, expected) → capped
   });
 });

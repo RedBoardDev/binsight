@@ -21,6 +21,12 @@ const SIG_PAGE = 1000;
 const MAX_POLL_PAGES = 25;
 const TX_FETCH_RETRIES = 3; // a WS notification can outrun tx availability at the RPC read replica
 const TX_FETCH_RETRY_MS = 350; // short backoff between null-tx refetches (fast-close path)
+// A null pool-meta read (the WS outran the LbPair account's availability at the RPC replica, or a brand-new pool the
+// leader opened seconds after creation) must NEVER be cached forever: a permanently-cached null blinds the bot to
+// EVERY subsequent event on that pool — each is built with amounts 0 / nonSolMint null → routed to 'ignore' → the
+// leader's open is silently never copied (the cardinal sin). Cache the null for only this SHORT TTL so a later
+// successful read values the pool; the on-chain reconcile backstop covers the specific event valued while degraded.
+const POOL_META_NULL_TTL_MS = 15_000;
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 export function makeDetectionDeps(args: {
@@ -32,16 +38,32 @@ export function makeDetectionDeps(args: {
   persist?: DetectorDeps['persist'];
   onGap?: DetectorDeps['onGap'];
   /** Optional SHARED pool-meta cache (Inc.3b: one deps object per watched leader — leaders sharing a pool must
-   *  not each pay the meta read). Defaults to a per-deps private cache (the single-leader behavior). */
+   *  not each pay the meta read). Defaults to a per-deps private cache (the single-leader behavior). Holds only
+   *  RESOLVED (non-null) metas — a null read is tracked separately under a short TTL (never cached permanently). */
   poolMetaCache?: Map<string, LoadedPoolMeta | null>;
+  /** Observability: called with the pool address each time a DLMM pool's meta read returns null during classify, i.e.
+   *  the pool's events are valued DEGRADED (amounts 0 / nonSolMint null) until the meta resolves. */
+  onPoolMetaUnavailable?: (lbPair: string) => void;
+  /** Injectable clock (the null-meta TTL). Defaults to `Date.now`; overridden in tests for deterministic expiry. */
+  now?: () => number;
 }): DetectorDeps {
   const { conn, pk, poolReader, tokenMeta, onEvent, persist, onGap } = args;
+  const now = args.now ?? Date.now;
   const poolMetaCache = args.poolMetaCache ?? new Map<string, LoadedPoolMeta | null>();
+  const nullMetaAt = new Map<string, number>(); // lbPair → ms of the last null read (short-TTL negative cache, per-deps)
   const getPoolMeta = async (lbPair: string): Promise<LoadedPoolMeta | null> => {
     const cached = poolMetaCache.get(lbPair);
-    if (cached !== undefined) return cached;
+    if (cached) return cached; // a resolved pool meta is immutable → cache forever (shared across leaders on this pool)
+    const nulledAt = nullMetaAt.get(lbPair);
+    if (nulledAt !== undefined && now() - nulledAt < POOL_META_NULL_TTL_MS) return null; // negative cache still warm — don't re-hammer RPC
     const meta = await poolReader.loadPoolMeta(lbPair);
-    poolMetaCache.set(lbPair, meta);
+    if (meta) {
+      poolMetaCache.set(lbPair, meta);
+      nullMetaAt.delete(lbPair);
+      return meta;
+    }
+    nullMetaAt.set(lbPair, now()); // remember the null for the SHORT TTL only — a later read re-resolves the pool
+    args.onPoolMetaUnavailable?.(lbPair);
     return meta;
   };
 

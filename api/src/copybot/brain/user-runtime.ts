@@ -75,8 +75,10 @@ import { decideResidualSell, minOutWithSlippage } from '@/domain/copybot/residua
 import { RugSlTracker } from '@/domain/copybot/rug-sl';
 import { planStopCloses } from '@/domain/copybot/stop-closes';
 import {
+  inRangeTokenAdds,
   planTwoSided,
   planTwoSidedReshape,
+  resolveTwoSidedTokenDeposit,
   sizeTwoSided,
   type TwoSidedPlan,
   twoSidedLegTotals,
@@ -167,6 +169,11 @@ const TWO_SIDED_SHAPE_MAX_READS = 18;
 // appears (else a premature read = no deficit = the copy wouldn't grow/shrink). Only when the event carries a real change.
 const RESYNC_READ_RETRIES = 8;
 const RESYNC_MIN_CHANGE_SOL = 0.001;
+// After a two-sided BUY confirms (on the coffre's connection), the brain reads the bought balance on ITS connection
+// ~300ms later → a read-after-write lag can show the token too low. Retry the balance read (reusing
+// OPEN_SHAPE_READ_DELAY_MS between reads) until the BOUGHT delta clears the quote-derived floor; if it never does
+// within this bound, SKIP the deposit (both-or-nothing) rather than deposit a short/one-sided half leg (#33).
+const TOKEN_BALANCE_SETTLE_MAX_READS = 6;
 // addLiquidityByWeight2 distributes a total by per-bin bps; the rounded per-bin amounts can sum to a hair MORE than
 // the total → the token TransferChecked fails "insufficient funds". Deposit just under the wallet balance to absorb
 // it (the tiny remainder is swept). ≤0.1% → negligible fidelity impact.
@@ -397,6 +404,12 @@ export async function createUserRuntime(
       solSide: 'X' | 'Y';
       tokenMint: string;
       sizeSol: number;
+      /** #33 — snapshot of the token balance BEFORE the buy was published (a pre-existing residual of the same mint
+       *  must NOT be co-deposited); the quoted token output + buy slippage derive the settle floor the post-buy read
+       *  must clear before we trust it (read-after-write lag → never a short/one-sided half copy). */
+      preBuyTokenRaw: bigint;
+      expectedTokenRaw: bigint;
+      buySlippageBps: number;
     }
   >();
 
@@ -461,6 +474,11 @@ export async function createUserRuntime(
       /** The mirror's leader (3b): the deferred add derives the same keys the reshape would have. */
       leader: string;
       signature: string;
+      /** #33 — pre-buy token snapshot + quoted output + slippage: the post-buy read must clear the derived floor
+       *  before the add deposits (read-after-write lag → never a short token leg), and only the BOUGHT delta deposits. */
+      preBuyTokenRaw: bigint;
+      expectedTokenRaw: bigint;
+      buySlippageBps: number;
     }
   >();
   const buildingToken2022Positions = new Map<string, number>(); // ourPosition → ms the create was published (orphan-close grace while the deposit lands)
@@ -637,6 +655,33 @@ export async function createUserRuntime(
     // Expected two-sided but never saw both legs → return null (NOT a half/single-leg shape): handleOpen then SKIPS
     // the open rather than copying a forbidden one-sided half of a two-sided leader (both-or-nothing).
     return expectBothLegs ? null : last;
+  }
+
+  // #33 — SETTLE the two-sided token leg before depositing. The BUY confirms on the coffre's connection; the brain
+  // reads the balance on ITS connection ~300ms later → a read-after-write lag can show the bought token still at (or
+  // near) its PRE-buy value. Depositing that stale/short amount = a forbidden one-sided half copy. Retry the read until
+  // the BOUGHT delta (`actual − preBuy`, which also excludes any pre-existing residual of the same mint) clears the
+  // quote-derived floor; if it never does within the bound, return `ready:false` so the caller SKIPS (both-or-nothing).
+  async function settledTwoSidedDeposit(
+    tokenMint: string,
+    preBuyTokenRaw: bigint,
+    expectedTokenRaw: bigint,
+    slippageBps: number,
+  ): Promise<{ ready: boolean; depositRaw: bigint }> {
+    const mintPk = new PublicKey(tokenMint);
+    let last: { ready: boolean; depositRaw: bigint } = { ready: false, depositRaw: 0n };
+    for (let r = 0; r <= TOKEN_BALANCE_SETTLE_MAX_READS; r++) {
+      if (r > 0) await sleep(OPEN_SHAPE_READ_DELAY_MS);
+      const actualBalance = await readOwnerTokenBalance(conn, ownerPk, mintPk);
+      last = resolveTwoSidedTokenDeposit({
+        actualBalance,
+        preBuyBalance: preBuyTokenRaw,
+        expectedOut: expectedTokenRaw,
+        slippageBps,
+      });
+      if (last.ready) return last;
+    }
+    return last; // never settled → caller does a both-or-nothing skip (the bought token is recovered by the sweep)
   }
 
   async function handleOpen(e: DetectedEvent, leader: string): Promise<void> {
@@ -969,6 +1014,9 @@ export async function createUserRuntime(
     const buyKey = `${leader}:${e.pool}:buy:${e.signature}`;
     const buyCommandId = commandIdFor(buyKey);
     const { issuedAtSlot, deadlineSlot } = await slots();
+    // #33 — snapshot the token balance BEFORE the buy lands: the post-buy read deposits only the BOUGHT delta
+    // (actual − preBuy), so a pre-existing residual of the same mint is never co-deposited past the leader composition.
+    const preBuyTokenRaw = await readOwnerTokenBalance(conn, ownerPk, new PublicKey(tokenMint));
 
     // Stash the open context → built+published once the buy lands; the build reads the ACTUAL token bought (ExactIn
     // output is variable) and deposits THAT, keyed by solSide/tokenMint (not a pre-planned exact amount).
@@ -980,6 +1028,9 @@ export async function createUserRuntime(
       solSide,
       tokenMint,
       sizeSol,
+      preBuyTokenRaw,
+      expectedTokenRaw: BigInt(buyQuote.outAmount),
+      buySlippageBps: ec.execution.slippageBps,
     });
     inFlightBuyMints.set(tokenMint, Date.now()); // protect this bought token from the safety-sweep until it's deposited
     await publish(
@@ -1146,11 +1197,34 @@ export async function createUserRuntime(
     if (consumeOpenCancellation(e.position, e.pool)) return; // leader closed before the buy landed → don't open into an exited pool
     const poolPk = new PublicKey(e.pool);
     const pair = await createDlmmPair(conn, poolPk);
-    // Deposit the token we ACTUALLY bought (ExactIn output is variable) — read the settled balance, don't assume an
-    // exact amount. SOL leg = the sized lamports; token leg = the real balance, distributed by the same bps `dist`.
-    const actualToken = depositableToken(
-      await readOwnerTokenBalance(conn, ownerPk, new PublicKey(tokenMint)),
-    ); // reserve a hair for per-bin bps rounding (TransferChecked insufficient-funds)
+    // Deposit the token we ACTUALLY bought (ExactIn output is variable). #33 — the balance read can LAG the buy confirm
+    // (read-after-write): guard it until the BOUGHT delta clears the quote-derived floor. If it never settles, SKIP the
+    // whole open (both-or-nothing) — NEVER deposit a short/stale token leg (a forbidden one-sided half copy). The
+    // bought token is recovered by the wallet sweep. `depositableToken` still reserves a hair for per-bin bps rounding.
+    const settled = await settledTwoSidedDeposit(
+      tokenMint,
+      ctx.preBuyTokenRaw,
+      ctx.expectedTokenRaw,
+      ctx.buySlippageBps,
+    );
+    if (!settled.ready) {
+      events.emit('eligibility.twosided.unbuyable', {
+        stage: 'open',
+        outcome: 'skipped',
+        reason: 'twosided_unbuyable',
+        leader,
+        pool: e.pool,
+        leaderPosition: e.position,
+        eventKey: openSkipKey(e, leader),
+        adminDetail: {
+          mint: tokenMint,
+          nonSolSymbol: e.nonSolSymbol,
+          err: 'token balance never settled to the buy floor (read-after-write) — both-or-nothing skip',
+        },
+      });
+      return;
+    }
+    const actualToken = depositableToken(settled.depositRaw);
     const { totalX, totalY } = twoSidedLegTotals(solSide, sizeLamports, actualToken);
     const lower = Math.min(...dist.map((d) => d.binId));
     const upper = Math.max(...dist.map((d) => d.binId));
@@ -1436,8 +1510,33 @@ export async function createUserRuntime(
     }
     const poolPk = new PublicKey(pool);
     const pair = await createDlmmPair(conn, poolPk);
-    const actualToken = await readOwnerTokenBalance(conn, ownerPk, new PublicKey(tokenMint)); // ExactIn output is variable → deposit the real balance
-    const depositToken = depositableToken(actualToken); // reserve a hair for per-bin bps rounding (else TransferChecked → insufficient funds)
+    // #33 — the ExactIn output is variable, so deposit the REAL balance — but guard the read against a read-after-write
+    // lag: retry until the BOUGHT delta clears the quote-derived floor. If it never settles, SKIP the token add (the
+    // SOL-leg removes already published stand; the reconcile self-corrects on the next event) — never a short leg.
+    const settled = await settledTwoSidedDeposit(
+      tokenMint,
+      ctx.preBuyTokenRaw,
+      ctx.expectedTokenRaw,
+      ctx.buySlippageBps,
+    );
+    if (!settled.ready) {
+      events.emit('reshape.token_unbuyable', {
+        stage: 'reshape',
+        outcome: 'skipped',
+        reason: 'reshape_token_unbuyable',
+        leader,
+        pool,
+        leaderPosition,
+        ourPosition,
+        eventKey: `${userId}:${leader}:${pool}:reshape-add-unsettled:${signature}`,
+        adminDetail: {
+          mint: tokenMint,
+          err: 'token balance never settled to the buy floor (read-after-write) — both-or-nothing skip',
+        },
+      });
+      return;
+    }
+    const depositToken = depositableToken(settled.depositRaw); // reserve a hair for per-bin bps rounding (else TransferChecked → insufficient funds)
     // TWO-SIDED add. WIDE (≥26 bins) → addLiquidityByWeight2 (v1 would chunk at 26 → onlyTx throw → the wide grow would
     // fail); fits ≤70 bins in one tx, works classic + Token-2022. NARROW (≤25) → keep the PROVEN buildAddByWeight (v1
     // classic / add2 Token-2022) untouched — exact per-bin placement (changing it perturbs precise spike/refill copies).
@@ -1711,7 +1810,16 @@ export async function createUserRuntime(
     }
     if (!ourShape || !plan) return;
     const { ops, tokenAddOps } = plan;
-    const twoSidedAdd = ec.twoSidedMode === 'on' && tokenAddOps.length > 0;
+    // #48: gate the two-sided-BUY branch on the FILTERED token deficit (in OUR fixed range, positive raw), NOT the raw
+    // op count. A reshape whose token adds all fall outside our range or round to 0 has NO token leg to grow → it must
+    // fall through to the one-sided SOL add path below so the SOL leg STILL grows this cycle (else it would enter the
+    // buy branch, price a 0-token leg, throw, and drop the SOL-leg adds — leaving the copy undersized its whole life).
+    const tokenMint = solSide === 'Y' ? meta.mintX : meta.mintY;
+    const tokenAdds =
+      ec.twoSidedMode === 'on'
+        ? inRangeTokenAdds(tokenAddOps, ourShape.lowerBinId, ourShape.upperBinId)
+        : [];
+    const twoSidedAdd = tokenAdds.length > 0;
     if (ops.length === 0 && !twoSidedAdd) {
       events.emit('reshape.noop', {
         stage: 'reshape',
@@ -1779,13 +1887,8 @@ export async function createUserRuntime(
     if (twoSidedAdd) {
       // TWO-SIDED reshape add: a deficit on the SOL leg AND the token leg → BUY the token deficit via ExactIn (ExactOut
       // has no Token-2022 route), then ADD both legs once the buy lands — the bought amount is variable, so we
-      // build-after-buy and deposit the ACTUAL balance (exactly like the two-sided OPEN).
-      const tokenMint = solSide === 'Y' ? meta.mintX : meta.mintY;
-      const tokenAdds = tokenAddOps
-        .map((o) => ({ binId: ourShape.lowerBinId + o.offset, raw: Math.round(o.addSol) }))
-        .filter(
-          (a) => a.binId >= ourShape.lowerBinId && a.binId <= ourShape.upperBinId && a.raw > 0,
-        );
+      // build-after-buy and deposit the ACTUAL balance (exactly like the two-sided OPEN). `tokenMint`/`tokenAdds` were
+      // computed above the two-sided gate (#48) — the filtered token deficit is what decided we're on this branch.
       const solShaped =
         adds.length > 0
           ? reanchorShape(
@@ -1846,6 +1949,8 @@ export async function createUserRuntime(
         const buyTxB64 = await buildJupiterSwapTx(jupiterBaseUrl, buyQuote, ownerPk.toBase58());
         const buyKey = `${leader}:${m.pool}:reshape-buy:${e.signature}`;
         const buyCommandId = commandIdFor(buyKey);
+        // #33 — pre-buy snapshot so the deferred add deposits only the BOUGHT delta (never a pre-existing residual).
+        const preBuyTokenRaw = await readOwnerTokenBalance(conn, ownerPk, new PublicKey(tokenMint));
         pendingReshapeAdds.set(buyCommandId, {
           dist,
           addLamports,
@@ -1859,6 +1964,9 @@ export async function createUserRuntime(
           leaderPosition: m.leaderPosition,
           leader,
           signature: e.signature,
+          preBuyTokenRaw,
+          expectedTokenRaw: BigInt(buyQuote.outAmount),
+          buySlippageBps: ec.execution.slippageBps,
         });
         inFlightBuyMints.set(tokenMint, Date.now()); // protect the bought token from the sweep until the reshape add deposits it
         await publish(

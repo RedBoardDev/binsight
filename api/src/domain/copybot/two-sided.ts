@@ -10,6 +10,7 @@
  */
 import { type BinSol, planReshape, type ReshapeOp } from './position-adjust';
 import { type LeaderBinAmount, type ReanchoredShape, reanchorShape } from './reanchor';
+import { minOutWithSlippage } from './residual-sell';
 
 /** Per-bin raw legs of the leader's position: SOL side + the non-SOL token side, keyed by ABSOLUTE bin. */
 export interface LeaderBinLegs {
@@ -124,6 +125,50 @@ export function planTwoSidedReshape(
     (o) => o.action === 'remove' && !solRemoveOffsets.has(o.offset),
   );
   return { ops: [...solOps, ...tokenRemoveOps], tokenAddOps };
+}
+
+/**
+ * The token ADD deficits of a reshape mapped into OUR position's FIXED bin range (PURE). A reshape's token adds can
+ * fall OUTSIDE our [lower,upper] (the leader extended its range past ours — a v1 limit) or round to 0 raw units; both
+ * are dropped. When NONE survive there is no token leg to grow, so the caller must NOT enter the two-sided-BUY branch
+ * (which would price a 0-token leg, throw "priced at 0 SOL", and drop the SOL-leg adds with it) — it must fall through
+ * to the one-sided SOL add path so the SOL leg STILL grows this cycle (ULTRACODE #48: else the copy stays undersized
+ * until the next leader event, and if the leader closes first the copy was undersized its whole life). Keyed by
+ * ABSOLUTE binId = lowerBinId + offset (the token leg shares the SOL leg's lower-bin alignment).
+ */
+export function inRangeTokenAdds(
+  tokenAddOps: Array<{ offset: number; addSol: number }>,
+  lowerBinId: number,
+  upperBinId: number,
+): Array<{ binId: number; raw: number }> {
+  return tokenAddOps
+    .map((o) => ({ binId: lowerBinId + o.offset, raw: Math.round(o.addSol) }))
+    .filter((a) => a.binId >= lowerBinId && a.binId <= upperBinId && a.raw > 0);
+}
+
+/**
+ * Decide whether the just-bought token leg has SETTLED enough to deposit (PURE). The token BUY confirms on the
+ * coffre's connection; the brain reads the balance ~300ms later on ITS connection → a read-after-write lag can show
+ * the balance still at (or near) its PRE-buy value. Depositing that stale/short amount = a forbidden one-sided half
+ * copy (SPEC: both-or-nothing on a two-sided leg). `bought = actualBalance − preBuyBalance` isolates what THIS buy
+ * added, so a pre-existing residual of the same mint is never co-deposited (ULTRACODE #33). The read is trusted only
+ * once `bought` clears the quote-derived floor `minOut(expectedOut, slippage)` — the least the landed buy must have
+ * delivered. Deposit `min(bought, expectedOut)` so a positive-slippage overfill isn't deposited past the leader's
+ * composition (the remainder is swept). `ready:false` → the caller retries the read; retries exhausted → the caller
+ * SKIPS the deposit (both-or-nothing), never depositing a short leg.
+ */
+export function resolveTwoSidedTokenDeposit(args: {
+  actualBalance: bigint;
+  preBuyBalance: bigint;
+  expectedOut: bigint;
+  slippageBps: number;
+}): { ready: boolean; depositRaw: bigint } {
+  const { actualBalance, preBuyBalance, expectedOut, slippageBps } = args;
+  const floor = minOutWithSlippage(expectedOut, slippageBps);
+  const bought = actualBalance - preBuyBalance;
+  if (bought < floor) return { ready: false, depositRaw: 0n };
+  const depositRaw = bought < expectedOut ? bought : expectedOut;
+  return { ready: true, depositRaw };
 }
 
 /** Re-anchor ONE leg, or null when the leg carries no liquidity (avoids reanchorShape throwing on an empty leg). */
