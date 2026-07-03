@@ -1,13 +1,12 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { usePortfolio } from '@/application/stores/portfolio-store';
 import { usePrefs } from '@/application/stores/prefs-store';
-import { useSession } from '@/application/stores/session-store';
 import { useSolUsd } from '@/application/stores/sol-usd-store';
 import { useUi } from '@/application/stores/ui-store';
 import { useWallets } from '@/application/stores/wallets-store';
 import { shortAddr } from '@/domain/format';
+import { useSignOut } from '@/presentation/hooks/use-sign-out';
 import {
   Button,
   cn,
@@ -22,8 +21,7 @@ import { useOpenAccess } from './open-access-context';
 import { SettingsDrawer } from './settings-drawer';
 
 export function AppShell() {
-  const router = useRouter();
-  const logout = useSession((s) => s.logout);
+  const signOut = useSignOut();
   const scope = usePortfolio((s) => s.scope);
   const setScope = usePortfolio((s) => s.setScope);
   const wallets = useWallets((s) => s.wallets);
@@ -54,8 +52,7 @@ export function AppShell() {
   }
 
   async function onLogout() {
-    await logout();
-    router.replace('/login');
+    await signOut();
   }
 
   return (

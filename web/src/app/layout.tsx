@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import { Inter, JetBrains_Mono, Space_Grotesk } from 'next/font/google';
 import { ServiceWorkerRegistrar } from '@/presentation/components/sw-registrar';
+import { AppProviders } from './providers';
 import './globals.css';
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter', display: 'swap' });
@@ -35,7 +36,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" className={`${inter.variable} ${mono.variable} ${display.variable}`}>
       <body className="min-h-dvh">
         <ServiceWorkerRegistrar />
-        {children}
+        <AppProviders>{children}</AppProviders>
       </body>
     </html>
   );

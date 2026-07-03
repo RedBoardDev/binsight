@@ -13,7 +13,9 @@ import type {
   WalletPnlCurve,
   WalletState,
 } from '@binsight/shared';
+import { getAccessToken } from '@privy-io/react-auth';
 import type { RpcTelemetry } from '@/domain/rpc-telemetry';
+import { API_URL } from '@/infrastructure/config';
 
 export type ClosedQuery = {
   q?: string;
@@ -22,17 +24,67 @@ export type ClosedQuery = {
   result?: 'all' | 'win' | 'loss';
 };
 
-class ApiError extends Error {
-  constructor(message: string) {
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
     super(message);
     this.name = 'ApiError';
   }
 }
 
+const HTTP_UNAUTHORIZED = 401;
+const HTTP_FORBIDDEN = 403;
+
+/**
+ * Auth failures are handled centrally (every call goes through {@link authedFetch}) and surfaced to
+ * ONE registered handler — the auth gate — so a dead Privy session redirects to login with a visible
+ * message and a lost account (403 needsInvite) re-opens the invite gate, instead of every data view
+ * dealing with scattered 401/403s.
+ */
+export type AuthFailureKind = 'expired' | 'needsInvite';
+type AuthFailureHandler = (kind: AuthFailureKind) => void;
+
+let authFailureHandler: AuthFailureHandler | null = null;
+
+/** Register the single auth-failure handler (the auth gate). Pass `null` to unregister. */
+export function setAuthFailureHandler(handler: AuthFailureHandler | null): void {
+  authFailureHandler = handler;
+}
+
+/**
+ * Fetch `<API_URL>/<path>` with the Privy access token as Bearer. The token is asked fresh on every
+ * call — the Privy SDK caches it and transparently refreshes it near expiry. A null token (no valid
+ * session) and a 401 both mark the session expired; a 403 carrying `needsInvite` routes back to the
+ * invite gate.
+ */
+async function authedFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const token = await getAccessToken();
+  if (!token) {
+    authFailureHandler?.('expired');
+    throw new ApiError(`${init.method ?? 'GET'} ${path} unauthenticated`, HTTP_UNAUTHORIZED);
+  }
+  const headers = new Headers(init.headers);
+  headers.set('authorization', `Bearer ${token}`);
+  const res = await fetch(`${API_URL}/${path}`, { ...init, headers });
+  if (res.status === HTTP_UNAUTHORIZED) {
+    authFailureHandler?.('expired');
+  } else if (res.status === HTTP_FORBIDDEN) {
+    // Body is read on a clone so callers can still consume the original response.
+    const body = (await res
+      .clone()
+      .json()
+      .catch(() => ({}))) as { needsInvite?: boolean };
+    if (body.needsInvite === true) authFailureHandler?.('needsInvite');
+  }
+  return res;
+}
+
 // Coalesce concurrent identical GETs into one in-flight request. Several components mount and request
 // the same resource in the same React commit — PerformanceCard + PairsCard both GET /stats (A09), and a
 // closed-set change re-fires every scoped query at once (O10) — so without this each fires its own
-// round-trip through the BFF. Keyed by path and cleared the moment the request settles (resolve OR
+// round-trip to the API. Keyed by path and cleared the moment the request settles (resolve OR
 // reject), so it only ever dedupes truly-concurrent calls and never serves a stale response. (Requests
 // with different params — e.g. the period-scoped Net Worth curves, O06 — have different paths and are
 // correctly NOT merged: they are distinct resources.)
@@ -42,8 +94,8 @@ async function get<T>(path: string): Promise<T> {
   const pending = inflightGets.get(path);
   if (pending) return pending as Promise<T>;
   const req = (async (): Promise<T> => {
-    const res = await fetch(`/api/${path}`, { headers: { accept: 'application/json' } });
-    if (!res.ok) throw new ApiError(`GET ${path} failed (${res.status})`);
+    const res = await authedFetch(path, { headers: { accept: 'application/json' } });
+    if (!res.ok) throw new ApiError(`GET ${path} failed (${res.status})`, res.status);
     return (await res.json()) as T;
   })();
   inflightGets.set(path, req);
@@ -59,26 +111,37 @@ async function send(
   method: 'POST' | 'PUT' | 'DELETE',
   body?: unknown,
 ): Promise<boolean> {
-  const res = await fetch(`/api/${path}`, {
-    method,
-    headers: body === undefined ? undefined : { 'content-type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  return res.ok;
+  try {
+    const res = await authedFetch(path, {
+      method,
+      headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    return res.ok;
+  } catch {
+    // A dead session throws before the request leaves — the auth gate is already redirecting.
+    return false;
+  }
 }
 
 async function getBlob(path: string, accept: string, signal?: AbortSignal): Promise<Blob> {
-  const res = await fetch(`/api/${path}`, { headers: { accept }, signal });
-  if (!res.ok) throw new ApiError(`GET ${path} failed (${res.status})`);
+  const res = await authedFetch(path, { headers: { accept }, signal });
+  if (!res.ok) throw new ApiError(`GET ${path} failed (${res.status})`, res.status);
   return res.blob();
 }
 
 type ClosedPage = { rows: ClosedPosition[]; total: number };
 
-/** The caller's own identity, from `/auth/me`. */
-export type AccountIdentity = { address: string; isOwner: boolean };
+/** The caller's own identity (the registered branch of `/auth/me`). */
+export type AccountIdentity = { address: string | null; isOwner: boolean };
 
-/** Typed client over the BFF proxy. The proxy attaches the session JWT server-side. */
+/** `/auth/me`: registered accounts get their identity; a valid Privy login without an account row
+ *  is told to redeem an invite. */
+export type AuthMe =
+  | ({ registered: true } & AccountIdentity)
+  | { registered: false; needsInvite: true };
+
+/** Typed client hitting the API origin directly (Privy token attached per request). */
 export const api = {
   state: (scope: string) => get<WalletState>(`state?wallet=${encodeURIComponent(scope)}`),
 
@@ -147,9 +210,6 @@ export const api = {
 
   refresh: () => send('refresh', 'POST'),
 
-  /** The caller's own account (address + owner flag) — routed through the proxy. */
-  me: () => get<AccountIdentity>('auth/me'),
-
   // ── Admin (owner only — the backend re-checks isOwner on every call) ──────────────────────────
   /** Unified access list: invited (whitelisted) + joined (registered) accounts. */
   access: () => get<AccessEntry[]>('admin/access'),
@@ -164,85 +224,64 @@ export const api = {
   debugRpc: () => get<RpcTelemetry>('debug/rpc'),
 };
 
-/** Result of asking the backend for a signature challenge (register / reset step 1). */
-type NonceResult =
-  | { ok: true; nonce: string; message: string }
-  | { ok: false; status: number; error?: string; notWhitelisted?: boolean };
+/** Typed reasons a redeem can fail — mirrors the API's error codes exactly (plus `network`). */
+export type RedeemInviteError =
+  | 'invalid_code'
+  | 'code_expired'
+  | 'code_used'
+  | 'already_registered'
+  | 'network';
 
-async function postJson(path: string, body: unknown): Promise<Response> {
-  return fetch(path, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-}
+const REDEEM_ERROR_CODES: readonly RedeemInviteError[] = [
+  'invalid_code',
+  'code_expired',
+  'code_used',
+  'already_registered',
+];
 
-/** POST to an auth endpoint and normalise the {ok}|{ok:false,error} result (login/register/reset). */
-async function postAuth(path: string, body: unknown): Promise<{ ok: boolean; error?: string }> {
-  const res = await postJson(path, body);
-  if (res.ok) return { ok: true };
-  const data = (await res.json().catch(() => ({}))) as { error?: string };
-  return { ok: false, error: data.error };
-}
+export type RedeemInviteResult = { ok: true } | { ok: false; error: RedeemInviteError };
 
-/**
- * Auth endpoints live outside the proxy (they manage the httpOnly cookie directly). Identity is the
- * Solana wallet address; the one-time signature is required only at register and password reset.
- */
+/** Result of the WS-ticket fetch: a ticket, a dead session (stop reconnecting), or a transient
+ *  failure (retry with backoff). */
+export type WsTicketResult = { token: string } | { unauthorized: true } | null;
+
+/** Auth endpoints (Privy token → binsight account). Sessions themselves are 100% Privy. */
 export const authApi = {
-  /** Register step 1 / reset step 1 — fetch the challenge to sign. */
-  async nonce(address: string, kind: 'register' | 'reset'): Promise<NonceResult> {
-    const res = await postJson(kind === 'register' ? '/api/auth/nonce' : '/api/auth/reset/nonce', {
-      address,
-    });
-    const data = (await res.json().catch(() => ({}))) as {
-      nonce?: string;
-      message?: string;
-      error?: string;
-      notWhitelisted?: boolean;
-    };
-    if (res.ok && data.nonce && data.message) {
-      return { ok: true, nonce: data.nonce, message: data.message };
+  /** The caller's account state. Works pre-account so the gate can decide invite vs app. */
+  me: () => get<AuthMe>('auth/me'),
+
+  /** Redeem a single-use invite code to create the binsight account for this Privy identity. */
+  async redeemInvite(code: string): Promise<RedeemInviteResult> {
+    let res: Response;
+    try {
+      res = await authedFetch('auth/redeem-invite', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ code }),
+      });
+    } catch {
+      return { ok: false, error: 'network' };
     }
-    return {
-      ok: false,
-      status: res.status,
-      error: data.error,
-      notWhitelisted: data.notWhitelisted,
-    };
+    if (res.ok) return { ok: true };
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    const known = REDEEM_ERROR_CODES.find((reason) => reason === data.error);
+    return { ok: false, error: known ?? 'network' };
   },
 
-  login(address: string, password: string): Promise<{ ok: boolean; error?: string }> {
-    return postAuth('/api/auth/login', { address, password });
-  },
-
-  // In open-access mode the backend ignores signature/nonce, so the simplified signup omits them.
-  register(p: {
-    address: string;
-    password: string;
-    signature?: string;
-    nonce?: string;
-  }): Promise<{ ok: boolean; error?: string }> {
-    return postAuth('/api/auth/register', p);
-  },
-
-  reset(p: {
-    address: string;
-    signature: string;
-    nonce: string;
-    password: string;
-  }): Promise<{ ok: boolean; error?: string }> {
-    return postAuth('/api/auth/reset', p);
-  },
-
-  async logout(): Promise<void> {
-    await fetch('/api/auth/logout', { method: 'POST' });
-  },
-
-  async wsTicket(): Promise<string | null> {
-    const res = await fetch('/api/auth/ws-ticket');
+  /** Short-lived ticket for the `/live` WebSocket (browsers can't set WS headers). */
+  async wsTicket(): Promise<WsTicketResult> {
+    let res: Response;
+    try {
+      res = await authedFetch('auth/ws-ticket');
+    } catch (err) {
+      if (err instanceof ApiError && err.status === HTTP_UNAUTHORIZED) {
+        return { unauthorized: true };
+      }
+      return null;
+    }
+    if (res.status === HTTP_UNAUTHORIZED) return { unauthorized: true };
     if (!res.ok) return null;
     const { token } = (await res.json()) as { token: string };
-    return token;
+    return { token };
   },
 };

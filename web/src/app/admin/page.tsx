@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { shortAddr } from '@/domain/format';
-import { api } from '@/infrastructure/api/client';
+import { api, authApi } from '@/infrastructure/api/client';
 import { Button, Input, Modal } from '@/presentation/ui';
 
 const ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -54,11 +54,12 @@ export default function AdminPage() {
   const [tab, setTab] = useState<Tab>('access');
 
   useEffect(() => {
-    api
+    authApi
       .me()
       .then((me) => {
-        setAllowed(me.isOwner);
-        if (!me.isOwner) router.replace('/');
+        const isOwner = me.registered && me.isOwner;
+        setAllowed(isOwner);
+        if (!isOwner) router.replace('/');
       })
       .catch(() => {
         setAllowed(false);
