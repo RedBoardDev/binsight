@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   type LeaderPositionState,
   leaderStateFromFetch,
+  type OrphanScanUser,
   planFailsafeCloses,
+  planOrphans,
   planReconcile,
 } from './reconciliation';
 
@@ -248,5 +250,54 @@ describe('planReconcile — rug-exit-pending re-close (a failed rug-SL close mus
       recentlyOpened: new Set(['oRug']),
     });
     expect(plan).toEqual({ markClosed: [], reClose: [], orphans: [] });
+  });
+});
+
+describe('planOrphans — global orphan pass over the SHARED wallet (Inc.3b S6)', () => {
+  const NOW = 1_000_000;
+  const GRACE = 90_000;
+  const user = (over: Partial<OrphanScanUser> = {}): OrphanScanUser => ({
+    tracked: new Set<string>(),
+    recentlyOpened: new Set<string>(),
+    buildingToken2022: new Map<string, number>(),
+    ...over,
+  });
+  const scan = (onChain: string[], users: OrphanScanUser[]): string[] =>
+    planOrphans({ onChain: new Set(onChain), users, nowMs: NOW, buildingGraceMs: GRACE });
+
+  it('an on-chain position tracked by NO user is an orphan', () => {
+    expect(scan(['stray'], [user(), user()])).toEqual(['stray']);
+  });
+
+  it('UNION suppression: a position tracked by ANY user (even just the second) is never an orphan', () => {
+    // WHY: the per-user reconcile intersects the enumerator with its OWN tracked set, so per-user orphan lists
+    // are empty by construction — if this union missed user B's claim, B's LIVE position would be force-closed
+    // by the wallet pass (the forbidden false close on a shared wallet).
+    const a = user({ tracked: new Set(['posA']) });
+    const b = user({ tracked: new Set(['posB']) });
+    expect(scan(['posA', 'posB'], [a, b])).toEqual([]);
+  });
+
+  it("recently-opened suppression: ANY user's fresh open is never an orphan (indexer lag ≠ untracked)", () => {
+    const b = user({ recentlyOpened: new Set(['fresh']) });
+    expect(scan(['fresh'], [user(), b])).toEqual([]);
+  });
+
+  it('a Token-2022 position mid-build WITHIN the grace is suppressed (deposit still in flight)', () => {
+    const b = user({ buildingToken2022: new Map([['building', NOW - (GRACE - 1)]]) });
+    expect(scan(['building'], [user(), b])).toEqual([]);
+  });
+
+  it('a Token-2022 build PAST the grace IS an orphan (deposit never landed → the empty position is cleaned)', () => {
+    // WHY: without the expiry, a crashed create→deposit sequence would shield its empty position forever — a
+    // dormant on-chain account nobody closes.
+    const b = user({ buildingToken2022: new Map([['stale-build', NOW - GRACE]]) });
+    expect(scan(['stale-build'], [b])).toEqual(['stale-build']);
+  });
+
+  it('ZERO users ⇒ every on-chain position is an orphan (an empty tracked set must never hide strays)', () => {
+    // WHY: the pre-3b single-user sweep once short-circuited on "nothing tracked" and hid a live orphan (the
+    // dormant-position incident) — the scan must judge the wallet, not the tracking.
+    expect(scan(['a', 'b'], [])).toEqual(['a', 'b']);
   });
 });

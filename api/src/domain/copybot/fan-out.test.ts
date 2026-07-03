@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CONFIG_DEFAULTS, type CopybotConfig, type LeaderSettings } from './config';
+import { CONFIG_DEFAULTS, type CopybotConfig, type LeaderSettings, parseConfig } from './config';
 import { computeLeaderSet, type LeaderHoldings, shouldRetainLeader, usersCopying } from './fan-out';
 
 const LEADER_A = 'LeaderAaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -44,6 +44,18 @@ describe('computeLeaderSet — the union of STARTED leaders across enabled users
 
   it('empty configs (e.g. every row failed parseConfig upstream) ⇒ empty set (fail closed)', () => {
     expect(computeLeaderSet(new Map())).toEqual(new Set());
+  });
+
+  it('a CORRUPT stored row contributes NOTHING: the fail-closed parse yields a stopped config (S7)', () => {
+    // WHY (7a): the leader set is derived from PARSED configs — a corrupt blob must never resurrect a leader
+    // into the watch set (parseConfig fails closed to enabled:false, so the union simply skips that user).
+    const corrupt = parseConfig('{"user": {"enabled": true, "sizing"'); // truncated JSON — a partial write
+    expect(corrupt.user.enabled).toBe(false); // the fail-closed premise this test locks
+    const configs = new Map([
+      ['corrupt-user', corrupt],
+      ['healthy-user', cfg([leaderEntry(LEADER_B)])],
+    ]);
+    expect(computeLeaderSet(configs)).toEqual(new Set([LEADER_B]));
   });
 });
 

@@ -6,11 +6,13 @@
  * Bundled CJS (tsup.copybot.config.ts) — imports the SDK, NEVER runs under tsx. Does NOT import the keypair.
  *   yarn tsup --config tsup.copybot.config.ts → node --env-file=../.env dist/copybot/brain-main.cjs [--once] [--seconds=N]
  *
- * Inc.3b steps 3-5: everything tenant-scoped lives in `createUserRuntime` (user-runtime.ts); per-leader detection
- * + the event fan-out live in the `LeaderHub` (leader-hub.ts), seeded here with exactly [cfg.leader]. This file
- * keeps the PROCESS SHELL — env/boot, the timers, the wallet-level sweeps (reconcile / rug-SL / wallet sweep) and
- * the ev:executed consumer (routed per runtime via executed-router) — and still boots exactly ONE runtime bound
- * to SYSTEM_USER_ID (the config-driven leader set + multi-user boot are 3b step 7).
+ * Inc.3b: everything tenant-scoped lives in `createUserRuntime` (user-runtime.ts); per-leader detection + the
+ * event fan-out live in the `LeaderHub` (leader-hub.ts), driven by the CONFIG-DERIVED leader set (computeLeaderSet
+ * — step 7a; COPYBOT_LEADER is demoted to a boot-warning). Boot + live reload spawn ONE runtime per ACTIVE user
+ * (user-reload.ts — step 7b); the shared-wallet sweeps (reconcile / rug-SL — wallet-sweeps.ts) and the wallet
+ * token sweep run across every runtime. This file keeps the PROCESS SHELL — env/boot, the timers, the sweep/reload
+ * wiring and the ev:executed consumer (routed per runtime via executed-router). The SYSTEM runtime is ALWAYS
+ * booted: it is the WALLET context (orphan closes / sweep sells / --once publish as SYSTEM, INC3B-PLAN §4).
  */
 import { DLMM_PROGRAM_ID } from '@binsight/shared';
 import { Connection, PublicKey } from '@solana/web3.js';
@@ -23,16 +25,15 @@ import { HeartbeatStore } from '@/copybot/heartbeat-store';
 import { SYSTEM_USER_ID } from '@/copybot/journal-store';
 import { CopyEvents } from '@/copybot/observability/copy-events';
 import { EventStore } from '@/copybot/observability/event-store';
-import { purgeRugExitPending } from '@/copybot/rug-exit-store';
-import { type CopybotConfig, effectiveFor } from '@/domain/copybot/config';
+import type { CopybotConfig } from '@/domain/copybot/config';
 import type { DetectedEvent } from '@/domain/copybot/events';
-import { shouldRetainLeader } from '@/domain/copybot/fan-out';
+import { computeLeaderSet, shouldRetainLeader } from '@/domain/copybot/fan-out';
 import type { TokenSnapshot } from '@/domain/copybot/filters';
 import { JupiterTokenGateway } from '@/domain/copybot/filters/sources/jupiter-token/jupiter-token-gateway';
 import { LeaderDetector } from '@/domain/copybot/leader-detector';
-import { planReconcile } from '@/domain/copybot/reconciliation';
 import { planWalletSweep } from '@/domain/copybot/residual-sell';
 import {
+  assembleBrainStatus,
   type BrainStatusDetail,
   DETECTION_STALE_FAILURES,
   detectionHealthy,
@@ -50,7 +51,6 @@ import { decodeDlmmLegs } from '@/infrastructure/solana/dlmm/dlmm-event-decoder'
 import {
   readLeaderPositionShape,
   readUserPositions,
-  type UserPosition,
 } from '@/infrastructure/solana/dlmm/leader-position-reader';
 import { OnchainPoolMetaReader } from '@/infrastructure/solana/dlmm/pool-meta';
 import { HeliusTxSubscriber } from '@/infrastructure/solana/helius-tx-subscriber';
@@ -64,15 +64,16 @@ import { HeliusTokenMetadataGateway } from '@/infrastructure/solana/token-metada
 import { type ExecutedBatchDeps, processExecutedBatch } from './dispatch-executed';
 import { resolveExecutedTarget } from './executed-router';
 import { LeaderHub } from './leader-hub';
-import type { Mirror } from './mirror-registry';
-import { pendingOpenLeaders } from './pending-open-cancel';
+import { reloadAllUsers } from './user-reload';
 import {
   createUserRuntime,
+  INFLIGHT_BUY_GRACE_MS,
   RECLOSE_GRACE_MS,
   SELL_RESIDUAL_DUST_RAW,
   type SharedBrainDeps,
   type UserRuntime,
 } from './user-runtime';
+import { runReconcileSweep, runRugSlSweep } from './wallet-sweeps';
 
 const POLL_MS = 15_000;
 const RECON_MS = 30_000; // on-chain reconcile cadence (no-miss-close backstop)
@@ -118,11 +119,8 @@ const pendingSellMints = new Map<
   string,
   { tokenMint: string; nonSolSymbol: string | null; pool: string }
 >();
-// The sweep must not sell the bought token during buy → (create →) deposit (≤ ~20s under load). Kept SHORT so it
-// expires soon after the deposit lands — else it would also block the safety-sweep from selling that same token's
-// CLOSE residual (the close returns it to the wallet) for too long. The close-triggered sell is the primary path;
-// this grace only gates the backstop sweep.
-const INFLIGHT_BUY_GRACE_MS = 30_000;
+// The in-flight-buy grace (INFLIGHT_BUY_GRACE_MS) lives in user-runtime.ts since 3b step 6: the close-triggered
+// sell applies the SAME grace as the sweep below (a shared-wallet hazard — see onCloseExecuted).
 const TOKEN2022_DEPOSIT_GRACE_MS = 90_000; // orphan-close grace for an empty position whose deposit is still in flight; past it, a non-deposited position is cleaned
 
 async function main(): Promise<void> {
@@ -149,15 +147,7 @@ async function main(): Promise<void> {
   const tokenMeta = new HeliusTokenMetadataGateway(cfg.httpUrl, log);
   const bus = RedisBus.connect(cfg.redisUrl);
   const db = openDatabase(cfg.dbUrl);
-  // Single-tenant binding (Inc.3a — SPEC §11): the brain still runs ONE user, bound ONCE here and passed to the
-  // single user runtime, which threads it through everything tenant-scoped (commandId derivation,
-  // SignRequest.userId, mirror/rug-exit rows, config, observability) — never hardcoded deep in call chains. The
-  // multi-user fan-out (next increment) turns this into one runtime per active user.
-  const userId = SYSTEM_USER_ID;
   const configStore = new ConfigStore(db, log);
-  // Single-user runtime (increment 2): the brain reads THE SYSTEM_USER_ID row of the per-user config table.
-  // Increment 3 iterates configStore.listActiveUserIds() and runs one runtime per active user.
-  const initialConfig = await configStore.seedIfAbsent(userId); // polled + ping-reloaded live below
   const control = ControlChannel.connect(cfg.redisUrl); // instant config-reload pings (kill-switch applies in <100ms)
   const heartbeat = new HeartbeatStore(db, log, 'brain'); // process status the web reads (online + positions/exposure/latency)
   const recentlyPublishedClose = new Map<string, number>(); // ourPosition → ms a close was last published (reClose grace)
@@ -200,46 +190,55 @@ async function main(): Promise<void> {
     priorityFeeOracleEnv: cfg.priorityFeeOracleEnv,
     alertWebhookUrl: process.env.ALERT_WEBHOOK,
   };
-  // ONE per-user runtime, bound to SYSTEM (Inc.3b step 3): all tenant-scoped state + handlers live inside it; the
-  // process shell below (detection, timers, wallet-level sweeps, consumers) drives this single instance. The
-  // multi-user fan-out (next 3b steps) turns this into a Map<userId, UserRuntime>.
-  const rt = await createUserRuntime(shared, userId, {
-    ownerPk,
-    balanceOf: () => cfg.balanceSol,
-    leader: cfg.leader,
-    initialConfig,
-  });
-  // The brain's runtime/config views (3b step 5): the hub's fan-out targets from these live maps. Still exactly
-  // ONE SYSTEM entry each — booting from listActiveUserIds() is step 7.
-  const runtimes = new Map<string, UserRuntime>([[userId, rt]]);
-  const userConfigs = new Map<string, CopybotConfig>([[userId, initialConfig]]);
-
-  const reloadConfig = async (): Promise<void> => {
-    // STOP = FORCE-CLOSE (SPEC §4.3): diff the config we were RUNNING (prev, the last loaded value in memory —
-    // never a stale/boot snapshot, so a restart can't replay an old stop) against the fresh load, and force-close
-    // the mirrors of every observed stop transition (leader disabled/removed, or global user.enabled off).
-    const prev = rt.getConfig();
-    const next = await configStore.load(userId);
-    rt.setConfig(next);
-    userConfigs.set(userId, next); // the fan-out targets from this live view
-    await rt.applyStopCloses(prev, next);
+  // The brain's runtime/config views (3b): the fan-out, status, sweeps and reload all read these LIVE maps —
+  // one entry per booted user. A deactivated user's runtime is RETAINED (its stop-close diff force-closes; it
+  // keeps reconciling until its mirrors drain) while its disabled config drops it from the open fan-out targets.
+  const runtimes = new Map<string, UserRuntime>();
+  const userConfigs = new Map<string, CopybotConfig>();
+  let bootRestored = 0; // mirrors restored across every boot-time spawn → gates the boot failsafe reconcile
+  // Build + durably seed ONE user runtime (persisted mirrors → registry + opens-window ring; rug sets are seeded
+  // inside createUserRuntime). Registration in the maps belongs to the caller (reload orchestration).
+  const spawnRuntime = async (uid: string, config: CopybotConfig): Promise<UserRuntime> => {
+    const runtime = await createUserRuntime(shared, uid, {
+      ownerPk,
+      balanceOf: () => cfg.balanceSol, // the SHARED wallet balance for every user until Inc.4 custody
+      leader: cfg.leader,
+      initialConfig: config,
+    });
+    const restored = await runtime.store.loadOpen();
+    runtime.restoreOpenMirrors(restored);
+    bootRestored += restored.length;
+    if (restored.length > 0)
+      log.info({ userId: uid, restored: restored.length }, '♻️ mirrors reloaded from the DB');
+    return runtime;
   };
+  // The SYSTEM runtime is ALWAYS booted, active or not (INC3B-PLAN §4): it is the WALLET context — orphan closes,
+  // sweep sells and --once publish as SYSTEM. It never receives opens unless its own config enables leaders (the
+  // fan-out targets from `userConfigs`), so an always-on SYSTEM runtime costs nothing.
+  const systemConfig = await configStore.seedIfAbsent(SYSTEM_USER_ID); // seed so the web/bench has a row to edit
+  const systemRt = await spawnRuntime(SYSTEM_USER_ID, systemConfig);
+  runtimes.set(SYSTEM_USER_ID, systemRt);
+  userConfigs.set(SYSTEM_USER_ID, systemConfig);
 
   // Shared detection-context emitter (SYSTEM-bound, INC3B-PLAN §3): detection is ONE on-chain fact — the hub's
   // `detect.routed` / `detect.gap` / per-leader `system.detection_stale` and the consumer-loop errors are emitted
-  // here ONCE, never fabricated per user. Same binding the SYSTEM runtime's emitter has ⇒ identical rows today.
-  const detectionLog = log.child({ userId, wallet: cfg.ownerPubkey, process: 'brain' });
+  // here ONCE, never fabricated per user.
+  const detectionLog = log.child({
+    userId: SYSTEM_USER_ID,
+    wallet: cfg.ownerPubkey,
+    process: 'brain',
+  });
   const detectionEvents = new CopyEvents(
     new EventStore(db, detectionLog),
     detectionLog,
-    { userId, wallet: cfg.ownerPubkey, process: 'brain' },
+    { userId: SYSTEM_USER_ID, wallet: cfg.ownerPubkey, process: 'brain' },
     createAlertWebhookSink(process.env.ALERT_WEBHOOK, detectionLog),
   );
   // WS trigger, created EARLY (never connects until start(), below) so the hub can record its watches.
   const sub = cfg.wsUrl ? new HeliusTxSubscriber(cfg.wsUrl, log) : undefined;
   // Per-leader detection (3b step 4): one detector+tracker+poll-health per watched leader, ONE shared pool-meta
-  // cache across the per-leader deps, and the event fan-out (step 5) — seeded below with exactly [cfg.leader]
-  // (the config-driven leader set is step 7a).
+  // cache across the per-leader deps, and the event fan-out (step 5) — driven by the CONFIG-DERIVED leader set
+  // (computeLeaderSet over the live `userConfigs`, applied by each reload pass — step 7a).
   const poolMetaCache = new Map<string, LoadedPoolMeta | null>();
   const hub = new LeaderHub({
     log,
@@ -274,22 +273,23 @@ async function main(): Promise<void> {
   let lastReconcileAt: number | null = null; // ms of the last SUCCESSFUL reconcile sweep
   let reconcileFailures = 0; // CONSECUTIVE reconcile failures (reset on a success)
   let reconcileStaleAlerted = false; // once-per-episode gate; re-armed when the counter is back to 0
-  const brainStatus = (): BrainStatusDetail => {
-    const open = rt.registry.openPositions();
-    const poll = hub.pollHealth(); // per-leader health, aggregated (single leader ⇒ its exact values)
-    return {
-      leader: cfg.leader,
-      openPositions: open.length,
-      exposureSol: open.reduce((s, m) => s + m.sizeSol, 0),
-      lastActionAt: rt.lastActionAt(),
-      lastLatencyMs: rt.lastLatencyMs(),
+  // Status v2 (3b step 8): pure assembly — legacy top-level fields become AGGREGATES, plus per-user and
+  // per-leader breakdowns (see assembleBrainStatus for the aggregation rules and their WHY).
+  const brainStatus = (): BrainStatusDetail =>
+    assembleBrainStatus({
+      users: [...runtimes.values()].map((r) => ({
+        userId: r.userId,
+        openMirrors: r.registry
+          .openPositions()
+          .map((m) => ({ leader: r.leaderOf(m), sizeSol: m.sizeSol })),
+        lastActionAt: r.lastActionAt(),
+        lastLatencyMs: r.lastLatencyMs(),
+      })),
+      leaders: hub.leaderHealth(),
       wsConnected,
-      lastPollAt: poll.lastPollAt,
       lastReconcileAt,
-      pollFailures: poll.pollFailures,
       reconcileFailures,
-    };
-  };
+    });
   // The reconcile sweep succeeded: stamp, zero the counter, re-arm the reconcile-side stale alert. (The poll-side
   // equivalent lives per leader in the hub — 3b step 4 split the two health signals.) Observability only.
   const onReconcileSuccess = (): void => {
@@ -317,157 +317,44 @@ async function main(): Promise<void> {
     }
   };
 
-  // Anti-dormant reconcile (the no-miss-close pillar) — driven by ON-CHAIN reality, NEVER by DB status (which
-  // can lie if a close failed). Enumerates OUR positions actually on-chain and compares to the persisted mirrors:
-  //  · our position gone on-chain                  → close confirmed → mark closed in DB
-  //  · our position still on-chain + leader closed  → re-publish the close (retried by the vault until it lands)
-  //  · on-chain position we never tracked           → orphan → alert (never close blindly)
-  // Any RPC failure aborts the sweep (retry next tick) so we never act on incomplete data.
-  async function reconcileSweep(): Promise<void> {
-    const tracked = await rt.store.loadOpen();
-
-    let held: UserPosition[];
-    try {
-      held = await readUserPositions(conn, ownerPk);
-    } catch (e) {
-      log.error(
-        { e: (e as Error).message },
-        'reconcile: failed to enumerate our positions → skip this sweep',
-      );
-      return;
-    }
-    const ourOnChain = new Set(held.map((p) => p.position)); // enumerator → orphan detection ONLY (can lag)
-
-    // Per-mirror DIRECT account reads — the RELIABLE close signal (a per-account getAccountInfo, not the laggy
-    // enumerator): is OUR position gone? is the leader's? A read error → undefined → never added (no close on doubt).
-    const ourClosed = new Set<string>();
-    const leaderClosed = new Set<string>();
-    await Promise.all(
-      tracked.map(async (m) => {
-        const [ours, leader] = await Promise.all([
-          conn.getAccountInfo(new PublicKey(m.ourPosition)).catch(() => undefined),
-          conn.getAccountInfo(new PublicKey(m.leaderPosition)).catch(() => undefined),
-        ]);
-        if (ours === null) ourClosed.add(m.ourPosition); // null = account gone (rent reclaimed on DLMM close)
-        if (leader === null) leaderClosed.add(m.leaderPosition);
-      }),
-    );
-
-    const now = Date.now();
-    // Open-grace: a copy opened < RECONCILE_OPEN_GRACE_MS ago isn't reliably confirmable on-chain yet → exclude
-    // it from close decisions so a fresh open is never mistaken for "gone" (anti-dormant regression).
-    const recentlyOpened = new Set(
-      tracked.filter((m) => now - m.openedAt < RECONCILE_OPEN_GRACE_MS).map((m) => m.ourPosition),
-    );
-
-    const plan = planReconcile({
-      ourOnChain,
-      ourClosed,
-      tracked: tracked.map((m) => ({
-        ourPosition: m.ourPosition,
-        leaderPosition: m.leaderPosition,
-      })),
-      leaderClosed,
-      recentlyOpened,
-      rugExitPending: rt.rugExitPending, // re-close a rug-SL-closed mirror (leader still open) until confirmed gone — never-miss-close
+  // Anti-dormant reconcile over the SHARED wallet (the no-miss-close pillar) — 3 phases in wallet-sweeps.ts:
+  // ONE enumeration + a per-sweep read cache, one isolated plan per user, then the GLOBAL orphan pass (orphan =
+  // tracked by NO user), published as SYSTEM through the always-on SYSTEM runtime.
+  const reconcileSweep = (): Promise<void> =>
+    runReconcileSweep({
+      log,
+      runtimes: () => runtimes.values(),
+      enumeratePositions: () => readUserPositions(conn, ownerPk),
+      readAccountInfo: (pubkey) => conn.getAccountInfo(new PublicKey(pubkey)),
+      recentlyPublishedClose,
+      publishOrphanClose: (p) => systemRt.publishOrphanClose(p), // wallet maintenance → SYSTEM keys + journal
+      openGraceMs: RECONCILE_OPEN_GRACE_MS,
+      recloseGraceMs: RECLOSE_GRACE_MS,
+      token2022DepositGraceMs: TOKEN2022_DEPOSIT_GRACE_MS,
     });
-
-    for (const our of plan.markClosed) {
-      const m = tracked.find((x) => x.ourPosition === our);
-      if (!m) continue;
-      await rt.store.markClosed(m.leaderPosition);
-      rt.registry.close(m.leaderPosition);
-      recentlyPublishedClose.delete(our);
-      rt.rugSlTracker.forget(our);
-      void purgeRugExitPending(rt.rugExitPending, rt.rugExitStore, our); // rug-SL/stop close CONFIRMED gone → stop retrying
-
-      rt.events.closed({
-        stage: 'close',
-        outcome: 'confirmed',
-        leader: rt.leaderOf(m), // the MIRROR's leader (3b) — same value while the hub runs [cfg.leader]
-        pool: m.pool,
-        leaderPosition: m.leaderPosition,
-        ourPosition: our,
-        ourSizeSol: m.sizeSol,
-        eventKey: rt.closeConfirmedKey(rt.leaderOf(m), m.pool, our),
-        adminDetail: { nonSolSymbol: m.nonSolSymbol, via: 'reconcile' },
+  // One reconcile tick: sweep → health bookkeeping → prune the hub's drained leaders (their retention inputs —
+  // open mirrors / pending closes — change exactly when this sweep confirms closes). Never rejects.
+  const reconcileTick = (): Promise<void> =>
+    reconcileSweep()
+      .then(() => {
+        onReconcileSuccess();
+        hub.pruneDrained();
+      })
+      .catch((e) => {
+        log.error({ e: (e as Error).message }, 'reconcile');
+        onReconcileFailure();
       });
-    }
-    for (const rc of plan.reClose) {
-      // Grace: skip if we published a close for this position recently (let the in-flight close land first).
-      if (now - (recentlyPublishedClose.get(rc.ourPosition) ?? 0) < RECLOSE_GRACE_MS) continue;
-      const m = tracked.find((x) => x.ourPosition === rc.ourPosition);
-      if (m) await rt.publishReClose(m);
-    }
-    for (const orphan of plan.orphans) {
-      // A Token-2022 open's empty position (TX1 landed, deposit TX2 still in flight) is intentionally UNTRACKED until
-      // the deposit lands — don't orphan-close it mid-build. Past the grace (deposit never landed) the entry is
-      // dropped and the empty position IS cleaned up here as a normal orphan (no dormant position).
-      const buildingSince = rt.buildingToken2022Positions.get(orphan);
-      if (buildingSince !== undefined) {
-        if (now - buildingSince < TOKEN2022_DEPOSIT_GRACE_MS) continue;
-        rt.buildingToken2022Positions.delete(orphan);
-      }
-      // Stray position on our wallet (a bug-forgotten mirror or a manual open) → AUTO-CLOSE it (spec 04
-      // reconcile; Valhalla force-closes random DLMMs). We have its pool + bins from the enumerator. The grace
-      // avoids re-publishing while a previous orphan-close is still landing.
-      const p = held.find((h) => h.position === orphan);
-      if (p && now - (recentlyPublishedClose.get(orphan) ?? 0) >= RECLOSE_GRACE_MS)
-        await rt.publishOrphanClose(p);
-    }
 
-    // Belt-and-suspenders (backstop behind the close-event-driven handleClose path): a leader that closed a position
-    // whose MULTI-TX open is still IN FLIGHT is never in `tracked` (the mirror isn't registered yet), so the loops
-    // above can't catch it. Cancel any pending open whose leader account is confirmably GONE so the continuation
-    // never funds an exited pool — only when it's a CLEAN addition (leader account read as null; else rely on handleClose).
-    const pendingLeaders = [...pendingOpenLeaders(rt.pendingOpenMapsView())].filter(
-      ([lp]) => !rt.registry.hasOpen(lp),
-    );
-    if (pendingLeaders.length > 0) {
-      await Promise.all(
-        pendingLeaders.map(async ([lp, pool]) => {
-          const info = await conn.getAccountInfo(new PublicKey(lp)).catch(() => undefined);
-          if (info === null) rt.cancelPendingOpen(lp, pool); // leader account gone → the pending open must not complete
-        }),
-      );
-    }
-  }
-
-  // Rug-SL: poll each open pool's active-bin token price (one cheap lbPair read per pool), feed the tracker, and
-  // close any position whose price crashed ≥ dropPercent within the window. The leader keeps holding (it's OUR
-  // independent safety exit) → close + drop the tracker window; re-copy only on a NEW leader open (no auto-reopen
-  // path exists: planReconcile never opens, handleResync no-ops on a closed mirror). A failed price read yields
-  // null → NOT recorded, so a transient RPC blip can never fabricate a crash.
-  async function rugSlSweep(): Promise<void> {
-    const open = rt.registry.openPositions();
-    if (open.length === 0) return;
-    const now = Date.now();
-    const byPool = new Map<string, Mirror[]>();
-    for (const m of open) byPool.set(m.pool, [...(byPool.get(m.pool) ?? []), m]);
-    for (const [pool, mirrors] of byPool) {
-      const price = await readActiveTokenPrice(conn, new PublicKey(pool));
-      if (price === null) continue; // never record a garbage price → no false trigger
-      for (const m of mirrors) {
-        // Per-mirror leader config (3b): the rug-SL trigger reads the settings of the leader THIS mirror copies —
-        // leader A's rug config must never fire (or mute) a close on leader B's mirror.
-        const rugCfg = effectiveFor(rt.getConfig(), m.leaderAddress).rugSl;
-        rt.rugSlTracker.record(m.ourPosition, price, now);
-        if (!rugCfg.enabled) continue;
-        if (now - (recentlyPublishedClose.get(m.ourPosition) ?? 0) < RECLOSE_GRACE_MS) continue; // a close is already in flight
-        if (!rt.rugSlTracker.check(m.ourPosition, rugCfg, now)) continue;
-        await rt.publishSafetyClose(m, 'rugsl', 'rug_sl');
-        // Keep the mirror TRACKED (do NOT registry.close here): a failed rug-SL close (congestion — the rug case)
-        // must be re-published by the reconcile until the position is confirmed gone on-chain. Marking it
-        // rug-exit-pending drives that retry independent of `leaderClosed` (the leader still holds it — rug-SL is OUR
-        // exit). The reconcile clears the pending flag + registry.close + DB markClosed once the close lands.
-        rt.rugExitPending.add(m.ourPosition);
-        void rt.rugExitStore.addPending(m.ourPosition); // persist so the retry survives a brain restart
-        rt.rugSlTracker.forget(m.ourPosition); // stop price re-triggering (recentlyPublishedClose + reconcile now own the retry)
-        rt.rugExited.add(m.leaderPosition); // suppress re-opening this leader position on its next add (we rug-exited it)
-        void rt.rugExitStore.addExited(m.leaderPosition); // persist so the suppression survives a brain restart
-      }
-    }
-  }
+  // Rug-SL across EVERY runtime's mirrors, grouped by pool (ONE price read per pool per tick); the trigger is
+  // judged per (user, mirror's leader) — see wallet-sweeps.ts.
+  const rugSlSweep = (): Promise<void> =>
+    runRugSlSweep({
+      log,
+      runtimes: () => runtimes.values(),
+      readPoolTokenPrice: (pool) => readActiveTokenPrice(conn, new PublicKey(pool)),
+      recentlyPublishedClose,
+      recloseGraceMs: RECLOSE_GRACE_MS,
+    });
 
   /** No-miss safety net: enumerate EVERY non-SOL token on the copier wallet (classic SPL + Token-2022) and sell
    *  each back to SOL. Catches anything the close-triggered sell missed — a brain downtime, a failed/rejected
@@ -485,7 +372,7 @@ async function main(): Promise<void> {
     // `eventKey` is the per-cycle correlation (swNow): each periodic sweep that finds a residual is its own row
     // (the operator must see a still-stranded residual each cycle), while WS/poll have no part here. The per-mint
     // failure shares the cycle stamp + mint so a retry within the same cycle collapses, distinct cycles don't.
-    rt.events.emit('swap.sweep_detected', {
+    systemRt.events.emit('swap.sweep_detected', {
       stage: 'sweep',
       outcome: 'detected',
       leader: cfg.leader,
@@ -493,9 +380,9 @@ async function main(): Promise<void> {
       adminDetail: { count: toSweep.length, mints: toSweep.map((b) => b.mint) },
     });
     for (const b of toSweep) {
-      await rt.publishSell(b.mint, b.amountRaw, ownerPk.toBase58(), 'sweep').catch((e) => {
+      await systemRt.publishSell(b.mint, b.amountRaw, ownerPk.toBase58(), 'sweep').catch((e) => {
         // A sweep sell that fails to build/publish is the swap-failed path → pinned, feed-visible (SPEC §2.1 swap).
-        rt.events.swapFailed({
+        systemRt.events.swapFailed({
           stage: 'sweep',
           outcome: 'failed',
           reason: 'failed_after_retries',
@@ -508,12 +395,36 @@ async function main(): Promise<void> {
   }
 
   await blockhashCache.start(); // prime + background-refresh so serializeUnsigned never pays a getLatestBlockhash RTT
-  if (rt.oracleOn()) {
+  // Live priority-fee oracle: started once ANY booted runtime opts in (INC3B-PLAN §3) — env override or the
+  // user's DB flag. Checked after every reload pass so a live opt-in starts it too; never stopped once started
+  // (an opted-out user simply isn't quoted from it — serializeUnsigned checks oracleOn per publish).
+  let oracleStarted = false;
+  const ensureOracleStarted = async (): Promise<void> => {
+    if (oracleStarted || ![...runtimes.values()].some((r) => r.oracleOn())) return;
+    oracleStarted = true;
     await priorityFeeOracle.start(); // prime + background-refresh the live fee estimate (opt-in)
     log.info(
       '📈 priority-fee oracle on (live estimate raises the tier in congestion; cap still bounds it)',
     );
-  }
+  };
+  await ensureOracleStarted();
+
+  // Boot/reload orchestration (3b step 7b): ONE pass spawns every ACTIVE user's runtime, refreshes existing
+  // configs (STOP = FORCE-CLOSE diffs), reconciles the hub to computeLeaderSet(configs) and lets fresh users
+  // join the reconcile immediately. Reused verbatim by the control ping + the CONFIG_POLL_MS backstop.
+  const reloadAllUsersNow = async (): Promise<void> => {
+    await reloadAllUsers({
+      log,
+      listActiveUserIds: () => configStore.listActiveUserIds(),
+      loadConfig: (uid) => configStore.load(uid),
+      spawn: spawnRuntime,
+      runtimes,
+      userConfigs,
+      applyLeaderSet: (next) => hub.applyLeaderSet(next),
+      onUsersSpawned: () => reconcileTick(),
+    });
+    await ensureOracleStarted();
+  };
 
   // --once: validates the pipeline by forcing ONE open on a live leader position (deterministic), then exits.
   if (once) {
@@ -521,7 +432,7 @@ async function main(): Promise<void> {
       conn,
       leaderPk,
       poolReader,
-      (e) => rt.handleOpen(e, cfg.leader), // the forced open copies the boot leader (3b: handleOpen takes the event's leader)
+      (e) => systemRt.handleOpen(e, cfg.leader), // --once runs on the SYSTEM runtime (always booted above)
       bus,
       hmacKey,
       log,
@@ -530,16 +441,30 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  log.info({ leader: cfg.leader, owner: cfg.ownerPubkey, redis: cfg.redisUrl }, '🧠 brain started');
-  // Seed the hub with EXACTLY [cfg.leader] (3b steps 4-5): replay-seeds the cursor + tracker (without publishing)
-  // and records the WS watch. The config-driven leader set (computeLeaderSet) is step 7a.
-  await hub.applyLeaderSet(new Set([cfg.leader]));
-  log.info('replay done — switching to live');
+  log.info({ owner: cfg.ownerPubkey, redis: cfg.redisUrl }, '🧠 brain started');
+  // Boot pass (7b): spawn every active user's runtime; the hub is seeded with the CONFIG-DERIVED leader set
+  // (computeLeaderSet — 7a), each added leader replay-seeded (cursor + tracker, without publishing) before its
+  // WS watch is recorded.
+  await reloadAllUsersNow();
+  // 7a — COPYBOT_LEADER is DEMOTED: the env no longer drives detection. If it is set and disagrees with the
+  // config-derived set, say so LOUDLY at boot (an operator expecting the env to steer the bot must learn here).
+  const envLeader = process.env.COPYBOT_LEADER;
+  const derivedLeaders = computeLeaderSet(userConfigs);
+  if (envLeader && !derivedLeaders.has(envLeader)) {
+    log.warn(
+      { envLeader, configLeaders: [...derivedLeaders] },
+      '⚠️ COPYBOT_LEADER is set but absent from the config-derived leader set — the env no longer drives detection (edit the DB config instead)',
+    );
+  }
+  log.info(
+    { leaders: [...derivedLeaders], users: [...runtimes.keys()] },
+    'replay done — switching to live',
+  );
 
   // No-dormant-token: at boot, sweep any non-SOL balance left on the wallet (a prior downtime, a missed/
   // rejected close-sell) back to SOL before resuming — the wallet must never sit on a dormant token.
   await sweepWallet().catch((e) =>
-    rt.events.system('system.sweep_failed', e, {
+    systemRt.events.system('system.sweep_failed', e, {
       stage: 'sweep',
       outcome: 'failed',
       reason: 'sweep_failed',
@@ -548,13 +473,10 @@ async function main(): Promise<void> {
     }),
   );
 
-  // No-dormant: reload persisted open mirrors + immediate failsafe (the leader may have closed during a
-  // brain downtime → we close right away whatever must be closed before even resuming live).
-  const restored = await rt.store.loadOpen();
-  for (const m of restored) rt.registry.open(m);
-  if (restored.length > 0) {
-    log.info({ restored: restored.length }, '♻️ mirrors reloaded from the DB');
-    await reconcileSweep(); // close right away anything the leader closed during downtime (no grace at boot)
+  // No-dormant: every boot-time spawn reloaded its persisted open mirrors (spawnRuntime) — if ANY were restored,
+  // run the immediate failsafe now (a leader may have closed during the downtime → close before resuming live).
+  if (bootRestored > 0) {
+    await reconcileSweep(); // close right away anything a leader closed during downtime (no grace at boot)
   }
   if (!cfg.wsUrl || !sub) {
     log.warn('no SOLANA_WS_URL → live impossible');
@@ -570,16 +492,7 @@ async function main(): Promise<void> {
   // One process-level poll loop: the hub iterates its per-leader detectors sequentially (per-leader failure
   // counters + stale alerts live inside it). pollAll never rejects (per-entry try/catch).
   const timer = setInterval(() => void hub.pollAll(), POLL_MS);
-  const reconTimer = setInterval(
-    () =>
-      reconcileSweep()
-        .then(onReconcileSuccess)
-        .catch((e) => {
-          log.error({ e: (e as Error).message }, 'reconcile');
-          onReconcileFailure();
-        }),
-    RECON_MS,
-  );
+  const reconTimer = setInterval(() => void reconcileTick(), RECON_MS);
   const sweepTimer = setInterval(
     () => sweepWallet().catch((e) => log.error({ e: (e as Error).message }, 'sweep')),
     SWEEP_MS,
@@ -588,13 +501,14 @@ async function main(): Promise<void> {
     () => rugSlSweep().catch((e) => log.error({ e: (e as Error).message }, 'rug-sl')),
     RUG_SL_POLL_MS,
   );
-  // Live config reload. A web config edit publishes a control ping → reload from the DB NOW (kill-switch in <100ms);
-  // the periodic poll is the backstop if a ping is ever missed. load() is fail-safe (defaults on corruption); these
-  // are the only writes to the runtime's config post-boot.
-  const configTimer = setInterval(() => void reloadConfig(), CONFIG_POLL_MS);
+  // Live config reload — now the FULL multi-user pass (spawn new actives / per-user stop-close diffs / leader
+  // set). A web config edit publishes a control ping → reload from the DB NOW (kill-switch in <100ms); the
+  // periodic poll is the backstop if a ping is ever missed. load() is fail-safe (defaults on corruption); these
+  // are the only writes to the runtimes' configs post-boot.
+  const configTimer = setInterval(() => void reloadAllUsersNow(), CONFIG_POLL_MS);
   await control.subscribe(() => {
-    log.info('🔁 control: config-changed → reloading config now');
-    void reloadConfig();
+    log.info('🔁 control: config-changed → reloading all users now');
+    void reloadAllUsersNow();
   });
   // Process heartbeat: beat now (web sees the brain online immediately) then on an interval.
   void heartbeat.beat(brainStatus());
@@ -731,7 +645,7 @@ async function main(): Promise<void> {
     // Sells are wallet-residual actions: route by the publisher's userId, else fall back to the WALLET context
     // (the SYSTEM runtime) — the stash lives in the shared pendingSellMints either way.
     onSellConfirmed: (ev) =>
-      (resolveExecutedTarget(runtimes, { userId: ev.userId }) ?? rt).onSellConfirmed(ev),
+      (resolveExecutedTarget(runtimes, { userId: ev.userId }) ?? systemRt).onSellConfirmed(ev),
     ack: (id) => evBus.ack(EV_EXECUTED_STREAM, 'brain', id),
     onLoopError: (err, id) =>
       detectionEvents.system('system.loop_errored', err, {

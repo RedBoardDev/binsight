@@ -46,7 +46,11 @@ export function buildBenchConfig(capsPatch: Partial<CapsConfig> = {}): CopybotCo
     infiniteAdd: true,
     sizing: { ...base.sizing, tradeRatioPct: BENCH_TRADE_RATIO_PCT, minPositionSizeSol: BENCH_MIN_POSITION_SOL },
     execution: { ...base.execution, dustTokenRaw: BENCH_DUST_TOKEN_RAW },
-    caps: { ...base.caps, ...capsPatch },
+    // maxOpensPerWindow OFF for the bench: since 3b step 8 the per-user opens-window ring is LIVE, and the
+    // soak/mega-soak intentionally burst more opens than the product's 10-per-10-min default — the rate cap is
+    // covered by its unit tests (caps.test / user-runtime S8), not by the lifecycle bench. A test that WANTS the
+    // window cap patches it back via `capsPatch` (same mechanism as the kill-switch/maxOpenPositions tests).
+    caps: { ...base.caps, maxOpensPerWindow: null, ...capsPatch },
   };
   // The bench leader is explicitly STARTED (enabled:true): the bot must copy it the moment the brain boots —
   // the product's stopped-by-default rule applies to user-added leaders, not the bench seed.

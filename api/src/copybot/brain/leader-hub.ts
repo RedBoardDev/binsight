@@ -134,13 +134,13 @@ export class LeaderHub {
         this.deps.watcher?.unwatch(entry.leader);
       }
     }
-    this.reapDrained();
+    this.pruneDrained();
   }
 
   /** One sequential pass over every entry (the process-level POLL_MS loop). Per-leader failure isolation: one
    *  leader's throwing poll never blocks the others' completeness sweep. */
   async pollAll(): Promise<void> {
-    this.reapDrained();
+    this.pruneDrained();
     for (const entry of this.entries.values()) {
       try {
         await entry.detector.poll();
@@ -168,6 +168,15 @@ export class LeaderHub {
       }
     }
     return { lastPollAt, pollFailures };
+  }
+
+  /** Per-leader detection health for the v2 status payload (Inc.3b step 8 — replaces the poll singletons). */
+  leaderHealth(): Array<{ leader: string; lastPollAt: number | null; pollFailures: number }> {
+    return [...this.entries.values()].map((e) => ({
+      leader: e.leader,
+      lastPollAt: e.lastPollAt,
+      pollFailures: e.pollFailures,
+    }));
   }
 
   private createEntry(leader: string): LeaderEntry {
@@ -202,8 +211,11 @@ export class LeaderHub {
   }
 
   /** Delete the draining entries nothing references anymore. Called between polls (never mid-poll: `pollAll` is
-   *  sequential and awaits) and after a set change. In-flight WS classification keeps its closure — never cancelled. */
-  private reapDrained(): void {
+   *  sequential and awaits), after a set change, and by brain-main on reconcile ticks (Inc.3b step 6) — the
+   *  retention inputs (open mirrors / pending closes) change exactly when the reconcile confirms closes, so a
+   *  drained leader is released the tick its last mirror is confirmed gone, not one poll cycle later.
+   *  In-flight WS classification keeps its closure — never cancelled. */
+  pruneDrained(): void {
     for (const entry of this.entries.values()) {
       if (entry.draining && !this.deps.retainLeader(entry.leader))
         this.entries.delete(entry.leader);

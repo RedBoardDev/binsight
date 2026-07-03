@@ -305,3 +305,44 @@ describe('LeaderHub — per-leader poll health + stale alerts (S4)', () => {
     expect(health.lastPollAt).toBeGreaterThanOrEqual(before);
   });
 });
+
+describe('LeaderHub — pruneDrained + leaderHealth (Inc.3b S6/S8)', () => {
+  it('pruneDrained (public) releases a drained leader the moment retention drops — without waiting for a poll tick', async () => {
+    // WHY (step 6 wiring): retention inputs (open mirrors / pending closes) change exactly when the RECONCILE
+    // confirms closes, so brain-main calls this on reconcile ticks — a drained leader must not stay polled for
+    // an extra poll cycle after its last mirror is confirmed gone.
+    let retained = true;
+    const { hub, calls } = makeHub({ retain: () => retained });
+    await hub.applyLeaderSet(new Set([L1]));
+    await hub.applyLeaderSet(new Set()); // draining, retained
+    retained = false; // the reconcile just confirmed the last mirror gone
+    hub.pruneDrained();
+    calls.length = 0;
+    await hub.pollAll();
+    expect(calls).toEqual([]); // entry already reaped — no zombie poll
+  });
+
+  it('pruneDrained never touches a NON-draining leader, retained or not', async () => {
+    const { hub, calls } = makeHub({ retain: () => false });
+    await hub.applyLeaderSet(new Set([L1]));
+    hub.pruneDrained();
+    calls.length = 0;
+    await hub.pollAll();
+    expect(calls).toEqual([`poll:${L1}:poll`]); // still watched + polled
+  });
+
+  it('leaderHealth reports EVERY entry per leader (the v2 status payload input)', async () => {
+    // WHY (step 8): with N leaders a single lastPollAt/pollFailures pair can only describe the stalest one —
+    // the heartbeat needs per-leader rows to show "blind to leader X only".
+    const { hub, pollFails } = makeHub({});
+    await hub.applyLeaderSet(new Set([L1, L2]));
+    pollFails.add(L2);
+    await hub.pollAll();
+    const health = new Map(hub.leaderHealth().map((h) => [h.leader, h]));
+    expect(health.size).toBe(2);
+    expect(health.get(L1)?.pollFailures).toBe(0);
+    expect(health.get(L1)?.lastPollAt).not.toBeNull();
+    expect(health.get(L2)?.pollFailures).toBe(1);
+    expect(health.get(L2)?.lastPollAt).toBeNull(); // never succeeded
+  });
+});

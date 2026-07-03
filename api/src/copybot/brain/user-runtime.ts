@@ -133,6 +133,20 @@ const DEADLINE_SLOTS = 150; // ~60s
 // decides whether a leader TOKEN LEG is worth buying — a different concern). So selling uses 0 here. Exported for
 // brain-main's wallet sweep (the same floor gates the close-sell and the sweep).
 export const SELL_RESIDUAL_DUST_RAW = 0n;
+// A two-sided open's BOUGHT token sits on the wallet between the buy landing and the deposit landing. Selling it in
+// that window (close-triggered sell OR safety sweep — both read the WHOLE shared-wallet balance) would empty the
+// token leg — on the shared wallet even ANOTHER user's in-flight open is at risk (Inc.3b step 6). Kept SHORT so it
+// expires soon after the deposit lands — else it would also delay selling that same token's CLOSE residual for too
+// long. The wallet sweep backstop picks up whatever a deferred sell leaves. Exported: brain-main's sweep applies
+// the same grace over the shared `inFlightBuyMints` map.
+export const INFLIGHT_BUY_GRACE_MS = 30_000;
+// eventKey prefix for WALLET-context (no-leader) actions — today the orphan close (INC3B-PLAN §4): an orphan is
+// tracked by NO user and copies NO leader, so a leader-address prefix would fabricate an attribution AND alias the
+// commandId with that leader's real closes. Exported for the tests that pin the derived keys.
+export const WALLET_EVENT_PREFIX = 'wallet';
+// Retention of the per-user opens-per-window ring (caps.maxOpensPerWindow): far above any sane `windowMinutes`
+// (minutes-scale by design), so pruning can never eat a live window, while bounding the ring to O(day) entries.
+const OPEN_TIMESTAMPS_RETAIN_MS = 24 * 60 * 60_000;
 const RUG_SL_RETAIN_MS = 180_000; // keep ≥ any sane windowSeconds so the detector always has its full lookback
 // A leader OPEN's WS event can arrive BEFORE the position account is readable on our RPC node (read-after-write lag).
 // Retry the shape read briefly so a transient read-miss never DROPS a leader open (the sig is already deduped, so the
@@ -329,8 +343,10 @@ export async function createUserRuntime(
   let runtimeConfig = initialConfig; // polled + ping-reloaded live by brain-main via getConfig/setConfig
   // Resolve the EFFECTIVE config for ONE leader from the DB-backed config. Pure + cheap → recomputed at each point
   // of use so a live reload always takes effect on the next event. Decision paths pass the EVENT's/MIRROR's leader
-  // (3b fan-out); the wallet-level paths (sell economics, publish plumbing) still read the boot leader until the
-  // sweeps go multi-user (INC3B-PLAN §7 steps 6-7) — same value while the hub is seeded with [cfg.leader].
+  // (3b fan-out). `eff()` is the DOCUMENTED wallet-context path (INC3B-PLAN §4 / wave-C deviation 5): the
+  // wallet-level reads with no leader in scope (sell economics, priority-fee plumbing in serializeUnsigned) resolve
+  // THIS RUNTIME's config against the boot leader — for the wallet actions that runtime is SYSTEM, so wallet
+  // economics = the SYSTEM config (per-leader overrides don't apply to leaderless actions by construction).
   const effFor = (leader: string): EffectiveConfig => effectiveFor(runtimeConfig, leader);
   const eff = (): EffectiveConfig => effFor(bootLeader);
   const rugSlTracker = new RugSlTracker(RUG_SL_RETAIN_MS); // per-position price windows for the rug-SL crash check
@@ -448,6 +464,29 @@ export async function createUserRuntime(
   // the mirror was never registered so nothing is stuck, and the periodic sweep clears any token already bought.
   const cancelledOpens = new Set<string>();
 
+  // Per-user opens-per-window ring (3b step 8): wall-clock ms of every mirror THIS user opened, feeding
+  // caps.maxOpensPerWindow (checkCaps filters by the live window). PER USER by construction — user A's open burst
+  // must never consume user B's window. Seeded at boot from the persisted OPEN mirrors' openedAt: positions opened
+  // AND closed before a restart have no open row, so a boot mid-window UNDER-COUNTS by those closed-within-window
+  // opens (known + accepted: windows are minutes-scale, restarts mid-window are rare, and the cap is a rate
+  // limiter, not a safety exit).
+  const openTimestampsMs: number[] = [];
+  const recordOpen = (openedAtMs: number): void => {
+    openTimestampsMs.push(openedAtMs);
+    const cutoff = Date.now() - OPEN_TIMESTAMPS_RETAIN_MS;
+    while (openTimestampsMs.length > 0 && (openTimestampsMs[0] as number) < cutoff)
+      openTimestampsMs.shift();
+  };
+  // The ONE seam through which a mirror becomes tracked (every open path + the boot restore): registry + the
+  // opens-window ring stay in lockstep. Idempotent like registry.open — an already-open leader position records
+  // nothing (a re-open no-op is not a new open; counting it would burn window budget on duplicates).
+  const openMirror = (m: Omit<Mirror, 'status'>): Mirror => {
+    const alreadyOpen = registry.hasOpen(m.leaderPosition);
+    const mirror = registry.open(m);
+    if (!alreadyOpen) recordOpen(mirror.openedAt);
+    return mirror;
+  };
+
   const capsState = (candidateLeader: string): CapsState => {
     const open = registry.openPositions();
     return {
@@ -456,8 +495,10 @@ export async function createUserRuntime(
       // Per-leader scope (3b): only the CANDIDATE leader's mirrors count toward its exposure cap — another
       // leader's open positions must never consume this leader's `maxTotalExposureSol` budget.
       leaderExposureSol: exposureFor(open, candidateLeader),
+      // Mirrors don't carry the token mint, so the per-token concurrency cap has no input yet — out of 3b scope
+      // (checkCaps treats 0 as "never blocks"). The opens-per-window ring IS live (3b step 8).
       tokenOpenCount: 0,
-      openTimestampsMs: [],
+      openTimestampsMs: [...openTimestampsMs],
     };
   };
 
@@ -490,8 +531,9 @@ export async function createUserRuntime(
       stage: journalHint?.stage ?? stageForKind(full.kind),
       outcome: journalHint?.outcome ?? 'published',
       kind: full.kind,
-      // The event's/mirror's leader when the caller passes it (3b); wallet-level publishes (sell/orphan) fall
-      // back to the boot leader until the sweeps go multi-user (steps 6-7).
+      // The event's/mirror's leader when the caller passes it (3b); wallet-level publishes (sell/orphan) keep the
+      // boot-leader fallback as a correlation-only label (documented wallet-context path — their eventKeys/
+      // commandIds are what matter, and the orphan's is wallet-prefixed since step 6).
       leader: journalHint?.leader ?? bootLeader,
       pool: full.pool,
       leaderPosition: journalHint?.leaderPosition,
@@ -824,7 +866,7 @@ export async function createUserRuntime(
       issuedAtSlot,
       deadlineSlot,
     };
-    const mirror = registry.open({
+    const mirror = openMirror({
       leaderPosition: e.position,
       leaderAddress: leader, // the EVENT's leader (3b fan-out) — drives per-leader stop-closes/exposure/rug config
       ourPosition: sr.positionPubkey,
@@ -1174,7 +1216,7 @@ export async function createUserRuntime(
       deadlineSlot,
     };
     if (consumeOpenCancellation(e.position, e.pool)) return; // a close arrived DURING the build → abort before the on-chain publish
-    const mirror = registry.open({
+    const mirror = openMirror({
       leaderPosition: e.position,
       leaderAddress: leader, // the EVENT's leader (3b fan-out) — drives per-leader stop-closes/exposure/rug config
       ourPosition: sr.positionPubkey,
@@ -1297,7 +1339,7 @@ export async function createUserRuntime(
       buildingToken2022Positions.delete(pend.ourPosition);
       return;
     }
-    const mirror = registry.open({
+    const mirror = openMirror({
       leaderPosition: pend.leaderPosition,
       leaderAddress: leader, // the EVENT's leader (3b fan-out) — drives per-leader stop-closes/exposure/rug config
       ourPosition: pend.ourPosition,
@@ -1997,9 +2039,10 @@ export async function createUserRuntime(
   // close goes through the vault's Wall B like any other (signer/destination re-verified), so it can only ever
   // close OUR own position. Deterministic commandId → idempotent if it has to be retried.
   async function publishOrphanClose(p: UserPosition): Promise<void> {
-    // An orphan has NO leader (tracked by no mirror) — the BOOT leader prefixes it until the global orphan pass
-    // switches to a wallet prefix (INC3B-PLAN §4, step 6). Same commandId while the hub runs [cfg.leader].
-    const eventKey = `${bootLeader}:${p.pool}:orphan:${p.position}`;
+    // An orphan has NO leader (tracked by no mirror) — its keys live in the WALLET context (INC3B-PLAN §4): the
+    // `wallet:` prefix replaces a leader address so the commandId never aliases a leader-scoped close and never
+    // fabricates an attribution. Published as SYSTEM (brain-main routes every orphan through the SYSTEM runtime).
+    const eventKey = `${WALLET_EVENT_PREFIX}:${p.pool}:orphan:${p.position}`;
     const built = await buildCloseTx(
       conn,
       new PublicKey(p.pool),
@@ -2146,7 +2189,7 @@ export async function createUserRuntime(
       stage: 'sell',
       outcome: 'confirmed',
       kind: 'sell',
-      leader: bootLeader, // sells are WALLET-level residual actions (steps 6-7 make them SYSTEM/wallet-prefixed)
+      leader: bootLeader, // sells are WALLET-level residual actions (correlation-only label; SYSTEM publishes them)
       pool: ev.pool ?? stash.pool,
       commandId: ev.commandId,
       signature: ev.sig,
@@ -2174,7 +2217,7 @@ export async function createUserRuntime(
     nonSolSymbol: string | null = null,
   ): Promise<boolean> {
     const t0 = Date.now();
-    const ec = eff(); // wallet-level economics (boot leader) until the sweeps go multi-user (steps 6-7)
+    const ec = eff(); // wallet-level economics = the publishing runtime's config (SYSTEM for sweeps — documented wallet-context path)
     const eventKey = `${bootLeader}:${pool}:${source}:${tokenMint}:${residualRaw}`; // hoisted: also keys the below-min-sell-out skip's emit dedup
     const quote = await getJupiterQuote(
       jupiterBaseUrl,
@@ -2239,6 +2282,18 @@ export async function createUserRuntime(
     const meta = await poolReader.loadPoolMeta(ev.pool);
     if (!meta?.solSide) return; // non-SOL pool → nothing to re-swap into SOL
     const tokenMint = meta.solSide === 'X' ? meta.mintY : meta.mintX; // the non-SOL leg = residual to sell
+    // SHARED-WALLET guard (3b step 6): this sell reads (and would sell) the WHOLE wallet balance of the mint.
+    // If ANY runtime's two-sided open of this mint is in flight (buy landed, deposit pending), selling now would
+    // empty THAT user's token leg — a cross-user capital loss the single-user code couldn't have. Defer within
+    // the in-flight grace (checked BEFORE the balance read: no RPC spent on a deferred sell); the wallet sweep
+    // backstop applies the same grace and sells whatever residual remains once it expires.
+    if (Date.now() - (inFlightBuyMints.get(tokenMint) ?? 0) < INFLIGHT_BUY_GRACE_MS) {
+      log.info(
+        { mint: tokenMint, pool: ev.pool },
+        '💤 close-sell deferred: mint has an in-flight two-sided buy (sweep backstop sells the residue)',
+      );
+      return;
+    }
     const residual = await readOwnerTokenBalance(conn, ownerPk, new PublicKey(tokenMint));
     const decision = decideResidualSell(residual, SELL_RESIDUAL_DUST_RAW); // sell ANY residual; minSellOutLamports gates economics post-quote
     if (!decision.sell) {
@@ -2248,7 +2303,7 @@ export async function createUserRuntime(
         stage: 'sell',
         outcome: 'skipped',
         reason: decision.reason,
-        leader: bootLeader, // close-sell is a WALLET-level residual action (steps 6-7)
+        leader: bootLeader, // close-sell is a WALLET-level residual action (correlation-only label)
         pool: ev.pool,
         eventKey: `${bootLeader}:${ev.pool}:close-sell:${ev.positionPubkey ?? tokenMint}`,
         adminDetail: { mint: tokenMint },
@@ -2336,6 +2391,11 @@ export async function createUserRuntime(
     events,
     registry,
     store,
+    /** Boot restore: re-track persisted open mirrors AND seed the opens-per-window ring from their `openedAt`
+     *  (a position opened+closed before the restart has no open row → the documented small boot under-count). */
+    restoreOpenMirrors: (mirrors: ReadonlyArray<Omit<Mirror, 'status'>>): void => {
+      for (const m of mirrors) openMirror(m);
+    },
     rugSlTracker,
     rugExitStore,
     rugExited,

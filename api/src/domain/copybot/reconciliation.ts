@@ -97,3 +97,48 @@ export function planReconcile(input: ReconcileInput): ReconcilePlan {
   }
   return plan;
 }
+
+/**
+ * ONE user's claims on positions of the SHARED wallet, as seen by the global orphan pass (Inc.3b — INC3B-PLAN §4).
+ * The per-user reconcile intersects the enumerator with the user's own tracked set (its orphan list stays EMPTY);
+ * only the union across every user may declare a wallet position an orphan.
+ */
+export interface OrphanScanUser {
+  /** ourPositions this user's persisted mirrors track (open rows). */
+  tracked: ReadonlySet<string>;
+  /** ourPositions inside the reconcile open-grace — a fresh open may not be enumerable/persisted-visible yet,
+   *  so it must never be read as "tracked by no user" (kept separate from `tracked` for that reason). */
+  recentlyOpened: ReadonlySet<string>;
+  /** ourPosition → ms the Token-2022 empty-position create was published (its deposit may still be in flight). */
+  buildingToken2022: ReadonlyMap<string, number>;
+}
+
+export interface OrphanScanInput {
+  /** OUR wallet's positions on-chain per the enumerator (the whole shared wallet). */
+  onChain: ReadonlySet<string>;
+  /** EVERY runtime's claims. The caller must only run this pass when ALL users' claims are known — a user whose
+   *  claims failed to load would otherwise surface THEIR live positions as orphans (a forbidden false close). */
+  users: ReadonlyArray<OrphanScanUser>;
+  nowMs: number;
+  /** Grace for a mid-build Token-2022 position (create landed, deposit in flight). Past it, the deposit never
+   *  landed → the empty position IS a real orphan to clean (no dormant position). */
+  buildingGraceMs: number;
+}
+
+/**
+ * Global orphan pass over the SHARED wallet: orphan = an on-chain position tracked by NO user, opened recently by
+ * NO user, and mid-Token-2022-build (within grace) for NO user. With zero users every on-chain position is an
+ * orphan — an empty tracked set must never short-circuit the scan (the dormant-orphan bug class). Pure.
+ */
+export function planOrphans(input: OrphanScanInput): string[] {
+  const orphans: string[] = [];
+  for (const position of input.onChain) {
+    const claimed = input.users.some((u) => {
+      if (u.tracked.has(position) || u.recentlyOpened.has(position)) return true;
+      const buildingSince = u.buildingToken2022.get(position);
+      return buildingSince !== undefined && input.nowMs - buildingSince < input.buildingGraceMs;
+    });
+    if (!claimed) orphans.push(position);
+  }
+  return orphans;
+}

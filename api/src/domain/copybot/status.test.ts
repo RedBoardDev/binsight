@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  assembleBrainStatus,
   type BrainStatusDetail,
   DETECTION_STALE_FAILURES,
   detectionHealthy,
   HEARTBEAT_STALE_MS,
   isOnline,
+  LEGACY_LEADER_MULTI,
   shouldAlertDetectionStale,
 } from './status';
 
@@ -42,39 +44,130 @@ describe('status · isOnline', () => {
   });
 });
 
-describe('status · BrainStatusDetail detection-liveness fields', () => {
-  // WHY: the web reads this jsonb blob; the new fields must be present on a fresh snapshot AND the shape must stay
-  // backward-compatible (optional) so an older persisted row without them still type-checks and renders.
-  it('carries wsConnected / lastPollAt / lastReconcileAt / pollFailures / reconcileFailures', () => {
-    const detail: BrainStatusDetail = {
-      leader: 'L',
-      openPositions: 0,
-      exposureSol: 0,
-      lastActionAt: null,
-      lastLatencyMs: null,
-      wsConnected: true,
-      lastPollAt: 123,
-      lastReconcileAt: 456,
-      pollFailures: 0,
-      reconcileFailures: 0,
-    };
-    expect(detail.wsConnected).toBe(true);
-    expect(detail.lastPollAt).toBe(123);
-    expect(detail.lastReconcileAt).toBe(456);
-    expect(detail.pollFailures).toBe(0);
-    expect(detail.reconcileFailures).toBe(0);
+describe('status · assembleBrainStatus (Inc.3b S8 — the v2 heartbeat payload)', () => {
+  const LEADER_A = 'LeaderA111';
+  const LEADER_B = 'LeaderB222';
+  const baseLeaders = [
+    { leader: LEADER_A, lastPollAt: 100, pollFailures: 0 },
+    { leader: LEADER_B, lastPollAt: 90, pollFailures: 2 },
+  ];
+  const health = { wsConnected: true, lastReconcileAt: 456, reconcileFailures: 1 };
+
+  it('top-level open/exposure are AGGREGATES across users; users[] carries each tenant slice', () => {
+    // WHY: a top-level number showing ONE user's healthy view over a broken second user would hide the breakage —
+    // the legacy fields must describe the whole process, with the per-user truth alongside.
+    const detail = assembleBrainStatus({
+      users: [
+        {
+          userId: 'u1',
+          openMirrors: [
+            { leader: LEADER_A, sizeSol: 0.5 },
+            { leader: LEADER_B, sizeSol: 0.25 },
+          ],
+          lastActionAt: 10,
+          lastLatencyMs: 100,
+        },
+        {
+          userId: 'u2',
+          openMirrors: [{ leader: LEADER_A, sizeSol: 1 }],
+          lastActionAt: null,
+          lastLatencyMs: null,
+        },
+      ],
+      leaders: baseLeaders,
+      ...health,
+    });
+    expect(detail.openPositions).toBe(3);
+    expect(detail.exposureSol).toBeCloseTo(1.75);
+    expect(detail.users.map((u) => u.userId)).toEqual(['u1', 'u2']);
+    expect(detail.users[0]?.openPositions).toBe(2);
+    expect(detail.users[0]?.exposureSol).toBeCloseTo(0.75);
+    expect(detail.users[1]?.exposureSol).toBeCloseTo(1);
   });
 
-  it('the new fields are optional (a legacy row without them is still a valid detail)', () => {
+  it("perLeader groups ONE user's mirrors by the leader they copy (per-(user,leader) visibility)", () => {
+    const detail = assembleBrainStatus({
+      users: [
+        {
+          userId: 'u1',
+          openMirrors: [
+            { leader: LEADER_A, sizeSol: 0.5 },
+            { leader: LEADER_A, sizeSol: 0.5 },
+            { leader: LEADER_B, sizeSol: 0.25 },
+          ],
+          lastActionAt: null,
+          lastLatencyMs: null,
+        },
+      ],
+      leaders: baseLeaders,
+      ...health,
+    });
+    expect(detail.users[0]?.perLeader).toEqual([
+      { leader: LEADER_A, openPositions: 2, exposureSol: 1 },
+      { leader: LEADER_B, openPositions: 1, exposureSol: 0.25 },
+    ]);
+  });
+
+  it("lastActionAt is the MOST RECENT across users and lastLatencyMs travels WITH it (never another user's)", () => {
+    // WHY: mixing user A's timestamp with user B's latency would fabricate a latency no action ever had — the
+    // operator would chase a phantom slow path.
+    const detail = assembleBrainStatus({
+      users: [
+        { userId: 'u1', openMirrors: [], lastActionAt: 50, lastLatencyMs: 999 },
+        { userId: 'u2', openMirrors: [], lastActionAt: 80, lastLatencyMs: 42 },
+      ],
+      leaders: baseLeaders,
+      ...health,
+    });
+    expect(detail.lastActionAt).toBe(80);
+    expect(detail.lastLatencyMs).toBe(42);
+  });
+
+  it('no user acted yet ⇒ null/null (never a fabricated zero)', () => {
+    const detail = assembleBrainStatus({
+      users: [{ userId: 'u1', openMirrors: [], lastActionAt: null, lastLatencyMs: null }],
+      leaders: [],
+      ...health,
+    });
+    expect(detail.lastActionAt).toBeNull();
+    expect(detail.lastLatencyMs).toBeNull();
+  });
+
+  it("legacy `leader` = the single watched leader; 'multi' when several; '' when none", () => {
+    // WHY: v1 consumers read one leader string — with N leaders any single address would be a lie; the sentinel
+    // says "look at leaders[]" without breaking a loose jsonb read.
+    const one = assembleBrainStatus({ users: [], leaders: [baseLeaders[0]!], ...health });
+    expect(one.leader).toBe(LEADER_A);
+    const many = assembleBrainStatus({ users: [], leaders: baseLeaders, ...health });
+    expect(many.leader).toBe(LEGACY_LEADER_MULTI);
+    const none = assembleBrainStatus({ users: [], leaders: [], ...health });
+    expect(none.leader).toBe('');
+  });
+
+  it('leaders[] carries the per-leader poll health verbatim (replaces the v1 singletons)', () => {
+    // WHY: with N leaders a single lastPollAt/pollFailures pair can only describe the stalest one — per-leader
+    // health is what makes "blind to leader X only" visible.
+    const detail = assembleBrainStatus({ users: [], leaders: baseLeaders, ...health });
+    expect(detail.leaders).toEqual(baseLeaders);
+    expect(detail.wsConnected).toBe(true);
+    expect(detail.lastReconcileAt).toBe(456);
+    expect(detail.reconcileFailures).toBe(1);
+  });
+
+  it('the jsonb stays loosely readable: a fresh payload still satisfies the (optional) legacy field shape', () => {
+    const detail: BrainStatusDetail = assembleBrainStatus({ users: [], leaders: [], ...health });
+    // The v1-optional detection fields remain optional — an old persisted row without them still type-checks.
     const legacy: BrainStatusDetail = {
       leader: 'L',
       openPositions: 1,
       exposureSol: 2,
       lastActionAt: 1,
       lastLatencyMs: 2,
+      users: [],
+      leaders: [],
     };
     expect(legacy.wsConnected).toBeUndefined();
-    expect(legacy.pollFailures).toBeUndefined();
+    expect(detail.wsConnected).toBe(true);
   });
 });
 

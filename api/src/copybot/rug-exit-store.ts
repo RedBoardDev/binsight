@@ -124,7 +124,7 @@ export class RugExitStore {
  */
 export async function purgeRugExitPending(
   pending: Set<string>,
-  store: RugExitStore,
+  store: Pick<RugExitStore, 'removePending'>, // structural: the multi-user sweep passes stub-able runtime surfaces
   ourPosition: string,
 ): Promise<boolean> {
   if (!pending.delete(ourPosition)) return false;

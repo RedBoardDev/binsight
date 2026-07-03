@@ -41,4 +41,12 @@ describe('bench-config · buildBenchConfig (DB-seeded bench config, replaces the
     expect(user.caps.killSwitchGlobal).toBe(false);
     expect(user.caps.killSwitchLeader).toBe(false);
   });
+
+  it('disables the opens-per-window rate cap (3b step 8 made the ring LIVE; the soak bursts past the default)', () => {
+    // WHY: the lifecycle bench must stay behaviorally identical across 3b — with the product default (10/10min)
+    // now enforced, a soak batch would trip the rate cap mid-run and fail for a non-lifecycle reason. The cap
+    // itself is locked by unit tests; a bench test that wants it patches it back in via capsPatch.
+    expect(buildBenchConfig().user.caps.maxOpensPerWindow).toBeNull();
+    expect(buildBenchConfig({ maxOpensPerWindow: 3 }).user.caps.maxOpensPerWindow).toBe(3); // patch still wins
+  });
 });

@@ -7,9 +7,11 @@ import { pino } from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 import { deriveCommandId } from '@/copybot/command-id';
 import type { HeartbeatStore } from '@/copybot/heartbeat-store';
+import { checkCaps } from '@/domain/copybot/caps';
 import { CONFIG_DEFAULTS } from '@/domain/copybot/config';
 import type { TokenSnapshot } from '@/domain/copybot/filters';
 import { TtlCache } from '@/domain/copybot/ttl-cache';
+import type { LoadedPoolMeta } from '@/domain/dlmm';
 import type { ControlChannel } from '@/infrastructure/bus/control-channel';
 import type { RedisBus } from '@/infrastructure/bus/redis-bus';
 import type { Database } from '@/infrastructure/persistence/database';
@@ -30,7 +32,7 @@ vi.mock('@meteora-ag/dlmm', () => ({
   StrategyType: { Spot: 0, Curve: 1, BidAsk: 2 },
 }));
 
-import { createUserRuntime, type SharedBrainDeps } from './user-runtime';
+import { createUserRuntime, INFLIGHT_BUY_GRACE_MS, type SharedBrainDeps } from './user-runtime';
 
 // Fresh in-memory Postgres (PGlite) with the real Drizzle migrations applied — MirrorStore/RugExitStore/EventStore
 // run against the exact production schema (multi-tenant PKs included).
@@ -60,7 +62,18 @@ const shared: SharedBrainDeps = {
     },
   } as unknown as RedisBus,
   hmacKey: 'test-hmac-key',
-  poolReader: { loadPoolMeta: async () => null } as unknown as OnchainPoolMetaReader,
+  poolReader: {
+    // null for every pool EXCEPT the close-sell guard fixture: its (offline) meta lets onCloseExecuted resolve
+    // the residual mint without RPC, so the in-flight-buy guard is reachable in isolation.
+    loadPoolMeta: async (pool: string) =>
+      pool === 'POOL_SELL_GUARD'
+        ? ({
+            solSide: 'Y',
+            mintX: 'MINT_INFLIGHT',
+            mintY: 'So11111111111111111111111111111111111111112',
+          } as LoadedPoolMeta)
+        : null,
+  } as unknown as OnchainPoolMetaReader,
   tokenMeta: {} as HeliusTokenMetadataGateway,
   blockhashCache: new BlockhashCache(async () => ({ blockhash: 'x', lastValidBlockHeight: 0 })),
   priorityFeeOracle: { get: () => null } as unknown as PriorityFeeOracle,
@@ -302,5 +315,88 @@ describe('UserRuntime — fan-out ownership accessors (Inc.3b S5)', () => {
     const holdingsA = rtA.leaderHoldings();
     expect(holdingsA.openMirrorLeaders).toContain(LEADER); // rtA's mirror from the isolation suite above
     expect(holdingsA.rugExitPendingLeaders).toContain(null); // OUR_RUG_ROUTE has no mirror row → unattributable
+  });
+});
+
+describe('UserRuntime — close-sell respects the shared inFlightBuyMints grace (Inc.3b S6)', () => {
+  const POOL = 'POOL_SELL_GUARD';
+  const MINT = 'MINT_INFLIGHT'; // the pool fixture's non-SOL leg (solSide 'Y' ⇒ token = mintX)
+
+  it("a close confirm during ANOTHER user's in-flight two-sided buy DEFERS the residual sell (no read, no publish)", async () => {
+    // WHY: the sell reads the WHOLE shared-wallet balance of the mint — user A's close-sell firing while user B's
+    // buy→deposit is in flight would sell B's just-bought token leg out from under their open (cross-user capital
+    // loss). Within the grace the handler must return BEFORE any RPC/publish; the fake conn/bus would throw loudly
+    // if it did not (this resolving cleanly IS the proof).
+    shared.inFlightBuyMints.set(MINT, Date.now());
+    try {
+      await expect(
+        rtA.onCloseExecuted({ pool: POOL, positionPubkey: 'OUR_X' }),
+      ).resolves.toBeUndefined();
+    } finally {
+      shared.inFlightBuyMints.delete(MINT);
+    }
+  });
+
+  it('past the grace the sell path proceeds (the guard releases — the residue is not deferred forever)', async () => {
+    // WHY: the guard must be a DELAY, not a mute — a still-present token past the grace is a real residual. Past
+    // the grace the handler reaches the wallet balance read, which the offline test conn rejects: the rejection
+    // proves the guard released (in-grace above resolves without ever touching the conn).
+    shared.inFlightBuyMints.set(MINT, Date.now() - (INFLIGHT_BUY_GRACE_MS + 1));
+    try {
+      await expect(rtA.onCloseExecuted({ pool: POOL, positionPubkey: 'OUR_X' })).rejects.toThrow();
+    } finally {
+      shared.inFlightBuyMints.delete(MINT);
+    }
+  });
+});
+
+describe('UserRuntime — per-user opens-per-window ring (Inc.3b S8)', () => {
+  it("restoreOpenMirrors seeds ONE user's ring; the other user's window stays untouched", () => {
+    // WHY: caps.maxOpensPerWindow is a PER-USER rate limit — user A's open burst consuming user B's window would
+    // silently skip B's legitimate copies (a miss). The ring lives inside the runtime instance by construction.
+    const T0 = Date.now();
+    const baselineA = rtA.capsState(LEADER).openTimestampsMs.length;
+    const baselineB = rtB.capsState(LEADER).openTimestampsMs.length;
+    const m = (i: number) => ({
+      leaderPosition: `__ring_lp_${i}__`,
+      leaderAddress: LEADER,
+      ourPosition: `__ring_our_${i}__`,
+      pool: 'POOL_RING',
+      nonSolSymbol: null,
+      sizeSol: 0.1,
+      lowerBin: -1,
+      upperBin: 1,
+      openedAt: T0,
+    });
+    rtA.restoreOpenMirrors([m(1), m(2)]);
+    const ringA = rtA.capsState(LEADER).openTimestampsMs;
+    expect(ringA.length).toBe(baselineA + 2);
+    expect(ringA).toContain(T0); // seeded from the persisted openedAt, not re-stamped
+    expect(rtB.capsState(LEADER).openTimestampsMs.length).toBe(baselineB);
+
+    // The wired consequence: A's window can block while B's identical check allows.
+    const caps = { ...CONFIG_DEFAULTS.user.caps, maxOpensPerWindow: 2, windowMinutes: 10 };
+    expect(checkCaps(caps, rtA.capsState(LEADER), 0.1, T0 + 1).action).toBe('block');
+    expect(checkCaps(caps, rtB.capsState(LEADER), 0.1, T0 + 1).action).toBe('allow');
+  });
+
+  it('an idempotent re-open of the SAME leader position records NO new window entry', () => {
+    // WHY: the ring counts OPENS; a duplicate registry.open no-op (replayed restore, double confirm) burning
+    // window budget would starve real copies behind phantom ones.
+    const T0 = Date.now();
+    const m = {
+      leaderPosition: '__ring_dup_lp__',
+      leaderAddress: LEADER,
+      ourPosition: '__ring_dup_our__',
+      pool: 'POOL_RING',
+      nonSolSymbol: null,
+      sizeSol: 0.1,
+      lowerBin: -1,
+      upperBin: 1,
+      openedAt: T0,
+    };
+    const before = rtB.capsState(LEADER).openTimestampsMs.length;
+    rtB.restoreOpenMirrors([m, m]); // second entry is the SAME open leader position → no-op
+    expect(rtB.capsState(LEADER).openTimestampsMs.length).toBe(before + 1);
   });
 });

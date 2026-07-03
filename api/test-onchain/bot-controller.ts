@@ -42,7 +42,10 @@ function spawnUntil(label: string, args: string[], env: NodeJS.ProcessEnv, ready
 }
 
 // Bootstrap env ONLY (infra/secrets — NOT tunables; sizing/caps/two-sided/dust/infiniteAdd now live in the DB config
-// seeded by seedBenchConfig). COPYBOT_LEADER = the leader to follow (brain reads it directly for `cfg.leader`).
+// seeded by seedBenchConfig). COPYBOT_LEADER is INERT for detection since 3b step 7a (the brain derives its leader
+// set from the DB configs — here {LEADER_TEST}, the very leader seedBenchConfig enables, so they always agree and
+// the brain's boot warning never fires); kept exported for the harness's own use + the brain's wallet-context
+// fallback prefixes (legacy mirrors persisted without a leader column).
 // COPYBOT_DEV_BUS_KEY=true: the boot bus-key guard is fail-closed (rejects a missing/default BUS_HMAC_KEY); the bench
 // runs locally without a real key, so it opts into the public dev default explicitly. A real BUS_HMAC_KEY in the env
 // still takes precedence — this only unblocks the no-key local case.
