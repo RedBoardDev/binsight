@@ -113,79 +113,73 @@ function ctxFor(conn: Connection, bus: RedisBus): Ctx {
     hmacKey: 'k',
     retryMax: 0,
     retryDelayMs: 0,
-    confirmTimeoutMs: 40,
+    onSubmitted: vi.fn(), // lane → confirm-worker hand-off (3c); a fresh spy per ctx so tests can assert it
     log,
   };
 }
 
-describe('process1 — a returned signature is NOT execution (no dormant-position on a silently-failed close)', () => {
-  it('CONFIRMED landing → ok=landed AND ev:executed published (the brain may now markClosed)', async () => {
+describe('process1 — 3c: the lane ends at the BROADCAST (a returned signature is NOT execution)', () => {
+  it('a successful broadcast → verdict "submitted", row state=submitted, hand-off to the worker — NO ev:executed yet', async () => {
+    // WHY (ULTRACODE #22/#31 + the no-dormant-position rule): the lane must free at the broadcast — an in-lane
+    // confirm wait would head-of-line-block other users — and a signature alone is NOT execution: publishing
+    // ev:executed here would let the brain markClosed a tx that may still drop. Only the confirm worker, on an
+    // on-chain confirmation, may finalize 'landed' + publish (see confirm-worker.test.ts).
     const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
     const conn = fakeConn(() => ({ value: { confirmationStatus: 'confirmed' } }));
     const sr = closeReq();
-    const verdict = await process1(sr, ctxFor(conn, bus));
-    expect(verdict).toEqual({ ok: true, kind: 'close' });
-    expect(bus.publish).toHaveBeenCalledTimes(1);
-    // ev:executed carries the SIGNED tenant (3b fan-out: the brain routes the confirm to that user's runtime —
-    // without it a multi-user brain could ack another user's close as its own).
-    expect(vi.mocked(bus.publish).mock.calls[0]?.[3]).toMatchObject({
-      commandId: sr.commandId,
-      kind: 'close',
+    const ctx = ctxFor(conn, bus);
+    const verdict = await process1(sr, ctx);
+    expect(verdict).toEqual({ ok: true, reason: 'submitted', kind: 'close' });
+    expect(bus.publish).not.toHaveBeenCalled(); // ev:executed belongs to the worker, on confirmation ONLY
+    const row = (
+      await db
+        .select()
+        .from(executions)
+        .where(eq(executions.commandId, sr.commandId as string))
+    )[0];
+    expect(row?.state).toBe('submitted');
+    // The hand-off carries the exact broadcast + the publish context — and the SAME context is durable on the row,
+    // so a worker restarted after a crash can still publish a faithful ev:executed.
+    expect(ctx.onSubmitted).toHaveBeenCalledTimes(1);
+    const tracked = vi.mocked(ctx.onSubmitted).mock.calls[0]?.[0];
+    expect(tracked).toMatchObject({
       userId: USER,
+      commandId: sr.commandId,
+      lastValidBlockHeight: 1_000,
+      publish: {
+        kind: 'close',
+        pool: pool.toBase58(),
+        positionPubkey: position.toBase58(),
+        owner: copier.publicKey.toBase58(),
+        sizeSol: 0.1,
+      },
     });
-    const row = await db
-      .select()
-      .from(executions)
-      .where(eq(executions.commandId, sr.commandId as string));
-    expect(row[0]?.state).toBe('landed');
+    expect(tracked?.signature).toBeTruthy();
+    expect(row?.publishCtx).toEqual(tracked?.publish);
   });
 
-  it('on-chain ERROR (tx returned a sig then failed) → ok=false, NO ev:executed, state=failed (re-claimable)', async () => {
-    // WHY: the cardinal no-miss bug — a close that lands a signature but errors on-chain must NOT be recorded as
-    // success. It stays 'failed' so the reconcile/orphan backstop re-drives it, and the brain never markCloses early.
-    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
-    const conn = fakeConn(() => ({ value: { err: 'InstructionError' } }));
-    const sr = closeReq();
-    const verdict = await process1(sr, ctxFor(conn, bus));
-    expect(verdict.ok).toBe(false);
-    expect(bus.publish).not.toHaveBeenCalled(); // no premature ev:executed → the brain keeps the mirror open
-    const row = await db
-      .select()
-      .from(executions)
-      .where(eq(executions.commandId, sr.commandId as string));
-    expect(row[0]?.state).toBe('failed'); // re-claimable by a reconcile retry
-  });
-
-  it('confirmation TIMEOUT (signature never confirms) → state=failed, NO ev:executed (not a phantom landed)', async () => {
-    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
-    const conn = fakeConn(() => ({ value: null })); // never confirms → confirmLanded times out → false
-    const sr = closeReq();
-    const verdict = await process1(sr, ctxFor(conn, bus));
-    expect(verdict.ok).toBe(false);
-    expect(bus.publish).not.toHaveBeenCalled();
-    const row = await db
-      .select()
-      .from(executions)
-      .where(eq(executions.commandId, sr.commandId as string));
-    expect(row[0]?.state).toBe('failed');
-  });
-
-  it('a confirmed landing is then a DUPLICATE on replay (idempotency unchanged by the confirm step)', async () => {
+  it('an in-flight (submitted) command is a DUPLICATE on replay — no double-broadcast while the worker confirms', async () => {
+    // WHY: between the broadcast and the worker's confirmation the command is neither landed nor failed; a
+    // re-delivered copy must NOT re-sign (a 2nd broadcast of an add/buy/sell has no on-chain idempotency).
     const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
     const conn = fakeConn(() => ({ value: { confirmationStatus: 'finalized' } }));
     const sr = closeReq();
-    expect((await process1(sr, ctxFor(conn, bus))).ok).toBe(true);
-    const again = await process1(sr, ctxFor(conn, bus)); // same commandId, now 'landed' → not re-claimable
+    const ctx = ctxFor(conn, bus);
+    expect((await process1(sr, ctx)).ok).toBe(true);
+    const again = await process1(sr, ctx); // same commandId, now 'submitted' → not re-claimable in normal flow
     expect(again).toMatchObject({ ok: false, reason: 'duplicate' });
+    expect(ctx.onSubmitted).toHaveBeenCalledTimes(1); // one broadcast, one hand-off
   });
 
-  it('dry-run (signing disabled) short-circuits to skipped (never reaches confirm)', async () => {
+  it('dry-run (signing disabled) short-circuits to skipped (nothing broadcast, nothing handed to the worker)', async () => {
     const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
     const conn = fakeConn(() => ({ value: { err: 'should-not-be-checked' } }));
     const sr = closeReq();
-    const verdict = await process1(sr, { ...ctxFor(conn, bus), signingEnabled: false });
+    const ctx = { ...ctxFor(conn, bus), signingEnabled: false };
+    const verdict = await process1(sr, ctx);
     expect(verdict).toMatchObject({ ok: true, reason: 'dry-run' });
     expect(bus.publish).not.toHaveBeenCalled();
+    expect(ctx.onSubmitted).not.toHaveBeenCalled();
   });
 });
 
@@ -223,7 +217,7 @@ describe('process1 — multi-tenant identity (SPEC §11: the SIGNED userId drive
       ...ctxFor(conn, bus),
       policyFor: async (userId) => ({ maxTradeSol: caps[userId] ?? 0 }),
     };
-    // user A (cap 1.0): a 0.1 SOL close passes the re-clamp and lands.
+    // user A (cap 1.0): a 0.1 SOL close passes the re-clamp and broadcasts.
     expect((await process1(closeReq(), perUserCtx)).ok).toBe(true);
     // user B (cap 0.05): the SAME 0.1 SOL size is over ITS cap → rejected before any signature.
     const eventKey = `test:${pool.toBase58()}:close:small:${process.hrtime.bigint()}`;
@@ -240,7 +234,7 @@ describe('process1 — multi-tenant identity (SPEC §11: the SIGNED userId drive
   it('★ the SAME eventKey copied for TWO users signs TWICE (independent idempotency slots — ULTRACODE #25/#27)', async () => {
     // WHY (the user-#2-duplicate-rejection bug class): pre-v2, both users' commands for one leader event shared
     // one commandId → the second was rejected 'duplicate' and that user silently missed the copy. With
-    // derive(userId, eventKey) + the (user_id, command_id) claim, both land.
+    // derive(userId, eventKey) + the (user_id, command_id) claim, both broadcast.
     const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
     const conn = fakeConn(() => ({ value: { confirmationStatus: 'confirmed' } }));
     const sharedEventKey = `test:${pool.toBase58()}:close:shared:${process.hrtime.bigint()}`;
@@ -252,7 +246,7 @@ describe('process1 — multi-tenant identity (SPEC §11: the SIGNED userId drive
     });
     expect((await process1(forUser('user-a'), ctxFor(conn, bus))).ok).toBe(true);
     const second = await process1(forUser('user-b'), ctxFor(conn, bus));
-    expect(second).toEqual({ ok: true, kind: 'close' }); // NOT { ok:false, reason:'duplicate' }
+    expect(second).toEqual({ ok: true, reason: 'submitted', kind: 'close' }); // NOT { ok:false, reason:'duplicate' }
     // …while the same user replaying the same event stays a duplicate (idempotency intact):
     expect(await process1(forUser('user-a'), ctxFor(conn, bus))).toMatchObject({
       ok: false,
@@ -261,41 +255,27 @@ describe('process1 — multi-tenant identity (SPEC §11: the SIGNED userId drive
   });
 });
 
-describe('process1 — #3: a confirmed land is TERMINAL (a post-confirm failure never re-signs/re-lands)', () => {
-  it('a post-confirm bus.publish failure does NOT re-sign/re-land (no double execution)', async () => {
-    // WHY (the money-path bug): once confirmLanded returns true the on-chain action already applied and is
-    // IRREVERSIBLE. If a post-confirm publish (a Redis blip) threw INSIDE the retry scope, the loop would re-sign
-    // the SAME tx with a fresh blockhash and RE-LAND it — a real-money double add/buy/sell/remove (no on-chain
-    // idempotency). retryMax=1 is required to expose the regression: the old code re-lands on the throw (land×2),
-    // the fixed code records the confirmed sig, breaks, and publishes ONCE outside the loop (land×1).
-    const bus = {
-      publish: vi.fn(async () => {
-        throw new Error('redis blip');
-      }),
-    } as unknown as RedisBus;
+describe('process1 — #3: a successful broadcast is TERMINAL for the lane (nothing after it can re-sign/re-land)', () => {
+  it('a hand-off after the broadcast never re-enters the retry scope (one land, retryMax=1)', async () => {
+    // WHY (the money-path bug class): once the tx is on the wire the on-chain action may apply and is then
+    // IRREVERSIBLE. If anything after the broadcast (hand-off, logging) threw INSIDE the retry scope, the loop
+    // would re-sign the SAME tx with a fresh blockhash and RE-LAND it — a real-money double add/buy/sell/remove
+    // (no on-chain idempotency). The hand-off runs OUTSIDE the try: land is called exactly once.
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
     const land = vi.fn(async () => `SIG_${Math.floor(Math.random() * 1e9)}`); // one land == one sendRawTransaction
     const conn = {
       getSlot: async () => 200,
       getLatestBlockhash: async () => ({ blockhash: Keypair.generate().publicKey.toBase58() }),
       sendRawTransaction: land,
-      getSignatureStatus: async () => ({ value: { confirmationStatus: 'confirmed' } }), // confirms on the 1st attempt
     } as unknown as Connection;
     const sr = closeReq();
     const verdict = await process1(sr, { ...ctxFor(conn, bus), retryMax: 1 });
-    expect(land).toHaveBeenCalledTimes(1); // no double-land — FAILS on the old code (re-lands → 2)
-    expect(verdict).toEqual({ ok: true, kind: 'close' }); // the on-chain action is terminal → still 'landed'
-    expect(bus.publish).toHaveBeenCalledTimes(1); // attempted once; the failure is swallowed, never re-published
-    const row = await db
-      .select()
-      .from(executions)
-      .where(eq(executions.commandId, sr.commandId as string));
-    expect(row[0]?.state).toBe('landed');
+    expect(land).toHaveBeenCalledTimes(1); // no double-land
+    expect(verdict).toEqual({ ok: true, reason: 'submitted', kind: 'close' });
   });
 
-  // NOTE: a `finalize` throw after a confirmed land can't be exercised cleanly — `finalize` is a module-level import
-  // (not injected) and shares the same `db` that `claimExecution` needs to SUCCEED first, so a db that throws only on
-  // the terminal update would be brittle. The fix already runs finalize OUTSIDE the retry scope (its throw can only
-  // propagate, never re-sign): the publish-throw test above covers the terminal-scope guarantee.
+  // NOTE: the post-CONFIRM terminal guarantee (a publish failure after a confirmed land never re-lands) now lives
+  // with its owner: confirm-worker.test.ts ("a publish failure after a confirmed land stays landed").
 });
 
 // --- OPEN with a WSOL wrap: exercises the position-signer path + the #3 Wall-B SOL-spend cap, END-TO-END in process1.
@@ -354,13 +334,14 @@ function openReq(wrapLamports: number, sizeSol = 0.1): Record<string, unknown> {
 }
 
 describe('process1 — OPEN: position-signer + the #3 Wall-B SOL-spend cap end-to-end', () => {
-  it('an open whose wrap is UNDER the cap (sized at maxTradeSol) lands when confirmed', async () => {
+  it('an open whose wrap is UNDER the cap (sized at maxTradeSol) broadcasts', async () => {
     const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
     const conn = fakeConn(() => ({ value: { confirmationStatus: 'confirmed' } }));
     const sr = openReq(900_000_000, 0.9); // wrap 0.9 SOL ≤ cap (maxTradeSol 1.0 × 1.1 + 0.005)
-    const verdict = await process1(sr, ctxFor(conn, bus));
-    expect(verdict).toEqual({ ok: true, kind: 'open' });
-    expect(bus.publish).toHaveBeenCalledTimes(1);
+    const ctx = ctxFor(conn, bus);
+    const verdict = await process1(sr, ctx);
+    expect(verdict).toEqual({ ok: true, reason: 'submitted', kind: 'open' });
+    expect(ctx.onSubmitted).toHaveBeenCalledTimes(1); // handed to the confirm worker
   });
 
   it('an open that UNDER-REPORTS sizeSol but WRAPS far more than the cap → rejected wallb:sol_spend_over_cap (no sign)', async () => {
@@ -369,9 +350,10 @@ describe('process1 — OPEN: position-signer + the #3 Wall-B SOL-spend cap end-t
     const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
     const conn = fakeConn(() => ({ value: { confirmationStatus: 'confirmed' } }));
     const sr = openReq(5_000_000_000, 0.1); // reports 0.1 SOL but wraps 5 SOL
-    const verdict = await process1(sr, ctxFor(conn, bus));
+    const ctx = ctxFor(conn, bus);
+    const verdict = await process1(sr, ctx);
     expect(verdict).toMatchObject({ ok: false, reason: 'wallb:sol_spend_over_cap', kind: 'open' });
-    expect(bus.publish).not.toHaveBeenCalled(); // never signed/landed
+    expect(ctx.onSubmitted).not.toHaveBeenCalled(); // never signed/broadcast
     const row = await db
       .select()
       .from(executions)
@@ -431,22 +413,18 @@ function buyReq(outputMint: PublicKey): Record<string, unknown> {
   };
 }
 
-describe('process1 — BUY confirm gate (#4: a non-confirmed buy never publishes ev:executed)', () => {
-  it('a buy that CONFIRMS → landed + ev:executed (the dependent open may proceed)', async () => {
+describe('process1 — BUY confirm gate (#4: ev:executed for a buy comes ONLY from the confirm worker)', () => {
+  it('a buy broadcast publishes NOTHING from the lane — the dependent two-sided open must wait for the confirmation', async () => {
+    // WHY (#4): the brain builds the dependent open only on the buy's ev:executed. If the lane published at
+    // broadcast time, an unconfirmed/dropped buy would trigger a TOKENLESS two-sided open downstream. The worker
+    // publishes only on an on-chain confirmation (confirm-worker.test.ts covers the confirm/expiry outcomes).
     const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
     const conn = fakeConn(() => ({ value: { confirmationStatus: 'confirmed' } }));
-    const verdict = await process1(buyReq(Keypair.generate().publicKey), ctxFor(conn, bus));
-    expect(verdict).toEqual({ ok: true, kind: 'buy' });
-    expect(bus.publish).toHaveBeenCalledTimes(1);
-  });
-
-  it('a buy that does NOT confirm (timeout) → failed, NO ev:executed (no tokenless two-sided open downstream)', async () => {
-    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
-    const conn = fakeConn(() => ({ value: null })); // never confirms
-    const sr = buyReq(Keypair.generate().publicKey);
-    const verdict = await process1(sr, ctxFor(conn, bus));
-    expect(verdict.ok).toBe(false);
-    expect(bus.publish).not.toHaveBeenCalled();
+    const ctx = ctxFor(conn, bus);
+    const verdict = await process1(buyReq(Keypair.generate().publicKey), ctx);
+    expect(verdict).toEqual({ ok: true, reason: 'submitted', kind: 'buy' });
+    expect(bus.publish).not.toHaveBeenCalled(); // no premature ev:executed for a mere broadcast
+    expect(vi.mocked(ctx.onSubmitted).mock.calls[0]?.[0]?.publish).toMatchObject({ kind: 'buy' });
   });
 });
 
@@ -507,6 +485,7 @@ describe('process1 — #7: markSubmitted persists sig+expiry BEFORE the tx hits 
     let stateAtLand: string | undefined;
     let sigAtLand: string | null | undefined;
     let lvbhAtLand: number | null | undefined;
+    let publishCtxAtLand: unknown;
     const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
     const conn = {
       getSlot: async () => 200,
@@ -526,6 +505,7 @@ describe('process1 — #7: markSubmitted persists sig+expiry BEFORE the tx hits 
         stateAtLand = row?.state;
         sigAtLand = row?.signature;
         lvbhAtLand = row?.lastValidBlockHeight;
+        publishCtxAtLand = row?.publishCtx;
         return `SIG_${Math.floor(Math.random() * 1e9)}`;
       },
     } as unknown as Connection;
@@ -534,6 +514,9 @@ describe('process1 — #7: markSubmitted persists sig+expiry BEFORE the tx hits 
     expect(stateAtLand).toBe('submitted'); // markSubmitted ran BEFORE land
     expect(sigAtLand).toBeTruthy();
     expect(lvbhAtLand).toBe(LVBH);
+    // 3c: the worker's publish context is durable BEFORE the wire too — a crash right after land still leaves a
+    // row the restarted worker can both finalize AND publish from.
+    expect(publishCtxAtLand).toMatchObject({ kind: 'close', pool: pool.toBase58() });
   });
 });
 
@@ -571,20 +554,25 @@ describe('process1 — #7: recovery pre-check re-signs ONLY a provably-dead tx (
 
   it('case 2 (DEAD): sig not found + blockhash expired (getBlockHeight > lastValidBlockHeight) → re-signs exactly once', async () => {
     // WHY: a tx whose blockhash has expired and that the chain has never seen is provably dead — the copy would be
-    // MISSED if we did not re-drive it. The recovery re-signs and lands EXACTLY one new tx.
+    // MISSED if we did not re-drive it. The recovery re-signs and broadcasts EXACTLY one new tx, whose row carries
+    // a FRESH signature (the stale one is cleared by the re-claim — the worker's signature-pinned finalize relies
+    // on it) and goes back to the worker as a normal 'submitted'.
     const sr = closeReq();
     await seedSubmitted(sr, PRIOR_SIG, LVBH);
     const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
     const land = vi.fn(async () => `SIG_${Math.floor(Math.random() * 1e9)}`);
     const conn = recoveryConn({ priorStatus: { value: null }, blockHeight: LVBH + 1_000, land }); // not found + expired
-    const verdict = await process1(sr, ctxFor(conn, bus), true);
+    const ctx = ctxFor(conn, bus);
+    const verdict = await process1(sr, ctx, true);
     expect(land).toHaveBeenCalledTimes(1); // one — and only one — new land
-    expect(verdict).toEqual({ ok: true, kind: 'close' });
+    expect(verdict).toEqual({ ok: true, reason: 'submitted', kind: 'close' });
     const row = await db
       .select()
       .from(executions)
       .where(eq(executions.commandId, sr.commandId as string));
-    expect(row[0]?.state).toBe('landed');
+    expect(row[0]?.state).toBe('submitted');
+    expect(row[0]?.signature).not.toBe(PRIOR_SIG); // the dead broadcast's sig is gone — a fresh attempt owns the row
+    expect(ctx.onSubmitted).toHaveBeenCalledTimes(1); // …and the worker now watches the NEW signature
   });
 
   it('case 3 (IN-FLIGHT): sig not found but blockhash still valid → does NOT re-sign this pass (retryLater, unACKed)', async () => {
@@ -615,6 +603,6 @@ describe('process1 — #7: recovery pre-check re-signs ONLY a provably-dead tx (
     const conn = recoveryConn({ priorStatus: { value: null }, blockHeight: 500, land });
     const verdict = await process1(sr, ctxFor(conn, bus), true);
     expect(land).toHaveBeenCalledTimes(1); // safe re-sign (nothing was broadcast)
-    expect(verdict).toEqual({ ok: true, kind: 'close' });
+    expect(verdict).toEqual({ ok: true, reason: 'submitted', kind: 'close' });
   });
 });

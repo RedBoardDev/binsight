@@ -172,6 +172,10 @@ export const executions = pgTable(
     // re-sign a PROVABLY-dead tx. `signature` = the broadcast tx sig; `lastValidBlockHeight` = its blockhash expiry.
     signature: text('signature'),
     lastValidBlockHeight: bigint('last_valid_block_height', { mode: 'number' }),
+    // Async confirm (3c): the ev:executed/observability context (kind/pool/position/owner/size/issuedAt) persisted
+    // WITH the broadcast, so the confirm worker can finalize AND publish a 'submitted' row after a restart — the
+    // cmd:sign message may already be ACKed by then (the row, not the PEL, is the durable state past broadcast).
+    publishCtx: jsonb('publish_ctx'),
     createdAt: ms('created_at').notNull(),
     updatedAt: ms('updated_at').notNull(),
   },

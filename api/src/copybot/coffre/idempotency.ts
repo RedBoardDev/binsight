@@ -43,7 +43,17 @@ export async function claimExecution(
   // recoveryPreCheck first, so this only re-claims a PROVABLY-DEAD tx — never a landed/in-flight one. A re-claimed
   // open re-signs its DETERMINISTIC keypair → if it had already landed, the account exists and the re-attempt fails
   // harmlessly (no double position).
-  const set = { state: 'claimed' as const, updatedAt: nowMs };
+  // The re-claim CLEARS the prior broadcast trace (signature/expiry/publish context): a re-claim only ever starts
+  // from a provably-dead tx (recovery pre-check) or a forceReclaim close (harmless re-close), and the async confirm
+  // worker's conditional finalize is SIGNATURE-PINNED — clearing the stale signature guarantees a delayed worker
+  // resolve of the OLD broadcast can never flip (or spuriously fail-alert) the row while the NEW attempt is signing.
+  const set = {
+    state: 'claimed' as const,
+    signature: null,
+    lastValidBlockHeight: null,
+    publishCtx: null,
+    updatedAt: nowMs,
+  };
   const reclaimable = recovering
     ? inArray(executions.state, ['failed', 'claimed', 'submitted'])
     : eq(executions.state, 'failed');

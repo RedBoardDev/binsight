@@ -3,16 +3,21 @@
  * Consumes `cmd:sign` (XREADGROUP) and applies the ordered critical section BEFORE any signature:
  *  1-4 (bus) size/HMAC/hop · 5 Zod strict · 6 staleness (slot ≤ deadline) · 7 commandId == derive(eventKey)
  *  · 8 idempotence (INSERT executions ON CONFLICT, BEFORE) · 9 re-clamp size (local config) · 10-11 Wall B
- *  (decoding WITHOUT the SDK) · 12 SIGN · 13 LAND. In Inc.3, 12-13 = DRY-RUN (log "I would sign"), no
- *  signature. Does NOT import the DLMM SDK (firewall F3) → runs under tsx.
+ *  (decoding WITHOUT the SDK) · 12 SIGN · 13 LAND (async confirm). 3c: each message runs on its user's SIGNING
+ *  LANE (per-user FIFO, cross-user concurrent — `lanes.ts`) and the on-chain confirmation is owned by the shared
+ *  `ConfirmWorker`, so one slow/unconfirmed tx never head-of-line-blocks another user's close (ULTRACODE #22/#31).
+ *  Does NOT import the DLMM SDK (firewall F3) → runs under tsx.
  *   node --import tsx --env-file=../.env src/copybot/coffre/coffre-main.ts
  */
 import { randomUUID } from 'node:crypto';
 import { Connection } from '@solana/web3.js';
+import type { Logger } from 'pino';
 import { pino } from 'pino';
 import { createAlertWebhookSink } from '@/copybot/alert';
 import { assertBusKey } from '@/copybot/bus-key-guard';
+import { ConfirmWorker } from '@/copybot/coffre/confirm-worker';
 import { loadCopierKeypair } from '@/copybot/coffre/keypair';
+import { laneKeyOf, SigningLanes } from '@/copybot/coffre/lanes';
 import { type Ctx, process1, type UserSignPolicy } from '@/copybot/coffre/process-command';
 import { ConfigStore } from '@/copybot/config-store';
 import { HeartbeatStore } from '@/copybot/heartbeat-store';
@@ -22,7 +27,7 @@ import { EventStore } from '@/copybot/observability/event-store';
 import type { CopyCode } from '@/domain/copybot/observability/codes';
 import { HEARTBEAT_INTERVAL_MS } from '@/domain/copybot/status';
 import { ControlChannel } from '@/infrastructure/bus/control-channel';
-import { RedisBus } from '@/infrastructure/bus/redis-bus';
+import { type ConsumedMessage, RedisBus } from '@/infrastructure/bus/redis-bus';
 import { openDatabase } from '@/infrastructure/persistence/database';
 import { BlockhashCache } from '@/infrastructure/solana/blockhash-cache';
 
@@ -37,6 +42,12 @@ const CONFIG_POLL_MS = 5_000; // re-read the DB-backed runtime config (the maxTr
 const LEASE_KEY = 'copybot:coffre:lease'; // the exclusive Redis key guarding the coffre singleton
 const LEASE_TTL_MS = 30_000; // a crashed holder's lease auto-expires within this window so a restart can re-acquire
 const LEASE_RENEW_MS = LEASE_TTL_MS / 2; // renew well before expiry so a live holder never spuriously loses the lease
+
+// --drain parity with the old inline-confirm flow: after the batch, wait (bounded) for the async confirms so the
+// validation run still ends with ev:executed published. Past the ceiling (≈ a blockhash lifetime) an unconfirmed tx
+// is expiring anyway and the next boot's `loadPending` resumes it — never hang the drain on a dead tx.
+const DRAIN_CONFIRM_WAIT_MS = 90_000;
+const DRAIN_CONFIRM_POLL_MS = 250; // cheap in-memory check of the worker's in-flight count
 
 // Dead-letter routing for a REJECTED cmd:sign verdict. Pinning is code-driven (CODE_REGISTRY), so forgery/tamper/
 // malformed rejects — "someone/something is wrong" — map to a PINNED code (operator paged out-of-band), while the
@@ -77,6 +88,66 @@ export function routeVerdict(verdict: {
   return { action: 'deadLetter', code: deadLetterCode(verdict.reason) };
 }
 
+/** What the lane task needs to route ONE message to its terminal I/O (ack / dead-letter / retain). */
+export interface MessageHandlerDeps {
+  /** The critical section — `process1` bound to its Ctx (injected so the handler is unit-testable). */
+  process: (
+    payload: unknown | null,
+    recovering: boolean,
+  ) => Promise<{ ok: boolean; reason?: string; kind?: string; retryLater?: boolean }>;
+  bus: Pick<RedisBus, 'ack' | 'deadLetter'>;
+  events: Pick<CopyEvents, 'system'>;
+  log: Logger;
+  stream: string;
+  group: string;
+}
+
+/**
+ * Build the per-message LANE TASK: run the critical section, then perform the verdict's terminal I/O. The ACK (or
+ * dead-letter, which acks internally) happens ONLY here — after the lane task reached a terminal outcome — never at
+ * dispatch/enqueue time: a crash between the dispatch and this point leaves the message in the PEL, and the boot
+ * drain (+ the executions table idempotency) re-drives it. Exported for direct unit tests of that contract.
+ */
+export function createMessageHandler(
+  deps: MessageHandlerDeps,
+): (msg: ConsumedMessage, recovering: boolean) => Promise<void> {
+  const { process, bus, events, log, stream, group } = deps;
+  return async (msg, recovering) => {
+    try {
+      const verdict = await process(msg.payload, recovering);
+      log.info({ id: msg.id, recovering, ...verdict }, verdict.ok ? '✅ processed' : '⛔ rejected');
+      // Route by verdict (pure decision, I/O here):
+      //  - retain (#7 recovery in-flight): leave UNACKED so a later pass re-checks the chain — ACKing would strand it;
+      //  - deadLetter (rejected/poison): move the raw message to the DLQ + emit a system-event trace (PINNED for a
+      //    forged/malformed command — "something is wrong"; internal for the expected duplicate/stale), instead of a
+      //    SILENT ack that would let a poison/forged message vanish without a durable trace;
+      //  - ack (terminal-OK): clear it as before (idempotence guarded by the executions table).
+      const route = routeVerdict(verdict);
+      if (route.action === 'retain') return;
+      if (route.action === 'deadLetter') {
+        events.system(route.code, undefined, {
+          stage: 'sign',
+          outcome: 'rejected',
+          reason: `dead_letter:${verdict.reason ?? 'unknown'}`,
+          adminDetail: { id: msg.id, reason: verdict.reason, kind: verdict.kind, recovering },
+        });
+        await bus.deadLetter(stream, group, msg.id, msg.raw);
+      } else {
+        await bus.ack(stream, group, msg.id);
+      }
+    } catch (e) {
+      // process threw (transient I/O before the idempotency claim) → the message is left UNACKED for retry. An
+      // internal loop self-failure (NEVER user-notified — loop guard, SPEC §6); the row carries the cause.
+      events.system('system.loop_errored', e, {
+        stage: 'sign',
+        outcome: 'failed',
+        reason: 'loop_errored',
+        adminDetail: { id: msg.id, phase: 'process1' },
+      });
+    }
+  };
+}
+
 const cfg = {
   httpUrl: process.env.SOLANA_HTTP_URL ?? '',
   redisUrl: process.env.REDIS_URL ?? 'redis://localhost:6385',
@@ -88,7 +159,6 @@ const cfg = {
   signingEnabled: process.env.SIGNING_ENABLED === 'true', // Inc.4 ; false = dry-run
   retryMax: Number(process.env.SIGN_RETRY_MAX ?? '2'), // sign+land attempts when land THROWS (no sig produced); a returned-but-unconfirmed sig is NOT retried in place (double-apply risk)
   retryDelayMs: Number(process.env.SIGN_RETRY_DELAY_MS ?? '1500'),
-  confirmTimeoutMs: Number(process.env.SIGN_CONFIRM_TIMEOUT_MS ?? '45000'), // wait for on-chain confirmation before treating a landing as failed (a returned signature != execution)
   jitoBundleUrl: process.env.COPYBOT_JITO_BUNDLE_URL, // block-engine URL; absent ⇒ never bundle (plain RPC land)
   jitoEnabledEnv:
     process.env.COPYBOT_JITO !== undefined ? process.env.COPYBOT_JITO === 'true' : undefined, // env override of the DB jitoEnabled
@@ -199,6 +269,15 @@ async function main(): Promise<void> {
     '🔐 vault started (pull-only)',
   );
 
+  // ASYNC CONFIRM WORKER (3c): the single owner of on-chain confirmation for every broadcast — no signing lane ever
+  // waits on the chain. `loadPending` runs BEFORE the boot PEL drain: a 'submitted' row whose cmd:sign was already
+  // ACKed by a prior instance (crash after broadcast) has NO PEL copy — the row is its only recovery state.
+  const confirmWorker = new ConfirmWorker({ conn, db, bus, events, hmacKey, log });
+  const resumed = await confirmWorker.loadPending();
+  if (resumed > 0)
+    log.info({ resumed }, '🔎 confirm worker resumed in-flight broadcasts from durable state');
+  confirmWorker.start();
+
   // CRASH RECOVERY (no-miss): re-process any cmd:sign a prior (crashed) instance read but never ACKed — its PEL,
   // re-read with XREADGROUP id '0'. Exactly-once is guaranteed by the executions table (a landed command is a
   // duplicate; a stranded 'claimed' one is re-claimable). Without this, a vault crash mid-sign would STRAND an
@@ -215,53 +294,32 @@ async function main(): Promise<void> {
     hmacKey,
     retryMax: cfg.retryMax,
     retryDelayMs: cfg.retryDelayMs,
-    confirmTimeoutMs: cfg.confirmTimeoutMs,
+    onSubmitted: (t) => confirmWorker.track(t), // lane → worker hand-off at the broadcast (3c)
     log,
   };
-  // Process a batch, ACKing each message ONLY after process1 returned a verdict. If process1 THROWS (transient I/O
-  // such as a getSlot RPC blip, BEFORE the idempotency claim), the message is left UNACKED in the PEL — the next
-  // pending-drain retries it (a throwing message must never be silently dropped nor strand the rest of the batch).
+  // 3c PER-USER SIGNING LANES: each message runs on its SIGNED user's lane — FIFO within a user, concurrent across
+  // users (bounded) — so one user's slow sign/broadcast never delays another user's close. The batch is awaited as a
+  // whole before the next read: per-user FIFO holds ACROSS batches (batch N fully dispatched before batch N+1 is
+  // read), memory is bounded to one batch, and a message is ACKed ONLY by its own lane task reaching a terminal
+  // outcome (createMessageHandler) — a crash mid-batch leaves every unfinished message in the PEL for the boot drain.
+  const lanes = new SigningLanes();
+  const handleMessage = createMessageHandler({
+    process: (payload, recovering) => process1(payload, ctx, recovering),
+    bus,
+    events,
+    log,
+    stream: STREAM,
+    group: GROUP,
+  });
   const processBatch = async (
     msgs: Awaited<ReturnType<typeof bus.consume>>,
     recovering = false,
   ): Promise<void> => {
-    for (const msg of msgs) {
-      try {
-        const verdict = await process1(msg.payload, ctx, recovering);
-        log.info(
-          { id: msg.id, recovering, ...verdict },
-          verdict.ok ? '✅ processed' : '⛔ rejected',
-        );
-        // Route by verdict (pure decision, I/O here):
-        //  - retain (#7 recovery in-flight): leave UNACKED so a later pass re-checks the chain — ACKing would strand it;
-        //  - deadLetter (rejected/poison): move the raw message to the DLQ + emit a system-event trace (PINNED for a
-        //    forged/malformed command — "something is wrong"; internal for the expected duplicate/stale), instead of a
-        //    SILENT ack that would let a poison/forged message vanish without a durable trace;
-        //  - ack (terminal-OK): clear it as before (idempotence guarded by the executions table).
-        const route = routeVerdict(verdict);
-        if (route.action === 'retain') continue;
-        if (route.action === 'deadLetter') {
-          events.system(route.code, undefined, {
-            stage: 'sign',
-            outcome: 'rejected',
-            reason: `dead_letter:${verdict.reason ?? 'unknown'}`,
-            adminDetail: { id: msg.id, reason: verdict.reason, kind: verdict.kind, recovering },
-          });
-          await bus.deadLetter(STREAM, GROUP, msg.id, msg.raw);
-        } else {
-          await bus.ack(STREAM, GROUP, msg.id);
-        }
-      } catch (e) {
-        // process1 threw (transient I/O before the idempotency claim) → the message is left UNACKED for retry. An
-        // internal loop self-failure (NEVER user-notified — loop guard, SPEC §6); the row carries the cause.
-        events.system('system.loop_errored', e, {
-          stage: 'sign',
-          outcome: 'failed',
-          reason: 'loop_errored',
-          adminDetail: { id: msg.id, phase: 'process1' },
-        });
-      }
-    }
+    await Promise.all(
+      msgs.map((msg) =>
+        lanes.dispatch(laneKeyOf(msg.payload), () => handleMessage(msg, recovering)),
+      ),
+    );
   };
   try {
     // Crash recovery (recovering=true → a stranded 'claimed' from a CRASHED prior instance is re-claimable).
@@ -295,6 +353,7 @@ async function main(): Promise<void> {
     clearInterval(configTimer);
     clearInterval(heartbeatTimer);
     clearInterval(leaseTimer);
+    confirmWorker.stop();
     blockhashCache.stop();
     await bus.releaseLease(LEASE_KEY, instanceId).catch(() => {}); // best-effort; the TTL reclaims it anyway
     await Promise.all([bus.quit(), control.quit()]);
@@ -332,7 +391,14 @@ async function main(): Promise<void> {
     }
     if (drain) break;
   } while (!stopped);
-  if (drain) await stop();
+  if (drain) {
+    // Validation parity with the old inline-confirm flow: give the async worker a bounded window to confirm what
+    // the drained batch just broadcast (so ev:executed is published before exit). See DRAIN_CONFIRM_WAIT_MS.
+    const drainStart = Date.now();
+    while (confirmWorker.inflightCount > 0 && Date.now() - drainStart < DRAIN_CONFIRM_WAIT_MS)
+      await sleep(DRAIN_CONFIRM_POLL_MS);
+    await stop();
+  }
 }
 
 // Auto-run as the process entrypoint. Guarded so importing this module in a unit test (vitest sets process.env.VITEST;

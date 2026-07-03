@@ -91,4 +91,25 @@ describe('claimExecution — per-user idempotency claim with failed-retry', () =
     await setState(USER, CID, 'skipped');
     expect(await claimExecution(db, USER, CID, 'ek', 999, 10, false, true)).toBe(true);
   });
+
+  it('★ a re-claim CLEARS the stale broadcast trace (signature / expiry / publish context) — 3c', async () => {
+    // WHY: the async confirm worker's conditional finalize is SIGNATURE-PINNED (finalizeSubmitted). A re-claim only
+    // ever starts from a provably-dead broadcast, so clearing its trace guarantees a delayed worker resolve of the
+    // OLD tx can never flip — nor spuriously fail-alert — the row while the NEW attempt is being signed.
+    await db
+      .update(executions)
+      .set({
+        state: 'failed',
+        signature: 'OLD_DEAD_SIG',
+        lastValidBlockHeight: 42,
+        publishCtx: { kind: 'close' },
+      })
+      .where(and(eq(executions.userId, USER), eq(executions.commandId, CID)));
+    expect(await claimExecution(db, USER, CID, 'ek', 999, 11)).toBe(true);
+    const row = await rowOf(USER, CID);
+    expect(row?.state).toBe('claimed');
+    expect(row?.signature).toBeNull();
+    expect(row?.lastValidBlockHeight).toBeNull();
+    expect(row?.publishCtx).toBeNull();
+  });
 });
