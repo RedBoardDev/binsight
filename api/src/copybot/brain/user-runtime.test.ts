@@ -83,6 +83,7 @@ const shared: SharedBrainDeps = {
   recentlyPublishedClose: new Map(),
   inFlightBuyMints: new Map(),
   pendingSellMints: new Map(),
+  walletBalanceCache: { balanceSol: async () => 10 }, // never hit by SYSTEM/constant-balance isolation tests
   nextJitoTipSeed: () => 0,
   jupiterBaseUrl: 'http://127.0.0.1:1',
   jitoEnabledEnv: undefined,
@@ -92,7 +93,7 @@ const shared: SharedBrainDeps = {
 
 const opts = {
   ownerPk: OWNER,
-  balanceOf: () => 10,
+  balanceOf: async () => 10,
   leader: LEADER,
   initialConfig: CONFIG_DEFAULTS,
 };

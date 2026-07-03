@@ -120,6 +120,7 @@ import {
 } from './pending-open-cancel';
 import { createPendingOpenReservations } from './pending-open-reservations';
 import { createPositionQueue } from './position-queue';
+import type { WalletBalanceCache } from './wallet-balance-cache';
 
 const STREAM = 'copybot:cmd:sign';
 const HOP = 'cmd:sign';
@@ -233,6 +234,9 @@ export interface SharedBrainDeps {
   inFlightBuyMints: Map<string, number>;
   /** commandId → sold-token stash so the sell confirm can name the token (wallet-level; sells are residual). */
   pendingSellMints: Map<string, { tokenMint: string; nonSolSymbol: string | null; pool: string }>;
+  /** Short-TTL SOL-balance cache shared by every runtime (Inc.4c) — one entry per REAL wallet; SYSTEM bypasses
+   *  it (constant bench balance). Injected so it is mockable and the getBalance cost is shared/bounded. */
+  walletBalanceCache: WalletBalanceCache;
   /** Rotates the Jito tip across accounts (per-tip, process-wide) to avoid contention. */
   nextJitoTipSeed: () => number;
   jupiterBaseUrl: string;
@@ -245,12 +249,13 @@ export interface SharedBrainDeps {
   alertSink: ((e: CopyEvent) => void) | undefined;
 }
 
-/** Per-user injection points (INC3B-PLAN §8): Inc.4 swaps these for per-user wallets/balances. */
+/** Per-user injection points (INC3B-PLAN §8): Inc.4c resolves these per user (spawn-wallet.ts). */
 export interface UserRuntimeOptions {
-  /** The signing wallet's owner pubkey (ONE shared wallet until Inc.4 custody). */
+  /** The signing wallet's owner pubkey — SYSTEM = the bench wallet; a real user = their provisioned Privy wallet. */
   ownerPk: PublicKey;
-  /** Available SOL balance fed to decideEntry (today: the COPIER_BALANCE_SOL env, shared by every user). */
-  balanceOf: () => number;
+  /** Available SOL fed to decideEntry — SYSTEM = the constant bench balance; a real user = a short-TTL getBalance
+   *  cache minus their SOL reserve (async: a live user reads on-chain). */
+  balanceOf: () => Promise<number>;
   /** The BOOT leader (cfg.leader). Since the LeaderHub extraction (3b step 4) events/mirrors carry their own
    *  leader; this remains only as (a) the fallback for legacy mirrors persisted without a `leader` column and
    *  (b) the prefix of the still-wallet-level paths (sell / orphan / cancel keys) until steps 6-7. */
@@ -626,10 +631,13 @@ export async function createUserRuntime(
       '🔨 handleOpen start',
     );
     const ec = effFor(leader);
+    // Read the spendable balance ONCE (a real user's is an async cached getBalance; SYSTEM's is a constant): the
+    // decision and the skip-emit's `configuredSol` must report the SAME value.
+    const availableBalanceSol = await balanceOf();
     const decision = decideEntry(
       e,
       { ...ec.sizing, skipNonSolPaired: true },
-      { availableBalanceSol: balanceOf() },
+      { availableBalanceSol },
     );
     if (decision.outcome === 'skipped') {
       // dynamic reason: below_min_floor (sizing) / insufficient_balance (balance, pinned) / non_sol_paired — resolved to its leaf.
@@ -647,7 +655,7 @@ export async function createUserRuntime(
         adminDetail: {
           mint: e.nonSolMint,
           nonSolSymbol: e.nonSolSymbol,
-          configuredSol: balanceOf(),
+          configuredSol: availableBalanceSol,
         },
       });
       return;
@@ -2388,6 +2396,9 @@ export async function createUserRuntime(
 
   return {
     userId,
+    /** The wallet this runtime acts on (ownerPk.toBase58()) — the key brain-main groups runtimes by for the
+     *  per-wallet sweeps (Inc.4c). SYSTEM = the bench wallet; a real user = their provisioned Privy wallet. */
+    wallet,
     events,
     registry,
     store,

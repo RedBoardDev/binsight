@@ -1,16 +1,22 @@
 import { pino } from 'pino';
 import { describe, expect, it } from 'vitest';
 import { CONFIG_DEFAULTS, type CopybotConfig } from '@/domain/copybot/config';
+import type { OwnerTokenBalance } from '@/domain/copybot/residual-sell';
 import type { UserPosition } from '@/infrastructure/solana/dlmm/leader-position-reader';
 import type { Mirror } from './mirror-registry';
 import type { PendingOpenMaps } from './pending-open-cancel';
 import {
-  type ReconcileRuntime,
   type ReconcileSweepDeps,
+  type ResidualSweepDeps,
+  type ResidualSweepRuntime,
   type RugSlSweepDeps,
   type RugSweepRuntime,
   runReconcileSweep,
+  runReconcileSweepByWallet,
+  runResidualSweep,
   runRugSlSweep,
+  type WalletReconcileRuntime,
+  type WalletReconcileSweepDeps,
 } from './wallet-sweeps';
 
 const log = pino({ level: 'silent' });
@@ -20,6 +26,11 @@ const RECLOSE_GRACE_MS = 60_000;
 const BUILDING_GRACE_MS = 90_000;
 const LEADER = 'Leader1111111111111111111111111111111111111';
 const LP = 'LEADER_POS_SHARED'; // the SAME leader position mirrored by both users (the 3b topology)
+// Inc.4c wallets: the pre-4c topology is ONE shared wallet; a real user has their OWN (distinct) wallet.
+const SHARED_WALLET = 'WalletSharedxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
+const WALLET_A = 'WalletAaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const WALLET_B = 'WalletBbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+const WSOL = 'So11111111111111111111111111111111111111112';
 
 const mirror = (over: Partial<Mirror>): Mirror => ({
   leaderPosition: LP,
@@ -42,11 +53,13 @@ const emptyPendingMaps = (): PendingOpenMaps => ({
   reshapeAdds: new Map(),
 });
 
-/** Recording ReconcileRuntime stub — every side effect the sweep may take is captured for assertions. */
+/** Recording ReconcileRuntime stub — every side effect the sweep may take is captured for assertions. Carries a
+ *  `wallet` + `publishOrphanClose` (Inc.4c) so it also satisfies the per-wallet orchestrator; the plain
+ *  `runReconcileSweep` tests ignore both (they publish orphans through the deps-level publisher). */
 function makeReconcileRt(
   userId: string,
   mirrors: Mirror[],
-  opts: { loadOpenThrows?: boolean } = {},
+  opts: { loadOpenThrows?: boolean; wallet?: string } = {},
 ) {
   const calls = {
     markClosed: [] as string[],
@@ -54,9 +67,14 @@ function makeReconcileRt(
     reClosed: [] as string[],
     closedEvents: [] as unknown[],
     cancelled: [] as string[],
+    orphanClosed: [] as string[],
   };
-  const rt: ReconcileRuntime = {
+  const rt: WalletReconcileRuntime = {
     userId,
+    wallet: opts.wallet ?? SHARED_WALLET,
+    publishOrphanClose: async (p) => {
+      calls.orphanClosed.push(p.position);
+    },
     store: {
       loadOpen: async () => {
         if (opts.loadOpenThrows) throw new Error('db down for this user');
@@ -74,7 +92,7 @@ function makeReconcileRt(
       closed: (fields: unknown) => {
         calls.closedEvents.push(fields);
       },
-    } as ReconcileRuntime['events'],
+    } as WalletReconcileRuntime['events'],
     rugSlTracker: { forget: () => {} },
     rugExitPending: new Set<string>(),
     rugExitStore: { removePending: async () => {} },
@@ -92,7 +110,7 @@ function makeReconcileRt(
 
 /** Deps with a scripted account universe: `reads` maps pubkey → present({}) / gone(null); unlisted → undefined. */
 function makeDeps(
-  runtimes: ReconcileRuntime[],
+  runtimes: WalletReconcileRuntime[],
   held: UserPosition[],
   reads: Record<string, object | null>,
 ) {
@@ -462,5 +480,250 @@ describe('runReconcileSweep — enumerator failure degrades, never aborts the cl
     const { deps } = makeDeps([rt], [pos('OUR_A')], { OUR_A: {}, [LP]: {} });
     const result = await runReconcileSweep(deps);
     expect(result.enumerated).toBe(true);
+  });
+});
+
+/** Deps for the PER-WALLET reconcile: enumeration is keyed by wallet; reads are shared and counted. */
+function makeByWalletDeps(
+  runtimes: WalletReconcileRuntime[],
+  heldByWallet: Record<string, UserPosition[]>,
+  reads: Record<string, object | null>,
+) {
+  const enumeratedWallets: string[] = [];
+  const readCounts = new Map<string, number>();
+  const deps: WalletReconcileSweepDeps = {
+    log,
+    runtimes: () => runtimes,
+    enumerateForWallet: async (wallet) => {
+      enumeratedWallets.push(wallet);
+      return heldByWallet[wallet] ?? [];
+    },
+    readAccountInfo: async (pubkey) => {
+      readCounts.set(pubkey, (readCounts.get(pubkey) ?? 0) + 1);
+      return reads[pubkey];
+    },
+    recentlyPublishedClose: new Map<string, number>(),
+    openGraceMs: OPEN_GRACE_MS,
+    recloseGraceMs: RECLOSE_GRACE_MS,
+    token2022DepositGraceMs: BUILDING_GRACE_MS,
+    nowMs: () => NOW,
+  };
+  return { deps, enumeratedWallets, readCounts };
+}
+
+describe('runReconcileSweepByWallet — per-distinct-wallet reconcile (Inc.4c)', () => {
+  it('each DISTINCT wallet is enumerated independently; an orphan on wallet A is closed by A only', async () => {
+    // WHY: a real user has their OWN Privy wallet — the whole-wallet enumeration + the orphan authority must be
+    // keyed by wallet. A stray on wallet A (tracked by no user of A) is A's maintenance; a runtime on wallet B
+    // must never enumerate A nor close A's orphan (it can't sign for A).
+    const { rt: rtA, calls: a } = makeReconcileRt(
+      'user-a',
+      [mirror({ ourPosition: 'OUR_A', leaderPosition: 'LP_A' })],
+      { wallet: WALLET_A },
+    );
+    const { rt: rtB, calls: b } = makeReconcileRt(
+      'user-b',
+      [mirror({ ourPosition: 'OUR_B', leaderPosition: 'LP_B' })],
+      { wallet: WALLET_B },
+    );
+    const { deps, enumeratedWallets } = makeByWalletDeps(
+      [rtA, rtB],
+      { [WALLET_A]: [pos('OUR_A'), pos('STRAY_A')], [WALLET_B]: [pos('OUR_B')] },
+      { OUR_A: {}, LP_A: {}, OUR_B: {}, LP_B: {}, STRAY_A: {} },
+    );
+    const result = await runReconcileSweepByWallet(deps);
+    expect([...enumeratedWallets].sort()).toEqual([WALLET_A, WALLET_B]); // one enumeration per distinct wallet
+    expect(a.orphanClosed).toEqual(['STRAY_A']); // wallet A's stray closed by A's runtime
+    expect(b.orphanClosed).toEqual([]); // wallet B's runtime never touches A's orphan
+    expect(a.markClosed).toEqual([]); // nothing else closed (both live)
+    expect(b.markClosed).toEqual([]);
+    expect(result.enumerated).toBe(true);
+  });
+
+  it("per-user isolation across wallets: A's ourPosition gone ⇒ A markClosed; B (other wallet) untouched", async () => {
+    // WHY: the 3b per-(user, ourPosition) attribution must survive the per-wallet split — a confirmed close on one
+    // wallet can never flip a live mirror on another.
+    const { rt: rtA, calls: a } = makeReconcileRt(
+      'user-a',
+      [mirror({ ourPosition: 'OUR_A', leaderPosition: 'LP_A' })],
+      { wallet: WALLET_A },
+    );
+    const { rt: rtB, calls: b } = makeReconcileRt(
+      'user-b',
+      [mirror({ ourPosition: 'OUR_B', leaderPosition: 'LP_B' })],
+      { wallet: WALLET_B },
+    );
+    const { deps } = makeByWalletDeps(
+      [rtA, rtB],
+      { [WALLET_A]: [], [WALLET_B]: [pos('OUR_B')] },
+      { OUR_A: null, LP_A: {}, OUR_B: {}, LP_B: {} }, // OUR_A gone on-chain
+    );
+    await runReconcileSweepByWallet(deps);
+    expect(a.markClosed).toEqual(['LP_A']); // A's close confirmed (direct read)
+    expect(b.markClosed).toEqual([]); // B untouched
+    expect(b.reClosed).toEqual([]);
+  });
+
+  it('two users on the SAME wallet stay in ONE group: the shared leader position is read ONCE (dedup preserved)', async () => {
+    // WHY: the pre-4c topology (multiple runtimes on one wallet) must keep its O(distinct-positions) read cache —
+    // grouping by wallet must not split same-wallet users into separate enumerations/caches.
+    const { rt: rtA } = makeReconcileRt('user-a', [mirror({ ourPosition: 'OUR_A' })], {
+      wallet: WALLET_A,
+    });
+    const { rt: rtB } = makeReconcileRt('user-b', [mirror({ ourPosition: 'OUR_B' })], {
+      wallet: WALLET_A,
+    });
+    const { deps, enumeratedWallets, readCounts } = makeByWalletDeps(
+      [rtA, rtB],
+      { [WALLET_A]: [pos('OUR_A'), pos('OUR_B')] },
+      { OUR_A: {}, OUR_B: {}, [LP]: {} },
+    );
+    await runReconcileSweepByWallet(deps);
+    expect(enumeratedWallets).toEqual([WALLET_A]); // ONE enumeration for the shared wallet
+    expect(readCounts.get(LP)).toBe(1); // the shared leader position deduped across the two same-wallet users
+  });
+
+  it("a broken enumerator on ONE wallet degrades the whole reconcile (enumerated:false) but not the others' backstop", async () => {
+    // WHY: `enumerated` feeds the detection-stale watchdog — a permanently-broken enumerator on any wallet must
+    // read as a failure (not healthy), while the per-user close backstop (direct reads) still runs on every wallet.
+    const { rt: rtA, calls: a } = makeReconcileRt(
+      'user-a',
+      [mirror({ ourPosition: 'OUR_A', leaderPosition: 'LP_A' })],
+      { wallet: WALLET_A },
+    );
+    const { rt: rtB, calls: b } = makeReconcileRt(
+      'user-b',
+      [mirror({ ourPosition: 'OUR_B', leaderPosition: 'LP_B' })],
+      { wallet: WALLET_B },
+    );
+    const { deps } = makeByWalletDeps(
+      [rtA, rtB],
+      { [WALLET_B]: [pos('OUR_B')] }, // WALLET_A enumeration below throws
+      { OUR_A: null, LP_A: {}, OUR_B: {}, LP_B: null },
+    );
+    deps.enumerateForWallet = async (wallet) => {
+      if (wallet === WALLET_A) throw new Error('SDK #245');
+      return [pos('OUR_B')];
+    };
+    const result = await runReconcileSweepByWallet(deps);
+    expect(result.enumerated).toBe(false); // wallet A's enumerator failure degrades the aggregate
+    expect(a.markClosed).toEqual(['LP_A']); // A's close backstop still ran (direct read)
+    expect(b.reClosed).toEqual(['OUR_B']); // B's leader-gone reClose still ran
+  });
+});
+
+/** Recording ResidualSweepRuntime stub. */
+function makeResidualRt(userId: string, wallet: string, opts: { publishThrows?: boolean } = {}) {
+  const calls = {
+    sold: [] as Array<{ mint: string; amountRaw: bigint; pool: string }>,
+    sweepDetected: 0,
+    swapFailed: [] as string[],
+  };
+  const rt: ResidualSweepRuntime = {
+    userId,
+    wallet,
+    events: {
+      emit: (code) => {
+        if (code === 'swap.sweep_detected') calls.sweepDetected += 1;
+      },
+      swapFailed: (fields) => {
+        calls.swapFailed.push((fields.adminDetail as { mint: string }).mint);
+      },
+    } as ResidualSweepRuntime['events'],
+    publishSell: async (mint, amountRaw, pool) => {
+      if (opts.publishThrows) throw new Error('publish down');
+      calls.sold.push({ mint, amountRaw, pool });
+      return true;
+    },
+  };
+  return { rt, calls };
+}
+
+const bal = (mint: string, amountRaw: bigint): OwnerTokenBalance => ({ mint, amountRaw });
+
+function makeResidualDeps(
+  runtimes: ResidualSweepRuntime[],
+  balancesByWallet: Record<string, OwnerTokenBalance[]>,
+  over: Partial<ResidualSweepDeps> = {},
+) {
+  const walletReads: string[] = [];
+  const deps: ResidualSweepDeps = {
+    log,
+    runtimes: () => runtimes,
+    readWalletBalances: async (wallet) => {
+      walletReads.push(wallet);
+      return balancesByWallet[wallet] ?? [];
+    },
+    inFlightBuyMints: new Map<string, number>(),
+    wsolMint: WSOL,
+    dustRaw: 0n,
+    inflightGraceMs: 30_000,
+    leaderLabel: LEADER,
+    nowMs: () => NOW,
+    ...over,
+  };
+  return { deps, walletReads };
+}
+
+describe('runResidualSweep — per-distinct-wallet residual safety sweep (Inc.4c)', () => {
+  it('one balance read per DISTINCT wallet; each wallet residual sold by a runtime that owns it', async () => {
+    // WHY: a residual on user B's wallet can only be sold by B (its owner signs) — the sweep must read + publish
+    // per wallet, never fold two wallets into one balance read (which would cross-attribute the sell).
+    const { rt: rtA, calls: a } = makeResidualRt('user-a', WALLET_A);
+    const { rt: rtB, calls: b } = makeResidualRt('user-b', WALLET_B);
+    const { deps, walletReads } = makeResidualDeps([rtA, rtB], {
+      [WALLET_A]: [bal('MINT_A', 100n)],
+      [WALLET_B]: [bal('MINT_B', 200n)],
+    });
+    await runResidualSweep(deps);
+    expect([...walletReads].sort()).toEqual([WALLET_A, WALLET_B]); // one read per wallet
+    expect(a.sold).toEqual([{ mint: 'MINT_A', amountRaw: 100n, pool: WALLET_A }]);
+    expect(b.sold).toEqual([{ mint: 'MINT_B', amountRaw: 200n, pool: WALLET_B }]);
+    expect(a.sweepDetected).toBe(1);
+    expect(b.sweepDetected).toBe(1);
+  });
+
+  it('two runtimes on the SAME wallet sweep it ONCE (one publisher, one balance read)', async () => {
+    // WHY: a shared wallet (the pre-4c topology) must be swept once — N publishers selling the same residual would
+    // double-spend the swap.
+    const { rt: rtA, calls: a } = makeResidualRt('user-a', WALLET_A);
+    const { rt: rtB, calls: b } = makeResidualRt('user-b', WALLET_A);
+    const { deps, walletReads } = makeResidualDeps([rtA, rtB], {
+      [WALLET_A]: [bal('MINT_A', 100n)],
+    });
+    await runResidualSweep(deps);
+    expect(walletReads).toEqual([WALLET_A]); // ONE read
+    expect(a.sold).toEqual([{ mint: 'MINT_A', amountRaw: 100n, pool: WALLET_A }]); // first owner publishes
+    expect(b.sold).toEqual([]); // the second same-wallet runtime does not double-sell
+  });
+
+  it('an in-flight two-sided buy is NOT swept within the grace (never empty a token leg mid-open)', async () => {
+    // WHY: the bought token of an in-flight two-sided open sits on the wallet before its deposit — selling it would
+    // empty the leg. The grace protects it; past the grace a still-present token means the open failed → swept.
+    const { rt, calls } = makeResidualRt('user-a', WALLET_A);
+    const inFlightBuyMints = new Map<string, number>([['MINT_INFLIGHT', NOW - 1]]); // just published
+    const { deps } = makeResidualDeps(
+      [rt],
+      { [WALLET_A]: [bal('MINT_INFLIGHT', 100n)] },
+      { inFlightBuyMints },
+    );
+    await runResidualSweep(deps);
+    expect(calls.sold).toEqual([]); // protected within the grace
+    expect(calls.sweepDetected).toBe(0); // nothing to sweep this tick
+  });
+
+  it('a residual that is only WSOL/dust is not swept (nothing to do)', async () => {
+    const { rt, calls } = makeResidualRt('user-a', WALLET_A);
+    const { deps } = makeResidualDeps([rt], { [WALLET_A]: [bal(WSOL, 5n)] }); // WSOL is excluded by planWalletSweep
+    await runResidualSweep(deps);
+    expect(calls.sold).toEqual([]);
+    expect(calls.sweepDetected).toBe(0);
+  });
+
+  it('a failing publishSell emits the swap-failed path (pinned, feed-visible) and never throws', async () => {
+    const { rt, calls } = makeResidualRt('user-a', WALLET_A, { publishThrows: true });
+    const { deps } = makeResidualDeps([rt], { [WALLET_A]: [bal('MINT_A', 100n)] });
+    await expect(runResidualSweep(deps)).resolves.toBeUndefined();
+    expect(calls.swapFailed).toEqual(['MINT_A']); // the residual is surfaced, not silently dropped
   });
 });

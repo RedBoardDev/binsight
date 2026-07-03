@@ -36,8 +36,10 @@ export interface ReloadDeps<R extends ReloadableRuntime> {
   /** ConfigStore.load — fail-safe AND fail-closed (a corrupt row parses to a stopped config, never throws). */
   loadConfig(userId: string): Promise<CopybotConfig>;
   /** createUserRuntime + durable seeding (persisted mirrors → registry + opens-window ring; rug sets inside).
-   *  Must NOT register itself — this orchestrator owns the maps (a throwing spawn must leave no half-entry). */
-  spawn(userId: string, config: CopybotConfig): Promise<R>;
+   *  Must NOT register itself — this orchestrator owns the maps (a throwing spawn must leave no half-entry).
+   *  Returns null when the user is not spawnable yet (Inc.4c: a real user whose Privy wallet isn't provisioned) —
+   *  skipped exactly like an inactive user and retried on the next reload. */
+  spawn(userId: string, config: CopybotConfig): Promise<R | null>;
   /** THE live maps the fan-out/status/sweeps read (owned by brain-main, mutated in place here). */
   runtimes: Map<string, R>;
   userConfigs: Map<string, CopybotConfig>;
@@ -71,6 +73,11 @@ export async function reloadAllUsers<R extends ReloadableRuntime>(
     try {
       const config = await deps.loadConfig(userId);
       const rt = await deps.spawn(userId, config);
+      if (rt === null) {
+        // Not provisioned yet (Inc.4c: no resolvable wallet) → no runtime, no fan-out entry; retried next reload.
+        deps.log.info({ userId }, 'reload: user not provisioned yet → runtime not spawned');
+        continue;
+      }
       deps.runtimes.set(userId, rt);
       deps.userConfigs.set(userId, config);
       spawnedNow.add(userId);

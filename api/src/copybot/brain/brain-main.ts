@@ -31,7 +31,6 @@ import { computeLeaderSet, shouldRetainLeader } from '@/domain/copybot/fan-out';
 import type { TokenSnapshot } from '@/domain/copybot/filters';
 import { JupiterTokenGateway } from '@/domain/copybot/filters/sources/jupiter-token/jupiter-token-gateway';
 import { LeaderDetector } from '@/domain/copybot/leader-detector';
-import { planWalletSweep } from '@/domain/copybot/residual-sell';
 import {
   assembleBrainStatus,
   type BrainStatusDetail,
@@ -44,6 +43,7 @@ import { TtlCache } from '@/domain/copybot/ttl-cache';
 import type { LoadedPoolMeta } from '@/domain/dlmm';
 import { ControlChannel } from '@/infrastructure/bus/control-channel';
 import { RedisBus } from '@/infrastructure/bus/redis-bus';
+import { CopybotActivationRepository } from '@/infrastructure/persistence/copybot-activation-repository';
 import { openDatabase } from '@/infrastructure/persistence/database';
 import { BlockhashCache } from '@/infrastructure/solana/blockhash-cache';
 import { readActiveTokenPrice } from '@/infrastructure/solana/dlmm/active-bin-price';
@@ -64,6 +64,7 @@ import { HeliusTokenMetadataGateway } from '@/infrastructure/solana/token-metada
 import { type ExecutedBatchDeps, processExecutedBatch } from './dispatch-executed';
 import { resolveExecutedTarget } from './executed-router';
 import { LeaderHub } from './leader-hub';
+import { resolveUserWallet } from './spawn-wallet';
 import { reloadAllUsers } from './user-reload';
 import {
   createUserRuntime,
@@ -73,7 +74,8 @@ import {
   type SharedBrainDeps,
   type UserRuntime,
 } from './user-runtime';
-import { runReconcileSweep, runRugSlSweep } from './wallet-sweeps';
+import { createWalletBalanceCache, WALLET_BALANCE_TTL_MS } from './wallet-balance-cache';
+import { runReconcileSweepByWallet, runResidualSweep, runRugSlSweep } from './wallet-sweeps';
 
 const POLL_MS = 15_000;
 const RECON_MS = 30_000; // on-chain reconcile cadence (no-miss-close backstop)
@@ -166,6 +168,17 @@ async function main(): Promise<void> {
   }).getSnapshot;
   const filterDeps = { jupiterToken, snapshotCache };
   let jitoTipSeed = 0; // rotates the tip across Jito's accounts (per-tip) to avoid contention
+  // Inc.4c: a REAL user's spendable balance = a short-TTL getBalance cache minus their SOL reserve. Shared across
+  // runtimes (SharedBrainDeps) so the getBalance cost is bounded + the cache is mockable. SYSTEM bypasses it.
+  const walletBalanceCache = createWalletBalanceCache({
+    fetchLamports: (address) => conn.getBalance(new PublicKey(address)),
+    ttlMs: WALLET_BALANCE_TTL_MS,
+  });
+  // Inc.4c: resolve a real user's provisioned wallet address (activation row) → ownerPk; null = not provisioned yet
+  // (skipped at spawn, exactly like an inactive user). Privy-FREE repo (F1b) — the brain only needs the address.
+  const activationRepo = new CopybotActivationRepository(db);
+  const resolveOwner = (uid: string): Promise<PublicKey | null> =>
+    activationRepo.resolveSignableWallet(uid).then((w) => (w ? new PublicKey(w.address) : null));
 
   // Process-level deps shared by every user runtime (ONE detection/RPC/cache/bus layer + the wallet-level maps).
   const shared: SharedBrainDeps = {
@@ -184,6 +197,7 @@ async function main(): Promise<void> {
     recentlyPublishedClose,
     inFlightBuyMints,
     pendingSellMints,
+    walletBalanceCache,
     nextJitoTipSeed: () => jitoTipSeed++,
     jupiterBaseUrl: cfg.jupiterBaseUrl,
     jitoEnabledEnv: cfg.jitoEnabledEnv,
@@ -200,10 +214,25 @@ async function main(): Promise<void> {
   let bootRestored = 0; // mirrors restored across every boot-time spawn → gates the boot failsafe reconcile
   // Build + durably seed ONE user runtime (persisted mirrors → registry + opens-window ring; rug sets are seeded
   // inside createUserRuntime). Registration in the maps belongs to the caller (reload orchestration).
-  const spawnRuntime = async (uid: string, config: CopybotConfig): Promise<UserRuntime> => {
+  const spawnRuntime = async (uid: string, config: CopybotConfig): Promise<UserRuntime | null> => {
+    // Inc.4c: SYSTEM → the bench wallet + the constant bench balance (BYTE-IDENTICAL); a real user → their
+    // provisioned Privy wallet + a short-TTL getBalance cache minus the LIVE SOL reserve (config-derived); an
+    // unresolved (not-provisioned-yet) user → null → skipped by the caller, exactly like an inactive user.
+    const resolved = await resolveUserWallet({
+      userId: uid,
+      systemOwnerPk: ownerPk,
+      systemBalanceSol: cfg.balanceSol,
+      resolveOwner,
+      walletBalanceCache,
+      reserveSol: () => (userConfigs.get(uid) ?? config).user.sizing.solReserveSol,
+    });
+    if (!resolved) {
+      log.info({ userId: uid }, '⏭️ user wallet not provisioned yet → runtime not spawned');
+      return null;
+    }
     const runtime = await createUserRuntime(shared, uid, {
-      ownerPk,
-      balanceOf: () => cfg.balanceSol, // the SHARED wallet balance for every user until Inc.4 custody
+      ownerPk: resolved.ownerPk,
+      balanceOf: resolved.balanceOf,
       leader: cfg.leader,
       initialConfig: config,
     });
@@ -219,6 +248,11 @@ async function main(): Promise<void> {
   // fan-out targets from `userConfigs`), so an always-on SYSTEM runtime costs nothing.
   const systemConfig = await configStore.seedIfAbsent(SYSTEM_USER_ID); // seed so the web/bench has a row to edit
   const systemRt = await spawnRuntime(SYSTEM_USER_ID, systemConfig);
+  if (!systemRt) {
+    // SYSTEM always resolves (the configured bench wallet) — a null here is impossible; fail LOUD if it ever isn't.
+    log.error('SYSTEM runtime failed to spawn (bench wallet unresolved)');
+    process.exit(1);
+  }
   runtimes.set(SYSTEM_USER_ID, systemRt);
   userConfigs.set(SYSTEM_USER_ID, systemConfig);
 
@@ -319,17 +353,17 @@ async function main(): Promise<void> {
     }
   };
 
-  // Anti-dormant reconcile over the SHARED wallet (the no-miss-close pillar) — 3 phases in wallet-sweeps.ts:
-  // ONE enumeration + a per-sweep read cache, one isolated plan per user, then the GLOBAL orphan pass (orphan =
-  // tracked by NO user), published as SYSTEM through the always-on SYSTEM runtime.
+  // Anti-dormant reconcile (the no-miss-close pillar) — driven PER DISTINCT WALLET (Inc.4c): runtimes are grouped
+  // by ownerPk, each wallet enumerated once + swept through the 3 phases in wallet-sweeps.ts (per-user plans, a
+  // per-sweep read cache, then the GLOBAL orphan pass scoped to THAT wallet, published by a runtime that owns it —
+  // SYSTEM for the bench wallet). With only SYSTEM today this is one wallet = one sweep, byte-identical to pre-4c.
   const reconcileSweep = (): Promise<{ enumerated: boolean }> =>
-    runReconcileSweep({
+    runReconcileSweepByWallet({
       log,
       runtimes: () => runtimes.values(),
-      enumeratePositions: () => readUserPositions(conn, ownerPk),
+      enumerateForWallet: (wallet) => readUserPositions(conn, new PublicKey(wallet)),
       readAccountInfo: (pubkey) => conn.getAccountInfo(new PublicKey(pubkey)),
       recentlyPublishedClose,
-      publishOrphanClose: (p) => systemRt.publishOrphanClose(p), // wallet maintenance → SYSTEM keys + journal
       openGraceMs: RECONCILE_OPEN_GRACE_MS,
       recloseGraceMs: RECLOSE_GRACE_MS,
       token2022DepositGraceMs: TOKEN2022_DEPOSIT_GRACE_MS,
@@ -362,43 +396,21 @@ async function main(): Promise<void> {
       recloseGraceMs: RECLOSE_GRACE_MS,
     });
 
-  /** No-miss safety net: enumerate EVERY non-SOL token on the copier wallet (classic SPL + Token-2022) and sell
-   *  each back to SOL. Catches anything the close-triggered sell missed — a brain downtime, a failed/rejected
-   *  sell, or a residual from any other source — so the wallet never holds a dormant non-SOL balance. */
-  async function sweepWallet(): Promise<void> {
-    const balances = await readAllOwnerTokenBalances(conn, ownerPk);
-    const swNow = Date.now();
-    // Sweep ANY non-SOL (minSellOutLamports gates economics post-quote) — EXCEPT a token still in-flight for a
-    // two-sided open (bought, awaiting deposit): selling it mid-open would empty the token leg. After the grace, a
-    // still-present in-flight token means the open failed → it IS a stranded residual → swept.
-    const toSweep = planWalletSweep(balances, WSOL_MINT, SELL_RESIDUAL_DUST_RAW).filter(
-      (b) => swNow - (inFlightBuyMints.get(b.mint) ?? 0) >= INFLIGHT_BUY_GRACE_MS,
-    );
-    if (toSweep.length === 0) return;
-    // `eventKey` is the per-cycle correlation (swNow): each periodic sweep that finds a residual is its own row
-    // (the operator must see a still-stranded residual each cycle), while WS/poll have no part here. The per-mint
-    // failure shares the cycle stamp + mint so a retry within the same cycle collapses, distinct cycles don't.
-    systemRt.events.emit('swap.sweep_detected', {
-      stage: 'sweep',
-      outcome: 'detected',
-      leader: cfg.leader,
-      eventKey: `${cfg.leader}:sweep:${swNow}`,
-      adminDetail: { count: toSweep.length, mints: toSweep.map((b) => b.mint) },
+  // No-miss safety net (Inc.4c: PER DISTINCT WALLET) — enumerate every non-SOL token (classic SPL + Token-2022)
+  // on each active runtime's wallet and sell it back to SOL, published by a runtime that owns that wallet (SYSTEM
+  // for the bench wallet). Catches anything the close-triggered sell missed — a brain downtime, a failed/rejected
+  // sell, any residual — so no wallet ever holds a dormant non-SOL balance. One wallet today ⇒ byte-identical loop.
+  const sweepWallet = (): Promise<void> =>
+    runResidualSweep({
+      log,
+      runtimes: () => runtimes.values(),
+      readWalletBalances: (wallet) => readAllOwnerTokenBalances(conn, new PublicKey(wallet)),
+      inFlightBuyMints,
+      wsolMint: WSOL_MINT,
+      dustRaw: SELL_RESIDUAL_DUST_RAW,
+      inflightGraceMs: INFLIGHT_BUY_GRACE_MS,
+      leaderLabel: cfg.leader,
     });
-    for (const b of toSweep) {
-      await systemRt.publishSell(b.mint, b.amountRaw, ownerPk.toBase58(), 'sweep').catch((e) => {
-        // A sweep sell that fails to build/publish is the swap-failed path → pinned, feed-visible (SPEC §2.1 swap).
-        systemRt.events.swapFailed({
-          stage: 'sweep',
-          outcome: 'failed',
-          reason: 'failed_after_retries',
-          leader: cfg.leader,
-          eventKey: `${cfg.leader}:sweep:${swNow}:${b.mint}`,
-          adminDetail: { mint: b.mint, error: (e as Error).message },
-        });
-      });
-    }
-  }
 
   await blockhashCache.start(); // prime + background-refresh so serializeUnsigned never pays a getLatestBlockhash RTT
   // Live priority-fee oracle: started once ANY booted runtime opts in (INC3B-PLAN §3) — env override or the

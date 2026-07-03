@@ -23,6 +23,7 @@ import type { CopyEvents } from '@/copybot/observability/copy-events';
 import { purgeRugExitPending, type RugExitStore } from '@/copybot/rug-exit-store';
 import { type CopybotConfig, effectiveFor } from '@/domain/copybot/config';
 import { type OrphanScanUser, planOrphans, planReconcile } from '@/domain/copybot/reconciliation';
+import { type OwnerTokenBalance, planWalletSweep } from '@/domain/copybot/residual-sell';
 import type { RugSlTracker } from '@/domain/copybot/rug-sl';
 import type { UserPosition } from '@/infrastructure/solana/dlmm/leader-position-reader';
 import type { Mirror } from './mirror-registry';
@@ -266,6 +267,69 @@ export async function runReconcileSweep(
   return { enumerated };
 }
 
+/** A reconcile runtime that also knows its WALLET (grouping key) and can publish an orphan close on it (Inc.4c). */
+export interface WalletReconcileRuntime extends ReconcileRuntime {
+  /** ownerPk.toBase58() — SYSTEM = the bench wallet; a real user = their provisioned Privy wallet (distinct). */
+  readonly wallet: string;
+  /** Force-close a STRAY position on THIS runtime's wallet (published as this user — wallet maintenance). */
+  publishOrphanClose(p: UserPosition): Promise<void>;
+}
+
+export interface WalletReconcileSweepDeps {
+  log: Logger;
+  /** The LIVE runtimes view — grouped here by `wallet` (distinct ownerPks) so each wallet is reconciled once. */
+  runtimes(): Iterable<WalletReconcileRuntime>;
+  /** ONE enumeration per DISTINCT wallet per tick (getProgramAccounts scoped to that wallet). */
+  enumerateForWallet(wallet: string): Promise<UserPosition[]>;
+  readAccountInfo(pubkey: string): Promise<object | null | undefined>;
+  recentlyPublishedClose: Map<string, number>;
+  openGraceMs: number;
+  recloseGraceMs: number;
+  token2022DepositGraceMs: number;
+  nowMs?: () => number;
+}
+
+/**
+ * Inc.4c — the reconcile driven PER DISTINCT WALLET. Every prior increment ran ONE shared wallet; a real user now
+ * has their OWN Privy wallet, so the enumeration + orphan authority must be keyed by wallet: an orphan on wallet W
+ * (tracked by NO user of W) is closed by a runtime that OWNS W, never by a runtime on a different wallet. Runtimes
+ * are grouped by `wallet` and each group is handed to `runReconcileSweep` with a wallet-scoped enumeration and a
+ * wallet-scoped orphan publisher (the group's owner). The per-user attribution, read-cache dedup and orphan veto
+ * inside `runReconcileSweep` are unchanged — they now apply within each wallet. `enumerated` is ANDed across wallets
+ * (any wallet whose enumerator threw degrades the whole reconcile for the watchdog, exactly as one wallet did).
+ *
+ * With ONLY the SYSTEM runtime (today) this collapses to a single group = a single `runReconcileSweep` over the
+ * bench wallet, BYTE-IDENTICAL to the pre-4c call.
+ */
+export async function runReconcileSweepByWallet(
+  deps: WalletReconcileSweepDeps,
+): Promise<{ enumerated: boolean }> {
+  const byWallet = new Map<string, WalletReconcileRuntime[]>();
+  for (const rt of deps.runtimes())
+    byWallet.set(rt.wallet, [...(byWallet.get(rt.wallet) ?? []), rt]);
+
+  let enumerated = true;
+  for (const [wallet, group] of byWallet) {
+    // Any runtime on the wallet owns it → its orphan close is that wallet's maintenance. SYSTEM is booted first so
+    // it is its own wallet's `group[0]` (SYSTEM-attributed orphan closes, unchanged); a real user owns theirs.
+    const owner = group[0] as WalletReconcileRuntime;
+    const res = await runReconcileSweep({
+      log: deps.log,
+      runtimes: () => group,
+      enumeratePositions: () => deps.enumerateForWallet(wallet),
+      readAccountInfo: deps.readAccountInfo,
+      recentlyPublishedClose: deps.recentlyPublishedClose,
+      publishOrphanClose: (p) => owner.publishOrphanClose(p),
+      openGraceMs: deps.openGraceMs,
+      recloseGraceMs: deps.recloseGraceMs,
+      token2022DepositGraceMs: deps.token2022DepositGraceMs,
+      nowMs: deps.nowMs,
+    });
+    enumerated = enumerated && res.enumerated;
+  }
+  return { enumerated };
+}
+
 /** The per-user runtime surface the rug-SL sweep drives (structural — `UserRuntime` satisfies it). */
 export interface RugSweepRuntime {
   readonly userId: string;
@@ -333,6 +397,86 @@ export async function runRugSlSweep(deps: RugSlSweepDeps): Promise<void> {
           "rug-sl: user trigger failed → other users' mirrors unaffected",
         );
       }
+    }
+  }
+}
+
+/** The runtime surface the residual sweep drives (structural — `UserRuntime` satisfies it). */
+export interface ResidualSweepRuntime {
+  readonly userId: string;
+  /** ownerPk.toBase58() — the grouping key (one sweep loop per DISTINCT wallet). */
+  readonly wallet: string;
+  events: Pick<CopyEvents, 'emit' | 'swapFailed'>;
+  /** Build+publish a token→SOL sell of `amountRaw` for `tokenMint` on `pool` (the wallet label here). */
+  publishSell(
+    tokenMint: string,
+    amountRaw: bigint,
+    pool: string,
+    source: 'close' | 'sweep',
+  ): Promise<boolean>;
+}
+
+export interface ResidualSweepDeps {
+  log: Logger;
+  runtimes(): Iterable<ResidualSweepRuntime>;
+  /** Non-SOL balances (classic + Token-2022) of ONE wallet — one read per DISTINCT wallet per tick. */
+  readWalletBalances(wallet: string): Promise<OwnerTokenBalance[]>;
+  /** tokenMint → ms a two-sided buy was published (protects the in-flight bought token from being swept). */
+  inFlightBuyMints: Map<string, number>;
+  wsolMint: string;
+  dustRaw: bigint;
+  inflightGraceMs: number;
+  /** Correlation-only leader label for the sweep-detected/failed events (the boot leader; wallet-context). */
+  leaderLabel: string;
+  nowMs?: () => number;
+}
+
+/**
+ * Inc.4c — the no-miss residual safety sweep driven PER DISTINCT WALLET. Enumerate every non-SOL token on each
+ * distinct wallet and sell it back to SOL, published by a runtime that OWNS that wallet (SYSTEM keeps its own loop
+ * over the bench wallet). Catches anything the close-triggered sell missed — a brain downtime, a failed/rejected
+ * sell, any residual — so no wallet ever sits on a dormant non-SOL balance. The bought token of an in-flight
+ * two-sided open is spared within the grace (selling it mid-open would empty the token leg).
+ *
+ * With ONLY the SYSTEM runtime (today) this is a single loop over the bench wallet, BYTE-IDENTICAL to the pre-4c
+ * `sweepWallet` (same publisher, same `pool` label = the wallet, same event keys).
+ */
+export async function runResidualSweep(deps: ResidualSweepDeps): Promise<void> {
+  const now = (deps.nowMs ?? Date.now)();
+  // One publisher per distinct wallet (the first runtime that owns it — SYSTEM is booted first for its own wallet).
+  const byWallet = new Map<string, ResidualSweepRuntime>();
+  for (const rt of deps.runtimes()) if (!byWallet.has(rt.wallet)) byWallet.set(rt.wallet, rt);
+
+  for (const [wallet, rt] of byWallet) {
+    const balances = await deps.readWalletBalances(wallet);
+    // Sweep ANY non-SOL (minSellOutLamports gates economics post-quote) EXCEPT a token still in-flight for a
+    // two-sided open (bought, awaiting deposit). Past the grace, a still-present in-flight token means the open
+    // failed → it IS a stranded residual → swept.
+    const toSweep = planWalletSweep(balances, deps.wsolMint, deps.dustRaw).filter(
+      (b) => now - (deps.inFlightBuyMints.get(b.mint) ?? 0) >= deps.inflightGraceMs,
+    );
+    if (toSweep.length === 0) continue;
+    // `eventKey` is the per-cycle correlation (now): each periodic sweep that finds a residual is its own row.
+    rt.events.emit('swap.sweep_detected', {
+      stage: 'sweep',
+      outcome: 'detected',
+      leader: deps.leaderLabel,
+      eventKey: `${deps.leaderLabel}:sweep:${now}`,
+      adminDetail: { count: toSweep.length, mints: toSweep.map((b) => b.mint) },
+    });
+    for (const b of toSweep) {
+      // The wallet is passed as the sell's `pool` label (a residual has no position/pool of its own).
+      await rt.publishSell(b.mint, b.amountRaw, wallet, 'sweep').catch((e) => {
+        // A sweep sell that fails to build/publish is the swap-failed path → pinned, feed-visible (SPEC §2.1 swap).
+        rt.events.swapFailed({
+          stage: 'sweep',
+          outcome: 'failed',
+          reason: 'failed_after_retries',
+          leader: deps.leaderLabel,
+          eventKey: `${deps.leaderLabel}:sweep:${now}:${b.mint}`,
+          adminDetail: { mint: b.mint, error: (e as Error).message },
+        });
+      });
     }
   }
 }

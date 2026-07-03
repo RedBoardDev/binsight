@@ -154,6 +154,29 @@ describe('reloadAllUsers — boot + live reload (Inc.3b S7)', () => {
     expect(h.runtimes.has('u1')).toBe(true);
   });
 
+  it('a user with no resolvable wallet (spawn → null) is skipped this pass and retried next (Inc.4c)', async () => {
+    // WHY: a real user whose Privy wallet isn't provisioned yet must NOT become a runtime or a fan-out target
+    // (it can't sign) — but it must not be dropped forever either: provisioning completes → the next reload spawns
+    // it. Mirrors the inactive-user path exactly.
+    const rows = new Map([
+      ['u1', cfg(true, [LEADER_A])],
+      ['u2', cfg(true, [LEADER_B])],
+    ]);
+    const h = makeHarness(rows);
+    const originalSpawn = h.deps.spawn;
+    let provisioned = false;
+    h.deps.spawn = async (uid, config) =>
+      uid === 'u2' && !provisioned ? null : originalSpawn(uid, config);
+    await reloadAllUsers(h.deps);
+    expect(h.runtimes.has('u1')).toBe(true);
+    expect(h.runtimes.has('u2')).toBe(false); // not provisioned → no runtime
+    expect(h.userConfigs.has('u2')).toBe(false); // and no fan-out entry
+    expect(h.reconciles()).toBe(1); // only u1 was a NEW runtime
+    provisioned = true;
+    await reloadAllUsers(h.deps);
+    expect(h.runtimes.has('u2')).toBe(true); // retried next reload → now spawned
+  });
+
   it("per-user refresh isolation: u1's failing config load keeps u1's previous config; u2 still refreshes", async () => {
     // WHY: a kill-switch edit for u2 must land even while u1's row read is broken — and u1 must keep RUNNING on
     // its last-known config (fail-closed parsing upstream already handles corrupt rows; here the READ itself died).
