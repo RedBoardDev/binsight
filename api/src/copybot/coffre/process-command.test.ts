@@ -94,6 +94,11 @@ function fakeConn(status: () => Status): Connection {
 }
 const blockhashCache = {
   get: () => ({ blockhash: Keypair.generate().publicKey.toBase58(), lastValidBlockHeight: 1_000 }),
+  // Fresh cache → attempt 0 uses it (no live RTT), matching the happy-path behavior these tests exercise.
+  getFresh: () => ({
+    blockhash: Keypair.generate().publicKey.toBase58(),
+    lastValidBlockHeight: 1_000,
+  }),
 } as unknown as BlockhashCache;
 // Typed observability emitter (P2): process1 emits codes through `events.emit`. A no-op fake here keeps the test
 // focused on the verdict + the executions idempotency state (the observability rows are covered by their own suites).

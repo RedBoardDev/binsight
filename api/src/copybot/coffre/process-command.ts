@@ -545,8 +545,11 @@ export async function process1(
     try {
       const tSign = Date.now();
       const fresh = Transaction.from(Buffer.from(sr.txBase64, 'base64')); // fresh tx per attempt
-      // First attempt: cached blockhash + expiry (no RTT). Retries: fetch fresh in case the cached one went stale.
-      const bh = attempt === 0 ? blockhashCache.get() : await conn.getLatestBlockhash();
+      // First attempt: the cached blockhash + expiry (no RTT) — but ONLY if it's fresh enough to submit with
+      // (`getFresh` misses when the cache went stale during RPC instability, exactly when a close matters most).
+      // Retries always fetch fresh. A miss on attempt 0 falls back to a live getLatestBlockhash, same as a retry.
+      const cachedBh = attempt === 0 ? blockhashCache.getFresh() : undefined;
+      const bh = cachedBh ?? (await conn.getLatestBlockhash());
       // feePayer + blockhash freeze the MESSAGE before signing (the owner + any co-signer sign the same bytes).
       fresh.feePayer = signer.publicKey;
       fresh.recentBlockhash = bh.blockhash;

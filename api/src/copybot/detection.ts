@@ -27,7 +27,34 @@ const TX_FETCH_RETRY_MS = 350; // short backoff between null-tx refetches (fast-
 // leader's open is silently never copied (the cardinal sin). Cache the null for only this SHORT TTL so a later
 // successful read values the pool; the on-chain reconcile backstop covers the specific event valued while degraded.
 const POOL_META_NULL_TTL_MS = 15_000;
+// getParsedTransactions is NOT gated by the per-call RPC limiter, and one oversized batched call over a large
+// signature backlog can itself trip a provider 429 (degrading every process that shares the Helius key). Cap each
+// call so a huge backlog fans out into bounded requests instead of one giant one. 100 is Solana's documented
+// getParsedTransactions batch soft-limit and keeps a single call comfortably under provider payload/rate limits.
+const CLASSIFY_TX_BATCH = 100;
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/** Split into order-preserving chunks of at most `size` (pure; `size` must be > 0). */
+export function chunk<T>(items: readonly T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+/** getParsedTransactions in bounded batches (CLASSIFY_TX_BATCH), concatenating results in input order so the
+ *  returned array stays index-aligned with `signatures` (the no-miss backbone relies on that alignment). */
+async function getParsedTransactionsBatched(
+  conn: Connection,
+  signatures: string[],
+  opts: Parameters<Connection['getParsedTransactions']>[1],
+): Promise<Awaited<ReturnType<Connection['getParsedTransactions']>>> {
+  const out: Awaited<ReturnType<Connection['getParsedTransactions']>> = [];
+  for (const batch of chunk(signatures, CLASSIFY_TX_BATCH)) {
+    const res = await conn.getParsedTransactions(batch, opts);
+    for (const tx of res) out.push(tx);
+  }
+  return out;
+}
 
 export function makeDetectionDeps(args: {
   conn: Connection;
@@ -94,13 +121,13 @@ export function makeDetectionDeps(args: {
 
     async classify(signatures: string[]): Promise<ClassifyResult> {
       const opts = { maxSupportedTransactionVersion: 0 as const, commitment: 'confirmed' as const };
-      let txs = await conn.getParsedTransactions(signatures, opts);
+      let txs = await getParsedTransactionsBatched(conn, signatures, opts);
       // Refetch ONLY the still-null slots (WS outran RPC availability). Keeps the poll cheap; makes the live
       // WS close/open path resolve in ~1s instead of waiting for the next cursor poll.
       for (let attempt = 0; attempt < TX_FETCH_RETRIES && txs.some((t) => t === null); attempt++) {
         await sleep(TX_FETCH_RETRY_MS);
         const missing = signatures.filter((_, i) => txs[i] === null);
-        const refetched = await conn.getParsedTransactions(missing, opts);
+        const refetched = await getParsedTransactionsBatched(conn, missing, opts);
         let m = 0;
         txs = txs.map((t) => (t === null ? (refetched[m++] ?? null) : t));
       }

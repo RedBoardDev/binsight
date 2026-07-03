@@ -1,6 +1,6 @@
 import type { Connection, PublicKey } from '@solana/web3.js';
 import { describe, expect, it, vi } from 'vitest';
-import { makeDetectionDeps } from './detection';
+import { chunk, makeDetectionDeps } from './detection';
 
 // detection.ts is the I/O adapter feeding the no-miss LeaderDetector. The logic that MATTERS here is the no-miss
 // completeness of signature ingestion: cold-start is bounded (no full-wallet replay); a poll does a COMPLETE
@@ -157,5 +157,55 @@ describe('makeDetectionDeps.classify — null-tx refetch (WS outruns RPC availab
     const { unresolved } = await deps.classify(['s1']);
     expect(unresolved.size).toBe(0); // resolved on the first fetch → nothing unresolved
     expect(getParsedTransactions).toHaveBeenCalledTimes(1); // nothing null → no refetch
+  });
+});
+
+describe('chunk', () => {
+  it('splits into order-preserving batches of at most `size`, last batch shorter', () => {
+    expect(chunk([1, 2, 3, 4, 5], 2)).toEqual([[1, 2], [3, 4], [5]]);
+  });
+  it('an exact multiple splits evenly with no empty trailing batch', () => {
+    expect(chunk([1, 2, 3, 4], 2)).toEqual([
+      [1, 2],
+      [3, 4],
+    ]);
+  });
+  it('fewer items than `size` → a single batch; empty → no batches', () => {
+    expect(chunk([1, 2], 100)).toEqual([[1, 2]]);
+    expect(chunk([], 100)).toEqual([]);
+  });
+});
+
+describe('makeDetectionDeps.classify — getParsedTransactions is batched (bounded RPC calls, #50)', () => {
+  it('fans a large signature backlog into calls of at most CLASSIFY_TX_BATCH (100), covering every sig in order', async () => {
+    // WHY #50: getParsedTransactions is NOT gated by the per-call RPC limiter, and one oversized batched call over a
+    // huge backlog can itself trip a provider 429 that degrades every process sharing the Helius key. A backlog of
+    // 250 sigs must fan into 100 + 100 + 50 (never one 250-wide call), and stay index-aligned (no missed tx).
+    const NON_DLMM_TX = {
+      blockTime: 1,
+      meta: { innerInstructions: [] },
+      transaction: { signatures: ['x'], message: { instructions: [] } },
+    };
+    const batchSizes: number[] = [];
+    const seen: string[] = [];
+    const getParsedTransactions = vi.fn(async (sigs: string[]) => {
+      batchSizes.push(sigs.length);
+      seen.push(...sigs);
+      return sigs.map(() => NON_DLMM_TX); // all resolve → no null-refetch, isolates the initial batched fetch
+    });
+    const conn = { getParsedTransactions } as unknown as Connection;
+    const deps = makeDetectionDeps({
+      conn,
+      pk: PK,
+      poolReader: {} as never,
+      tokenMeta: { resolve: async () => new Map() } as never,
+      onEvent: () => undefined,
+    });
+    const signatures = Array.from({ length: 250 }, (_, i) => `s${i}`);
+    const { unresolved } = await deps.classify(signatures);
+    expect(unresolved.size).toBe(0);
+    expect(batchSizes).toEqual([100, 100, 50]); // bounded — never a single oversized call
+    expect(Math.max(...batchSizes)).toBeLessThanOrEqual(100);
+    expect(seen).toEqual(signatures); // every sig fetched exactly once, in order (index alignment preserved)
   });
 });

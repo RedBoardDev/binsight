@@ -12,11 +12,11 @@
  */
 import type { Logger } from 'pino';
 import { WebSocket } from 'undici';
+import { isWsDead, WS_PING_INTERVAL_MS } from './ws-keepalive';
 
 const BACKOFF_BASE_MS = 1000;
 const BACKOFF_MAX_MS = 30_000;
-const HEARTBEAT_MS = 30_000;
-const SILENCE_TIMEOUT_MS = 300_000;
+const SILENCE_TIMEOUT_MS = 300_000; // backstop only — the unanswered-keepalive check (below) trips far sooner
 
 /** Called per tx of the watched wallet: the signature + the logs (to filter DLMM on the consumer side). */
 export type TxActivityCb = (signature: string, logs: string[]) => void;
@@ -61,6 +61,7 @@ export class HeliusTxSubscriber {
   private connected = false;
   private stopped = false;
   private lastMessageAt = 0;
+  private unansweredPings = 0; // keepalives sent with no reply since the last inbound frame (#52 liveness)
   private heartbeat: ReturnType<typeof setInterval> | undefined;
   private readonly reconnectCbs: Array<() => void> = [];
   private readonly connChangeCbs: Array<(connected: boolean) => void> = [];
@@ -117,12 +118,14 @@ export class HeliusTxSubscriber {
       this.setConnected(true);
       this.backoffMs = BACKOFF_BASE_MS;
       this.lastMessageAt = Date.now();
+      this.unansweredPings = 0;
       for (const wallet of this.watched.keys()) this.subscribe(wallet);
       for (const cb of this.reconnectCbs) cb(); // catches up via the poll on what may have slipped through during the outage
       this.startHeartbeat();
     });
     this.ws.addEventListener('message', (ev) => {
       this.lastMessageAt = Date.now();
+      this.unansweredPings = 0; // any inbound frame (incl. a keepalive reply) proves the connection is alive
       this.handleMessage(typeof ev.data === 'string' ? ev.data : String(ev.data));
     });
     this.ws.addEventListener('close', () => this.scheduleReconnect());
@@ -155,11 +158,23 @@ export class HeliusTxSubscriber {
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = setInterval(() => {
       if (this.watched.size === 0) return;
-      if (Date.now() - this.lastMessageAt > SILENCE_TIMEOUT_MS) {
-        this.logger.warn('tx WS silent too long — forcing reconnect');
+      // Death by UNANSWERED keepalives (fast) or by a long silence backstop. A healthy idle connection replies to
+      // the keepalive, so unansweredPings resets and neither trips — no more churning healthy connections (#52).
+      if (isWsDead(this.unansweredPings) || Date.now() - this.lastMessageAt > SILENCE_TIMEOUT_MS) {
+        this.logger.warn('tx WS keepalive unanswered / silent too long — forcing reconnect');
         this.ws?.close();
+        return;
       }
-    }, HEARTBEAT_MS);
+      this.sendKeepalive();
+    }, WS_PING_INTERVAL_MS);
+  }
+
+  /** Benign JSON-RPC frame to keep the connection alive (undici WS has no protocol ping). Its reply advances
+   *  liveness; counting it as unanswered until then lets a dead socket be detected within a couple of ticks. */
+  private sendKeepalive(): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    this.ws.send(JSON.stringify({ jsonrpc: '2.0', id: this.nextReqId++, method: 'ping' }));
+    this.unansweredPings += 1;
   }
 
   private unsubscribe(subId: number): void {
