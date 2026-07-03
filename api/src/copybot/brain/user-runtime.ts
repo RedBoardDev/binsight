@@ -67,6 +67,7 @@ import {
   ATOMIC_BY_WEIGHT_BIN_LIMIT,
   activeBinSlippagePctFromBps,
   isWideOpen,
+  MAX_SINGLE_POSITION_BINS,
 } from '@/domain/copybot/open-routing';
 import {
   chunkBySpan,
@@ -480,6 +481,8 @@ export async function createUserRuntime(
       ourPosition: string;
       pool: string;
       nonSolSymbol: string | null;
+      /** per-token concurrency-cap key — threaded deposit → mirror so the persisted Token-2022 mirror carries it. */
+      nonSolMint: string;
       sizeSol: number;
       lower: number;
       upper: number;
@@ -555,7 +558,7 @@ export async function createUserRuntime(
     return mirror;
   };
 
-  const capsState = (candidateLeader: string): CapsState => {
+  const capsState = (candidateLeader: string, candidateMint: string): CapsState => {
     const open = registry.openPositions();
     return {
       openPositions: open.length,
@@ -563,9 +566,9 @@ export async function createUserRuntime(
       // Per-leader scope (3b): only the CANDIDATE leader's mirrors count toward its exposure cap — another
       // leader's open positions must never consume this leader's `maxTotalExposureSol` budget.
       leaderExposureSol: exposureFor(open, candidateLeader),
-      // Mirrors don't carry the token mint, so the per-token concurrency cap has no input yet — out of 3b scope
-      // (checkCaps treats 0 as "never blocks"). The opens-per-window ring IS live (3b step 8).
-      tokenOpenCount: 0,
+      // Per-token concurrency: count THIS user's open mirrors already in the candidate's token. An empty candidate
+      // mint (a non-SOL pool, skipped later anyway) counts 0 — never matching a legacy '' mirror on either side.
+      tokenOpenCount: candidateMint ? open.filter((m) => m.nonSolMint === candidateMint).length : 0,
       openTimestampsMs: [...openTimestampsMs],
     };
   };
@@ -781,7 +784,7 @@ export async function createUserRuntime(
     }
     const cap = checkCaps(
       ec.caps,
-      capsState(leader), // candidate leader = the EVENT's leader (3b fan-out)
+      capsState(leader, e.nonSolMint ?? ''), // candidate leader/mint = the EVENT's (3b fan-out; '' mint ⇒ per-token cap not counted)
       decision.sizeSol,
       Date.now(),
       ec.leaderMaxTotalExposureSol, // per-leader exposure ceiling (SPEC §4.2/§12)
@@ -940,6 +943,29 @@ export async function createUserRuntime(
       })),
     );
 
+    // A leader position wider than a single DLMM position can't be replicated as ONE createEmptyPosition + deposit
+    // (a >MAX_SINGLE_POSITION_BINS span chunks into multiple positions → a partial/forbidden half copy). Emit a
+    // TYPED skip BEFORE buildOpenByWeight so an extended leader position never throws a generic mirror error (#18).
+    if (dist.length > MAX_SINGLE_POSITION_BINS) {
+      void slotsP.catch(() => undefined); // the parallel slot fetch is unused on this skip path (mirrors the wide path)
+      events.emit('eligibility.too_wide', {
+        stage: 'open',
+        outcome: 'skipped',
+        reason: 'too_wide',
+        leader,
+        pool: e.pool,
+        leaderPosition: e.position,
+        eventKey: openSkipKey(e, leader),
+        adminDetail: {
+          mint: e.nonSolMint,
+          nonSolSymbol: e.nonSolSymbol,
+          bins: dist.length,
+          max: MAX_SINGLE_POSITION_BINS,
+        },
+      });
+      return;
+    }
+
     const sizeLamports = BigInt(Math.round(decision.sizeSol * LAMPORTS_PER_SOL));
     const totalX = meta.solSide === 'X' ? sizeLamports : 0n;
     const totalY = meta.solSide === 'Y' ? sizeLamports : 0n;
@@ -1000,6 +1026,7 @@ export async function createUserRuntime(
       ourPosition: sr.positionPubkey,
       pool: e.pool,
       nonSolSymbol: e.nonSolSymbol,
+      nonSolMint: e.nonSolMint ?? '', // per-token concurrency-cap key
       sizeSol: decision.sizeSol,
       lowerBin: lower,
       upperBin: upper,
@@ -1325,6 +1352,28 @@ export async function createUserRuntime(
       });
     }
 
+    // A span wider than a single DLMM position can't be replicated as one create + deposit (it would chunk into
+    // multiple positions → a partial/forbidden half copy). Typed skip BEFORE buildOpenByWeight (#18); the bought
+    // token is recovered by the wallet sweep — same guarantee as the Token-2022 branch above.
+    if (dist.length > MAX_SINGLE_POSITION_BINS) {
+      events.emit('eligibility.too_wide', {
+        stage: 'open',
+        outcome: 'skipped',
+        reason: 'too_wide',
+        leader,
+        pool: e.pool,
+        leaderPosition: e.position,
+        eventKey: openSkipKey(e, leader),
+        adminDetail: {
+          mint: tokenMint,
+          nonSolSymbol: e.nonSolSymbol,
+          bins: dist.length,
+          max: MAX_SINGLE_POSITION_BINS,
+        },
+      });
+      return;
+    }
+
     // CLASSIC SPL two-sided. WIDE (≥26 bins) → the atomic open chunks into [pre, main(addLiquidityByWeight), post] →
     // sequence it (publishSplitOpen) so the deposit isn't dropped. NARROW (≤25) → the atomic 1-tx open (token held now
     // → CU estimation works). v1 addLiquidityByWeight is correct for a CLASSIC two-sided deposit (both legs span active).
@@ -1379,6 +1428,7 @@ export async function createUserRuntime(
       ourPosition: sr.positionPubkey,
       pool: e.pool,
       nonSolSymbol: e.nonSolSymbol,
+      nonSolMint: tokenMint, // the token we bought = the per-token concurrency-cap key
       sizeSol,
       lowerBin: lower,
       upperBin: upper,
@@ -1451,6 +1501,7 @@ export async function createUserRuntime(
       ourPosition: posKp.publicKey.toBase58(),
       pool: e.pool,
       nonSolSymbol: e.nonSolSymbol,
+      nonSolMint: e.nonSolMint ?? '', // per-token concurrency-cap key
       sizeSol,
       lower,
       upper,
@@ -1503,6 +1554,7 @@ export async function createUserRuntime(
       ourPosition: pend.ourPosition,
       pool: pend.pool,
       nonSolSymbol: pend.nonSolSymbol,
+      nonSolMint: pend.nonSolMint, // per-token concurrency-cap key
       sizeSol: pend.sizeSol,
       lowerBin: pend.lower,
       upperBin: pend.upper,

@@ -29,6 +29,7 @@ export class MirrorStore {
         ourPosition: m.ourPosition,
         pool: m.pool,
         nonSolSymbol: m.nonSolSymbol,
+        nonSolMint: m.nonSolMint,
         sizeSol: m.sizeSol,
         lowerBin: m.lowerBin,
         upperBin: m.upperBin,
@@ -69,6 +70,9 @@ export class MirrorStore {
       ourPosition: r.ourPosition,
       pool: r.pool,
       nonSolSymbol: r.nonSolSymbol,
+      // Legacy row (non_sol_mint NULL) → '': matches no real candidate mint, so it is never counted toward the
+      // per-token concurrency cap (safe default; a fresh-start DB has no such rows per SPEC §15).
+      nonSolMint: r.nonSolMint ?? '',
       sizeSol: r.sizeSol,
       lowerBin: r.lowerBin,
       upperBin: r.upperBin,

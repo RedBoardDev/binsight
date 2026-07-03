@@ -388,6 +388,16 @@ const RAW_CODE_REGISTRY = {
     render: 'skipped-eligibility',
     coalesceMs: FEED_COALESCE_MS,
   },
+  // A leader position spans MORE bins than a single DLMM position (`MAX_SINGLE_POSITION_BINS`) — the GENERAL
+  // one-sided/classic open can't replicate it as one position → typed skip (never a partial/generic mirror error).
+  'eligibility.too_wide': {
+    category: 'ELIGIBILITY',
+    severity: 'info',
+    audience: 'feed',
+    title: 'Skipped — Range Too Wide',
+    render: 'skipped-eligibility',
+    coalesceMs: FEED_COALESCE_MS,
+  },
 
   // ── reshape (RESHAPE) — noop internal; the rest reach the user ─────────────────────────────────────────────
   'reshape.token_unbuyable': {

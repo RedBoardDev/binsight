@@ -24,6 +24,7 @@ const mirror: Mirror = {
   ourPosition: 'OUR',
   pool: 'POOL',
   nonSolSymbol: 'TOK',
+  nonSolMint: 'MINT_A',
   sizeSol: 0.25,
   lowerBin: -45,
   upperBin: -42,
@@ -110,6 +111,45 @@ describe('MirrorStore — no-dormant persistence, per user', () => {
       (m) => m.leaderPosition === LP,
     );
     expect(other?.sizeSol).toBe(0.75); // untouched
+  });
+
+  it('round-trips nonSolMint — the per-token concurrency-cap key survives a restart (ULTRACODE #9)', async () => {
+    // WHY: maxConcurrentPerToken counts open mirrors by their token mint. If the mint did not survive a restart,
+    // the cap would silently under-count after a reboot and could over-open into the same token.
+    const MINT_LP = '__test_mirror_mint__';
+    await store.saveOpen({
+      ...mirror,
+      leaderPosition: MINT_LP,
+      ourPosition: 'OUR_MINT',
+      nonSolMint: 'MintABC',
+    });
+    const reloaded = (await new MirrorStore(db, USER).loadOpen()).find(
+      (m) => m.leaderPosition === MINT_LP,
+    );
+    expect(reloaded?.nonSolMint).toBe('MintABC');
+  });
+
+  it("legacy row (non_sol_mint NULL) loads with nonSolMint '' → never counted toward the per-token cap", async () => {
+    // WHY: a row written before the non_sol_mint column has NULL; '' matches no real candidate mint, so such a
+    // mirror is simply not counted (safe). Loading it as null/undefined would break the string-equality count.
+    const LEGACY_MINT_LP = '__test_legacy_null_mint__';
+    await db.insert(schema.copyPositions).values({
+      userId: USER,
+      leaderPosition: LEGACY_MINT_LP,
+      leader: 'LEADER_A',
+      ourPosition: 'OUR_LEGACY_MINT',
+      pool: 'POOL',
+      nonSolSymbol: 'TOK',
+      nonSolMint: null, // a row written before the non_sol_mint column existed
+      sizeSol: 0.1,
+      lowerBin: -1,
+      upperBin: 1,
+      status: 'open',
+      openedAt: 1_700_000_000_000,
+      closedAt: null,
+    });
+    const loaded = (await store.loadOpen()).find((m) => m.leaderPosition === LEGACY_MINT_LP);
+    expect(loaded?.nonSolMint).toBe('');
   });
 
   it('markClosed closes THIS user mirror only → user #2 same-leader mirror stays open', async () => {

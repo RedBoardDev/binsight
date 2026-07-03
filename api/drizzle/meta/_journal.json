@@ -148,6 +148,13 @@
       "when": 1783096987197,
       "tag": "0020_fee-ledger",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1783111471139,
+      "tag": "0021_mirror-mint",
+      "breakpoints": true
     }
   ]
 }

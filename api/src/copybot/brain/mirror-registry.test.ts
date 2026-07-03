@@ -7,6 +7,7 @@ const m = (over: Partial<Omit<Mirror, 'status'>> = {}): Omit<Mirror, 'status'> =
   ourPosition: 'O',
   pool: 'POOL',
   nonSolSymbol: 'TOK',
+  nonSolMint: 'MINT',
   sizeSol: 1,
   lowerBin: -45,
   upperBin: -42,

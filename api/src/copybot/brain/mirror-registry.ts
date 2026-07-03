@@ -15,6 +15,10 @@ export interface Mirror {
   leaderAddress: string;
   pool: string;
   nonSolSymbol: string | null;
+  /** mint of the non-SOL side — the key the per-token concurrency cap (`maxConcurrentPerToken`) counts on.
+   *  `''` for a legacy pre-mint row (NULL in the DB) or an unknown mint: it matches no real candidate mint, so
+   *  such a mirror is simply never counted toward the cap (safe; a fresh-start DB has none). */
+  nonSolMint: string;
   sizeSol: number;
   /** re-anchored bin range of OUR position (for the close). */
   lowerBin: number;

@@ -34,6 +34,20 @@ vi.mock('@meteora-ag/dlmm', () => ({
   StrategyType: { Spot: 0, Curve: 1, BidAsk: 2 },
 }));
 
+// The too-wide open test (below) drives handleOpen to the `dist.length > MAX_SINGLE_POSITION_BINS` guard, which
+// sits AFTER the leader-shape read. Override JUST the two RPC seams on that path (real for every other export):
+// `createDlmmPair` (a discarded dummy — the guard returns before any build) and `readLeaderPositionShape` (driven
+// per-test to a wide one-sided shape). No other test in this file calls either, so their behavior is unchanged.
+vi.mock('@/infrastructure/solana/dlmm/dlmm-tx-builder', async (orig) => {
+  const actual = await orig<typeof import('@/infrastructure/solana/dlmm/dlmm-tx-builder')>();
+  return { ...actual, createDlmmPair: vi.fn(async () => ({}) as never) };
+});
+vi.mock('@/infrastructure/solana/dlmm/leader-position-reader', async (orig) => {
+  const actual = await orig<typeof import('@/infrastructure/solana/dlmm/leader-position-reader')>();
+  return { ...actual, readLeaderPositionShape: vi.fn() };
+});
+
+import { readLeaderPositionShape } from '@/infrastructure/solana/dlmm/leader-position-reader';
 import { createUserRuntime, INFLIGHT_BUY_GRACE_MS, type SharedBrainDeps } from './user-runtime';
 
 // Fresh in-memory Postgres (PGlite) with the real Drizzle migrations applied — MirrorStore/RugExitStore/EventStore
@@ -129,6 +143,7 @@ describe('createUserRuntime — two instances are FULLY isolated (Inc.3b S3)', (
       ourPosition: 'OUR_A',
       pool: 'POOL',
       nonSolSymbol: 'TOK',
+      nonSolMint: 'MINT',
       sizeSol: 0.2,
       lowerBin: -5,
       upperBin: 5,
@@ -141,10 +156,10 @@ describe('createUserRuntime — two instances are FULLY isolated (Inc.3b S3)', (
   it("caps read the runtime's own registry — A's exposure never consumes B's caps", () => {
     // WHY: capsState feeds checkCaps (max open positions / total exposure). If registries were shared, user A's
     // open positions would BLOCK user B's opens (a wrongly-skipped copy = a silent miss, the #1 forbidden failure).
-    expect(rtA.capsState(LEADER).openPositions).toBe(1);
-    expect(rtA.capsState(LEADER).leaderExposureSol).toBeCloseTo(0.2);
-    expect(rtB.capsState(LEADER).openPositions).toBe(0);
-    expect(rtB.capsState(LEADER).leaderExposureSol).toBe(0);
+    expect(rtA.capsState(LEADER, '').openPositions).toBe(1);
+    expect(rtA.capsState(LEADER, '').leaderExposureSol).toBeCloseTo(0.2);
+    expect(rtB.capsState(LEADER, '').openPositions).toBe(0);
+    expect(rtB.capsState(LEADER, '').leaderExposureSol).toBe(0);
   });
 
   it('mirror store: rows are tenant-bound — A saveOpen is not loaded by B', async () => {
@@ -280,6 +295,7 @@ describe('UserRuntime — fan-out ownership accessors (Inc.3b S5)', () => {
       ourPosition: 'OUR_B2',
       pool: 'POOL',
       nonSolSymbol: null,
+      nonSolMint: 'MINT',
       sizeSol: 0.1,
       lowerBin: -1,
       upperBin: 1,
@@ -362,29 +378,30 @@ describe('UserRuntime — per-user opens-per-window ring (Inc.3b S8)', () => {
     // WHY: caps.maxOpensPerWindow is a PER-USER rate limit — user A's open burst consuming user B's window would
     // silently skip B's legitimate copies (a miss). The ring lives inside the runtime instance by construction.
     const T0 = Date.now();
-    const baselineA = rtA.capsState(LEADER).openTimestampsMs.length;
-    const baselineB = rtB.capsState(LEADER).openTimestampsMs.length;
+    const baselineA = rtA.capsState(LEADER, '').openTimestampsMs.length;
+    const baselineB = rtB.capsState(LEADER, '').openTimestampsMs.length;
     const m = (i: number) => ({
       leaderPosition: `__ring_lp_${i}__`,
       leaderAddress: LEADER,
       ourPosition: `__ring_our_${i}__`,
       pool: 'POOL_RING',
       nonSolSymbol: null,
+      nonSolMint: 'MINT',
       sizeSol: 0.1,
       lowerBin: -1,
       upperBin: 1,
       openedAt: T0,
     });
     rtA.restoreOpenMirrors([m(1), m(2)]);
-    const ringA = rtA.capsState(LEADER).openTimestampsMs;
+    const ringA = rtA.capsState(LEADER, '').openTimestampsMs;
     expect(ringA.length).toBe(baselineA + 2);
     expect(ringA).toContain(T0); // seeded from the persisted openedAt, not re-stamped
-    expect(rtB.capsState(LEADER).openTimestampsMs.length).toBe(baselineB);
+    expect(rtB.capsState(LEADER, '').openTimestampsMs.length).toBe(baselineB);
 
     // The wired consequence: A's window can block while B's identical check allows.
     const caps = { ...CONFIG_DEFAULTS.user.caps, maxOpensPerWindow: 2, windowMinutes: 10 };
-    expect(checkCaps(caps, rtA.capsState(LEADER), 0.1, T0 + 1).action).toBe('block');
-    expect(checkCaps(caps, rtB.capsState(LEADER), 0.1, T0 + 1).action).toBe('allow');
+    expect(checkCaps(caps, rtA.capsState(LEADER, ''), 0.1, T0 + 1).action).toBe('block');
+    expect(checkCaps(caps, rtB.capsState(LEADER, ''), 0.1, T0 + 1).action).toBe('allow');
   });
 
   it('an idempotent re-open of the SAME leader position records NO new window entry', () => {
@@ -397,14 +414,15 @@ describe('UserRuntime — per-user opens-per-window ring (Inc.3b S8)', () => {
       ourPosition: '__ring_dup_our__',
       pool: 'POOL_RING',
       nonSolSymbol: null,
+      nonSolMint: 'MINT',
       sizeSol: 0.1,
       lowerBin: -1,
       upperBin: 1,
       openedAt: T0,
     };
-    const before = rtB.capsState(LEADER).openTimestampsMs.length;
+    const before = rtB.capsState(LEADER, '').openTimestampsMs.length;
     rtB.restoreOpenMirrors([m, m]); // second entry is the SAME open leader position → no-op
-    expect(rtB.capsState(LEADER).openTimestampsMs.length).toBe(before + 1);
+    expect(rtB.capsState(LEADER, '').openTimestampsMs.length).toBe(before + 1);
   });
 });
 
@@ -475,6 +493,7 @@ describe('UserRuntime — Inc.4d performance-fee collection (SPEC §9)', () => {
       ourPosition: OUR,
       pool: 'POOL',
       nonSolSymbol: null,
+      nonSolMint: 'MINT',
       sizeSol: 1,
       lowerBin: -1,
       upperBin: 1,
@@ -515,6 +534,7 @@ describe('UserRuntime — Inc.4d performance-fee collection (SPEC §9)', () => {
       ourPosition: OUR,
       pool: 'POOL',
       nonSolSymbol: null,
+      nonSolMint: 'MINT',
       sizeSol: 1,
       lowerBin: -1,
       upperBin: 1,
@@ -541,6 +561,7 @@ describe('UserRuntime — Inc.4d performance-fee collection (SPEC §9)', () => {
       ourPosition: OUR,
       pool: 'POOL',
       nonSolSymbol: null,
+      nonSolMint: 'MINT',
       sizeSol: 1,
       lowerBin: -1,
       upperBin: 1,
@@ -645,5 +666,142 @@ describe('UserRuntime — Inc.4d performance-fee collection (SPEC §9)', () => {
       (r) => r.some((f) => f.code === 'fee.landed'),
     );
     expect(feed.filter((f) => f.code === 'fee.landed')).toHaveLength(1);
+  });
+});
+
+describe('UserRuntime — per-user, per-token concurrency cap (ULTRACODE #9)', () => {
+  // Distinct from every other test's 'MINT' so this suite counts only its own seeded mirrors (shared rtA/rtB).
+  const MINT_PT = 'MintPerTokenxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
+  const OTHER_MINT = 'MintOtherxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
+  const mk = (i: number, mint: string) => ({
+    leaderPosition: `__pt_lp_${i}__`,
+    leaderAddress: LEADER,
+    ourPosition: `__pt_our_${i}__`,
+    pool: 'POOL_PT',
+    nonSolSymbol: null,
+    nonSolMint: mint,
+    sizeSol: 0.1,
+    lowerBin: -1,
+    upperBin: 1,
+    openedAt: Date.now(),
+  });
+
+  it("counts THIS user's open mirrors of the candidate mint (a different/empty mint counts 0)", () => {
+    // WHY: maxConcurrentPerToken means "at most N open positions in the SAME token". The count MUST key off the
+    // mirror's persisted nonSolMint — before this fix it was hardcoded 0, so the cap could NEVER fire (dead guardrail).
+    rtA.registry.open(mk(1, MINT_PT)); // idempotent by leaderPosition → safe to (re)open in each test
+    rtA.registry.open(mk(2, MINT_PT));
+    expect(rtA.capsState(LEADER, MINT_PT).tokenOpenCount).toBe(2);
+    expect(rtA.capsState(LEADER, OTHER_MINT).tokenOpenCount).toBe(0);
+    // An empty candidate mint (a non-SOL pool, skipped later anyway) matches nothing — not even a legacy '' mirror.
+    expect(rtA.capsState(LEADER, '').tokenOpenCount).toBe(0);
+  });
+
+  it('blocks a further open of a token already at maxConcurrentPerToken; a different token is allowed', () => {
+    rtA.registry.open(mk(1, MINT_PT));
+    rtA.registry.open(mk(2, MINT_PT));
+    const caps = { ...CONFIG_DEFAULTS.user.caps, maxConcurrentPerToken: 2 };
+    const blocked = checkCaps(caps, rtA.capsState(LEADER, MINT_PT), 0.1, Date.now());
+    expect(blocked).toMatchObject({ action: 'block', reason: 'max_concurrent_per_token' });
+    // A candidate in a DIFFERENT token (0 open) is allowed — the cap is per token, not global.
+    expect(checkCaps(caps, rtA.capsState(LEADER, OTHER_MINT), 0.1, Date.now()).action).toBe(
+      'allow',
+    );
+  });
+
+  it('the DEFAULT (maxConcurrentPerToken null) never blocks, even with the token fully seeded', () => {
+    // WHY: the count is now computed on every open, but the cap must stay INERT unless configured — the SOL-only
+    // fast path's behavior is unchanged for the default config (no new block, no behavior drift).
+    rtA.registry.open(mk(1, MINT_PT));
+    rtA.registry.open(mk(2, MINT_PT));
+    expect(CONFIG_DEFAULTS.user.caps.maxConcurrentPerToken).toBeNull();
+    expect(
+      checkCaps(CONFIG_DEFAULTS.user.caps, rtA.capsState(LEADER, MINT_PT), 0.1, Date.now()).action,
+    ).toBe('allow');
+  });
+
+  it('the per-token count is PER USER — user B in the same token is not counted for user A budgeting', () => {
+    // WHY: both tenants share the leader stream; A's positions in a token must never consume B's per-token budget.
+    rtA.registry.open(mk(1, MINT_PT));
+    rtA.registry.open(mk(2, MINT_PT));
+    expect(rtB.capsState(LEADER, MINT_PT).tokenOpenCount).toBe(0);
+  });
+});
+
+describe('UserRuntime — a leader position wider than one DLMM position skips typed, never crashes (ULTRACODE #18)', () => {
+  const WSOL = 'So11111111111111111111111111111111111111112';
+  const WIDE_POOL = Keypair.generate().publicKey.toBase58(); // must be a valid base58 pubkey (handleOpen does new PublicKey(e.pool))
+  const WIDE_MINT = Keypair.generate().publicKey.toBase58();
+
+  it('a >70-bin one-sided open emits eligibility.too_wide and does NOT publish (no generic mirror error)', async () => {
+    // WHY (copy-fidelity + fail-loud): a leader position spanning more bins than one DLMM position can't be
+    // replicated as a single create + deposit. Before this fix the general open path threw a generic mirror error
+    // with no eligibility row; it must instead emit the TYPED eligibility.too_wide skip and publish nothing.
+    const publish = vi.fn(async () => undefined);
+    const errs: unknown[] = [];
+    const capturingLog = {
+      info() {},
+      warn() {},
+      debug() {},
+      error: (o: unknown) => errs.push(o),
+      child() {
+        return capturingLog;
+      },
+    };
+    const sharedWide: SharedBrainDeps = {
+      ...shared,
+      log: capturingLog as never,
+      bus: { publish } as unknown as RedisBus,
+      poolReader: {
+        loadPoolMeta: async (pool: string) =>
+          pool === WIDE_POOL
+            ? ({ solSide: 'Y', binStep: 20, mintX: WIDE_MINT, mintY: WSOL } as LoadedPoolMeta)
+            : null,
+      } as unknown as OnchainPoolMetaReader,
+    };
+    const rt = await createUserRuntime(sharedWide, 'wide-user', opts);
+
+    // 71 contiguous bins (> MAX_SINGLE_POSITION_BINS = 70), SOL on the Y side. Both legs are populated so the
+    // stable-shape read returns on the FIRST poll (no 1s retry sleep); twoSidedMode is 'off' by default, so
+    // handleOpen still routes the general one-sided path (which reads the SOL/Y leg only).
+    const perBin = Array.from({ length: 71 }, (_, i) => ({ binId: i - 35, x: 1n, y: 1_000n }));
+    vi.mocked(readLeaderPositionShape).mockResolvedValue({
+      positionPubkey: '__wide_pos__',
+      activeBinId: 0,
+      lowerBinId: -35,
+      upperBinId: 35,
+      perBin,
+    });
+
+    const e = {
+      signature: 'sig-wide-1',
+      blockTime: 1,
+      instruction: 'AddLiquidityByStrategy2',
+      depositSol: 1,
+      depositTokenRaw: 0, // one-sided → the general (not Token-2022/two-sided) open path
+      withdrawSol: 0,
+      claimSol: 0,
+      closed: false,
+      pool: WIDE_POOL,
+      position: '__wide_pos__',
+      nonSolMint: WIDE_MINT,
+      nonSolSymbol: 'WIDE',
+    };
+    // The event leader must be a CONFIGURED+enabled leader, else caps pause an unknown leader before the guard.
+    const wideLeader = CONFIG_DEFAULTS.leaders[0]!.address;
+    // Must not throw synchronously nor asynchronously (the guard returns cleanly).
+    await expect(Promise.resolve(rt.onEvent(e, 'ws', wideLeader, 1))).resolves.not.toThrow();
+
+    const rows = await waitFor(
+      () =>
+        db
+          .select({ code: schema.copyJournal.code, userId: schema.copyJournal.userId })
+          .from(schema.copyJournal)
+          .where(inArray(schema.copyJournal.userId, ['wide-user'])),
+      (r) => r.length > 0,
+    );
+    expect(rows.map((r) => r.code)).toContain('eligibility.too_wide');
+    expect(publish).not.toHaveBeenCalled(); // never published an open (no partial/half copy)
+    expect(errs).toEqual([]); // and NO generic mirror error was thrown/logged (the whole point of #18) (no partial/half copy)
   });
 });

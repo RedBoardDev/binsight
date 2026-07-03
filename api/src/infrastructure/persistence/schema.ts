@@ -199,6 +199,9 @@ export const copyPositions = pgTable(
     ourPosition: text('our_position').notNull(),
     pool: text('pool').notNull(),
     nonSolSymbol: text('non_sol_symbol'),
+    // Mint of the non-SOL side — the key the per-token concurrency cap counts on. Nullable: a legacy row (added
+    // before this column) loads as '' (see mirror-store), which matches no real mint → never counted toward the cap.
+    nonSolMint: text('non_sol_mint'),
     sizeSol: doublePrecision('size_sol').notNull(),
     lowerBin: integer('lower_bin').notNull(),
     upperBin: integer('upper_bin').notNull(),

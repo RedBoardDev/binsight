@@ -24,6 +24,7 @@ import type { AccountRepository, ConfigRepository, PositionRepository } from '@/
 import type { GeckoTerminalGateway } from '@/infrastructure/geckoterminal/geckoterminal-gateway';
 import { csvCell } from '@/infrastructure/http/csv';
 import type { PresenceTracker } from '@/infrastructure/notifications/presence';
+import { isAllowedPushEndpoint } from '@/infrastructure/notifications/push-endpoint';
 import type { NetworthSnapshotRepository } from '@/infrastructure/persistence/networth-snapshot-repository';
 import type { PushRepository, PushSub } from '@/infrastructure/persistence/push-repository';
 import type { RpcCreditLedgerRepository } from '@/infrastructure/persistence/rpc-credit-ledger-repository';
@@ -312,6 +313,11 @@ export function registerRoutes(app: FastifyInstance, deps: RouteDeps): void {
       const auth = typeof b?.keys?.auth === 'string' ? b.keys.auth : null;
       if (!endpoint || !p256dh || !auth) {
         return reply.code(400).send({ error: 'invalid subscription' });
+      }
+      // Blind-SSRF guard (#108): the endpoint is a URL the server later POSTs to (delivery + /push/test), so pin it
+      // to the known push-service hosts. A foreign/internal host would let a caller probe our network on demand.
+      if (!isAllowedPushEndpoint(endpoint)) {
+        return reply.code(400).send({ error: 'endpoint host not allowed' });
       }
       await pushRepo.save(req.account!.id, { endpoint, p256dh, auth } satisfies PushSub);
       return { ok: true };

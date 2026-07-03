@@ -38,6 +38,7 @@ const mirror = (over: Partial<Mirror>): Mirror => ({
   ourPosition: 'OUR',
   pool: 'POOL',
   nonSolSymbol: 'TOK',
+  nonSolMint: 'MINT',
   sizeSol: 0.5,
   lowerBin: -5,
   upperBin: 5,
