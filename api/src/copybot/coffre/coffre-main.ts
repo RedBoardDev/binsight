@@ -36,6 +36,7 @@ import { ControlChannel } from '@/infrastructure/bus/control-channel';
 import { type ConsumedMessage, RedisBus } from '@/infrastructure/bus/redis-bus';
 import { CopybotActivationRepository } from '@/infrastructure/persistence/copybot-activation-repository';
 import { openDatabase } from '@/infrastructure/persistence/database';
+import { PositionLedgerRepository } from '@/infrastructure/persistence/position-ledger-repository';
 import { PrivyServer } from '@/infrastructure/privy/privy-server';
 import { BlockhashCache } from '@/infrastructure/solana/blockhash-cache';
 
@@ -234,6 +235,7 @@ const cfg = {
   jitoBundleUrl: process.env.COPYBOT_JITO_BUNDLE_URL, // block-engine URL; absent ⇒ never bundle (plain RPC land)
   jitoEnabledEnv:
     process.env.COPYBOT_JITO !== undefined ? process.env.COPYBOT_JITO === 'true' : undefined, // env override of the DB jitoEnabled
+  operatorFeeAddress: process.env.OPERATOR_FEE_ADDRESS ?? '', // Inc.4d fee sink (SPEC §9); '' ⇒ Wall B rejects fee txs
 };
 
 // Inc.4a — per-user Privy signing (default OFF). While OFF, a real user's pipeline runs end-to-end via a DryRunSigner
@@ -354,7 +356,18 @@ async function main(): Promise<void> {
   // ASYNC CONFIRM WORKER (3c): the single owner of on-chain confirmation for every broadcast — no signing lane ever
   // waits on the chain. `loadPending` runs BEFORE the boot PEL drain: a 'submitted' row whose cmd:sign was already
   // ACKed by a prior instance (crash after broadcast) has NO PEL copy — the row is its only recovery state.
-  const confirmWorker = new ConfirmWorker({ conn, db, bus, events, hmacKey, log });
+  // Inc.4d — the confirm worker appends a lamport-exact position_ledger row per confirmed position tx (the fee
+  // base's source), as post-confirm bookkeeping OFF the exactly-once path (a write failure never affects finalize).
+  const positionLedger = new PositionLedgerRepository(db);
+  const confirmWorker = new ConfirmWorker({
+    conn,
+    db,
+    bus,
+    events,
+    ledger: positionLedger,
+    hmacKey,
+    log,
+  });
   const resumed = await confirmWorker.loadPending();
   if (resumed > 0)
     log.info({ resumed }, '🔎 confirm worker resumed in-flight broadcasts from durable state');
@@ -409,6 +422,7 @@ async function main(): Promise<void> {
     events,
     policyFor, // per-message, per-USER sign-time policy (reads the live per-user config cache — SPEC §11)
     signingEnabled: cfg.signingEnabled,
+    operatorFeeAddress: cfg.operatorFeeAddress, // Inc.4d Wall B fee-sink allowlist (coffre-trusted, not the request)
     hmacKey,
     retryMax: cfg.retryMax,
     retryDelayMs: cfg.retryDelayMs,

@@ -88,6 +88,10 @@ export interface Ctx {
   /** Resolve the sign-time policy for the REQUEST's user (never a hardcoded tenant — SPEC §11). */
   policyFor: (userId: string) => Promise<UserSignPolicy>;
   signingEnabled: boolean; // false ⇒ dry-run (log "I would sign")
+  /** The coffre's OWN trusted operator fee sink (Inc.4d, SPEC §9) — the ONE allowlisted non-owner outflow, and
+   *  only for a `kind:'fee'` tx. Empty ('') ⇒ no sink ⇒ Wall B rejects any fee tx (fail-closed). Sourced from the
+   *  coffre env, NEVER from the request, so a compromised brain cannot redirect the fee. */
+  operatorFeeAddress: string;
   hmacKey: string; // ev:executed envelope key
   retryMax: number; // sign+land attempts when land THROWS (no signature produced)
   retryDelayMs: number;
@@ -456,7 +460,8 @@ export async function process1(
       reason: 'owner_mismatch',
       kind: sr.kind,
     });
-  // Wall B binds a swap to owner's ATA of its non-SOL token: sell = the token sold, buy = the token bought.
+  // Wall B binds a swap to owner's ATA of its non-SOL token: sell = the token sold, buy = the token bought. For a
+  // 'fee' it binds the ONLY allowed non-owner outflow to the coffre's OWN operator sink ('' ⇒ undefined ⇒ reject).
   const wb = verifyTx(tx, {
     owner: sr.owner,
     pool: sr.pool,
@@ -464,6 +469,7 @@ export async function process1(
     positionPubkey: sr.positionPubkey,
     inputMint: sr.sell?.inputMint ?? sr.buy?.outputMint,
     maxLamports: wallBMaxLamports(maxTradeSol),
+    operatorFeeAddress: ctx.operatorFeeAddress || undefined,
   });
   if (!wb.ok) {
     // Wall B reject → its precise `wallb.<leaf>` code. The verbatim journaled reason stays `wallb:<wb.reason>`

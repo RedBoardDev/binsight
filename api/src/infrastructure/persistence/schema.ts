@@ -425,6 +425,58 @@ export const copybotActivation = pgTable('copybot_activation', {
   updatedAt: ms('updated_at').notNull(),
 });
 
+// Copy-bot · Inc.4d — the bot's own per-position EXECUTION LEDGER (SPEC §9). One row per confirmed SOL-moving
+// position tx (open/add/remove/close/claim), lamport-exact from the OWNER account's balance delta in the tx meta
+// (the confirm worker's post-confirm bookkeeping). The per-position realized base = Σlamports_in − Σlamports_out,
+// with NO dependency on the stats engine. Post-confirm only: a write failure never touches the landed/finalize
+// state. `lamports_in` = SOL returned to the owner (remove/close/claim → positive delta); `lamports_out` = SOL the
+// owner deposited (open/add → negative delta). The UNIQUE key makes a re-confirm idempotent (never double-counts).
+export const positionLedger = pgTable(
+  'position_ledger',
+  {
+    id: serial('id').primaryKey(),
+    userId: text('user_id').notNull(), // tenant FK → users.id; SYSTEM bench binds SYSTEM_USER_ID
+    ourPosition: text('our_position').notNull(), // OUR copied position this movement belongs to
+    kind: text('kind').notNull(), // open | add | remove | close | claim (the SOL-moving lifecycle kinds only)
+    lamportsIn: bigint('lamports_in', { mode: 'number' }).notNull().default(0), // owner balance delta > 0 (SOL returned)
+    lamportsOut: bigint('lamports_out', { mode: 'number' }).notNull().default(0), // owner balance delta < 0 (SOL deposited)
+    sig: text('sig').notNull(), // the on-chain tx signature this row was decoded from
+    confirmedAt: ms('confirmed_at').notNull(), // when the confirm worker recorded it (Date.now)
+  },
+  (t) => [
+    index('idx_position_ledger_user_position').on(t.userId, t.ourPosition),
+    // A re-confirm of the SAME (user, tx, position) is one row — the ledger is idempotent (never double-counts).
+    uniqueIndex('uq_position_ledger_user_sig_position').on(t.userId, t.sig, t.ourPosition),
+  ],
+);
+
+// Copy-bot · Inc.4d — per-position PERFORMANCE FEE ledger (SPEC §9): 5% of positive realized per-position PnL,
+// assessed at close from `position_ledger` (base > 0 ⇒ fee = floor(base × 5%); losers pay nothing, no high-water
+// mark). ONE row per closed position (UNIQUE (user, position) ⇒ idempotent assessment). `state`: 'pending' (a fee
+// is owed and the periodic feeSweep publishes a transfer to the operator sink until it lands), 'landed' (the
+// transfer confirmed), or 'skipped' (no operator sink configured ⇒ the amount owed is recorded but never swept).
+// A fee is a decoupled follow-up: its failure NEVER blocks or delays the money-critical close (SPEC §9).
+export const feeLedger = pgTable(
+  'fee_ledger',
+  {
+    id: serial('id').primaryKey(),
+    userId: text('user_id').notNull(), // tenant FK → users.id
+    ourPosition: text('our_position').notNull(), // the closed position the fee is levied on
+    basePnlLamports: bigint('base_pnl_lamports', { mode: 'number' }).notNull(), // the positive realized base the fee is 5% of
+    feeLamports: bigint('fee_lamports', { mode: 'number' }).notNull(), // floor(base × FEE_BPS / 10000)
+    state: text('state').notNull().default('pending'), // pending | landed | skipped
+    sig: text('sig'), // the landed fee-transfer signature (null until the sweep confirms it)
+    attempts: integer('attempts').notNull().default(0), // feeSweep publish attempts (per-attempt journaling, SPEC §9)
+    createdAt: ms('created_at').notNull(),
+    updatedAt: ms('updated_at').notNull(),
+  },
+  (t) => [
+    // One fee per closed position — the assessment is idempotent under a re-confirm / reconcile double-fire.
+    uniqueIndex('uq_fee_ledger_user_position').on(t.userId, t.ourPosition),
+    index('idx_fee_ledger_state').on(t.state), // the feeSweep scans state='pending'
+  ],
+);
+
 /** Which user watches which wallet. A wallet is monitored by the engine iff ≥1 row references it. */
 export const userWatchedWallets = pgTable(
   'user_watched_wallets',

@@ -51,6 +51,10 @@ export interface DispatchExecutedDeps {
   onAddConfirmed: (ourPosition: string, commandId: string) => void;
   onClaimConfirmed: (ourPosition: string, commandId: string) => void;
   onSellConfirmed: (ev: ExecutedEvent) => void;
+  /** ev:executed(fee) → the 5% performance-fee transfer landed → mark the fee 'landed' + emit the transparency row
+   *  (Inc.4d). Async (a bounded DB write): a transient failure rejects → the message is retried (markLanded is
+   *  idempotent). A fee is decoupled from the close — this never affects any close. */
+  onFeeConfirmed: (ev: ExecutedEvent) => Promise<void>;
 }
 
 /** Route ONE `ev:executed` payload to its handler. Rejects iff the routed handler rejects (the caller's
@@ -95,6 +99,9 @@ export async function dispatchExecuted(
   } else if (ev?.kind === 'sell') {
     // a residual token→SOL SELL LANDED → FEED `swap.executed`. Observability-only.
     deps.onSellConfirmed(ev);
+  } else if (ev?.kind === 'fee') {
+    // the 5% performance-fee transfer LANDED → mark the fee 'landed' + FEED `fee.landed` (Inc.4d, SPEC §9).
+    await deps.onFeeConfirmed(ev);
   }
 }
 

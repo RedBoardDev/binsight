@@ -42,6 +42,8 @@ import { decideEntry } from '@/domain/copybot/decision';
 import { routeWithPending } from '@/domain/copybot/dispatch';
 import type { DetectedEvent } from '@/domain/copybot/events';
 import type { LeaderHoldings } from '@/domain/copybot/fan-out';
+import { computeFee } from '@/domain/copybot/fee/fee';
+import { sumLedgerBase } from '@/domain/copybot/fee/position-ledger';
 import {
   type FilterContext,
   filtersActive,
@@ -83,6 +85,8 @@ import { classifyInstruction } from '@/domain/dlmm';
 import type { ControlChannel } from '@/infrastructure/bus/control-channel';
 import type { RedisBus } from '@/infrastructure/bus/redis-bus';
 import type { Database } from '@/infrastructure/persistence/database';
+import type { FeeLedgerRepository } from '@/infrastructure/persistence/fee-ledger-repository';
+import type { PositionLedgerRepository } from '@/infrastructure/persistence/position-ledger-repository';
 import type { BlockhashCache } from '@/infrastructure/solana/blockhash-cache';
 import {
   buildAddByWeight,
@@ -247,6 +251,13 @@ export interface SharedBrainDeps {
   /** Process-wide Discord operator-alert sink (pinned/operator events); undefined ⇒ no-op. Shared across
    *  every runtime + the detection emitter so the rate-limit + dedup are process-wide (SPEC §10). */
   alertSink: ((e: CopyEvent) => void) | undefined;
+  /** Inc.4d — the operator fee sink (SPEC §9). '' ⇒ no collection: fees are still recorded (state 'skipped') but
+   *  never swept. NOT read from the request — the coffre re-verifies the tx moves SOL to its OWN configured sink. */
+  operatorFeeAddress: string;
+  /** Inc.4d — the per-position execution ledger (the fee base source, written by the coffre confirm worker). */
+  positionLedger: PositionLedgerRepository;
+  /** Inc.4d — the per-position performance-fee ledger (assessed here at close, swept by the feeSweep). */
+  feeLedger: FeeLedgerRepository;
 }
 
 /** Per-user injection points (INC3B-PLAN §8): Inc.4c resolves these per user (spawn-wallet.ts). */
@@ -291,6 +302,9 @@ export async function createUserRuntime(
     jupiterBaseUrl,
     jitoEnabledEnv,
     priorityFeeOracleEnv,
+    operatorFeeAddress,
+    positionLedger,
+    feeLedger,
   } = shared;
   const { ownerPk, balanceOf, leader: bootLeader, initialConfig } = opts;
   const wallet = ownerPk.toBase58();
@@ -2180,6 +2194,107 @@ export async function createUserRuntime(
       eventKey: closeConfirmedKey(leaderOf(m), m.pool, ourPosition),
       adminDetail: { nonSolSymbol: m.nonSolSymbol, via: 'ev_executed' },
     });
+    // Inc.4d — assess the 5% performance fee now that the position's ledger is COMPLETE (the confirm worker wrote
+    // the CLOSE's ledger row BEFORE the ev:executed that drove us here — SPEC §9). Fully decoupled from the close:
+    // a fee-assessment failure is swallowed (logged) so it NEVER blocks/delays the money-critical close-confirm ack.
+    await assessFee(ourPosition).catch((err) =>
+      log.warn(
+        { ourPosition, err: (err as Error).message },
+        'fee assessment failed — close is unaffected (fee retried never blocks the close)',
+      ),
+    );
+  }
+
+  /**
+   * Assess the 5% performance fee for a just-closed position from its own execution ledger (SPEC §9): base =
+   * Σlamports_in − Σlamports_out; a base ≤ 0 owes nothing (per position, no loss offset, no high-water mark).
+   * Idempotent per position (the fee_ledger unique key), so a re-confirm never double-charges — the transparency
+   * feed row is emitted only on the FIRST insert. When no operator sink is configured the fee is still RECORDED
+   * (state 'skipped') so what would be owed is auditable, but it is never swept.
+   */
+  async function assessFee(ourPosition: string): Promise<void> {
+    const rows = await positionLedger.listForPosition(userId, ourPosition);
+    const base = sumLedgerBase(rows);
+    const fee = computeFee(base);
+    if (fee <= 0n) return; // a losing/flat position pays nothing (SPEC §9)
+    const state = operatorFeeAddress ? 'pending' : 'skipped';
+    const inserted = await feeLedger.assess(userId, ourPosition, Number(base), Number(fee), state);
+    if (!inserted) return; // a prior assessment already recorded (+ emitted) this position's fee (idempotent)
+    events.emit('fee.assessed', {
+      stage: 'sweep',
+      outcome: 'detected',
+      kind: 'fee',
+      pool: ourPosition,
+      ourPosition,
+      eventKey: `fee:${ourPosition}`,
+      adminDetail: {
+        basePnlSol: Number(base) / LAMPORTS_PER_SOL,
+        feeSol: Number(fee) / LAMPORTS_PER_SOL,
+        state,
+      },
+    });
+  }
+
+  /**
+   * Build + publish the 5% performance-fee transfer (owner → operator sink) as a `kind:'fee'` SignRequest (Inc.4d)
+   * — the coffre signs+lands it like any other kind, and Wall B re-checks the destination is the coffre's OWN
+   * configured sink. Idempotent per (user, position): commandId = derive(userId, `fee:${ourPosition}`). A plain
+   * transfer (no priority fee / tip) keeps the fee tx minimal + trivially Wall-B-verifiable. Skips when no sink is
+   * configured (such rows were assessed 'skipped' and never reach the sweep — this is belt-and-suspenders).
+   */
+  async function publishFee(ourPosition: string, feeLamports: number): Promise<void> {
+    if (!operatorFeeAddress) return;
+    const operatorPk = new PublicKey(operatorFeeAddress);
+    const eventKey = `fee:${ourPosition}`;
+    const tx = new Transaction().add(
+      SystemProgram.transfer({ fromPubkey: ownerPk, toPubkey: operatorPk, lamports: feeLamports }),
+    );
+    tx.feePayer = ownerPk;
+    tx.recentBlockhash = blockhashCache.get().blockhash; // placeholder — the coffre re-sets a fresh blockhash before signing
+    const txBase64 = tx
+      .serialize({ requireAllSignatures: false, verifySignatures: false })
+      .toString('base64');
+    const { issuedAtSlot, deadlineSlot } = await slots();
+    await publish(
+      {
+        commandId: commandIdFor(eventKey),
+        eventKey,
+        kind: 'fee',
+        pool: ourPosition, // a fee has no DLMM pool — carry the position for correlation (Wall B ignores it for a fee)
+        positionPubkey: ourPosition, // provenance: the closed position this fee is levied on
+        owner: ownerPk.toBase58(),
+        txBase64,
+        sizeSol: 0, // a fee deploys no position SOL (it transfers the fee out)
+        targetBinRange: { lower: 0, upper: 0 }, // n/a for a fee
+        issuedAtSlot,
+        deadlineSlot,
+        fee: { toAddress: operatorFeeAddress, lamports: feeLamports.toString() },
+      },
+      { leaderPosition: ourPosition },
+    );
+    log.info({ ourPosition, feeLamports }, '💸 fee published');
+  }
+
+  /**
+   * ev:executed(fee) → the performance-fee transfer LANDED → flip the fee 'pending' → 'landed' and emit the
+   * transparency feed row. Idempotent (markLanded transitions only a still-'pending' row → a duplicate confirm
+   * emits nothing). Observability + a bounded DB write; never blocks the close.
+   */
+  async function onFeeConfirmed(ev: { positionPubkey?: string; sig?: string }): Promise<void> {
+    const ourPosition = ev.positionPubkey;
+    if (!ourPosition) return;
+    const feeLamports = await feeLedger.markLanded(userId, ourPosition, ev.sig ?? '');
+    if (feeLamports === null) return; // already landed / unknown → no duplicate feed row
+    events.emit('fee.landed', {
+      stage: 'sweep',
+      outcome: 'confirmed',
+      kind: 'fee',
+      pool: ourPosition,
+      ourPosition,
+      signature: ev.sig,
+      eventKey: `fee:${ourPosition}`,
+      adminDetail: { feeSol: feeLamports / LAMPORTS_PER_SOL },
+    });
   }
 
   // ev:executed(sell) → a residual token→SOL SELL (close-triggered OR safety-sweep) LANDED → emit the FEED
@@ -2430,6 +2545,8 @@ export async function createUserRuntime(
     onCloseConfirmed,
     onSellConfirmed,
     onCloseExecuted,
+    publishFee,
+    onFeeConfirmed,
     hasPendingReshapeAdd: (commandId: string): boolean => pendingReshapeAdds.has(commandId),
     hasPendingToken2022Deposit: (commandId: string): boolean =>
       pendingToken2022Deposits.has(commandId),

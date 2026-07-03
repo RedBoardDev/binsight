@@ -533,3 +533,62 @@ describe('Wall B — priority-fee cap (ComputeBudget price × CU-limit is bounde
     });
   });
 });
+
+describe('Wall B — verifyTx (fee / operator sink: the ONE allowlisted non-owner outflow, Inc.4d SPEC §9)', () => {
+  const operator = pk();
+  const feeIntent = (over: Partial<WallBIntent> = {}): WallBIntent => ({
+    owner: owner.toBase58(),
+    pool: position.toBase58(), // a fee has no DLMM pool — Wall B ignores `pool` for a fee
+    kind: 'fee',
+    positionPubkey: position.toBase58(),
+    operatorFeeAddress: operator.toBase58(),
+    ...over,
+  });
+  const feeTransferTo = (to: PublicKey, lamports = 25_000_000) =>
+    buildTx(owner, [SystemProgram.transfer({ fromPubkey: owner, toPubkey: to, lamports })]);
+
+  it('fee → the configured operator sink is ALLOWED (the single amount-derived outflow exception)', () => {
+    expect(verifyTx(feeTransferTo(operator), feeIntent())).toEqual({ ok: true });
+  });
+
+  it('fee → a FOREIGN destination is rejected (a compromised brain cannot redirect the fee)', () => {
+    const attacker = pk();
+    expect(verifyTx(feeTransferTo(attacker), feeIntent())).toMatchObject({
+      ok: false,
+      reason: 'foreign_sol_destination',
+    });
+  });
+
+  it('a NON-fee tx to the operator address is rejected (the exception is gated strictly to kind=fee)', () => {
+    // A 'close' tx transferring to the operator address must NOT get the fee exception → foreign_sol_destination.
+    expect(verifyTx(feeTransferTo(operator), feeIntent({ kind: 'close' }))).toMatchObject({
+      ok: false,
+      reason: 'foreign_sol_destination',
+    });
+  });
+
+  it('fee with NO operator sink configured → fail-closed: a transfer to the would-be operator is foreign', () => {
+    // With no sink allowlisted, EVEN a transfer to the operator address is just a foreign destination → rejected
+    // in the instruction loop (the coffre never signs a fee it has no sink for).
+    expect(
+      verifyTx(feeTransferTo(operator), feeIntent({ operatorFeeAddress: undefined })),
+    ).toMatchObject({ ok: false, reason: 'foreign_sol_destination' });
+  });
+
+  it('a "fee" tx with no transfer AND no sink → reject fee_operator_unset (the degenerate fail-closed case)', () => {
+    const t = buildTx(owner, [ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 })]);
+    expect(verifyTx(t, feeIntent({ operatorFeeAddress: undefined }))).toMatchObject({
+      ok: false,
+      reason: 'fee_operator_unset',
+    });
+  });
+
+  it('a "fee" tx that carries NO operator transfer → reject fee_missing_operator_transfer', () => {
+    // A ComputeBudget-only "fee" tx (no SystemProgram.transfer to the operator) must not pass as a fee.
+    const t = buildTx(owner, [ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 })]);
+    expect(verifyTx(t, feeIntent())).toMatchObject({
+      ok: false,
+      reason: 'fee_missing_operator_transfer',
+    });
+  });
+});

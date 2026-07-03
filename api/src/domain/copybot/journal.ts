@@ -13,7 +13,16 @@
  */
 
 /** The leader DLMM action / sign kind this entry relates to (mirrors the SignRequest `kind`). */
-export const JOURNAL_KINDS = ['open', 'add', 'remove', 'close', 'claim', 'sell', 'buy'] as const;
+export const JOURNAL_KINDS = [
+  'open',
+  'add',
+  'remove',
+  'close',
+  'claim',
+  'sell',
+  'buy',
+  'fee',
+] as const;
 export type JournalKind = (typeof JOURNAL_KINDS)[number];
 
 /** Pipeline stage of the bot that produced the entry. */
@@ -138,6 +147,8 @@ export function stageForKind(kind: JournalKind): JournalStage {
       return 'close';
     case 'sell':
       return 'sell';
+    case 'fee': // the 5% performance-fee transfer — a wallet-level follow-up published by the periodic sweep
+      return 'sweep';
   }
 }
 

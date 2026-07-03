@@ -1,5 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
-import { Connection, Keypair } from '@solana/web3.js';
+import { Connection, Keypair, Transaction } from '@solana/web3.js';
 import { inArray } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
@@ -15,6 +15,8 @@ import type { LoadedPoolMeta } from '@/domain/dlmm';
 import type { ControlChannel } from '@/infrastructure/bus/control-channel';
 import type { RedisBus } from '@/infrastructure/bus/redis-bus';
 import type { Database } from '@/infrastructure/persistence/database';
+import { FeeLedgerRepository } from '@/infrastructure/persistence/fee-ledger-repository';
+import { PositionLedgerRepository } from '@/infrastructure/persistence/position-ledger-repository';
 import * as schema from '@/infrastructure/persistence/schema';
 import { BlockhashCache } from '@/infrastructure/solana/blockhash-cache';
 import type { OnchainPoolMetaReader } from '@/infrastructure/solana/dlmm/pool-meta';
@@ -46,6 +48,7 @@ const log = pino({ level: 'silent' });
 // ONE shared wallet + ONE watched leader for both runtimes — the exact Inc.3b topology (custody is Inc.4).
 const OWNER = Keypair.generate().publicKey;
 const LEADER = Keypair.generate().publicKey.toBase58();
+const OPERATOR_FEE = Keypair.generate().publicKey.toBase58(); // Inc.4d fee sink (SPEC §9)
 const USER_A = 'test-runtime-user-a';
 const USER_B = 'test-runtime-user-b';
 
@@ -89,6 +92,9 @@ const shared: SharedBrainDeps = {
   jitoEnabledEnv: undefined,
   priorityFeeOracleEnv: undefined,
   alertSink: undefined,
+  operatorFeeAddress: OPERATOR_FEE,
+  positionLedger: new PositionLedgerRepository(db),
+  feeLedger: new FeeLedgerRepository(db),
 };
 
 const opts = {
@@ -399,5 +405,202 @@ describe('UserRuntime — per-user opens-per-window ring (Inc.3b S8)', () => {
     const before = rtB.capsState(LEADER).openTimestampsMs.length;
     rtB.restoreOpenMirrors([m, m]); // second entry is the SAME open leader position → no-op
     expect(rtB.capsState(LEADER).openTimestampsMs.length).toBe(before + 1);
+  });
+});
+
+describe('UserRuntime — Inc.4d performance-fee collection (SPEC §9)', () => {
+  const FEE_USER = 'test-runtime-fee-user';
+  const positionLedgerRepo = new PositionLedgerRepository(db);
+  const feeLedgerRepo = new FeeLedgerRepository(db);
+
+  /** Seed a COMPLETE per-position ledger for `ourPosition` under `FEE_USER` (as the confirm worker would). */
+  async function seedLedger(
+    ourPosition: string,
+    legs: Array<{ kind: string; lamportsIn?: number; lamportsOut?: number }>,
+  ): Promise<void> {
+    let i = 0;
+    for (const leg of legs)
+      await positionLedgerRepo.append({
+        userId: FEE_USER,
+        ourPosition,
+        kind: leg.kind,
+        lamportsIn: leg.lamportsIn ?? 0,
+        lamportsOut: leg.lamportsOut ?? 0,
+        sig: `${ourPosition}-${i++}`,
+        confirmedAt: Date.now(),
+      });
+  }
+
+  // A valid 32-byte base58 blockhash (any pubkey) so publishFee's tx.serialize() succeeds — the coffre re-sets a
+  // fresh blockhash before signing, so the placeholder value is irrelevant to correctness.
+  const FEE_BLOCKHASH = Keypair.generate().publicKey.toBase58();
+
+  /** A runtime for FEE_USER whose bus CAPTURES published SignRequests (so we can decode a fee transfer). */
+  async function feeRuntime(operatorFeeAddress = OPERATOR_FEE) {
+    const published: Array<Record<string, unknown>> = [];
+    const bus = {
+      publish: async (_s: string, _h: string, _k: string, payload: Record<string, unknown>) => {
+        published.push(payload);
+        return 'sid';
+      },
+    } as unknown as RedisBus;
+    const blockhashCache = new BlockhashCache(async () => ({
+      blockhash: FEE_BLOCKHASH,
+      lastValidBlockHeight: 0,
+    }));
+    await blockhashCache.start();
+    // publishFee reads the current slot for the SignRequest freshness bounds — a minimal offline stub.
+    const conn = { getSlot: async () => 0 } as unknown as Connection;
+    const rt = await createUserRuntime(
+      { ...shared, bus, blockhashCache, conn, operatorFeeAddress },
+      FEE_USER,
+      opts,
+    );
+    return { rt, published };
+  }
+
+  it('close-confirm on a WINNING position assesses 5% → one pending fee_ledger row + a fee.assessed feed event', async () => {
+    // WHY: the fee is real revenue levied at close from the bot's OWN ledger; a winner owes exactly floor(5%),
+    // recorded once (idempotent) and shown transparently in the feed (SPEC §9).
+    const OUR = 'OUR_FEE_WIN';
+    // deposit 1.0, close 1.5 → base 0.5 SOL → fee 0.025 SOL.
+    await seedLedger(OUR, [
+      { kind: 'open', lamportsOut: 1_000_000_000 },
+      { kind: 'close', lamportsIn: 1_500_000_000 },
+    ]);
+    const { rt } = await feeRuntime();
+    rt.registry.open({
+      leaderPosition: 'LP_FEE_WIN',
+      leaderAddress: LEADER,
+      ourPosition: OUR,
+      pool: 'POOL',
+      nonSolSymbol: null,
+      sizeSol: 1,
+      lowerBin: -1,
+      upperBin: 1,
+      openedAt: Date.now(),
+    });
+    await rt.onCloseConfirmed(OUR);
+    const rows = await db
+      .select()
+      .from(schema.feeLedger)
+      .where(inArray(schema.feeLedger.ourPosition, [OUR]));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      state: 'pending',
+      basePnlLamports: 500_000_000,
+      feeLamports: 25_000_000,
+    });
+    const feed = await waitFor(
+      () =>
+        db
+          .select()
+          .from(schema.copyJournal)
+          .where(inArray(schema.copyJournal.code, ['fee.assessed'])),
+      (r) => r.length > 0,
+    );
+    expect(feed.some((f) => f.ourPosition === OUR)).toBe(true);
+  });
+
+  it('a LOSING position owes NOTHING — no fee_ledger row, no fee event', async () => {
+    const OUR = 'OUR_FEE_LOSS';
+    await seedLedger(OUR, [
+      { kind: 'open', lamportsOut: 1_000_000_000 },
+      { kind: 'close', lamportsIn: 400_000_000 }, // base −0.6 SOL
+    ]);
+    const { rt } = await feeRuntime();
+    rt.registry.open({
+      leaderPosition: 'LP_FEE_LOSS',
+      leaderAddress: LEADER,
+      ourPosition: OUR,
+      pool: 'POOL',
+      nonSolSymbol: null,
+      sizeSol: 1,
+      lowerBin: -1,
+      upperBin: 1,
+      openedAt: Date.now(),
+    });
+    await rt.onCloseConfirmed(OUR);
+    const rows = await db
+      .select()
+      .from(schema.feeLedger)
+      .where(inArray(schema.feeLedger.ourPosition, [OUR]));
+    expect(rows).toHaveLength(0);
+  });
+
+  it('a second close-confirm is idempotent — still exactly ONE fee row (no double-charge)', async () => {
+    const OUR = 'OUR_FEE_IDEM';
+    await seedLedger(OUR, [
+      { kind: 'open', lamportsOut: 1_000_000_000 },
+      { kind: 'close', lamportsIn: 2_000_000_000 },
+    ]);
+    const { rt } = await feeRuntime();
+    const mirror = {
+      leaderPosition: 'LP_FEE_IDEM',
+      leaderAddress: LEADER,
+      ourPosition: OUR,
+      pool: 'POOL',
+      nonSolSymbol: null,
+      sizeSol: 1,
+      lowerBin: -1,
+      upperBin: 1,
+      openedAt: Date.now(),
+    };
+    rt.registry.open(mirror);
+    await rt.onCloseConfirmed(OUR);
+    rt.registry.open(mirror); // re-register (as a reconcile re-drive might) and confirm again
+    await rt.onCloseConfirmed(OUR);
+    const rows = await db
+      .select()
+      .from(schema.feeLedger)
+      .where(inArray(schema.feeLedger.ourPosition, [OUR]));
+    expect(rows).toHaveLength(1);
+  });
+
+  it('publishFee builds a kind:fee SystemProgram.transfer to the OPERATOR sink for the exact lamports', async () => {
+    // WHY: the coffre re-verifies the fee tx moves SOL to its OWN operator sink — the brain must build exactly
+    // that transfer (owner → operator, feeLamports) under a kind:'fee' SignRequest with the traceability payload.
+    const { rt, published } = await feeRuntime();
+    await rt.publishFee('OUR_FEE_PUB', 40_000_000);
+    expect(published).toHaveLength(1);
+    const sr = published[0]!;
+    expect(sr.kind).toBe('fee');
+    expect(sr.owner).toBe(OWNER.toBase58());
+    expect(sr.fee).toEqual({ toAddress: OPERATOR_FEE, lamports: '40000000' });
+    // Decode the unsigned tx: exactly one SystemProgram.transfer of 40_000_000 lamports owner → operator.
+    const tx = Transaction.from(Buffer.from(sr.txBase64 as string, 'base64'));
+    expect(tx.instructions).toHaveLength(1);
+    const ix = tx.instructions[0]!;
+    expect(ix.keys[0]?.pubkey.toBase58()).toBe(OWNER.toBase58()); // from = owner
+    expect(ix.keys[1]?.pubkey.toBase58()).toBe(OPERATOR_FEE); // to = operator sink
+    expect(ix.data.readBigUInt64LE(4)).toBe(40_000_000n); // SystemProgram.transfer lamports (offset 4)
+  });
+
+  it('publishFee is a NO-OP when no operator sink is configured (nothing to transfer)', async () => {
+    const { rt, published } = await feeRuntime('');
+    await rt.publishFee('OUR_FEE_NOSINK', 10_000_000);
+    expect(published).toHaveLength(0);
+  });
+
+  it('onFeeConfirmed flips the fee landed + emits fee.landed once (a duplicate confirm is a no-op)', async () => {
+    const OUR = 'OUR_FEE_LAND';
+    const { rt } = await feeRuntime();
+    await feeLedgerRepo.assess(FEE_USER, OUR, 500_000_000, 25_000_000, 'pending');
+    await rt.onFeeConfirmed({ positionPubkey: OUR, sig: 'FEE_LAND_SIG' });
+    await rt.onFeeConfirmed({ positionPubkey: OUR, sig: 'FEE_LAND_SIG' }); // duplicate → no second feed row
+    const [row] = await db
+      .select()
+      .from(schema.feeLedger)
+      .where(inArray(schema.feeLedger.ourPosition, [OUR]));
+    expect(row).toMatchObject({ state: 'landed', sig: 'FEE_LAND_SIG' });
+    const feed = await waitFor(
+      () =>
+        db
+          .select()
+          .from(schema.copyJournal)
+          .where(inArray(schema.copyJournal.ourPosition, [OUR])),
+      (r) => r.some((f) => f.code === 'fee.landed'),
+    );
+    expect(feed.filter((f) => f.code === 'fee.landed')).toHaveLength(1);
   });
 });

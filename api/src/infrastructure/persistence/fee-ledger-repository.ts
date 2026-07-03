@@ -1,0 +1,101 @@
+import { and, asc, eq } from 'drizzle-orm';
+import type { Database } from './database';
+import { feeLedger } from './schema';
+
+/** A fee owed on a closed position, as the feeSweep picks it up (Inc.4d, SPEC §9). */
+export interface PendingFee {
+  userId: string;
+  ourPosition: string;
+  feeLamports: number;
+  attempts: number;
+}
+
+/** The lifecycle states of a fee row: owed & sweepable | collected on-chain | recorded-but-no-sink. */
+export type FeeState = 'pending' | 'landed' | 'skipped';
+
+/**
+ * The per-position performance-fee ledger (Inc.4d). The brain ASSESSES one row per closed position (idempotent),
+ * the periodic feeSweep publishes a transfer for each `pending` row until it LANDS, and each has an `attempts`
+ * counter for per-attempt journaling. One owner of the `fee_ledger` table.
+ */
+export class FeeLedgerRepository {
+  constructor(private readonly db: Database) {}
+
+  /**
+   * Record the fee owed for a closed position, idempotent on `(user_id, our_position)` — a re-confirm / reconcile
+   * double-fire never double-assesses. Returns `true` only when a NEW row was inserted (so the caller emits the
+   * transparency feed event exactly once). `state` is 'pending' when a sink is configured, else 'skipped'.
+   */
+  async assess(
+    userId: string,
+    ourPosition: string,
+    basePnlLamports: number,
+    feeLamports: number,
+    state: FeeState,
+  ): Promise<boolean> {
+    const now = Date.now();
+    const inserted = await this.db
+      .insert(feeLedger)
+      .values({
+        userId,
+        ourPosition,
+        basePnlLamports,
+        feeLamports,
+        state,
+        attempts: 0,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoNothing()
+      .returning({ id: feeLedger.id });
+    return inserted.length > 0;
+  }
+
+  /** The oldest `pending` fees, bounded — the feeSweep publishes a transfer for each (SPEC §9). */
+  async listPending(limit: number): Promise<PendingFee[]> {
+    return this.db
+      .select({
+        userId: feeLedger.userId,
+        ourPosition: feeLedger.ourPosition,
+        feeLamports: feeLedger.feeLamports,
+        attempts: feeLedger.attempts,
+      })
+      .from(feeLedger)
+      .where(eq(feeLedger.state, 'pending'))
+      .orderBy(asc(feeLedger.createdAt))
+      .limit(limit);
+  }
+
+  /** Count a publish attempt for a pending fee (per-attempt journaling; the row stays pending until it lands). */
+  async bumpAttempts(userId: string, ourPosition: string): Promise<void> {
+    const row = await this.db
+      .select({ attempts: feeLedger.attempts })
+      .from(feeLedger)
+      .where(and(eq(feeLedger.userId, userId), eq(feeLedger.ourPosition, ourPosition)));
+    const current = row[0]?.attempts ?? 0;
+    await this.db
+      .update(feeLedger)
+      .set({ attempts: current + 1, updatedAt: Date.now() })
+      .where(and(eq(feeLedger.userId, userId), eq(feeLedger.ourPosition, ourPosition)));
+  }
+
+  /**
+   * Mark a fee collected once its transfer confirms — flips 'pending' → 'landed' (records the sig). Idempotent:
+   * a second confirm no-ops (only a still-'pending' row transitions). Returns the collected `feeLamports` on the
+   * transition (so the caller can render the amount in the feed), or `null` when nothing transitioned.
+   */
+  async markLanded(userId: string, ourPosition: string, sig: string): Promise<number | null> {
+    const changed = await this.db
+      .update(feeLedger)
+      .set({ state: 'landed', sig, updatedAt: Date.now() })
+      .where(
+        and(
+          eq(feeLedger.userId, userId),
+          eq(feeLedger.ourPosition, ourPosition),
+          eq(feeLedger.state, 'pending'),
+        ),
+      )
+      .returning({ feeLamports: feeLedger.feeLamports });
+    return changed[0]?.feeLamports ?? null;
+  }
+}

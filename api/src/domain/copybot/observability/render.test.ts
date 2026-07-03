@@ -220,6 +220,22 @@ describe('render-user · SOL-only feed templates (SPEC §3.2)', () => {
     expect(m).toMatchSnapshot();
   });
 
+  it('fee (SOL-only base + fee, transparent — SPEC §9)', () => {
+    const m = toUserMessage(
+      event('fee.assessed', {
+        category: 'FEE',
+        stage: 'sweep',
+        outcome: 'confirmed',
+        ourPosition: 'POS',
+        adminDetail: { basePnlSol: 0.85, feeSol: 0.04 },
+      }),
+    );
+    expect(m).toMatchSnapshot();
+    const joined = [m?.emoji, ...(m?.lineParts ?? [])].join(' ');
+    expect(joined).not.toContain('$');
+    expect(joined).not.toMatch(/USD/i);
+  });
+
   it('does not leak USD or a currency symbol anywhere in the rendered parts', () => {
     // WHY: locked decision 2 — SOL-only. A regression that interpolated a `$` figure would violate the contract.
     const m = toUserMessage(

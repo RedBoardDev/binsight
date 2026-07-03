@@ -65,9 +65,14 @@ const ALLOWED_PROGRAMS = new Set([
 export interface WallBIntent {
   owner: string;
   pool: string;
-  kind: 'open' | 'close' | 'claim' | 'sell' | 'add' | 'remove' | 'buy';
+  kind: 'open' | 'close' | 'claim' | 'sell' | 'add' | 'remove' | 'buy' | 'fee';
   /** pubkey of the expected ephemeral position (signer for an open). */
   positionPubkey: string;
+  /** The coffre's OWN configured operator fee sink (Inc.4d, SPEC §9). The ONE non-owner System.Transfer
+   *  destination allowed — and ONLY when `kind==='fee'`. Comes from the coffre's trusted env (NOT the request),
+   *  so a compromised brain cannot redirect the fee: a `kind:'fee'` tx to any other destination, or a non-fee tx
+   *  to this address, is rejected. Undefined ⇒ no sink configured ⇒ a fee tx is rejected (fail-closed). */
+  operatorFeeAddress?: string;
   /** for a Jupiter swap ('sell' or 'buy'): the swap's NON-SOL token mint (sell = input sold, buy = output bought)
    *  — the swap is bound to owner's ATA of it. */
   inputMint?: string;
@@ -99,6 +104,7 @@ export function verifyTx(tx: Transaction, intent: WallBIntent): WallBVerdict {
 
   const ownerWsolAta = ownerAta(new PublicKey(intent.owner), WSOL, TOKEN_PROGRAM); // the SOL the tx wraps for deployment/swap
   let wrapLamports = 0n; // sum of owner→WSOL-ATA System-Transfers = the ACTUAL SOL this tx deploys
+  let feeToOperatorLamports = 0n; // sum of owner→operator System-Transfers (allowed ONLY for kind 'fee')
   let cbUnitLimit: bigint | null = null; // explicit ComputeBudget CU limit, if the tx sets one
   let cbUnitPriceMicro = 0n; // ComputeBudget CU price (microLamports/CU) → the priority fee
   const accountKeys = new Set<string>();
@@ -123,8 +129,17 @@ export function verifyTx(tx: Transaction, intent: WallBIntent): WallBVerdict {
       const lamports = ix.data.length >= 12 ? ix.data.readBigUInt64LE(4) : 0n;
       if (from === intent.owner && to === ownerWsolAta) wrapLamports += lamports; // capital wrapped for the deposit/swap
       if (from === intent.owner && to !== intent.owner && to !== ownerWsolAta) {
-        // The ONE allowed non-owner SOL destination: a capped tip to a known Jito tip account (anti-sandwich).
-        if (to !== undefined && JITO_TIP_SET.has(to)) {
+        // The allowed non-owner SOL destinations are a CLOSED set, each machine-checked here (defense in depth):
+        //  · the operator fee sink — ONLY for kind 'fee', and only the coffre's OWN configured address (SPEC §9);
+        //  · a capped tip to a known Jito tip account (anti-sandwich);
+        //  · nothing else — any other destination is a drain vector and is rejected.
+        if (
+          intent.kind === 'fee' &&
+          intent.operatorFeeAddress !== undefined &&
+          to === intent.operatorFeeAddress
+        ) {
+          feeToOperatorLamports += lamports; // the ONE allowlisted outflow exception (amount-derived, no pool)
+        } else if (to !== undefined && JITO_TIP_SET.has(to)) {
           if (lamports > BigInt(MAX_JITO_TIP_LAMPORTS))
             return { ok: false, reason: 'jito_tip_too_large' };
         } else {
@@ -147,6 +162,17 @@ export function verifyTx(tx: Transaction, intent: WallBIntent): WallBVerdict {
   // slippage) so it only catches a GROSS over-spend, never false-rejects a legitimate deposit/buy.
   if (intent.maxLamports !== undefined && wrapLamports > BigInt(intent.maxLamports))
     return { ok: false, reason: 'sol_spend_over_cap' };
+
+  // A 'fee' is a plain SystemProgram.transfer of the 5% performance fee to the operator sink — no DLMM pool, no
+  // swap (SPEC §9). It is bound purely by its destination: the tx MUST move SOL owner→operator (the single
+  // allowlisted outflow, gated to kind 'fee' in the loop above) and NOTHING else foreign (any other destination
+  // already rejected as `foreign_sol_destination`). Fail-closed with no sink configured, and reject a "fee" tx
+  // that carries no operator transfer at all (a mislabeled/empty tx must never pass as a fee).
+  if (intent.kind === 'fee') {
+    if (intent.operatorFeeAddress === undefined) return { ok: false, reason: 'fee_operator_unset' };
+    if (feeToOperatorLamports <= 0n) return { ok: false, reason: 'fee_missing_operator_transfer' };
+    return { ok: true };
+  }
 
   // A 'sell' (token→SOL) or 'buy' (SOL→token) is a Jupiter swap: no DLMM pool is referenced. Bind it to owner's
   // ATA of the swap's non-SOL token (sell = the residual sold, buy = the token bought for a two-sided copy) —

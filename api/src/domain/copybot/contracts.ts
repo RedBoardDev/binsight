@@ -15,9 +15,9 @@ export const SignRequestSchema = z
     commandId: z.string().min(1),
     /** leader:pool:event:slot:txSig — the originating leader event. */
     eventKey: z.string().min(1),
-    kind: z.enum(['open', 'close', 'claim', 'sell', 'add', 'remove', 'buy']),
+    kind: z.enum(['open', 'close', 'claim', 'sell', 'add', 'remove', 'buy', 'fee']),
     pool: z.string().min(1),
-    /** pubkey of OUR position (ephemeral for an open). For a 'sell', the position we just closed (provenance). */
+    /** pubkey of OUR position (ephemeral for an open). For a 'sell'/'fee', the closed position (provenance). */
     positionPubkey: z.string().min(1),
     /** our owner (copy-test); the coffre checks destination == owner. */
     owner: z.string().min(1),
@@ -48,6 +48,15 @@ export const SignRequestSchema = z
         maxInLamports: z.string().min(1), // SOL spend cap (slippage-bounded; Wall B re-clamps against the local cap)
       })
       .optional(),
+    /** present ONLY for a 'fee': the 5% performance-fee transfer (owner → operator sink, SPEC §9). The coffre does
+     *  NOT trust `toAddress` (a compromised brain could forge it) — Wall B re-verifies the tx's transfer goes to
+     *  the coffre's OWN configured OPERATOR_FEE_ADDRESS; this payload is traceability/telemetry only. */
+    fee: z
+      .object({
+        toAddress: z.string().min(1), // the operator fee sink the brain built the transfer toward (re-checked by Wall B)
+        lamports: z.string().min(1), // the fee amount (raw lamports, string like the sell/buy amounts)
+      })
+      .optional(),
   })
   .strict()
   .superRefine((v, ctx) => {
@@ -76,6 +85,19 @@ export const SignRequestSchema = z
         code: z.ZodIssueCode.custom,
         message: 'buy payload only allowed for kind=buy',
         path: ['buy'],
+      });
+    // kind 'fee' ⟺ the fee payload is present (symmetric to sell/buy — no ambiguous half-formed fee intents).
+    if (v.kind === 'fee' && !v.fee)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'fee payload required for kind=fee',
+        path: ['fee'],
+      });
+    if (v.kind !== 'fee' && v.fee)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'fee payload only allowed for kind=fee',
+        path: ['fee'],
       });
   });
 

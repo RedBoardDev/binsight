@@ -9,7 +9,7 @@
 /** Severity for admin log level + UI coloring + alerting. Unchanged 3-value enum (mirrors `JournalSeverity`). */
 export type CopySeverity = 'info' | 'warn' | 'error';
 
-/** The 14 event namespaces (SPEC §1). One category per registry namespace. */
+/** The event namespaces (SPEC §1). One category per registry namespace. */
 export type CopyCategory =
   | 'LIFECYCLE'
   | 'DETECT'
@@ -24,6 +24,7 @@ export type CopyCategory =
   | 'WALLB'
   | 'FAILSAFE'
   | 'SWEEP'
+  | 'FEE' // Inc.4d — the 5% performance fee (assessed at close, collected by the sweep) (SPEC §9)
   | 'SYSTEM';
 
 /** Who sees the event. `'feed'` = visible to the user (the persisted `audience='feed'` rows ARE the feed). */
