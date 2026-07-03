@@ -6,11 +6,15 @@
  *  - `persist` NEVER throws on a DB failure and logs loud (the cardinal fail-safe contract);
  *  - the serialized `cause` is folded into `detail.cause` (admin-only, JSON-safe).
  */
+import { PGlite } from '@electric-sql/pglite';
 import { eq } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/pglite';
+import { migrate } from 'drizzle-orm/pglite/migrator';
 import type { Logger } from 'pino';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { CopyEvent } from '@/domain/copybot/observability/event';
 import { openDatabase } from '@/infrastructure/persistence/database';
+import * as schema from '@/infrastructure/persistence/schema';
 import { copyJournal } from '@/infrastructure/persistence/schema';
 import { EventStore } from './event-store';
 
@@ -84,11 +88,14 @@ describe('EventStore — persistence back-fills the new columns (SPEC §5)', () 
 
 describe('EventStore — NEVER throws (the cardinal guarantee)', () => {
   it('swallows a DB write failure and logs loud (the loop guard)', async () => {
+    // Model the real drizzle chain insert().values().onConflictDoNothing() — the final step is the awaited promise.
     const brokenDb = {
       insert: () => ({
-        values: async () => {
-          throw new Error('db down');
-        },
+        values: () => ({
+          onConflictDoNothing: async () => {
+            throw new Error('db down');
+          },
+        }),
       }),
     } as unknown as ReturnType<typeof openDatabase>;
     const warn = vi.fn();
@@ -101,5 +108,56 @@ describe('EventStore — NEVER throws (the cardinal guarantee)', () => {
     ).resolves.toBeUndefined();
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]![1]).toContain('journal write failed');
+  });
+});
+
+// Fresh in-memory Postgres (PGlite) with the real migrations applied — exercises the durable-dedup unique index
+// `uq_copy_journal_wallet_corr_code` exactly as production creates it, with no dependency on a local :5435 server.
+const pgliteDb = await (async () => {
+  const d = drizzle(new PGlite(), { schema });
+  await migrate(d, { migrationsFolder: './drizzle' });
+  return d as unknown as ReturnType<typeof openDatabase>;
+})();
+
+describe('EventStore — durable dedup is SILENT, not journal_write_failed (#64)', () => {
+  it('collapses a true duplicate (same wallet, correlationId, code) to ONE row with NO error log', async () => {
+    const warn = vi.fn();
+    const log = { warn, info: vi.fn(), error: vi.fn() } as unknown as Logger;
+    const store = new EventStore(pgliteDb, log);
+    const dup = event({
+      ctx: { userId: 'system', wallet: 'W_DUP', process: 'brain' },
+      correlationId: 'DUP',
+    });
+
+    await store.persistDurable(dup);
+    await store.persistDurable(dup); // WS + cursor-poll re-observation after a restart (LRU reset)
+
+    const rows = await pgliteDb.select().from(copyJournal).where(eq(copyJournal.wallet, 'W_DUP'));
+    expect(rows).toHaveLength(1); // the unique index collapsed the duplicate
+    // The intended dedup MUST NOT masquerade as a DB failure — that error is reserved for real DB errors.
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('keeps rows with a DISTINCT correlationId as separate rows (so a producer-side attempt discriminator preserves retry audit)', async () => {
+    const warn = vi.fn();
+    const log = { warn, info: vi.fn(), error: vi.fn() } as unknown as Logger;
+    const store = new EventStore(pgliteDb, log);
+    const base = {
+      ctx: { userId: 'system', wallet: 'W_RETRY', process: 'brain' as const },
+      commandId: 'CMD',
+    };
+
+    // Two sign-failure attempts on the SAME commandId — a genuine retry becomes a DISTINCT row IFF the producer
+    // discriminates the correlationId per attempt (here 'CMD#1' vs 'CMD#2'). The index only collapses TRUE duplicates.
+    await store.persistDurable(
+      event({ ...base, correlationId: 'CMD#1', code: 'lifecycle.open_failed' }),
+    );
+    await store.persistDurable(
+      event({ ...base, correlationId: 'CMD#2', code: 'lifecycle.open_failed' }),
+    );
+
+    const rows = await pgliteDb.select().from(copyJournal).where(eq(copyJournal.wallet, 'W_RETRY'));
+    expect(rows).toHaveLength(2); // both retry-audit rows preserved
+    expect(warn).not.toHaveBeenCalled();
   });
 });

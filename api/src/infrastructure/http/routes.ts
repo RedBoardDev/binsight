@@ -22,6 +22,7 @@ import { TWO_SIDED_MODES, type TwoSidedMode } from '@/domain/copybot/config/type
 import type { NewLeaderInput } from '@/domain/copybot/leader-onboard';
 import type { AccountRepository, ConfigRepository, PositionRepository } from '@/domain/ports';
 import type { GeckoTerminalGateway } from '@/infrastructure/geckoterminal/geckoterminal-gateway';
+import { csvCell } from '@/infrastructure/http/csv';
 import type { PresenceTracker } from '@/infrastructure/notifications/presence';
 import type { NetworthSnapshotRepository } from '@/infrastructure/persistence/networth-snapshot-repository';
 import type { PushRepository, PushSub } from '@/infrastructure/persistence/push-repository';
@@ -386,10 +387,6 @@ export function registerRoutes(app: FastifyInstance, deps: RouteDeps): void {
       dir: req.query.dir === 'asc' ? 'asc' : 'desc',
       result,
     });
-    const cell = (v: unknown) => {
-      const s = v == null ? '' : String(v);
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    };
     const iso = (ms: number | null) => (ms ? new Date(ms).toISOString() : '');
     const lines = [
       'Pair,Strategy,Invested SOL,Withdrawn SOL,Fees SOL,PnL SOL,PnL %,Opened,Closed,Duration s,Position',
@@ -409,7 +406,7 @@ export function registerRoutes(app: FastifyInstance, deps: RouteDeps): void {
           r.durationSeconds,
           r.positionAddress,
         ]
-          .map(cell)
+          .map(csvCell)
           .join(','),
       );
     }

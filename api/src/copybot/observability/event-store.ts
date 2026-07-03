@@ -46,39 +46,49 @@ export class EventStore {
   /** Build the full row (legacy + new columns) from the event and insert it. Swallows + logs loud on failure. */
   private async write(e: CopyEvent): Promise<void> {
     try {
-      await this.db.insert(copyJournal).values({
-        // ── legacy columns (unchanged shape — preserves CopyJournalStore's row) ──────────────────────────────
-        ts: e.ts,
-        process: e.ctx.process,
-        stage: e.stage,
-        outcome: e.outcome,
-        severity: e.severity ?? severityFor(e.outcome),
-        reason: e.reason ?? null,
-        kind: e.kind ?? null,
-        leader: e.leader ?? null,
-        pool: e.pool ?? null,
-        leaderPosition: e.leaderPosition ?? null,
-        ourPosition: e.ourPosition ?? null,
-        commandId: e.commandId ?? null,
-        eventKey: e.eventKey ?? null,
-        leaderSizeSol: e.leaderSizeSol ?? null,
-        ourSizeSol: e.ourSizeSol ?? null,
-        signature: e.signature ?? null,
-        latencyMs: e.latencyMs ?? null,
-        // `detail` carries the rich SOL payload; the serialized `cause` is folded into it (SPEC §5).
-        detail: detailWithCause(e),
-        // ── observability redesign columns (SPEC §5) ────────────────────────────────────────────────────────
-        userId: e.ctx.userId,
-        wallet: e.ctx.wallet,
-        correlationId: e.correlationId ?? null,
-        eventTs: e.eventTs,
-        code: e.code,
-        category: e.category,
-        audience: e.audience,
-        pinned: e.pinned,
-        // `delivered_at` is the future external-push outbox state — always null while feed-only (SPEC §5).
-        deliveredAt: null,
-      });
+      await this.db
+        .insert(copyJournal)
+        .values({
+          // ── legacy columns (unchanged shape — preserves CopyJournalStore's row) ──────────────────────────────
+          ts: e.ts,
+          process: e.ctx.process,
+          stage: e.stage,
+          outcome: e.outcome,
+          severity: e.severity ?? severityFor(e.outcome),
+          reason: e.reason ?? null,
+          kind: e.kind ?? null,
+          leader: e.leader ?? null,
+          pool: e.pool ?? null,
+          leaderPosition: e.leaderPosition ?? null,
+          ourPosition: e.ourPosition ?? null,
+          commandId: e.commandId ?? null,
+          eventKey: e.eventKey ?? null,
+          leaderSizeSol: e.leaderSizeSol ?? null,
+          ourSizeSol: e.ourSizeSol ?? null,
+          signature: e.signature ?? null,
+          latencyMs: e.latencyMs ?? null,
+          // `detail` carries the rich SOL payload; the serialized `cause` is folded into it (SPEC §5).
+          detail: detailWithCause(e),
+          // ── observability redesign columns (SPEC §5) ────────────────────────────────────────────────────────
+          userId: e.ctx.userId,
+          wallet: e.ctx.wallet,
+          correlationId: e.correlationId ?? null,
+          eventTs: e.eventTs,
+          code: e.code,
+          category: e.category,
+          audience: e.audience,
+          pinned: e.pinned,
+          // `delivered_at` is the future external-push outbox state — always null while feed-only (SPEC §5).
+          deliveredAt: null,
+        })
+        // Intended durable dedup is SILENT, not an error (#64): the `uq_copy_journal_wallet_corr_code` index is a
+        // restart backstop — the WS + cursor-poll re-observing the SAME (wallet, correlationId, code) must collapse
+        // to one row WITHOUT logging `journal_write_failed`. Reserving that error for REAL DB failures keeps the
+        // fail-loud signal meaningful. NOTE: a GENUINE retry-audit row (a failsafe/forceReclaim re-close deliberately
+        // reuses the same commandId, SPEC §6) still collapses here — preserving it as a DISTINCT row requires an
+        // attempt discriminator on `correlationId` at the event PRODUCER (domain/copybot/observability emitters +
+        // the brain/coffre sign/reconcile stages), which is out of this adapter's scope. See the review's #64.
+        .onConflictDoNothing();
     } catch (err) {
       // Loud but non-fatal AND non-recursive: log via pino directly, never re-emit through the (broken) journal
       // (the loop guard, SPEC §6 / D-7). The level is `warn` to match `CODE_REGISTRY['system.journal_write_failed']`
