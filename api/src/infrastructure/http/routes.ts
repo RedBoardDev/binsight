@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import {
   EventKindSchema,
   type LiveEvent,
@@ -21,7 +22,7 @@ import type { RpcCreditLedgerRepository } from '@/infrastructure/persistence/rpc
 import { renderClosedPnlCard } from '@/infrastructure/share-card/pnl-card';
 import type { CreditMeter } from '@/infrastructure/solana/credit-meter';
 import { TtlCache, VersionedCache } from '@/util/cache';
-import { isValidSolanaAddress } from './auth';
+import { isValidSolanaAddress } from '@/util/solana-address';
 
 /** Per-account watchlist size (the owner is exempt). Doubles as admission control. */
 const MAX_WALLETS_PER_ACCOUNT = 3;
@@ -29,6 +30,10 @@ const MAX_WALLETS_PER_ACCOUNT = 3;
 const GLOBAL_WALLET_CAP = 200;
 /** How many recent UTC days of persisted credit spend /debug/rpc returns (the panel's last-7d window). */
 const DEBUG_RPC_HISTORY_DAYS = 7;
+/** Invite-code entropy: 6 random bytes = 12 hex chars — unguessable at invite scale, easy to type. */
+const INVITE_CODE_BYTES = 6;
+/** Cap on the free-text note attached to an invite (same bound the old whitelist notes used). */
+const INVITE_NOTE_MAX_CHARS = 200;
 
 export type RouteDeps = {
   bus: EventBus;
@@ -53,8 +58,6 @@ export type RouteDeps = {
   vapidPublicKey: string;
   /** Send a test push to an account's own subscriptions; returns how many were targeted. */
   sendTestPush: (userId: string) => Promise<number>;
-  /** Open-access mode (env OPEN_ACCESS_MODE): single-wallet accounts + notifications disabled. */
-  openAccess: boolean;
 };
 
 /** Owner-only guard for operational/notification routes. Returns false (and replies 403) otherwise. */
@@ -82,7 +85,6 @@ export function registerRoutes(app: FastifyInstance, deps: RouteDeps): void {
     creditLedger,
     vapidPublicKey,
     sendTestPush,
-    openAccess,
   } = deps;
 
   // A watchlist changes only on add/remove (which invalidate below), so cache it briefly instead of
@@ -180,11 +182,8 @@ export function registerRoutes(app: FastifyInstance, deps: RouteDeps): void {
     }
     const already = await accounts.isWatching(me.id, address);
     if (!already && !me.isOwner) {
-      // Open-access accounts are single-wallet (the registration address is auto-watched), so any
-      // second wallet is rejected. The owner is exempt in either mode.
-      const cap = openAccess ? 1 : MAX_WALLETS_PER_ACCOUNT;
-      if ((await accounts.countWatched(me.id)) >= cap) {
-        return reply.code(409).send({ error: `wallet limit reached (${cap})` });
+      if ((await accounts.countWatched(me.id)) >= MAX_WALLETS_PER_ACCOUNT) {
+        return reply.code(409).send({ error: `wallet limit reached (${MAX_WALLETS_PER_ACCOUNT})` });
       }
       const monitored = await accounts.monitoredWallets();
       if (!monitored.includes(address) && monitored.length >= GLOBAL_WALLET_CAP) {
@@ -284,9 +283,6 @@ export function registerRoutes(app: FastifyInstance, deps: RouteDeps): void {
   app.post<{ Body: { endpoint?: unknown; keys?: { p256dh?: unknown; auth?: unknown } } }>(
     '/push/subscribe',
     async (req, reply) => {
-      // Open-access mode disables notifications entirely — refuse subscriptions so no web push is ever
-      // routed to these accounts (the UI also hides the toggle; this is the server-side guarantee).
-      if (openAccess) return reply.code(403).send({ error: 'notifications disabled' });
       const b = req.body;
       const endpoint = typeof b?.endpoint === 'string' ? b.endpoint : null;
       const p256dh = typeof b?.keys?.p256dh === 'string' ? b.keys.p256dh : null;
@@ -506,39 +502,48 @@ export function registerRoutes(app: FastifyInstance, deps: RouteDeps): void {
     return configRepo.saveSettings(parsed.data);
   });
 
-  // ── Admin (owner only): unified access + wallet overview ──────────────────────────────────────
-  // One list over invites (whitelist) + accounts; one revoke removes BOTH so access truly ends.
-  app.get('/admin/access', async (req, reply) => {
+  // ── Admin (owner only): invite codes + wallet overview ────────────────────────────────────────
+  // Single-use codes gate account creation (SPEC §1): a verified Privy login with no account must
+  // redeem one. Codes are traceable (used_by → account) and optionally expire.
+  app.get('/admin/invites', async (req, reply) => {
     if (!requireOwner(req, reply)) return;
-    return accounts.listAccess();
+    const invites = await accounts.listInvites();
+    // Surface the used/unused state explicitly so the admin UI doesn't re-derive it.
+    return invites.map((i) => ({ ...i, used: i.usedByUserId !== null }));
   });
 
-  // Invite: whitelist an address so it can register.
-  app.post<{ Body: { address?: unknown; note?: unknown } }>('/admin/access', async (req, reply) => {
+  // Generate a new invite code — SERVER-generated (crypto randomness), never client-chosen.
+  app.post<{ Body: { note?: unknown; expiresAt?: unknown } }>(
+    '/admin/invites',
+    async (req, reply) => {
+      if (!requireOwner(req, reply)) return;
+      const expiresAtRaw = req.body?.expiresAt;
+      if (
+        expiresAtRaw != null &&
+        (typeof expiresAtRaw !== 'number' || !Number.isFinite(expiresAtRaw))
+      ) {
+        return reply.code(400).send({ error: 'expiresAt must be an epoch-ms number' });
+      }
+      const code = randomBytes(INVITE_CODE_BYTES).toString('hex');
+      await accounts.createInvite({
+        code,
+        note: (typeof req.body?.note === 'string' ? req.body.note : '').slice(
+          0,
+          INVITE_NOTE_MAX_CHARS,
+        ),
+        expiresAt: expiresAtRaw ?? null,
+      });
+      return { ok: true, code };
+    },
+  );
+
+  // Delete an UNUSED invite (revoking it before anyone redeems). A redeemed code is the permanent
+  // code→account audit trail and cannot be deleted — hence 404 for unknown AND used codes.
+  app.delete<{ Params: { code: string } }>('/admin/invites/:code', async (req, reply) => {
     if (!requireOwner(req, reply)) return;
-    const address = req.body?.address;
-    if (!isValidSolanaAddress(address)) {
-      return reply.code(400).send({ error: 'invalid Solana address' });
-    }
-    await accounts.addWhitelist({
-      address,
-      note: (typeof req.body?.note === 'string' ? req.body.note : '').slice(0, 200),
-      addedBy: req.account!.address,
-    });
+    const deleted = await accounts.deleteInvite(req.params.code);
+    if (!deleted) return reply.code(404).send({ error: 'invite not found or already used' });
     return { ok: true };
-  });
-
-  // Revoke access for an address: delete its account (if any) AND remove the invite — the person loses
-  // access and can't re-register. SHARED wallet data is kept; live monitoring of orphan wallets stops.
-  app.delete<{ Params: { address: string } }>('/admin/access/:address', async (req, reply) => {
-    if (!requireOwner(req, reply)) return;
-    const found = await accounts.findByAddress(req.params.address);
-    if (found?.user.isOwner) return reply.code(400).send({ error: 'cannot revoke the owner' });
-    let stopped: string[] = [];
-    if (found) stopped = await accounts.deleteAccount(found.user.id);
-    await accounts.removeWhitelist(req.params.address);
-    for (const w of stopped) engine.removeWallet(w);
-    return { ok: true, stoppedMonitoring: stopped.length };
   });
 
   // Operational overview of every monitored wallet — watchers + open/closed positions + last sync, plus

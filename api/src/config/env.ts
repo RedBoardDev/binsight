@@ -3,30 +3,24 @@ import { z } from 'zod';
 const EnvSchema = z.object({
   PORT: z.coerce.number().int().positive().default(8787),
 
-  /** The secret that signs every session JWT (HS256). REQUIRED — no default, no placeholder — so the
-   *  schema fails fast at boot if it is missing or too short. Generate a ≥32-char random value:
-   *  `openssl rand -hex 32`. Keep it STABLE: changing it invalidates every existing session. */
+  /** The WS-ticket signing key (HS256). Sessions are 100% Privy; this secret only signs the
+   *  short-lived /auth/ws-ticket a browser passes to /live (WS can't send an Authorization header).
+   *  REQUIRED — no default — so the schema fails fast at boot. Generate: `openssl rand -hex 32`. */
   AUTH_SECRET: z
     .string()
     .min(32, 'AUTH_SECRET is required: a ≥32-char random secret (generate: openssl rand -hex 32)'),
-  /** The owner's Solana wallet address: auto-whitelisted on boot and flagged `isOwner` when it
-   *  registers (the bootstrap account). Empty = no owner seeded (populate the whitelist another way). */
-  OWNER_ADDRESS: z
+  /** The Privy application id — the audience every access token must carry, and the key of the
+   *  per-app JWKS endpoint the verifier reads. REQUIRED: without it no token can be verified. */
+  PRIVY_APP_ID: z.string().min(1, 'PRIVY_APP_ID is required (the Privy application id)'),
+  /** The operator's Privy DID (`did:privy:...`): redeeming an invite with this identity creates the
+   *  account flagged `isOwner` (the bootstrap). Empty = no owner bootstrap on this deployment. */
+  OWNER_PRIVY_DID: z
     .string()
     .default('')
     .refine(
-      (v) => v === '' || /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v),
-      'OWNER_ADDRESS must be a base58 Solana address',
+      (v) => v === '' || v.startsWith('did:privy:'),
+      'OWNER_PRIVY_DID must be a Privy DID (did:privy:...)',
     ),
-
-  /** Open-access mode. When 'true', registration is address + password only — NO wallet signature and
-   *  NO whitelist (anyone can create an account for any address), accounts are single-wallet, and
-   *  notifications are disabled. The default 'false' keeps the secure SIWS + whitelist + multi-wallet
-   *  behavior. Reversible per deployment; the SIWS/whitelist code stays in place either way. */
-  OPEN_ACCESS_MODE: z
-    .enum(['true', 'false'])
-    .default('false')
-    .transform((v) => v === 'true'),
 
   /** Master switch for the on-chain realized-PnL pass (the chained-FIFO `market_pnl_sol` writer). It
    *  needs the wallet's FULL buys/sells history, fetched from Helius and NOT persisted, so on a cold

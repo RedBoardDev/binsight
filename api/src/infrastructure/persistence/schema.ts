@@ -329,18 +329,16 @@ export const pushSubscriptions = pgTable(
   (t) => [index('idx_push_user').on(t.userId)],
 );
 
-// --- Multi-tenant accounts (public web). The owner is a seeded user with is_owner = true. ---
+// --- Multi-tenant accounts (public web). Identity is the Privy DID; sessions are 100% Privy. ---
 export const users = pgTable('users', {
   id: text('id').primaryKey(),
-  // The Solana wallet address = the account identity AND the username (unique). Proven by a one-time
-  // wallet signature at registration; thereafter the account is protected by the password below.
-  address: text('address').notNull().unique(),
-  passwordHash: text('password_hash').notNull(),
+  // The Privy user id (`did:privy:...`) = the account identity. The auth hook maps every verified
+  // access token's `sub` to this row; there is no password and no local session state.
+  privyUserId: text('privy_user_id').notNull().unique(),
+  // The account's Privy embedded Solana wallet address — filled by the custody increment (nullable
+  // until then). Unique: one wallet is one account's trading identity.
+  address: text('address').unique(),
   isOwner: boolean('is_owner').notNull().default(false),
-  // Bumped on password reset to invalidate every previously-issued JWT for this user (session kill):
-  // a token carries the version it was minted with; the auth hook rejects any token whose version is
-  // stale. Without this a leaked/old session would survive a password reset.
-  tokenVersion: integer('token_version').notNull().default(0),
   createdAt: ms('created_at').notNull(),
 });
 
@@ -360,43 +358,18 @@ export const userWatchedWallets = pgTable(
   ],
 );
 
-// Owner-managed allowlist gating who may register (beta is invite-tight). Registration is rejected
-// unless the connecting wallet address is present here. The owner's address is seeded from OWNER_ADDRESS.
-export const walletWhitelist = pgTable('wallet_whitelist', {
-  address: text('address').primaryKey(),
+// Single-use invitation codes gating account creation (beta is invite-tight). A verified Privy login
+// with no `users` row must redeem one; the claim is atomic (used_by_user_id set exactly once), so a
+// code maps to at most one account (traceable: code → account). Optional expiry; unused codes are
+// deletable by the owner.
+export const inviteCodes = pgTable('invite_codes', {
+  code: text('code').primaryKey(),
   note: text('note').notNull().default(''),
-  addedBy: text('added_by').notNull().default(''),
   createdAt: ms('created_at').notNull(),
+  expiresAt: ms('expires_at'), // null = never expires
+  usedByUserId: text('used_by_user_id'), // set atomically at redeem; null = still available
+  usedAt: ms('used_at'),
 });
-
-// Single-use, short-TTL nonces for the register / password-reset signature challenge. The server
-// issues one bound to an address, the wallet signs the SIWS message embedding it, and it is DELETED on
-// consume — so a captured signature can never be replayed. Expired rows are pruned opportunistically.
-export const authNonces = pgTable(
-  'auth_nonces',
-  {
-    nonce: text('nonce').primaryKey(),
-    address: text('address').notNull(),
-    expiresAt: ms('expires_at').notNull(),
-    // Domain separation: a nonce minted for 'register' can't be consumed by the 'reset' flow (or vice
-    // versa), so a captured challenge is bound to its intended action as well as its address.
-    purpose: text('purpose').notNull().default('register'),
-  },
-  (t) => [index('idx_auth_nonces_address').on(t.address)],
-);
-
-// Active-session allowlist: one row per issued JWT, keyed by its `jti`. The auth hook accepts a token
-// only while its jti is still here — enabling real per-session logout + revocation (tokenVersion stays
-// the coarse global kill). Rows are deleted on logout / password reset and pruned once past expiry.
-export const authSessions = pgTable(
-  'auth_sessions',
-  {
-    jti: text('jti').primaryKey(),
-    userId: text('user_id').notNull(),
-    expiresAt: ms('expires_at').notNull(),
-  },
-  (t) => [index('idx_auth_sessions_user').on(t.userId)],
-);
 
 export const notifRules = pgTable(
   'notif_rules',

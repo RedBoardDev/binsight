@@ -93,6 +93,7 @@ __metadata:
     drizzle-orm: "npm:^0.45.2"
     fastify: "npm:^5.2.1"
     ioredis: "npm:5.11.1"
+    jose: "npm:6.2.3"
     pino: "npm:^9.6.0"
     postgres: "npm:^3.4.9"
     tsup: "npm:^8.5.1"
@@ -6143,6 +6144,13 @@ __metadata:
   bin:
     jiti: lib/jiti-cli.mjs
   checksum: 10/6d75a8dbd61dbee031aa0937fabb748ff8ddf370b971958cc704f5cf26b4c5bdc9dcd0563059b2627a2bd41d946fa0bc64f912fdc8981ca7945a9d63c74ad0f9
+  languageName: node
+  linkType: hard
+
+"jose@npm:6.2.3":
+  version: 6.2.3
+  resolution: "jose@npm:6.2.3"
+  checksum: 10/876974613c5ee988d43b65a34c96ce440dbf7706a2f07f465b8874af16ee532102e224459a7068d2c6ef044affe49690667d23ca12770c279804baec95a09608
   languageName: node
   linkType: hard
 

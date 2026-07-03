@@ -1,5 +1,6 @@
 import type { RuntimeSettings } from '@binsight/shared';
 import { Connection } from '@solana/web3.js';
+import { createRemoteJWKSet } from 'jose';
 import { pino } from 'pino';
 import { DlmmPositionPnl } from './application/dlmm-position-pnl';
 import { Engine } from './application/engine/index';
@@ -18,6 +19,7 @@ import { WalletPnlService } from './application/wallet-pnl-service';
 import type { AppConfig } from './config/env';
 import { GeckoTerminalGateway } from './infrastructure/geckoterminal/geckoterminal-gateway';
 import { installGracefulShutdown } from './infrastructure/http/graceful-shutdown';
+import { createPrivyVerifier, privyJwksUrl } from './infrastructure/http/privy-auth';
 import { buildServer } from './infrastructure/http/server';
 import { CachedPriceGateway } from './infrastructure/jupiter/cached-price-gateway';
 import { JupiterPriceGateway } from './infrastructure/jupiter/jupiter-price';
@@ -252,7 +254,6 @@ export function compose(config: AppConfig): App {
       // a no-op once populated (upsertFlows then maintains it incrementally).
       await walletFlowRepo.ensureDailyBackfilled();
       await configRepo.init();
-      await accounts.init(config.OWNER_ADDRESS);
       notifications.start();
       networthRecorder.start();
       await engine.start();
@@ -274,7 +275,11 @@ export function compose(config: AppConfig): App {
         creditLedger: creditLedgerRepo,
         vapidPublicKey: config.VAPID_PUBLIC_KEY,
         sendTestPush: (userId) => pushRepo.forUser(userId).then((subs) => webPush.sendTest(subs)),
-        openAccess: config.OPEN_ACCESS_MODE,
+        // Privy access-token verifier: the remote JWKS is fetched lazily + cached by jose.
+        privyVerifier: createPrivyVerifier({
+          appId: config.PRIVY_APP_ID,
+          jwks: createRemoteJWKSet(privyJwksUrl(config.PRIVY_APP_ID)),
+        }),
       });
       // Periodic RPC call-count log (live + backfill lanes) for Helius tier-headroom monitoring —
       // the wallet PnL curve is served from persisted flows (SQL), so there's no cache to warm.

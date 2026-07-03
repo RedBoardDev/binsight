@@ -10,9 +10,6 @@ import { verifyJwt } from './auth';
 interface WsClient {
   socket: WebSocket;
   userId: string;
-  /** The connecting token's jti + version — re-checked on a timer so revocation reaches a live socket. */
-  jti: string;
-  ver: number;
   /** Resolved once at connect — only the owner's heartbeats gate Bark (notifications are owner-only). */
   isOwner: boolean;
   watched: Set<string>;
@@ -24,20 +21,16 @@ interface WsClient {
 const REVALIDATE_MS = 30_000;
 
 /**
- * A live socket stays authorized only while its account still exists, its token version still matches
- * (a password reset bumps it), and its session jti is still allow-listed (logout / owner-revoke deletes
- * it). The HTTP Bearer hook enforces exactly this, but /live bypasses that hook and authenticates once
- * at upgrade — so without re-checking, a revoked token would keep streaming until the JWT's exp.
+ * A live socket stays authorized only while its account still exists. Sessions are 100% Privy now —
+ * the WS ticket already expired seconds after connect — so account deletion is the ONE server-side
+ * revocation that must still reach an already-open socket (/live authenticates once at upgrade and
+ * would otherwise keep streaming to a deleted account forever).
  */
-export async function sessionStillValid(
-  accounts: Pick<AccountRepository, 'findById' | 'isSessionValid'>,
+export async function accountStillValid(
+  accounts: Pick<AccountRepository, 'findById'>,
   userId: string,
-  ver: number,
-  jti: string,
 ): Promise<boolean> {
-  const u = await accounts.findById(userId);
-  if (!u || u.tokenVersion !== ver) return false;
-  return accounts.isSessionValid(jti);
+  return (await accounts.findById(userId)) !== null;
 }
 
 // Shed frames to a client that isn't draining (bufferedAmount past this) instead of growing the heap
@@ -105,8 +98,8 @@ export function registerWebSocket(
 
   // logLevel:silent — a browser passes a short-lived ws-ticket in ?token=; keep it out of request logs.
   app.get('/live', { websocket: true, logLevel: 'silent' }, async (socket: WebSocket, req) => {
-    // Browsers send Origin on a WS upgrade; reject any that isn't allow-listed (defence-in-depth on top
-    // of the SameSite cookie that gates the ws-ticket). Native clients send no Origin → allowed.
+    // Browsers send Origin on a WS upgrade; reject any that isn't allow-listed (defence-in-depth on
+    // top of the Bearer-guarded ws-ticket mint). Native clients send no Origin → allowed.
     const origin = req.headers.origin;
     if (typeof origin === 'string' && !allowedOrigins.includes(origin)) {
       app.log.warn(
@@ -116,8 +109,8 @@ export function registerWebSocket(
       socket.close(1008, 'forbidden origin');
       return;
     }
-    // Native clients send the JWT in the Authorization header (kept out of URLs/logs, S10); browsers
-    // can't set WS headers, so they pass a short-lived ws-ticket in ?token=.
+    // Native clients send the ticket in the Authorization header (kept out of URLs/logs, S10);
+    // browsers can't set WS headers, so they pass the short-lived ws-ticket in ?token=.
     const token = liveToken(req.headers.authorization, (req.query as { token?: string }).token);
     const payload = token ? verifyJwt(secret, token) : null;
     if (!payload) {
@@ -125,18 +118,16 @@ export function registerWebSocket(
       return;
     }
     const userId = payload.sub;
+    // The ticket only proves the caller passed the Bearer hook seconds ago — the account row is the
+    // authority (a deleted account's freshly-minted ticket must not open a stream).
     const me = await accounts.findById(userId);
-    // /live bypasses the Bearer hook, so enforce the SAME revocation checks here (token version + jti
-    // allowlist), not just the JWT signature — else a logged-out / reset / revoked token streams to exp.
-    if (!me || me.tokenVersion !== payload.ver || !(await accounts.isSessionValid(payload.jti))) {
+    if (!me) {
       socket.close(1008, 'unauthorized');
       return;
     }
     const client: WsClient = {
       socket,
       userId,
-      jti: payload.jti,
-      ver: payload.ver,
       isOwner: me.isOwner,
       watched: await watchedOf(userId),
       view: 'all',
@@ -243,15 +234,15 @@ export function registerWebSocket(
     }
   });
 
-  // Revocation + watchlist changes don't reach an already-open socket (it authenticates once at
-  // upgrade), so re-check every client on a timer: close any whose account/session was revoked, and
+  // Account deletion + watchlist changes don't reach an already-open socket (it authenticates once at
+  // upgrade), so re-check every client on a timer: close any whose account no longer exists, and
   // refresh each client's watched set so a removed wallet stops streaming (a newly-added one starts).
   const revalidate = setInterval(async () => {
     if (clients.size === 0) return;
     const watchedByUser = new Map<string, Set<string>>();
     for (const c of [...clients]) {
       if (c.socket.readyState !== c.socket.OPEN) continue;
-      if (!(await sessionStillValid(accounts, c.userId, c.ver, c.jti))) {
+      if (!(await accountStillValid(accounts, c.userId))) {
         c.socket.close(1008, 'session revoked');
         continue;
       }

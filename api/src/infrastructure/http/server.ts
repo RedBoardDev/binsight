@@ -1,35 +1,29 @@
-import { randomBytes } from 'node:crypto';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
 import Fastify from 'fastify';
 import type { AppConfig } from '@/config/env';
-import {
-  buildSiwsMessage,
-  createJwt,
-  hashPassword,
-  isValidSolanaAddress,
-  TOKEN_TTL_SECONDS,
-  verifyJwt,
-  verifyPassword,
-  verifyWalletSignature,
-} from './auth';
+import { createJwt } from './auth';
+import type { PrivyVerifier } from './privy-auth';
 import { type RouteDeps, registerRoutes } from './routes';
 import { registerWebSocket } from './websocket';
 
 declare module 'fastify' {
   interface FastifyRequest {
-    account?: { id: string; isOwner: boolean; address: string; tokenVersion: number; jti: string };
+    account?: { id: string; isOwner: boolean; address: string | null; privyUserId: string };
+    /** The verified Privy DID when NO local account row exists yet (the invite-gate window). */
+    privyDid?: string;
   }
 }
 
+/** WS tickets are minted per connection and consumed immediately — 60s absorbs any handshake lag. */
 const WS_TICKET_TTL_SECONDS = 60;
+/** Legacy `ver` claim value on WS tickets — Privy owns token lifecycles now; the field is vestigial. */
+const WS_TICKET_VERSION = 0;
+/** Legacy `jti` claim value on WS tickets — no session table backs tickets; a fixed marker. */
+const WS_TICKET_JTI = 'ws';
 
-// Fixed pause after every failed auth attempt — slows credential stuffing without any lockout state
-// that could be weaponised (see slowFail in buildServer for why the hard lockout was removed).
-const LOGIN_FAIL_DELAY_MS = 300;
-
-/** Everything registerRoutes needs (RouteDeps) plus the server-only app config. */
-export type ServerDeps = RouteDeps & { config: AppConfig };
+/** Everything registerRoutes needs (RouteDeps) plus the server-only app config + token verifier. */
+export type ServerDeps = RouteDeps & { config: AppConfig; privyVerifier: PrivyVerifier };
 
 export async function buildServer(deps: ServerDeps) {
   const app = Fastify({ logger: { level: deps.config.LOG_LEVEL } });
@@ -51,227 +45,50 @@ export async function buildServer(deps: ServerDeps) {
     reply.code(status).send({ error: status >= 500 ? 'internal error' : message });
   });
 
-  // ── Auth: wallet-address identity. A one-time signature proves ownership at register; thereafter
-  // address + password is exchanged for a session JWT, and everything else requires that JWT. ───────
-  const secret = deps.config.AUTH_SECRET;
+  // ── Auth: 100% Privy. Every request carries the Privy access token as a Bearer; the hook verifies
+  // it against Privy's JWKS (sub = the DID) and maps the DID to a local account row. A verified
+  // login with NO account row yet may only redeem an invite code (the account-creation gate). ──────
+  const secret = deps.config.AUTH_SECRET; // signs the short-lived WS ticket only
 
-  // SIWS binding: derive a STABLE domain/uri from the first allowed web origin. The same values build
-  // the challenge at /auth/nonce and reconstruct it at verify — the client-sent message is never trusted.
-  const primaryOrigin = deps.config.WEB_ORIGINS.split(',')[0]?.trim() || 'http://localhost:3000';
-  const siwsDomain = (() => {
-    try {
-      return new URL(primaryOrigin).host;
-    } catch {
-      return 'binsight';
+  // Redeem an invite code: the only mutation a verified-but-accountless Privy login may perform.
+  // The claim + account creation are one atomic transaction (a code maps to at most one account).
+  app.post('/auth/redeem-invite', async (req, reply) => {
+    if (req.account) return reply.code(409).send({ error: 'already_registered' });
+    const code = (req.body as { code?: unknown } | undefined)?.code;
+    if (typeof code !== 'string' || code.length === 0) {
+      return reply.code(400).send({ error: 'invalid_code' });
     }
-  })();
-  const NONCE_TTL_MS = 5 * 60 * 1000; // 5 minutes — long enough to read a wallet prompt, short for replay
-  const newNonce = (): string => randomBytes(24).toString('base64url');
-  const challengeFor = (address: string, nonce: string): string =>
-    buildSiwsMessage({ domain: siwsDomain, uri: primaryOrigin, address, nonce });
-
-  // Every failed auth attempt pauses for a fixed delay — that, plus the whitelist gate and slow scrypt,
-  // is the credential-stuffing friction. There is deliberately NO hard lockout: behind the BFF every
-  // browser request shares one server-side IP, so an IP lockout 429'd ALL web users on one user's
-  // failures (S04), and a per-account key let an attacker lock out any victim by their public address
-  // (S05) — both DoS vectors, and the keyed Map grew unbounded (S06). A pause has none of those.
-  const slowFail = (): Promise<void> => new Promise((r) => setTimeout(r, LOGIN_FAIL_DELAY_MS));
-  // A fixed dummy hash so /auth/login runs scrypt even for an unknown address — equalises response
-  // timing so the endpoint can't be used to enumerate which addresses are registered (L2).
-  const DUMMY_PASSWORD_HASH = hashPassword(randomBytes(16).toString('hex'));
-  // Each issued JWT gets a random session id (jti) + a row in the session allowlist, so logout / reset
-  // can revoke it before its TTL (real per-session revocation).
-  const newJti = (): string => randomBytes(16).toString('base64url');
-  const issueSession = async (
-    userId: string,
-    ver: number,
-  ): Promise<{ token: string; expiresInSeconds: number }> => {
-    const jti = newJti();
-    await deps.accounts.createSession(jti, userId, Date.now() + TOKEN_TTL_SECONDS * 1000);
-    return { token: createJwt(secret, userId, ver, jti), expiresInSeconds: TOKEN_TTL_SECONDS };
-  };
-
-  // Register step 1: hand back a single-use nonce + the exact message to sign — ONLY for a whitelisted
-  // address (non-approved wallets can't even start, and the UI gets a clean "not approved" signal).
-  app.post('/auth/nonce', async (req, reply) => {
-    const address = (req.body as { address?: unknown } | undefined)?.address;
-    if (!isValidSolanaAddress(address)) {
-      await slowFail();
-      return reply.code(400).send({ error: 'invalid Solana address' });
-    }
-    if (!deps.openAccess && !(await deps.accounts.isWhitelisted(address))) {
-      await slowFail();
-      return reply.code(403).send({ error: 'not approved', notWhitelisted: true });
-    }
-    if (await deps.accounts.findByAddress(address)) {
-      return reply.code(409).send({ error: 'account already exists, sign in instead' });
-    }
-    const nonce = newNonce();
-    await deps.accounts.issueNonce(address, nonce, Date.now() + NONCE_TTL_MS, 'register');
-    return reply.send({ nonce, message: challengeFor(address, nonce) });
-  });
-
-  // Register step 2: verify the signature over the exact challenge, then create the account, set its
-  // password, auto-watch the address, and issue a session. Whitelist + nonce are re-checked server-side.
-  app.post('/auth/register', async (req, reply) => {
-    const body = req.body as
-      | { address?: unknown; signature?: unknown; password?: unknown; nonce?: unknown }
-      | undefined;
-    const address = body?.address;
-    const password = typeof body?.password === 'string' ? body.password : '';
-
-    // Open-access mode: address + password only — no whitelist, no nonce, no signature. The wallet is
-    // NOT proven to belong to the caller (first-come binding); intentional for read-access viewing.
-    if (deps.openAccess) {
-      if (!isValidSolanaAddress(address) || password.length < 8) {
-        await slowFail();
-        return reply.code(400).send({ error: 'address and password (≥8) required' });
-      }
-      if (await deps.accounts.findByAddress(address)) {
-        return reply.code(409).send({ error: 'account already exists, sign in instead' });
-      }
-      const openUser = await deps.accounts.createUser({
-        address,
-        passwordHash: hashPassword(password),
-        isOwner: address === deps.config.OWNER_ADDRESS,
-      });
-      await deps.accounts.addWatch(openUser.id, { address });
-      await deps.engine.addWallet(address);
-      return reply.send(await issueSession(openUser.id, openUser.tokenVersion));
-    }
-
-    const signature = body?.signature;
-    const nonce = body?.nonce;
-    if (
-      !isValidSolanaAddress(address) ||
-      typeof signature !== 'string' ||
-      typeof nonce !== 'string' ||
-      password.length < 8
-    ) {
-      await slowFail();
-      return reply
-        .code(400)
-        .send({ error: 'address, signature, nonce and password (≥8) required' });
-    }
-    if (!(await deps.accounts.isWhitelisted(address))) {
-      await slowFail();
-      return reply.code(403).send({ error: 'not approved', notWhitelisted: true });
-    }
-    if (await deps.accounts.findByAddress(address)) {
-      return reply.code(409).send({ error: 'account already exists' });
-    }
-    // Consume the nonce FIRST (single-use) so a replay can't pass even with an otherwise-valid signature.
-    if (!(await deps.accounts.consumeNonce(address, nonce, 'register'))) {
-      await slowFail();
-      return reply.code(401).send({ error: 'expired or invalid challenge, restart' });
-    }
-    if (!verifyWalletSignature(challengeFor(address, nonce), signature, address)) {
-      await slowFail();
-      return reply.code(401).send({ error: 'signature verification failed' });
-    }
-    const user = await deps.accounts.createUser({
-      address,
-      passwordHash: hashPassword(password),
-      isOwner: address === deps.config.OWNER_ADDRESS,
+    const did = req.privyDid!;
+    const result = await deps.accounts.redeemInviteAndCreateUser({
+      code,
+      privyUserId: did,
+      // Owner bootstrap: the operator's DID is configured, not seeded — their redeem creates the
+      // owner account. OWNER_PRIVY_DID defaults to '' which can never equal a real DID.
+      isOwner: did === deps.config.OWNER_PRIVY_DID,
+      now: Date.now(),
     });
-    await deps.accounts.addWatch(user.id, { address });
-    await deps.engine.addWallet(address);
-    return reply.send(await issueSession(user.id, user.tokenVersion));
+    if (!result.ok) {
+      // Typed reasons so the client can render a precise gate message; 409 for a burned code (a
+      // conflict with its one-time use), 400 for a code that never was / no longer is redeemable.
+      if (result.reason === 'used') return reply.code(409).send({ error: 'code_used' });
+      if (result.reason === 'expired') return reply.code(400).send({ error: 'code_expired' });
+      return reply.code(400).send({ error: 'invalid_code' });
+    }
+    const { user } = result;
+    return reply.send({
+      ok: true,
+      account: { id: user.id, address: user.address, isOwner: user.isOwner },
+    });
   });
-
-  // Login (web + Apple apps): address + password → a session JWT. No signature.
-  app.post('/auth/login', async (req, reply) => {
-    const body = req.body as { address?: unknown; password?: unknown } | undefined;
-    const address = body?.address;
-    const password = body?.password;
-    if (!isValidSolanaAddress(address) || typeof password !== 'string') {
-      await slowFail();
-      return reply.code(400).send({ error: 'address and password required' });
-    }
-    const found = await deps.accounts.findByAddress(address);
-    // Always run scrypt (against a dummy hash when the account is missing) so the response time can't
-    // reveal whether the address is registered (L2 enumeration guard).
-    const ok = verifyPassword(password, found ? found.passwordHash : DUMMY_PASSWORD_HASH);
-    if (!found || !ok) {
-      await slowFail();
-      return reply.code(401).send({ error: 'invalid address or password' });
-    }
-    return reply.send(await issueSession(found.user.id, found.user.tokenVersion));
-  });
-
-  // Password reset step 1: hand back a nonce + message for ANY valid address (no existence check — so
-  // the endpoint cannot be used to enumerate which addresses are registered).
-  app.post('/auth/reset/nonce', async (req, reply) => {
-    const address = (req.body as { address?: unknown } | undefined)?.address;
-    if (!isValidSolanaAddress(address)) {
-      await slowFail();
-      return reply.code(400).send({ error: 'invalid Solana address' });
-    }
-    const nonce = newNonce();
-    await deps.accounts.issueNonce(address, nonce, Date.now() + NONCE_TTL_MS, 'reset');
-    return reply.send({ nonce, message: challengeFor(address, nonce) });
-  });
-
-  // Password reset step 2: prove ownership of the registration wallet → set a new password and
-  // invalidate every existing session (resetPassword bumps tokenVersion).
-  app.post('/auth/reset', async (req, reply) => {
-    const body = req.body as
-      | { address?: unknown; signature?: unknown; password?: unknown; nonce?: unknown }
-      | undefined;
-    const address = body?.address;
-    const signature = body?.signature;
-    const nonce = body?.nonce;
-    const password = typeof body?.password === 'string' ? body.password : '';
-    if (
-      !isValidSolanaAddress(address) ||
-      typeof signature !== 'string' ||
-      typeof nonce !== 'string' ||
-      password.length < 8
-    ) {
-      await slowFail();
-      return reply
-        .code(400)
-        .send({ error: 'address, signature, nonce and password (≥8) required' });
-    }
-    if (!(await deps.accounts.consumeNonce(address, nonce, 'reset'))) {
-      await slowFail();
-      return reply.code(401).send({ error: 'expired or invalid challenge, restart' });
-    }
-    if (!verifyWalletSignature(challengeFor(address, nonce), signature, address)) {
-      await slowFail();
-      return reply.code(401).send({ error: 'signature verification failed' });
-    }
-    const found = await deps.accounts.findByAddress(address);
-    if (!found) {
-      await slowFail();
-      return reply.code(404).send({ error: 'no account for this wallet' });
-    }
-    await deps.accounts.resetPassword(found.user.id, hashPassword(password));
-    await deps.accounts.deleteUserSessions(found.user.id); // revoke every existing session    // Re-fetch so the freshly-minted token carries the bumped version (keeping this new session valid).
-    const fresh = await deps.accounts.findById(found.user.id);
-    return reply.send(
-      await issueSession(found.user.id, fresh?.tokenVersion ?? found.user.tokenVersion + 1),
-    );
-  });
-
-  // Real logout: revoke this token's session (its jti) so it can't be replayed even within its TTL.
-  app.post('/auth/logout', async (req) => {
-    if (req.account) await deps.accounts.deleteSession(req.account.jti);
-    return { ok: true };
-  });
-
-  // Public feature flags for the web. No auth: the login page must read it before any session exists,
-  // to decide whether registration is the SIWS flow or the simple address + password form.
-  app.get('/config/app', async () => ({ openAccess: deps.openAccess }));
 
   // Short-lived WebSocket ticket (behind the Bearer hook) — encodes the caller's identity so the
-  // socket scopes to that account's watchlist. The web BFF mints one per connection.
+  // socket scopes to that account's watchlist. Browsers can't set WS headers, hence the ticket.
   app.get('/auth/ws-ticket', async (req) => ({
     token: createJwt(
       secret,
       req.account!.id,
-      req.account!.tokenVersion,
-      req.account!.jti,
+      WS_TICKET_VERSION,
+      WS_TICKET_JTI,
       WS_TICKET_TTL_SECONDS,
     ),
     expiresInSeconds: WS_TICKET_TTL_SECONDS,
@@ -279,49 +96,56 @@ export async function buildServer(deps: ServerDeps) {
 
   app.get('/auth/verify', async () => ({ ok: true }));
 
-  // The caller's own account (address + owner flag) — drives the web identity badge and gates the
-  // owner-only admin surface client-side (the backend re-checks isOwner on every admin route).
-  app.get('/auth/me', async (req) => ({
-    address: req.account!.address,
-    isOwner: req.account!.isOwner,
-  }));
+  // The caller's own account state. Reachable pre-account (a valid Privy login with no row yet) so
+  // the client can learn it must show the invite gate rather than guessing from scattered 403s.
+  app.get('/auth/me', async (req) =>
+    req.account
+      ? { registered: true, address: req.account.address, isOwner: req.account.isOwner }
+      : { registered: false, needsInvite: true },
+  );
 
-  // Resolve the caller's account from the Bearer JWT. Deny by default; reject a token whose version is
-  // stale (a password reset bumped it) so a reset really does kill every older session.
+  // Public feature flags for the web. No auth: the login page reads it before any session exists.
+  // Currently empty — kept as the forward-compat envelope for future flags.
+  app.get('/config/app', async () => ({}));
+
+  // Resolve the caller's account from the Bearer Privy token. Deny by default: no/invalid token ⇒
+  // 401; valid token without an account row ⇒ 403 needsInvite (except the two gate endpoints).
   app.addHook('onRequest', async (req, reply) => {
     const path = req.url.split('?')[0];
     if (
       path === '/live' || // exact match (self-authenticates) — a prefix match would exempt /live-*
       path === '/health' ||
-      path === '/config/app' || // public feature flags (read before any session exists)
-      path === '/auth/nonce' ||
-      path === '/auth/register' ||
-      path === '/auth/login' ||
-      path === '/auth/reset/nonce' ||
-      path === '/auth/reset'
+      path === '/config/app' // public feature flags (read before any session exists)
     ) {
       return;
     }
     const auth = req.headers.authorization;
-    const payload = auth?.startsWith('Bearer ') ? verifyJwt(secret, auth.slice(7)) : null;
-    if (!payload) {
+    const token = auth?.startsWith('Bearer ') ? auth.slice('Bearer '.length) : null;
+    const verified = token ? await deps.privyVerifier.verify(token) : null;
+    if (!verified) {
       reply.code(401).send({ error: 'unauthorized' });
       return;
     }
-    // One JOIN: the account AND its jti session must both be valid. The session allowlist is the real
-    // revocation (logout/reset deletes the jti), so a revoked token is rejected despite a valid signature.
-    const user = await deps.accounts.findByIdWithSession(payload.sub, payload.jti);
-    if (!user || user.tokenVersion !== payload.ver) {
-      reply.code(401).send({ error: 'unauthorized' });
+    const user = await deps.accounts.findByPrivyId(verified.did);
+    if (user) {
+      req.account = {
+        id: user.id,
+        isOwner: user.isOwner,
+        address: user.address,
+        privyUserId: user.privyUserId,
+      };
       return;
     }
-    req.account = {
-      id: user.id,
-      isOwner: user.isOwner,
-      address: user.address,
-      tokenVersion: user.tokenVersion,
-      jti: payload.jti,
-    };
+    // Verified Privy identity, no binsight account yet: only the invite-redeem endpoint and the
+    // self-describe endpoint may proceed — everything else is behind the invite gate.
+    const preAccountAllowed =
+      (path === '/auth/redeem-invite' && req.method === 'POST') ||
+      (path === '/auth/me' && req.method === 'GET');
+    if (!preAccountAllowed) {
+      reply.code(403).send({ error: 'no account', needsInvite: true });
+      return;
+    }
+    req.privyDid = verified.did;
   });
 
   // ServerDeps ⊇ RouteDeps, so hand the deps straight through (no field-by-field re-listing).

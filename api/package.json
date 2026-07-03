@@ -34,6 +34,7 @@
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.2.1",
     "ioredis": "5.11.1",
+    "jose": "6.2.3",
     "pino": "^9.6.0",
     "postgres": "^3.4.9",
     "tweetnacl": "1.0.3",
