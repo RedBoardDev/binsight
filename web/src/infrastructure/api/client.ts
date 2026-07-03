@@ -245,6 +245,62 @@ export type RedeemInviteResult = { ok: true } | { ok: false; error: RedeemInvite
  *  failure (retry with backoff). */
 export type WsTicketResult = { token: string } | { unauthorized: true } | null;
 
+// ── Copy-bot operator admin (owner only — the backend re-checks isOwner on every call) ─────────────
+/** One bot process's health, derived from heartbeat freshness. `detail` is loose jsonb → render defensively. */
+export type CopybotProcessStatus = {
+  ts: number;
+  ageMs: number;
+  online: boolean;
+  detail: unknown;
+};
+
+export type CopybotStatusView = {
+  brain: CopybotProcessStatus | null;
+  coffre: CopybotProcessStatus | null;
+};
+
+/** A quarantine/alert row (a projection of copy_journal): a pinned SYSTEM event the operator must see. */
+export type CopybotQuarantineRow = {
+  id: number;
+  ts: number;
+  code: string | null;
+  severity: string;
+  wallet: string | null;
+  userId: string | null;
+  correlationId: string | null;
+  reason: string | null;
+  leader: string | null;
+  detail: unknown;
+};
+
+/** Result of a GLOBAL KILL: how many user configs the halt now covers. */
+export type CopybotKillResult = { killed: number };
+
+/** Copy-bot operator admin surface (SPEC §10/§13). Owner-gated server-side. */
+export const adminApi = {
+  /** Brain/coffre process health (online/stale + the per-user/per-leader snapshot). */
+  copybotStatus: () => get<CopybotStatusView>('admin/copybot/status'),
+
+  /** Recent pinned SYSTEM alerts (quarantined forged commands / fatal stops / blind detectors), newest first. */
+  copybotQuarantine: (limit?: number) =>
+    get<CopybotQuarantineRow[]>(`admin/copybot/quarantine${limit ? `?limit=${limit}` : ''}`),
+
+  /**
+   * GLOBAL KILL — force killSwitchGlobal ON for every user (SPEC §13 away-from-desk halt). Returns the count on
+   * success and THROWS a typed {@link ApiError} otherwise, so the UI can read back status and never render an
+   * optimistic "killed" it can't confirm.
+   */
+  async copybotKill(): Promise<CopybotKillResult> {
+    const res = await authedFetch('admin/copybot/kill', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ level: 'global' }),
+    });
+    if (!res.ok) throw new ApiError(`POST admin/copybot/kill failed (${res.status})`, res.status);
+    return (await res.json()) as CopybotKillResult;
+  },
+};
+
 /** Auth endpoints (Privy token → binsight account). Sessions themselves are 100% Privy. */
 export const authApi = {
   /** The caller's account state. Works pre-account so the gate can decide invite vs app. */

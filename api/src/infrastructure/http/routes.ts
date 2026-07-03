@@ -7,6 +7,7 @@ import {
   WalletSchema,
 } from '@binsight/shared';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { CopybotAdminService } from '@/application/copybot-admin';
 import type { Engine } from '@/application/engine';
 import type { EventBus } from '@/application/event-bus';
 import type { NotificationManager } from '@/application/notification/manager';
@@ -58,6 +59,8 @@ export type RouteDeps = {
   vapidPublicKey: string;
   /** Send a test push to an account's own subscriptions; returns how many were targeted. */
   sendTestPush: (userId: string) => Promise<number>;
+  /** Copy-bot operator admin: process health, GLOBAL KILL, quarantine/alerts (owner-only — SPEC §10/§13). */
+  copybotAdmin: CopybotAdminService;
 };
 
 /** Owner-only guard for operational/notification routes. Returns false (and replies 403) otherwise. */
@@ -85,6 +88,7 @@ export function registerRoutes(app: FastifyInstance, deps: RouteDeps): void {
     creditLedger,
     vapidPublicKey,
     sendTestPush,
+    copybotAdmin,
   } = deps;
 
   // A watchlist changes only on add/remove (which invalidate below), so cache it briefly instead of
@@ -552,5 +556,30 @@ export function registerRoutes(app: FastifyInstance, deps: RouteDeps): void {
     if (!requireOwner(req, reply)) return;
     const rows = await accounts.walletOverview();
     return rows.map((w) => ({ ...w, ...engine.ingestStatus(w.address) }));
+  });
+
+  // ── Copy-bot operator admin (owner only — SPEC §10 admin surface, §13 away-from-desk kill) ──────────────
+  // Process health: brain/coffre heartbeat freshness (online/stale) + their per-user/per-leader snapshots.
+  app.get('/admin/copybot/status', async (req, reply) => {
+    if (!requireOwner(req, reply)) return;
+    return copybotAdmin.status();
+  });
+
+  // GLOBAL KILL: force killSwitchGlobal ON for every user + fire one control ping (halt applies in <100ms).
+  // Only `level:'global'` is supported today — reject anything else with 400 so an unknown scope can never no-op
+  // silently (the operator MUST know the kill applied; fail loud — Rule 11).
+  app.post<{ Body: { level?: unknown } }>('/admin/copybot/kill', async (req, reply) => {
+    if (!requireOwner(req, reply)) return;
+    if (req.body?.level !== 'global') {
+      return reply.code(400).send({ error: "unsupported kill level (only 'global' is supported)" });
+    }
+    return copybotAdmin.killGlobal();
+  });
+
+  // Recent pinned SYSTEM alerts (quarantined forged commands / fatal stops / blind detectors), newest first.
+  app.get<{ Querystring: { limit?: string } }>('/admin/copybot/quarantine', async (req, reply) => {
+    if (!requireOwner(req, reply)) return;
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    return copybotAdmin.quarantine(limit);
   });
 }

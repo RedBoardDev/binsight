@@ -2,6 +2,7 @@ import type { RuntimeSettings } from '@binsight/shared';
 import { Connection } from '@solana/web3.js';
 import { createRemoteJWKSet } from 'jose';
 import { pino } from 'pino';
+import { CopybotAdminService } from './application/copybot-admin';
 import { DlmmPositionPnl } from './application/dlmm-position-pnl';
 import { Engine } from './application/engine/index';
 import { StrategyService } from './application/engine/strategy-service';
@@ -17,6 +18,8 @@ import { SwapFlowIngest } from './application/swap-flow-ingest';
 import { WalletFlowIngest } from './application/wallet-flow-ingest';
 import { WalletPnlService } from './application/wallet-pnl-service';
 import type { AppConfig } from './config/env';
+import { ConfigStore } from './copybot/config-store';
+import { ControlChannel } from './infrastructure/bus/control-channel';
 import { GeckoTerminalGateway } from './infrastructure/geckoterminal/geckoterminal-gateway';
 import { installGracefulShutdown } from './infrastructure/http/graceful-shutdown';
 import { createPrivyVerifier, privyJwksUrl } from './infrastructure/http/privy-auth';
@@ -247,6 +250,23 @@ export function compose(config: AppConfig): App {
   });
   const notifications = new NotificationManager(bus, configRepo, presence, bark, webPush, logger);
 
+  // Copy-bot operator admin (owner-only API surface — SPEC §10/§13). It reads the copy_journal/copybot_status rows
+  // and flips every user's persisted kill switch, then fires ONE control ping so the halt applies in <100ms. The
+  // ControlChannel (2 Redis connections) is opened LAZILY on the first kill — the API needs Redis for nothing else
+  // — and quit on shutdown.
+  const copybotConfigStore = new ConfigStore(db, logger);
+  let controlChannel: ControlChannel | undefined;
+  const publishConfigChanged = async (): Promise<void> => {
+    controlChannel ??= ControlChannel.connect(config.REDIS_URL);
+    await controlChannel.publish({ type: 'config-changed' });
+  };
+  const copybotAdmin = new CopybotAdminService(
+    db,
+    copybotConfigStore,
+    publishConfigChanged,
+    logger,
+  );
+
   return {
     async start() {
       await runMigrations(db, './drizzle');
@@ -275,6 +295,7 @@ export function compose(config: AppConfig): App {
         creditLedger: creditLedgerRepo,
         vapidPublicKey: config.VAPID_PUBLIC_KEY,
         sendTestPush: (userId) => pushRepo.forUser(userId).then((subs) => webPush.sendTest(subs)),
+        copybotAdmin,
         // Privy access-token verifier: the remote JWKS is fetched lazily + cached by jose.
         privyVerifier: createPrivyVerifier({
           appId: config.PRIVY_APP_ID,
@@ -315,6 +336,10 @@ export function compose(config: AppConfig): App {
           async () => {
             if (statsTimer) clearInterval(statsTimer);
             if (flushTimer) clearInterval(flushTimer);
+          },
+          // Quit the lazily-opened control channel (if a kill ever ran) so its Redis connections drain cleanly.
+          async () => {
+            if (controlChannel) await controlChannel.quit();
           },
         ],
       });

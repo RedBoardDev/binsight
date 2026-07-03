@@ -62,6 +62,11 @@ const EnvSchema = z.object({
 
   /** Postgres connection string (self-hosted via docker-compose). */
   DATABASE_URL: z.string().default('postgres://meteora:meteora@localhost:5435/meteora'),
+
+  /** Redis URL for the copy-bot control channel. The API only PUBLISHES config-changed pings on it (e.g. the
+   *  operator GLOBAL KILL) so the brain/coffre early-reload the halted config in <100ms. Default matches the
+   *  copy-bot processes' own default (brain-main/coffre-main), so a single-box dev setup needs no extra env. */
+  REDIS_URL: z.string().default('redis://localhost:6385'),
   // History depth: either a rolling window (HISTORY_DAYS) OR an absolute floor date
   // (HISTORY_SINCE, e.g. 2026-05-01) — when set, HISTORY_SINCE wins (everything after it).
   HISTORY_DAYS: z.coerce.number().int().min(1).max(365).default(365),

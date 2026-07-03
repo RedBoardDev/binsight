@@ -115,4 +115,12 @@ export class ConfigStore {
       .from(copybotConfigs);
     return rows.filter((r) => parseConfig(r.config).user.enabled).map((r) => r.userId);
   }
+
+  /** EVERY user id with a stored config row — enabled, disabled, OR corrupt alike. This is the GLOBAL KILL target
+   *  (SPEC §10/§13): an operator halt must reach every configured tenant, so it cannot filter on `enabled` the way
+   *  `listActiveUserIds` does — a stopped or fail-closed user still owns `caps.killSwitchGlobal` we force ON. */
+  async allUserIds(): Promise<string[]> {
+    const rows = await this.db.select({ userId: copybotConfigs.userId }).from(copybotConfigs);
+    return rows.map((r) => r.userId);
+  }
 }

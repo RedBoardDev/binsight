@@ -201,4 +201,18 @@ describe('ConfigStore (integration, per-user rows)', () => {
     const active = (await store.listActiveUserIds()).filter((u) => TEST_USERS.includes(u));
     expect(active).toEqual([U1]);
   });
+
+  it('allUserIds returns EVERY configured user — enabled, disabled, OR corrupt (the GLOBAL KILL target)', async () => {
+    // WHY (SPEC §10/§13): the operator halt must reach every tenant. Unlike listActiveUserIds, allUserIds must NOT
+    // filter on `enabled` — a stopped or corrupt row still owns caps the kill switch has to force ON.
+    const store = new ConfigStore(db, log);
+    await store.save(U1, CONFIG_DEFAULTS); // enabled
+    await store.save(U2, {
+      ...CONFIG_DEFAULTS,
+      user: { ...CONFIG_DEFAULTS.user, enabled: false },
+    }); // disabled
+    await upsertRaw(U3, '{corrupt'); // corrupt
+    const all = (await store.allUserIds()).filter((u) => TEST_USERS.includes(u)).sort();
+    expect(all).toEqual([U1, U2, U3]);
+  });
 });
