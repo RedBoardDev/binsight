@@ -87,7 +87,7 @@ const shared: SharedBrainDeps = {
   jupiterBaseUrl: 'http://127.0.0.1:1',
   jitoEnabledEnv: undefined,
   priorityFeeOracleEnv: undefined,
-  alertWebhookUrl: undefined,
+  alertSink: undefined,
 };
 
 const opts = {

@@ -17,7 +17,7 @@
 import { DLMM_PROGRAM_ID } from '@binsight/shared';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { pino } from 'pino';
-import { createAlertWebhookSink } from '@/copybot/alert';
+import { createDiscordAlertSink } from '@/copybot/alert';
 import { assertBusKey } from '@/copybot/bus-key-guard';
 import { ConfigStore } from '@/copybot/config-store';
 import { makeDetectionDeps } from '@/copybot/detection';
@@ -188,7 +188,9 @@ async function main(): Promise<void> {
     jupiterBaseUrl: cfg.jupiterBaseUrl,
     jitoEnabledEnv: cfg.jitoEnabledEnv,
     priorityFeeOracleEnv: cfg.priorityFeeOracleEnv,
-    alertWebhookUrl: process.env.ALERT_WEBHOOK,
+    // ONE process-wide Discord sink shared by every runtime + the detection emitter (process-wide rate-limit
+    // + dedup, SPEC §10). No-op (with one boot log) when DISCORD_WEBHOOK_URL is unset.
+    alertSink: createDiscordAlertSink(process.env.DISCORD_WEBHOOK_URL, log),
   };
   // The brain's runtime/config views (3b): the fan-out, status, sweeps and reload all read these LIVE maps —
   // one entry per booted user. A deactivated user's runtime is RETAINED (its stop-close diff force-closes; it
@@ -232,7 +234,7 @@ async function main(): Promise<void> {
     new EventStore(db, detectionLog),
     detectionLog,
     { userId: SYSTEM_USER_ID, wallet: cfg.ownerPubkey, process: 'brain' },
-    createAlertWebhookSink(process.env.ALERT_WEBHOOK, detectionLog),
+    shared.alertSink,
   );
   // WS trigger, created EARLY (never connects until start(), below) so the hub can record its watches.
   const sub = cfg.wsUrl ? new HeliusTxSubscriber(cfg.wsUrl, log) : undefined;

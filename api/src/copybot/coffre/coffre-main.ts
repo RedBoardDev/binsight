@@ -13,7 +13,7 @@ import { randomUUID } from 'node:crypto';
 import { Connection } from '@solana/web3.js';
 import type { Logger } from 'pino';
 import { pino } from 'pino';
-import { createAlertWebhookSink } from '@/copybot/alert';
+import { createDiscordAlertSink } from '@/copybot/alert';
 import { assertBusKey } from '@/copybot/bus-key-guard';
 import { ConfirmWorker } from '@/copybot/coffre/confirm-worker';
 import { loadCopierKeypair } from '@/copybot/coffre/keypair';
@@ -188,7 +188,7 @@ async function main(): Promise<void> {
   // user/wallet/correlation. Operator-actionable (pinned) events also fan out to the external ALERT_WEBHOOK via the
   // injected sink (no-op when unset).
   const tlog = log.child({ userId: SYSTEM_USER_ID, wallet: cfg.owner, process: 'coffre' });
-  const alertSink = createAlertWebhookSink(process.env.ALERT_WEBHOOK, tlog);
+  const alertSink = createDiscordAlertSink(process.env.DISCORD_WEBHOOK_URL, tlog);
   const events = new CopyEvents(
     new EventStore(db, tlog),
     tlog,

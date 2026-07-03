@@ -28,7 +28,6 @@ import {
   Transaction,
 } from '@solana/web3.js';
 import type { Logger } from 'pino';
-import { createAlertWebhookSink } from '@/copybot/alert';
 import { deriveCommandId } from '@/copybot/command-id';
 import { derivePositionKeypair } from '@/copybot/ephemeral-position';
 import type { HeartbeatStore } from '@/copybot/heartbeat-store';
@@ -60,6 +59,7 @@ import {
   FALLBACK_CODE,
   resolveLegacyReason,
 } from '@/domain/copybot/observability/codes';
+import type { CopyEvent } from '@/domain/copybot/observability/event';
 import type { EmitInput } from '@/domain/copybot/observability/input';
 import { ATOMIC_BY_WEIGHT_BIN_LIMIT, isWideOpen } from '@/domain/copybot/open-routing';
 import {
@@ -239,8 +239,9 @@ export interface SharedBrainDeps {
   jitoEnabledEnv: boolean | undefined;
   /** env override of the DB priorityFeeOracle. */
   priorityFeeOracleEnv: boolean | undefined;
-  /** External ALERT_WEBHOOK for operator-actionable (pinned) events; undefined ⇒ no-op sink. */
-  alertWebhookUrl: string | undefined;
+  /** Process-wide Discord operator-alert sink (pinned/operator events); undefined ⇒ no-op. Shared across
+   *  every runtime + the detection emitter so the rate-limit + dedup are process-wide (SPEC §10). */
+  alertSink: ((e: CopyEvent) => void) | undefined;
 }
 
 /** Per-user injection points (INC3B-PLAN §8): Inc.4 swaps these for per-user wallets/balances. */
@@ -284,7 +285,6 @@ export async function createUserRuntime(
     jupiterBaseUrl,
     jitoEnabledEnv,
     priorityFeeOracleEnv,
-    alertWebhookUrl,
   } = shared;
   const { ownerPk, balanceOf, leader: bootLeader, initialConfig } = opts;
   const wallet = ownerPk.toBase58();
@@ -298,12 +298,11 @@ export async function createUserRuntime(
   // sites emit TYPED codes through it directly; every row back-fills user/wallet/correlation. Operator-actionable
   // (pinned) events also fan out to the external ALERT_WEBHOOK via the injected sink (no-op when unset).
   const tlog = log.child({ userId, wallet, process: 'brain' });
-  const alertSink = createAlertWebhookSink(alertWebhookUrl, tlog);
   const events = new CopyEvents(
     new EventStore(db, tlog),
     tlog,
     { userId, wallet, process: 'brain' },
-    alertSink,
+    shared.alertSink,
   );
   // P2: emit a TYPED event for a call site whose `reason` is RUNTIME-DYNAMIC (decision.reason, cap.reason, the
   // filter verdict, the generic publish marker). The leaf == the verbatim reason (SPEC §2.1 + resolveLegacyReason);
