@@ -16,6 +16,7 @@ import type { Logger } from 'pino';
 import { claimExecution } from '@/copybot/coffre/idempotency';
 import { landViaJito } from '@/copybot/coffre/jito-landing';
 import { land } from '@/copybot/coffre/landing';
+import { classifySignError, type SignErrorClass } from '@/copybot/coffre/sign-error-classifier';
 import { DryRunSkip, type Signer } from '@/copybot/coffre/signer';
 import { verifyTx } from '@/copybot/coffre/wall-b';
 import { deriveCommandId } from '@/copybot/command-id';
@@ -97,6 +98,19 @@ export interface Ctx {
   retryDelayMs: number;
   /** Hand a BROADCAST tx to the async confirm worker (3c). In-memory only — MUST never throw. */
   onSubmitted: (t: TrackedSubmission) => void;
+  /**
+   * Wave 4e — a per-user CUSTODY sign-failure side effect (Privy outage #20 / revoked delegation #21). Injected so
+   * the critical section stays testable: 'outage' → the coffre flips a `signingAvailable:false` heartbeat flag;
+   * 'revoked' → disable signing for THAT user (its open mirrors are KEPT for the reconcile). Absent on the SYSTEM/
+   * bench path (a local keypair never throws a Privy custody error). MUST be per-user isolated — one user's failure
+   * never affects another. Best-effort: a throw here must not break the lane (the caller guards it).
+   */
+  onSignError?: (e: {
+    class: Exclude<SignErrorClass, 'other'>;
+    userId: string;
+    owner: string;
+    message?: string;
+  }) => Promise<void>;
   log: Logger;
 }
 
@@ -526,6 +540,7 @@ export async function process1(
   let broadcastSig: string | undefined;
   let broadcastLvbh = 0;
   let dryRunSkipped = false; // the signer declined (DryRunSkip): finalize a benign 'skipped', NOT a land failure
+  let signErrorClass: Exclude<SignErrorClass, 'other'> | undefined; // 4e: a per-user Privy custody failure (outage/revoked)
   for (let attempt = 0; attempt <= ctx.retryMax; attempt++) {
     try {
       const tSign = Date.now();
@@ -573,6 +588,17 @@ export async function process1(
         dryRunSkipped = true;
         break;
       }
+      const klass = classifySignError(e);
+      if (klass !== 'other') {
+        // A per-user CUSTODY failure (Privy outage #20 / revoked delegation #21), NOT a transient land error → do
+        // NOT burn the remaining sign/land retries (a PrivySessionSigner already exhausted its own bounded backoff).
+        // The throw is BEFORE markSubmitted, so NOTHING is on the wire. Capture the class + break; the branch below
+        // emits the pinned alert + runs the injected per-user side effect, then finalizes 'failed' (re-claimable —
+        // the reconcile re-publishes the close; never-miss). Isolated to THIS user (SPEC §11/§17).
+        signErrorClass = klass;
+        lastErr = e as Error;
+        break;
+      }
       lastErr = e as Error;
       log.warn({ kind: sr.kind, attempt, error: lastErr.message }, 'sign/land failed — retry');
       if (attempt < ctx.retryMax) await sleep(ctx.retryDelayMs);
@@ -589,6 +615,46 @@ export async function process1(
     return finalize(db, sr.userId, sr.commandId, 'skipped', {
       ok: true,
       reason: 'dry-run',
+      kind: sr.kind,
+    });
+  }
+
+  if (signErrorClass) {
+    // A Privy CUSTODY failure (outage/revoked) — NOTHING was broadcast (thrown before markSubmitted). Emit the pinned
+    // alert (operator Discord + the user's feed banner) and run the injected per-user side effect (4e: outage → the
+    // `signingAvailable:false` heartbeat flag; revoked → disable signing for THIS user, keeping its mirrors for the
+    // reconcile). Then finalize 'failed' (re-claimable): the reconcile re-publishes the close until it lands — an
+    // outage self-heals when Privy returns; a revoked user's mirrors are retried once they re-authorize (never-miss).
+    const code: CopyCode =
+      signErrorClass === 'outage' ? 'system.signing_unavailable' : 'system.delegation_revoked';
+    events.emit(code, {
+      stage: 'sign',
+      outcome: 'failed',
+      reason: signErrorClass === 'outage' ? 'privy_outage' : 'delegation_revoked',
+      kind: sr.kind,
+      pool: sr.pool,
+      ourPosition: sr.positionPubkey,
+      commandId: sr.commandId,
+      adminDetail: { userId: sr.userId, error: lastErr?.message },
+    });
+    try {
+      await ctx.onSignError?.({
+        class: signErrorClass,
+        userId: sr.userId,
+        owner: ourOwner,
+        message: lastErr?.message,
+      });
+    } catch (e) {
+      // Best-effort per-user side effect — a failure to flip the flag/disable must never break the lane (the pinned
+      // alert already fired + the command finalizes 'failed'; the reconcile keeps the never-miss guarantee).
+      log.warn(
+        { userId: sr.userId, err: (e as Error).message },
+        'onSignError side effect failed (non-fatal)',
+      );
+    }
+    return finalize(db, sr.userId, sr.commandId, 'failed', {
+      ok: false,
+      reason: `sign_${signErrorClass}`,
       kind: sr.kind,
     });
   }

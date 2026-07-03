@@ -6,6 +6,7 @@ import { type ActivationView, copybotApi } from '@/infrastructure/api/client';
 import { Button, Card, EmptyState } from '@/presentation/ui';
 import { ActivationWizard } from './activation-wizard';
 import { LeaderAddWizard } from './leader-add-wizard';
+import { WithdrawPanel } from './withdraw-panel';
 
 /**
  * The copy-bot tab (desktop-only, SPEC §13). On entry it provisions the account's custody wallet (idempotent) and
@@ -96,6 +97,9 @@ export function BotPanel() {
           </p>
         )}
       </Card>
+
+      {/* Funds — withdrawal Path B (SPEC §2.2/§4.4): user-signed, never through the coffre. */}
+      <WithdrawPanel />
 
       <LeaderAddWizard
         open={leaderWizardOpen}

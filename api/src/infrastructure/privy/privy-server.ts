@@ -49,6 +49,22 @@ export class PrivyServer {
     return res.data.signed_transaction;
   }
 
+  /**
+   * IRREVERSIBLY soft-detach a Privy user — the LAST step of account teardown (Inc.4e / #56, SPEC §2.4). The 0.24.0
+   * public `PrivyClient.users()` surface exposes only `get`; user DELETION lives on the underlying resource client
+   * (`DELETE /v1/users/{id}`), reached here through the client's raw resource accessor with a NARROW typed shape (no
+   * `any`) — documented because the public facade omits it. Only ever reached under PRIVY_SIGNING_ENABLED (real
+   * provisioned users), so it is devnet-4f-gated; off-chain the teardown service injects a fake deleter.
+   */
+  async deleteUser(userId: string): Promise<void> {
+    // TODO(devnet-4f): confirm the exact user id form the REST API expects (the `did:privy:` DID vs the bare id) and
+    // re-verify this raw-resource path once the public @privy-io/node facade exposes user deletion.
+    const raw = this.client as unknown as {
+      privyApiClient: { users: { delete(id: string): Promise<unknown> } };
+    };
+    await raw.privyApiClient.users.delete(userId);
+  }
+
   /** Look up a wallet by its Privy id — used at provisioning to confirm the wallet, and later to read its signers. */
   async getWallet(walletId: string): Promise<PrivyWalletRef> {
     const w = await this.client.wallets().get(walletId);

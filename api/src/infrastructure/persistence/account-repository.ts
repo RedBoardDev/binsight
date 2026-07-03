@@ -10,8 +10,18 @@ import type {
 } from '@/domain/ports';
 import type { Database } from './database';
 import {
+  copybotActivation,
+  copybotConfigs,
+  copyDecisions,
+  copyJournal,
+  copyPositions,
+  executions,
+  feeLedger,
   inviteCodes,
+  positionLedger,
   positions as positionsTable,
+  rugExitPendings,
+  rugExits,
   users as usersTable,
   userWatchedWallets as uww,
 } from './schema';
@@ -173,10 +183,11 @@ export class PostgresAccountRepository implements AccountRepository {
     }));
   }
 
-  /** Delete an account + its watchlist; returns the wallets left with no watcher (so the engine can
-   *  stop LIVE monitoring them). The wallets' SHARED position/flow data is KEPT (keyed by address,
-   *  not by account) — revoking an account is "as if they never had one", the cached data survives
-   *  for whoever watches the wallet next. */
+  /** Delete an account + its watchlist + ALL its user-scoped copy-bot rows (the teardown cascade, Inc.4e / SPEC §2.4);
+   *  returns the wallets left with no watcher (so the engine can stop LIVE monitoring them). The wallets' SHARED
+   *  on-chain position/flow data is KEPT (keyed by address, not by account) — revoking an account is "as if they
+   *  never had one", the cached shared data survives for whoever watches the wallet next. Everything runs in ONE
+   *  transaction so a partial cascade can never leave a half-deleted account (a test asserts the completeness). */
   async deleteAccount(id: string): Promise<string[]> {
     return this.db.transaction(async (tx) => {
       const watched = (
@@ -191,6 +202,19 @@ export class PostgresAccountRepository implements AccountRepository {
           .where(eq(uww.walletAddress, addr));
         if (Number(r?.c ?? 0) === 0) orphans.push(addr);
       }
+      // User-scoped copy-bot state — deleted with the account (unlike the SHARED, address-keyed on-chain data above).
+      // Every table that carries a `user_id` for THIS tenant is cleared; the teardown test enumerates them so a new
+      // user-scoped table can't silently escape the cascade.
+      await tx.delete(copybotConfigs).where(eq(copybotConfigs.userId, id));
+      await tx.delete(copyPositions).where(eq(copyPositions.userId, id));
+      await tx.delete(executions).where(eq(executions.userId, id));
+      await tx.delete(copyDecisions).where(eq(copyDecisions.userId, id));
+      await tx.delete(copyJournal).where(eq(copyJournal.userId, id));
+      await tx.delete(rugExits).where(eq(rugExits.userId, id));
+      await tx.delete(rugExitPendings).where(eq(rugExitPendings.userId, id));
+      await tx.delete(positionLedger).where(eq(positionLedger.userId, id));
+      await tx.delete(feeLedger).where(eq(feeLedger.userId, id));
+      await tx.delete(copybotActivation).where(eq(copybotActivation.userId, id));
       await tx.delete(usersTable).where(eq(usersTable.id, id));
       return orphans;
     });

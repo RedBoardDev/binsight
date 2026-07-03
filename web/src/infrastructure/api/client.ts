@@ -343,6 +343,26 @@ export type ActivationView = {
   signingReady: boolean;
 };
 
+/** The withdraw helper (Path B, SPEC §2.2): the free (non-deployed, minus reserve) SOL the UI caps the amount to. */
+export type WithdrawableView = {
+  address: string | null;
+  balanceLamports: number;
+  deployedLamports: number;
+  reserveLamports: number;
+  withdrawableLamports: number;
+  withdrawableSol: number;
+};
+
+/** Typed teardown refusals (mirrors the API), plus `network` for a failed request — the UI renders a message per reason. */
+export type TeardownReason =
+  | 'open_mirrors'
+  | 'funds_remain'
+  | 'in_progress'
+  | 'privy_delete_failed'
+  | 'system_user'
+  | 'network';
+export type TeardownResult = { ok: true } | { ok: false; reason: TeardownReason };
+
 /** Why a pasted leader is rejected (stable functional codes — the wizard renders a message per code). */
 export type LeaderRejectReason =
   | 'invalid_address'
@@ -373,6 +393,25 @@ export const copybotApi = {
 
   /** Acknowledge the key-export offer (exported or skipped). */
   exportAck: () => postJson<ActivationView>('copybot/activation/export-ack'),
+
+  /** The free (non-deployed, minus reserve) SOL the withdraw UI caps the amount to (read-only — nothing signs). */
+  withdrawable: () => get<WithdrawableView>('copybot/withdrawable'),
+
+  /** Record a completed withdrawal (the user signed it with their OWN Privy authority) → stamps the teardown gate. */
+  withdrawalAck: () => postJson<{ ok: true }>('copybot/activation/withdrawal-ack'),
+
+  /** Delete the account (the server-enforced teardown gate). Resolves to a typed refusal on a 4xx/5xx (never throws). */
+  async deleteAccount(): Promise<TeardownResult> {
+    let res: Response;
+    try {
+      res = await authedFetch('copybot/account', { method: 'DELETE' });
+    } catch {
+      return { ok: false, reason: 'network' };
+    }
+    if (res.ok) return { ok: true };
+    const data = (await res.json().catch(() => ({}))) as { reason?: TeardownReason };
+    return { ok: false, reason: data.reason ?? 'network' };
+  },
 
   /** Validate a pasted leader address before adding it. */
   validateLeader: (address: string) =>

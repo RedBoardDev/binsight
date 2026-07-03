@@ -125,6 +125,29 @@ export class CopybotActivationRepository {
       .where(eq(copybotActivation.userId, userId));
   }
 
+  /** Record a completed withdrawal (Path B, Inc.4e) — this stamps the teardown gate (SPEC §2.4: a completed
+   *  withdrawal lets the account be deleted even with a non-dust balance). */
+  async markWithdrawalAck(userId: string, now: number): Promise<void> {
+    await this.db
+      .update(copybotActivation)
+      .set({ withdrawalAckAt: now, updatedAt: now })
+      .where(eq(copybotActivation.userId, userId));
+  }
+
+  /**
+   * Apply the REVOKED-delegation state (Inc.4e / #21): the user removed the coffre session signer, so signing is
+   * disabled AND consent is no longer valid. Setting `signer_added=false` makes the disable STICKY — the SYSTEM
+   * signing-gate reconciler (`signingReady`) can no longer auto-clear it, so re-activation requires the user to
+   * re-consent (re-run addSigners). The user's open mirrors are KEPT elsewhere (never-miss: the reconcile keeps
+   * trying to close them once signing returns).
+   */
+  async markSigningRevoked(userId: string, now: number): Promise<void> {
+    await this.db
+      .update(copybotActivation)
+      .set({ signingDisabled: true, signerAdded: false, updatedAt: now })
+      .where(eq(copybotActivation.userId, userId));
+  }
+
   /**
    * Apply the SYSTEM signing-gate decision: set `signing_disabled` and, the first time the account is seen funded,
    * stamp `funded_at`. Only writes when something actually changes (a no-op reconcile doesn't churn the row).

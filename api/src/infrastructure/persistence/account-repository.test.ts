@@ -1,11 +1,24 @@
 import { PGlite } from '@electric-sql/pglite';
+import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { describe, expect, it } from 'vitest';
 import { PostgresAccountRepository } from './account-repository';
 import type { Database } from './database';
 import * as schema from './schema';
-import { positions as positionsTable } from './schema';
+import {
+  copybotActivation,
+  copybotConfigs,
+  copyDecisions,
+  copyJournal,
+  copyPositions,
+  executions,
+  feeLedger,
+  positionLedger,
+  positions as positionsTable,
+  rugExitPendings,
+  rugExits,
+} from './schema';
 
 async function setup() {
   const pg = drizzle(new PGlite(), { schema });
@@ -241,6 +254,108 @@ describe('PostgresAccountRepository — admin', () => {
     expect(orphans).toEqual(['SOLO']); // SHARED still watched by B → not orphan
     const remaining = (await db.select().from(positionsTable)).map((p) => p.wallet).sort();
     expect(remaining).toEqual(['SHARED', 'SOLO']); // ALL data kept (shared, not account-owned)
+    expect(await accounts.findById(a.id)).toBeNull();
+    expect(await accounts.findById(b.id)).not.toBeNull();
+  });
+
+  it('deleteAccount CASCADES every user-scoped copy-bot table (teardown completeness — SPEC §2.4)', async () => {
+    // WHY (#56): account deletion is irreversible; a user-scoped row that escapes the cascade would leak the deleted
+    // account's copy-bot state (config/positions/ledgers/journal) into a future account or the operator surface. Seed
+    // a row in EVERY user-scoped copy-bot table for BOTH users, delete A, and assert A is fully gone while B survives.
+    const { db, accounts } = await setup();
+    const a = await accounts.createUser({ privyUserId: did('a'), isOwner: false });
+    const b = await accounts.createUser({ privyUserId: did('b'), isOwner: false });
+    const seed = async (userId: string) => {
+      await db.insert(copybotConfigs).values({ userId, config: '{}', updatedAt: 1 });
+      await db.insert(copyPositions).values({
+        userId,
+        leaderPosition: `L-${userId}`,
+        ourPosition: `O-${userId}`,
+        pool: 'p',
+        sizeSol: 0.1,
+        lowerBin: -1,
+        upperBin: 1,
+        status: 'open',
+        openedAt: 1,
+      });
+      await db.insert(executions).values({
+        userId,
+        commandId: `c-${userId}`,
+        eventKey: 'e',
+        state: 'landed',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await db.insert(copyDecisions).values({
+        userId,
+        signature: `sig-${userId}`,
+        leader: 'L',
+        eventKind: 'open',
+        outcome: 'mirrored',
+        decidedAt: 1,
+      });
+      await db.insert(copyJournal).values({
+        ts: 1,
+        process: 'brain',
+        stage: 'open',
+        outcome: 'published',
+        severity: 'info',
+        userId,
+      });
+      await db.insert(rugExits).values({ userId, leaderPosition: `L-${userId}`, exitedAt: 1 });
+      await db.insert(rugExitPendings).values({ userId, ourPosition: `O-${userId}`, createdAt: 1 });
+      await db.insert(positionLedger).values({
+        userId,
+        ourPosition: `O-${userId}`,
+        kind: 'close',
+        sig: `s-${userId}`,
+        confirmedAt: 1,
+      });
+      await db.insert(feeLedger).values({
+        userId,
+        ourPosition: `O-${userId}`,
+        basePnlLamports: 100,
+        feeLamports: 5,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await db
+        .insert(copybotActivation)
+        .values({ userId, privyWalletId: `w-${userId}`, createdAt: 1, updatedAt: 1 });
+    };
+    await seed(a.id);
+    await seed(b.id);
+
+    await accounts.deleteAccount(a.id);
+
+    // Every user-scoped copy-bot table: A's rows are GONE, B's rows SURVIVE (the cascade is per-tenant, not global).
+    // Each entry is a table's own typed (user)→count query, so a new user-scoped table can't silently escape here.
+    const perUserCounts: Record<string, (userId: string) => Promise<number>> = {
+      copybot_configs: async (u) =>
+        (await db.select().from(copybotConfigs).where(eq(copybotConfigs.userId, u))).length,
+      copy_positions: async (u) =>
+        (await db.select().from(copyPositions).where(eq(copyPositions.userId, u))).length,
+      executions: async (u) =>
+        (await db.select().from(executions).where(eq(executions.userId, u))).length,
+      copy_decisions: async (u) =>
+        (await db.select().from(copyDecisions).where(eq(copyDecisions.userId, u))).length,
+      copy_journal: async (u) =>
+        (await db.select().from(copyJournal).where(eq(copyJournal.userId, u))).length,
+      rug_exits: async (u) =>
+        (await db.select().from(rugExits).where(eq(rugExits.userId, u))).length,
+      rug_exit_pending: async (u) =>
+        (await db.select().from(rugExitPendings).where(eq(rugExitPendings.userId, u))).length,
+      position_ledger: async (u) =>
+        (await db.select().from(positionLedger).where(eq(positionLedger.userId, u))).length,
+      fee_ledger: async (u) =>
+        (await db.select().from(feeLedger).where(eq(feeLedger.userId, u))).length,
+      copybot_activation: async (u) =>
+        (await db.select().from(copybotActivation).where(eq(copybotActivation.userId, u))).length,
+    };
+    for (const [table, count] of Object.entries(perUserCounts)) {
+      expect(await count(a.id), `${table} not cascaded for A`).toBe(0); // A fully cascaded
+      expect(await count(b.id), `${table} wrongly cleared for B`).toBe(1); // B untouched (per-tenant)
+    }
     expect(await accounts.findById(a.id)).toBeNull();
     expect(await accounts.findById(b.id)).not.toBeNull();
   });

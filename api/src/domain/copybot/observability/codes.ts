@@ -572,6 +572,31 @@ const RAW_CODE_REGISTRY = {
     title: 'Command Quarantined — a forged/malformed cmd:sign was dead-lettered',
     render: 'system-fatal',
   },
+  // Inc.4e (#20): Privy signing is unavailable for a user after the bounded sign retries (an outage). NO automatism
+  // (the reconcile re-publishes closes when Privy returns; missed opens are logged — accepted risk SPEC §17.3);
+  // pinned so the operator is paged out-of-band, and the coffre heartbeat carries a `signingAvailable:false` flag the
+  // web renders as a "signing unavailable" banner. Reuses the system-fatal render (🚨 + the registry title).
+  'system.signing_unavailable': {
+    category: 'SYSTEM',
+    severity: 'error',
+    audience: 'feed',
+    pinned: true,
+    coalesceMs: PINNED_COALESCE_MS,
+    title: 'Signing Unavailable — Privy outage (auto-recovers)',
+    render: 'system-fatal',
+  },
+  // Inc.4e (#21): the user REVOKED the coffre session signer → signing is disabled for THAT user and their open
+  // mirrors are KEPT (the reconcile keeps trying to close them — never-miss). Pinned so it reaches BOTH the user's
+  // in-app feed ("re-authorize or close manually") AND the operator (Discord). Reuses the system-fatal render.
+  'system.delegation_revoked': {
+    category: 'SYSTEM',
+    severity: 'error',
+    audience: 'feed',
+    pinned: true,
+    coalesceMs: PINNED_COALESCE_MS,
+    title: 'Signing Access Revoked — re-authorize or close manually',
+    render: 'system-fatal',
+  },
   // Observability self-failures (D-7): audience:'internal' so they NEVER user-notify through the broken path.
   'system.journal_write_failed': { category: 'SYSTEM', severity: 'warn', audience: 'internal' },
   'system.notify_delivery_failed': { category: 'SYSTEM', severity: 'warn', audience: 'internal' },

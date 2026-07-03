@@ -19,10 +19,10 @@ import type { CopyEvents } from '@/copybot/observability/copy-events';
 import type { RedisBus } from '@/infrastructure/bus/redis-bus';
 import type { Database } from '@/infrastructure/persistence/database';
 import * as schema from '@/infrastructure/persistence/schema';
-import { executions } from '@/infrastructure/persistence/schema';
+import { copyPositions, executions } from '@/infrastructure/persistence/schema';
 import type { BlockhashCache } from '@/infrastructure/solana/blockhash-cache';
 import { type Ctx, process1 } from './process-command';
-import { DryRunSigner, LocalKeypairSigner } from './signer';
+import { DryRunSigner, LocalKeypairSigner, PrivyOutageError, type Signer } from './signer';
 
 // Fresh in-memory Postgres (PGlite) with the real Drizzle migrations applied — exercises the multi-tenant
 // executions PK (user_id, command_id) exactly as production creates it.
@@ -736,5 +736,95 @@ describe('process1 — Inc.4d: a kind:fee performance-fee transfer signs+lands w
       kind: 'fee',
     });
     expect(bus.publish).not.toHaveBeenCalled();
+  });
+});
+
+// --- Inc.4e: per-user Privy CUSTODY sign failures (outage #20 / revoked #21). The failure is thrown by the resolved
+// signer BEFORE markSubmitted (nothing on the wire); process1 classifies it, emits the pinned alert, runs the injected
+// per-user side effect, and finalizes 'failed' (re-claimable → the reconcile re-publishes the close = never-miss).
+describe('process1 — Inc.4e: per-user Privy custody sign failures (outage / revoked)', () => {
+  /** A ctx whose resolved signer ALWAYS throws `err` from `sign`, with spy `events.emit` + `onSignError`. */
+  function throwingSignerCtx(conn: Connection, bus: RedisBus, err: unknown) {
+    const signCalls = { count: 0 };
+    const signer: Signer = {
+      publicKey: copier.publicKey, // matches sr.owner → the Wall B owner check passes; the sign step then throws
+      sign: async () => {
+        signCalls.count += 1;
+        throw err;
+      },
+    };
+    const emit = vi.fn();
+    // Typed with the port's param so `.mock.calls[0][0]` narrows to the { class, userId, owner } side-effect payload.
+    const onSignError = vi.fn(async (_e: Parameters<NonNullable<Ctx['onSignError']>>[0]) => {});
+    const ctx: Ctx = {
+      ...ctxFor(conn, bus),
+      events: { emit } as unknown as CopyEvents,
+      signerFor: async () => signer,
+      onSignError,
+      retryMax: 2, // prove a CUSTODY failure short-circuits the sign/land retry loop (does not burn the retries)
+    };
+    return { ctx, signCalls, emit, onSignError };
+  }
+
+  it("a Privy OUTAGE → onSignError('outage') ONCE, pinned system.signing_unavailable, failed, no retry, nothing broadcast", async () => {
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const conn = fakeConn(() => ({ value: null }));
+    const { ctx, signCalls, emit, onSignError } = throwingSignerCtx(
+      conn,
+      bus,
+      new PrivyOutageError('wallet-x', 4, new Error('503')),
+    );
+    const sr = closeReq();
+    const verdict = await process1(sr, ctx);
+    expect(verdict).toMatchObject({ ok: false, reason: 'sign_outage', kind: 'close' });
+    expect(signCalls.count).toBe(1); // a custody failure does NOT re-attempt sign/land (no automatism)
+    expect(ctx.onSubmitted).not.toHaveBeenCalled(); // thrown before markSubmitted → nothing on the wire
+    expect(bus.publish).not.toHaveBeenCalled();
+    expect(onSignError).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(onSignError).mock.calls[0]?.[0]).toMatchObject({
+      class: 'outage',
+      userId: USER,
+    });
+    expect(vi.mocked(emit).mock.calls.some(([c]) => c === 'system.signing_unavailable')).toBe(true);
+    const row = (
+      await db
+        .select()
+        .from(executions)
+        .where(eq(executions.commandId, sr.commandId as string))
+    )[0];
+    expect(row?.state).toBe('failed'); // re-claimable — the reconcile re-publishes the close (never-miss)
+  });
+
+  it("a REVOKED delegation → onSignError('revoked'), pinned system.delegation_revoked, and KEEPS the user's open mirrors", async () => {
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const conn = fakeConn(() => ({ value: null }));
+    // Seed an OPEN mirror for USER — the revoked branch must NOT drop it (the reconcile keeps trying to close it).
+    const ourPos = `ours_${process.hrtime.bigint()}`;
+    await db.insert(copyPositions).values({
+      userId: USER,
+      leaderPosition: `L_${ourPos}`,
+      ourPosition: ourPos,
+      pool: pool.toBase58(),
+      sizeSol: 0.1,
+      lowerBin: -1,
+      upperBin: 1,
+      status: 'open',
+      openedAt: Date.now(),
+    });
+    const { ctx, onSignError, emit } = throwingSignerCtx(conn, bus, {
+      status: 403,
+      message: 'session signer not authorized',
+    });
+    const sr = closeReq();
+    const verdict = await process1(sr, ctx);
+    expect(verdict).toMatchObject({ ok: false, reason: 'sign_revoked', kind: 'close' });
+    expect(vi.mocked(onSignError).mock.calls[0]?.[0]).toMatchObject({
+      class: 'revoked',
+      userId: USER,
+    });
+    expect(vi.mocked(emit).mock.calls.some(([c]) => c === 'system.delegation_revoked')).toBe(true);
+    // never-miss: the user's open mirror is STILL present (the coffre never drops mirrors on a revoked delegation).
+    const mirrors = await db.select().from(copyPositions).where(eq(copyPositions.userId, USER));
+    expect(mirrors.filter((m) => m.status === 'open' && m.ourPosition === ourPos)).toHaveLength(1);
   });
 });

@@ -209,6 +209,7 @@ __metadata:
   dependencies:
     "@binsight/shared": "workspace:*"
     "@privy-io/react-auth": "npm:3.33.1"
+    "@solana-program/memo": "npm:0.8.0"
     "@solana/wallet-adapter-base": "npm:0.9.27"
     "@solana/wallet-adapter-phantom": "npm:0.9.29"
     "@solana/wallet-adapter-react": "npm:0.15.39"
@@ -3709,6 +3710,15 @@ __metadata:
   peerDependencies:
     "@solana/kit": ^5.0
   checksum: 10/7aabd69359df7da2633c9bee1aca9bced5c3df5d5126cb2a830fb285679f3269fe613f4664ccd3a2f37b3666e1f96cc887a594d75901ed5004c68c5f555224f8
+  languageName: node
+  linkType: hard
+
+"@solana-program/memo@npm:0.8.0":
+  version: 0.8.0
+  resolution: "@solana-program/memo@npm:0.8.0"
+  peerDependencies:
+    "@solana/kit": ^3.0
+  checksum: 10/be4f525cf68f53d486e0a4c657045bb6ff8978036a9f91cd0a09ed04d1e0b69c32cbead3af6741bee75b59a4476d87ee19e1a89c39319354182868d73b8532ee
   languageName: node
   linkType: hard
 

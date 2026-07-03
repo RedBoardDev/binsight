@@ -9,7 +9,9 @@ import {
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { CopybotActivationService } from '@/application/copybot-activation';
 import type { CopybotAdminService } from '@/application/copybot-admin';
+import type { CopybotFundsService } from '@/application/copybot-funds';
 import type { CopybotLeadersService } from '@/application/copybot-leaders';
+import type { CopybotTeardownService } from '@/application/copybot-teardown';
 import type { Engine } from '@/application/engine';
 import type { EventBus } from '@/application/event-bus';
 import type { NotificationManager } from '@/application/notification/manager';
@@ -69,6 +71,10 @@ export type RouteDeps = {
   copybotActivation: CopybotActivationService;
   /** Copy-bot leader onboarding (validate a pasted leader + add it STOPPED — SPEC §4.3). */
   copybotLeaders: CopybotLeadersService;
+  /** Copy-bot funds: the withdraw helper (free SOL) + withdrawal ack (Path B, read-only/no signing — SPEC §2.2). */
+  copybotFunds: CopybotFundsService;
+  /** Copy-bot account teardown: the server-enforced delete gate (SPEC §2.4 / #56). */
+  copybotTeardown: CopybotTeardownService;
 };
 
 /** Owner-only guard for operational/notification routes. Returns false (and replies 403) otherwise. */
@@ -99,6 +105,8 @@ export function registerRoutes(app: FastifyInstance, deps: RouteDeps): void {
     copybotAdmin,
     copybotActivation,
     copybotLeaders,
+    copybotFunds,
+    copybotTeardown,
   } = deps;
 
   // A watchlist changes only on add/remove (which invalidate below), so cache it briefly instead of
@@ -619,6 +627,34 @@ export function registerRoutes(app: FastifyInstance, deps: RouteDeps): void {
   app.post('/copybot/activation/export-ack', async (req) =>
     copybotActivation.exportAck(req.account!.id),
   );
+
+  // ── Copy-bot funds (per-account — withdrawal Path B, SPEC §2.2) ──────────────────────────────────────────────
+  // The free (non-deployed, minus reserve) SOL the withdraw UI caps the amount to. READ-ONLY: nothing signs here —
+  // the user signs the transfer with their OWN Privy authority client-side (never the coffre).
+  app.get('/copybot/withdrawable', async (req) => copybotFunds.withdrawable(req.account!.id));
+
+  // The user completed a withdrawal (their own Privy signature) → stamp `withdrawal_ack_at` so the teardown gate
+  // (SPEC §2.4) sees a completed withdrawal. Lightweight bookkeeping; no funds move through the API.
+  app.post('/copybot/activation/withdrawal-ack', async (req) => {
+    await copybotFunds.acknowledgeWithdrawal(req.account!.id);
+    return { ok: true };
+  });
+
+  // ── Copy-bot account teardown (per-account — the server-enforced delete gate, SPEC §2.4 / #56) ───────────────
+  // A SYSTEM gate, not a UX toggle: refuse (409) while open mirrors exist OR the wallet holds more than dust,
+  // UNLESS a completed withdrawal or key-export ack is recorded. On pass: stop→force-close→confirm-closed→Privy
+  // delete (irreversible)→local cascade. Typed refusals map to precise statuses so the UI can guide the user.
+  app.delete('/copybot/account', async (req, reply) => {
+    const me = req.account!;
+    const result = await copybotTeardown.teardown(me.id, me.privyUserId);
+    if (result.ok) return { ok: true };
+    if (result.reason === 'system_user') return reply.code(403).send({ error: 'forbidden' });
+    // Privy detach failed → nothing was deleted locally; the account is intact and the delete is retryable.
+    if (result.reason === 'privy_delete_failed')
+      return reply.code(502).send({ error: 'account provider unavailable', reason: result.reason });
+    // Gate refusal (open_mirrors / funds_remain) or a force-close still in flight (in_progress) → 409 + the reason.
+    return reply.code(409).send({ error: 'teardown refused', reason: result.reason });
+  });
 
   // ── Copy-bot leaders (per-account — SPEC §4.3) ───────────────────────────────────────────────────────────
   // Validate a pasted leader address before adding it: rejects a malformed address, the user's own bot wallet,

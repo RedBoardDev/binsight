@@ -409,6 +409,11 @@ async function main(): Promise<void> {
     log,
   });
 
+  // Inc.4e — the LIVE signing-availability flag the coffre heartbeat carries (the web renders a "signing unavailable"
+  // banner off it, SPEC §2.4/#20). Starts true; a Privy OUTAGE flips it false (no automatism — the reconcile
+  // self-heals when Privy returns); a subsequent successful sign flips it back true.
+  let signingAvailable = true;
+
   // CRASH RECOVERY (no-miss): re-process any cmd:sign a prior (crashed) instance read but never ACKed — its PEL,
   // re-read with XREADGROUP id '0'. Exactly-once is guaranteed by the executions table (a landed command is a
   // duplicate; a stranded 'claimed' one is re-claimable). Without this, a vault crash mid-sign would STRAND an
@@ -427,6 +432,20 @@ async function main(): Promise<void> {
     retryMax: cfg.retryMax,
     retryDelayMs: cfg.retryDelayMs,
     onSubmitted: (t) => confirmWorker.track(t), // lane → worker hand-off at the broadcast (3c)
+    // Inc.4e — per-user Privy CUSTODY sign-failure side effects (outage #20 / revoked #21), isolated per user:
+    //  - outage:  flip the heartbeat `signingAvailable` flag + beat NOW so the web banner appears fast. NO automatism.
+    //  - revoked: disable signing for THAT user (sticky — signer_added=false), keeping its OPEN mirrors so the
+    //    reconcile keeps trying to close them (never-miss — never dropped). Re-activation is blocked until re-consent.
+    //    TODO(devnet-4f): also invalidate the in-memory signerFor cache entry so a running coffre skips the user
+    //    immediately (today the DB flag is sticky across restarts + the alert dedupes, so this is a live-path nicety).
+    onSignError: async (e) => {
+      if (e.class === 'outage') {
+        signingAvailable = false;
+        void heartbeat.beat({ signingEnabled: cfg.signingEnabled, signingAvailable });
+      } else {
+        await activationRepo.markSigningRevoked(e.userId, Date.now());
+      }
+    },
     log,
   };
   // 3c PER-USER SIGNING LANES: each message runs on its SIGNED user's lane — FIFO within a user, concurrent across
@@ -474,10 +493,11 @@ async function main(): Promise<void> {
     log.info('🔁 control: config-changed → reloading config now');
     void reloadConfig();
   });
-  // Process heartbeat: beat now (web sees the vault online immediately) then on an interval.
-  void heartbeat.beat({ signingEnabled: cfg.signingEnabled });
+  // Process heartbeat: beat now (web sees the vault online immediately) then on an interval. `signingAvailable`
+  // rides every beat so the web reflects a Privy outage/recovery within one heartbeat (Inc.4e).
+  void heartbeat.beat({ signingEnabled: cfg.signingEnabled, signingAvailable });
   const heartbeatTimer = setInterval(
-    () => void heartbeat.beat({ signingEnabled: cfg.signingEnabled }),
+    () => void heartbeat.beat({ signingEnabled: cfg.signingEnabled, signingAvailable }),
     HEARTBEAT_INTERVAL_MS,
   );
   const stop = async (): Promise<void> => {

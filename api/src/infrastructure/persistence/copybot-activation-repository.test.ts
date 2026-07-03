@@ -127,4 +127,38 @@ describe('CopybotActivationRepository', () => {
     s = await repo.find(USER);
     expect(s?.fundedAt).toBe(t1);
   });
+
+  it('markWithdrawalAck stamps withdrawal_ack_at (the teardown gate reads it — SPEC §2.4)', async () => {
+    await repo.provision({
+      userId: USER,
+      privyWalletId: WALLET_ID,
+      address: ADDRESS,
+      policyId: null,
+    });
+    expect((await repo.find(USER))?.withdrawalAckAt).toBeNull();
+    const now = Date.now();
+    await repo.markWithdrawalAck(USER, now);
+    expect((await repo.find(USER))?.withdrawalAckAt).toBe(now);
+  });
+
+  it('markSigningRevoked disables signing AND clears signer_added (STICKY — blocks the reconciler + re-activation)', async () => {
+    // Provision + advance to a signable baseline (signer added, signing cleared).
+    await repo.provision({
+      userId: USER,
+      privyWalletId: WALLET_ID,
+      address: ADDRESS,
+      policyId: null,
+    });
+    await repo.markConsentComplete(USER, Date.now());
+    await repo.applySigningGate(USER, { signingDisabled: false, funded: true }, Date.now());
+    const before = await repo.find(USER);
+    expect(before?.signerAdded).toBe(true);
+    expect(before?.signingDisabled).toBe(false);
+    // Revoke (#21): the coffre session signer is gone → signing disabled AND consent invalidated.
+    await repo.markSigningRevoked(USER, Date.now());
+    const after = await repo.find(USER);
+    expect(after?.signingDisabled).toBe(true);
+    // signer_added=false makes it STICKY: signingReady() can no longer auto-clear it (re-activation needs re-consent).
+    expect(after?.signerAdded).toBe(false);
+  });
 });

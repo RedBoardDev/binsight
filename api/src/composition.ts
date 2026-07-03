@@ -4,7 +4,9 @@ import { createRemoteJWKSet } from 'jose';
 import { pino } from 'pino';
 import { CopybotActivationService } from './application/copybot-activation';
 import { CopybotAdminService } from './application/copybot-admin';
+import { CopybotFundsService } from './application/copybot-funds';
 import { CopybotLeadersService } from './application/copybot-leaders';
+import { CopybotTeardownService } from './application/copybot-teardown';
 import { DlmmPositionPnl } from './application/dlmm-position-pnl';
 import { Engine } from './application/engine/index';
 import { StrategyService } from './application/engine/strategy-service';
@@ -35,6 +37,7 @@ import { WebPushChannel } from './infrastructure/notifications/web-push-channel'
 import { PostgresAccountRepository } from './infrastructure/persistence/account-repository';
 import { PostgresConfigRepository } from './infrastructure/persistence/config-repository';
 import { CopybotActivationRepository } from './infrastructure/persistence/copybot-activation-repository';
+import { CopybotPositionsRepository } from './infrastructure/persistence/copybot-positions-repository';
 import { closeDatabase, openDatabase, runMigrations } from './infrastructure/persistence/database';
 import { DlmmLegRepository } from './infrastructure/persistence/dlmm-leg-repository';
 import { NetworthSnapshotRepository } from './infrastructure/persistence/networth-snapshot-repository';
@@ -61,6 +64,9 @@ import { TransactionStream } from './infrastructure/solana/transaction-stream';
 
 /** Cadence to flush the CreditMeter's since-last-drain deltas into the rpc_credit_daily rollup. */
 const CREDIT_FLUSH_INTERVAL_MS = 60_000;
+
+/** Lamports per SOL — converts the deployed mirror size (SOL) into the lamport space the withdraw helper works in. */
+const LAMPORTS_PER_SOL = 1_000_000_000;
 
 /** Coarse per-transfer ceiling baked into every user's Wall A policy (defense in depth). Wall B enforces the EXACT
  *  per-intent wrap cap from the user's sizing; this is only a gross backstop (no single transfer moves > 100 SOL).
@@ -329,6 +335,47 @@ export function compose(config: AppConfig): App {
     log: logger,
   });
 
+  // Copy-bot funds + teardown (Inc.4e — SPEC §2.2/§2.4). Both READ the wallet via the shared live-lane balance; the
+  // withdraw path NEVER signs (the user signs Path B with their OWN Privy client), and the teardown is a SYSTEM gate.
+  const walletBalanceLamports = (address: string): Promise<number> =>
+    connection.getBalance(new PublicKey(address));
+  const copybotPositions = new CopybotPositionsRepository(db);
+  const copybotFunds = new CopybotFundsService({
+    repo: copybotActivationRepo,
+    balances: walletBalanceLamports,
+    // Deployed SOL (Σ open mirror size_sol) → lamports; conservatively excluded from the offered withdrawal.
+    deployedLamports: (userId) =>
+      copybotPositions.deployedSol(userId).then((sol) => Math.round(sol * LAMPORTS_PER_SOL)),
+    log: logger,
+  });
+  // Stop the bot for one user = set config `enabled=false` + fire the control ping → the brain's stop=force-close
+  // path force-closes every mirror + re-swaps to SOL (SPEC §4.3). Idempotent: an already-stopped config just pings.
+  const stopBotForUser = async (userId: string): Promise<void> => {
+    const cfg = await copybotConfigStore.load(userId);
+    if (cfg.user.enabled) {
+      await copybotConfigStore.save(userId, { ...cfg, user: { ...cfg.user, enabled: false } });
+    }
+    await publishConfigChanged();
+  };
+  // IRREVERSIBLE Privy user delete — only wired when provisioning is configured; else it throws so the teardown
+  // surfaces a clear 502 (never silently skips the detach). With PRIVY_SIGNING_ENABLED OFF there are no real
+  // provisioned users, so this is only exercised by tests (a fake deleter) until devnet 4f.
+  const deletePrivyUser = provisioningPrivy
+    ? (privyUserId: string) => provisioningPrivy.deleteUser(privyUserId)
+    : (): Promise<void> => {
+        throw new Error('Privy account deletion not configured (set PRIVY_APP_SECRET)');
+      };
+  const copybotTeardown = new CopybotTeardownService({
+    activation: copybotActivationRepo,
+    openMirrorCount: (userId) => copybotPositions.openMirrorCount(userId),
+    balances: walletBalanceLamports,
+    stopBot: stopBotForUser,
+    deletePrivyUser,
+    // The local user-scoped cascade (returns the newly-orphaned wallets the engine's reconcile then stops watching).
+    deleteLocalCascade: (userId) => accounts.deleteAccount(userId).then(() => undefined),
+    log: logger,
+  });
+
   return {
     async start() {
       await runMigrations(db, './drizzle');
@@ -360,6 +407,8 @@ export function compose(config: AppConfig): App {
         copybotAdmin,
         copybotActivation,
         copybotLeaders,
+        copybotFunds,
+        copybotTeardown,
         // Privy access-token verifier: the remote JWKS is fetched lazily + cached by jose.
         privyVerifier: createPrivyVerifier({
           appId: config.PRIVY_APP_ID,
