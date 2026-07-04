@@ -175,6 +175,13 @@ export interface MessageHandlerDeps {
   group: string;
 }
 
+// A cmd:sign whose stream bytes were TRIMMED out of the PEL (an XTRIM MAXLEN on the command stream evicted an
+// in-flight entry, see RedisBus tombstone): its body/hmac are gone, so it can be neither re-processed nor
+// dead-lettered verbatim — the only safe action is to ACK-and-skip. A trimmed in-flight command is a rare but real
+// ops event, so it is warn-logged (not silent) for observability.
+const TOMBSTONE_LOG =
+  'cmd:sign trimmed out of the PEL (tombstone) → ACK-and-skip (ghost cannot be re-signed)';
+
 /**
  * Build the per-message LANE TASK: run the critical section, then perform the verdict's terminal I/O. The ACK (or
  * dead-letter, which acks internally) happens ONLY here — after the lane task reached a terminal outcome — never at
@@ -186,6 +193,16 @@ export function createMessageHandler(
 ): (msg: ConsumedMessage, recovering: boolean) => Promise<void> {
   const { process, bus, events, log, stream, group } = deps;
   return async (msg, recovering) => {
+    // TOMBSTONE: a PEL entry the command stream's XTRIM evicted (null/empty fields, see RedisBus.parse). Its bytes are
+    // GONE — it can be neither re-processed (nothing to decode) nor dead-lettered verbatim (nothing to preserve). ACK
+    // it and move on: leaving it in the PEL would wedge this consume loop on the ghost forever (heartbeat green,
+    // nothing signed, every later close missed). NOT routed through `process` — a null tombstone payload would be
+    // rejected → dead-lettered, and deadLetter(raw={}) would itself throw (empty xadd) and re-wedge the loop.
+    if (msg.tombstone) {
+      log.warn({ id: msg.id, recovering }, TOMBSTONE_LOG);
+      await bus.ack(stream, group, msg.id);
+      return;
+    }
     try {
       const verdict = await process(msg.payload, recovering);
       log.info({ id: msg.id, recovering, ...verdict }, verdict.ok ? '✅ processed' : '⛔ rejected');

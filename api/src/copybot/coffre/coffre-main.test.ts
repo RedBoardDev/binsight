@@ -89,6 +89,11 @@ function msgOf(id: string, payload: unknown): ConsumedMessage {
   return { id, payload, raw: { body: 'b', hmac: 'h' } };
 }
 
+/** A TOMBSTONE ConsumedMessage: the XTRIM-evicted PEL entry RedisBus.parse surfaces (payload null, empty raw). */
+function tombstoneOf(id: string): ConsumedMessage {
+  return { id, payload: null, raw: {}, tombstone: true };
+}
+
 function depsOf(process: MessageHandlerDeps['process']): MessageHandlerDeps & {
   acks: ReturnType<typeof vi.fn>;
   dlq: ReturnType<typeof vi.fn>;
@@ -160,6 +165,20 @@ describe('coffre createMessageHandler — ACK only AFTER the lane task reached a
       expect.anything(),
       expect.anything(),
     );
+  });
+
+  it('★ a TOMBSTONE (XTRIM-trimmed PEL entry) is ACKed-and-skipped — never re-processed, never dead-lettered (#147)', async () => {
+    // WHY: the trimmed entry's bytes are gone. Feeding it to `process` (payload null) would reject → dead-letter, and
+    // deadLetter(raw={}) would throw and re-wedge the loop. The ONLY safe action is ACK-and-skip. Leaving it unACKed
+    // (the old TypeError crash) wedged the consume loop on the ghost forever — vault alive (heartbeat green), signing
+    // NOTHING, every later close missed.
+    const process = vi.fn(async () => ({ ok: true }));
+    const deps = depsOf(process);
+    await createMessageHandler(deps)(tombstoneOf('9-0'), true);
+    expect(process).not.toHaveBeenCalled(); // never decoded — there is nothing to decode
+    expect(deps.dlq).not.toHaveBeenCalled(); // never dead-lettered — nothing to preserve (deadLetter({}) would throw)
+    expect(deps.acks).toHaveBeenCalledTimes(1);
+    expect(deps.acks).toHaveBeenCalledWith('s', 'g', '9-0'); // ACKed → cleared from the PEL, the loop can proceed
   });
 });
 
@@ -285,6 +304,25 @@ describe('coffre lanes ⨯ handler — user B is acked while user A is still sig
     finishA({ ok: true }); // release A (cleanup)
     await Promise.all(batch);
     expect(deps.acks).toHaveBeenCalledTimes(2);
+  });
+
+  it('★ a tombstone in a batch does NOT wedge the loop — the NEXT real command is still processed + ACKed (#147)', async () => {
+    // WHY (no-miss): the whole point of the tombstone handling is that ONE ghost PEL entry must not block the
+    // following genuine close. A tombstone and a real command dispatch through the loop; both must reach a terminal
+    // ACK — the tombstone via skip, the real command via its normal terminal-OK.
+    const process = vi.fn(async () => ({ ok: true, reason: 'submitted' }));
+    const deps = depsOf(process);
+    const handle = createMessageHandler(deps);
+    const lanes = new SigningLanes();
+    const batch = [tombstoneOf('9-1'), msgOf('9-2', { userId: 'u' })];
+    await Promise.all(
+      batch.map((m) => lanes.dispatch(laneKeyOf(m.payload), () => handle(m, true))),
+    );
+    expect(process).toHaveBeenCalledTimes(1); // only the REAL command was decoded (the tombstone was skipped)…
+    expect(process).toHaveBeenCalledWith({ userId: 'u' }, true); // …with the real payload, never the tombstone's null
+    expect(deps.acks).toHaveBeenCalledTimes(2); // BOTH acked: the tombstone (skip) AND the real command (terminal-OK)
+    expect(deps.acks).toHaveBeenCalledWith('s', 'g', '9-1'); // ghost cleared
+    expect(deps.acks).toHaveBeenCalledWith('s', 'g', '9-2'); // real close cleared → loop proceeds, no wedge
   });
 });
 

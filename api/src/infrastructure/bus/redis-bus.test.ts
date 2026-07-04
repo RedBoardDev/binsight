@@ -171,6 +171,52 @@ describe("RedisBus — NOGROUP self-heal + '0' anchor (fake redis)", () => {
   });
 });
 
+// XTRIM tombstone (deterministic, fake ioredis — no container). Once ops deploy the documented `XTRIM MAXLEN` on the
+// command stream, a cmd:sign still in the PEL (unconfirmed → retryLater) can be trimmed OUT of the stream; Redis then
+// returns null (or empty) fields for that PEL entry on an XREADGROUP-of-pending. FAIL-AGAINST-OLD: the old
+// fieldsToRecord dereferenced `null.length` → threw → the consume loop backed off and hit the SAME ghost entry every
+// iteration forever (vault alive/heartbeat green, signing NOTHING, every later close missed). parse must surface a
+// TOMBSTONE the caller can ACK-and-skip — and it must stay DISTINCT from a bad-MAC reject (which keeps its raw bytes).
+describe('RedisBus — a trimmed PEL entry parses as a TOMBSTONE, never throws (fake redis, #147)', () => {
+  const KEY = 'k_sign_test';
+
+  it('consumePending on a NULL-fields PEL entry → a tombstone, does NOT throw (old code threw TypeError)', async () => {
+    const xreadgroup = vi.fn(async () => [['cmd:sign', [['5-0', null]]]]); // Redis reply for a trimmed-out PEL entry
+    const bus = new RedisBus({ xreadgroup } as never);
+    await expect(bus.consumePending('cmd:sign', 'coffre', 'c1', 'cmd:sign', KEY)).resolves.toEqual([
+      { id: '5-0', payload: null, raw: {}, tombstone: true },
+    ]);
+  });
+
+  it('EMPTY ([]) fields ALSO parse as a tombstone (nothing to authenticate or dead-letter verbatim)', async () => {
+    const xreadgroup = vi.fn(async () => [['cmd:sign', [['6-0', []]]]]);
+    const bus = new RedisBus({ xreadgroup } as never);
+    const [msg] = await bus.consumePending('cmd:sign', 'coffre', 'c1', 'cmd:sign', KEY);
+    expect(msg).toEqual({ id: '6-0', payload: null, raw: {}, tombstone: true });
+  });
+
+  it('★ a tombstone is DISTINGUISHABLE from a bad-MAC reject — only the reject keeps raw body/hmac for the DLQ', async () => {
+    // Both surface payload:null, so the discriminator is `tombstone` (+ an empty `raw`). A tombstone must NEVER take
+    // the reject→deadLetter path: deadLetter(raw={}) would xadd with no fields and throw, re-wedging the loop. Proving
+    // one ghost in a batch does not blow up the neighbouring (genuine, here rejected) entry — parse maps each safely.
+    const xreadgroup = vi.fn(async () => [
+      [
+        'cmd:sign',
+        [
+          ['7-0', null], // trimmed-out → tombstone
+          ['7-1', ['body', 'B', 'hmac', '00']], // '00' = valid hex, wrong MAC → verifyEnvelope returns null (reject)
+        ],
+      ],
+    ]);
+    const bus = new RedisBus({ xreadgroup } as never);
+    const [tomb, reject] = await bus.consumePending('cmd:sign', 'coffre', 'c1', 'cmd:sign', KEY);
+    expect(tomb).toEqual({ id: '7-0', payload: null, raw: {}, tombstone: true });
+    expect(reject?.payload).toBeNull(); // a reject ALSO has a null payload…
+    expect(reject?.tombstone).toBeUndefined(); // …but it is NOT a tombstone…
+    expect(reject?.raw).toEqual({ body: 'B', hmac: '00' }); // …and it KEEPS its bytes for a verbatim DLQ
+  });
+});
+
 // End-to-end resilience against a live Redis (:6385). Proves the two no-miss guarantees on the real server:
 // (1) '0' catches a message published BEFORE the group existed; (2) after the group is DESTROYED (Redis eviction /
 // restart-empty), consume self-heals and still delivers the backlog instead of throwing NOGROUP forever.

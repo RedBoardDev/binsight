@@ -9,14 +9,23 @@ import { encodeEnvelope, verifyEnvelope } from './envelope';
 
 export interface ConsumedMessage {
   id: string;
-  /** authenticated payload, or `null` if the MAC/hop does not match (→ caller DLQ + ACK). */
+  /** authenticated payload; `null` if the MAC/hop does not match (→ caller DLQ + ACK) OR if this is a tombstone. */
   payload: unknown | null;
-  /** the EXACT raw stream fields (`body`/`hmac`) as read — needed to dead-letter a rejected/poison message verbatim. */
+  /** the EXACT raw stream fields (`body`/`hmac`) as read — needed to dead-letter a rejected/poison message verbatim; `{}` for a tombstone (the bytes are gone). */
   raw: Record<string, string>;
+  /**
+   * TOMBSTONE: this PEL entry's stream bytes were TRIMMED away — an `XTRIM MAXLEN` on the command stream evicted an
+   * entry still awaiting confirmation, so Redis returned null/empty fields for it. The body/hmac are GONE: the entry
+   * can be neither authenticated nor dead-lettered verbatim; the ONLY safe action is for the caller to ACK it and
+   * move on. Distinct from a `payload: null` REJECT (bad MAC/hop), which still carries its raw body/hmac for the DLQ.
+   */
+  tombstone?: boolean;
 }
 
-const fieldsToRecord = (fields: string[]): Record<string, string> => {
+const fieldsToRecord = (fields: string[] | null | undefined): Record<string, string> => {
   const r: Record<string, string> = {};
+  // A PEL entry whose stream bytes were TRIMMED (XTRIM MAXLEN) comes back with null fields — never deref `.length`.
+  if (!Array.isArray(fields)) return r;
   for (let i = 0; i + 1 < fields.length; i += 2) r[fields[i] as string] = fields[i + 1] as string;
   return r;
 };
@@ -57,13 +66,13 @@ export class RedisBus {
     stream: string,
     group: string,
     read: () => Promise<unknown>,
-  ): Promise<Array<[string, Array<[string, string[]]>]> | null> {
+  ): Promise<Array<[string, Array<[string, string[] | null]>]> | null> {
     try {
-      return (await read()) as Array<[string, Array<[string, string[]]>]> | null;
+      return (await read()) as Array<[string, Array<[string, string[] | null]>]> | null;
     } catch (err) {
       if (!(err as Error).message.includes('NOGROUP')) throw err;
       await this.ensureGroup(stream, group);
-      return (await read()) as Array<[string, Array<[string, string[]]>]> | null;
+      return (await read()) as Array<[string, Array<[string, string[] | null]>]> | null;
     }
   }
 
@@ -113,13 +122,19 @@ export class RedisBus {
   }
 
   private parse(
-    res: Array<[string, Array<[string, string[]]>]> | null,
+    res: Array<[string, Array<[string, string[] | null]>]> | null,
     hop: string,
     key: string,
   ): ConsumedMessage[] {
     if (!res || res.length === 0) return [];
     const entries = res[0]?.[1] ?? [];
     return entries.map(([id, fields]) => {
+      // TOMBSTONE: an XTRIM MAXLEN on the command stream can evict a PEL entry still awaiting confirmation; Redis then
+      // returns null (or empty) fields for it. The body/hmac are GONE — it can be neither authenticated nor
+      // dead-lettered verbatim — so surface a tombstone (`payload: null`, empty `raw`, `tombstone: true`) for the
+      // caller to ACK-and-skip. Without this the map would deref `null.length` and throw, wedging the consume loop.
+      if (!Array.isArray(fields) || fields.length === 0)
+        return { id, payload: null, raw: {}, tombstone: true };
       const f = fieldsToRecord(fields);
       const payload =
         f.body !== undefined && f.hmac !== undefined
