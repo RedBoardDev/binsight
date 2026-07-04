@@ -440,7 +440,11 @@ export async function createUserRuntime(
       sizeLamports: bigint;
       solSide: 'X' | 'Y';
       tokenMint: string;
+      /** OUR SOL leg (the SOL the open command deposits) — the per-command coffre re-clamp figure. */
       sizeSol: number;
+      /** COMBINED deployment (SOL leg + the SOL the buy spends) — recorded on the mirror so exposure counts BOTH
+       *  legs (finding #94 §3). Distinct from `sizeSol` so a command re-clamp never folds in the separate buy. */
+      recordedSizeSol: number;
       /** #33 — snapshot of the token balance BEFORE the buy was published (a pre-existing residual of the same mint
        *  must NOT be co-deposited); the quoted token output + buy slippage derive the settle floor the post-buy read
        *  must clear before we trust it (read-after-write lag → never a short/one-sided half copy). */
@@ -470,7 +474,11 @@ export async function createUserRuntime(
       leader: string;
       lower: number;
       upper: number;
+      /** SOL leg = the deposit command's per-command re-clamp figure. */
       sizeSol: number;
+      /** COMBINED deployment (SOL leg + buy spend) — recorded on the mirror so exposure counts both legs (#94 §3);
+       *  == sizeSol for a one-sided open (no buy). */
+      recordedSizeSol: number;
       prebuiltDeposit?: Transaction;
       dist?: WeightBin[];
       totalX?: bigint;
@@ -489,6 +497,9 @@ export async function createUserRuntime(
       /** per-token concurrency-cap key — threaded deposit → mirror so the persisted Token-2022 mirror carries it. */
       nonSolMint: string;
       sizeSol: number;
+      /** COMBINED deployment (SOL leg + buy spend) → the persisted mirror's sizeSol, so exposure counts both legs
+       *  (#94 §3); == sizeSol for a one-sided open. */
+      recordedSizeSol: number;
       lower: number;
       upper: number;
       leaderSizeSol: number;
@@ -935,7 +946,7 @@ export async function createUserRuntime(
         // hands off to openTwoSided, which either replicates both legs or SKIPS cleanly if the token can't be
         // bought (no Jupiter route). Either way we return — we do NOT fall through to the one-sided SOL path.
         if (ec.twoSidedMode === 'on')
-          return openTwoSided(e, leader, e.nonSolMint, meta.solSide, plan);
+          return openTwoSided(e, leader, e.nonSolMint, meta.solSide, plan, decision.sizeSol);
         // 'shadow' → fall through to the SOL-only path below (shadow mode = log the two-sided plan, open SOL-only).
       }
     }
@@ -1014,6 +1025,7 @@ export async function createUserRuntime(
         lower,
         upper,
         sizeSol: decision.sizeSol,
+        recordedSizeSol: decision.sizeSol, // one-sided: no token buy → recorded == the SOL leg
       });
     }
     const { issuedAtSlot, deadlineSlot } = await slotsP;
@@ -1047,25 +1059,38 @@ export async function createUserRuntime(
     await publish(sr, { leader, leaderPosition: e.position, leaderSizeSol: e.depositSol });
   }
 
-  /** TWO-SIDED open: buy the token leg (ExactOut, deterministic) then deposit BOTH legs. Publishes the BUY first
-   *  so the coffre lands it before the open (funds the token). The SOL leg keeps the sized SOL; the token leg is
-   *  scaled by the SAME factor (our SOL / leader SOL) to preserve the leader's composition. */
+  /** TWO-SIDED open: buy the token leg then deposit BOTH legs. Publishes the BUY first so the coffre lands it before
+   *  the open (funds the token). BOTH legs are scaled by ONE shared factor so the leader's composition holds AND the
+   *  COMBINED SOL deployment (SOL leg + the token buy) is bounded by the cap (finding #94). */
   async function openTwoSided(
     e: DetectedEvent,
     leader: string,
     tokenMint: string,
     solSide: 'X' | 'Y',
     plan: TwoSidedPlan,
+    decisionSizeSol: number,
   ): Promise<void> {
     const ec = effFor(leader);
-    // Scale BOTH legs by copyRatio of the leader's respective legs (preserves composition), SOL leg capped.
+    // Cap the COMBINED deployment (SOL leg + the SOL spent buying the token), NOT the SOL leg alone (finding #94).
+    // Ceiling = min(decideEntry's sizeSol — the copy-ratio of the leader's TOTAL value, incl. reduce-to-fit — and
+    // the per-trade hard cap maxTradeSol). The token leg's SOL value = the detected deposit (which already prices
+    // BOTH legs in SOL) minus OUR SOL leg; clamp ≥0 so a shape-read/deposit skew never yields a negative that would
+    // defeat the cap. sizeTwoSided then scales BOTH legs by one shared factor so composition holds AND the total is
+    // bounded — so the token buy can't over-deploy (symptom 1) or get coffre-rejected and drop the open (symptom 2).
+    const maxTradeLamports = BigInt(Math.round(ec.sizing.maxTradeSizeSol * LAMPORTS_PER_SOL));
+    const decisionLamports = BigInt(Math.round(decisionSizeSol * LAMPORTS_PER_SOL));
+    const maxDeployLamports =
+      decisionLamports < maxTradeLamports ? decisionLamports : maxTradeLamports;
+    const depositLamports = BigInt(Math.round(e.depositSol * LAMPORTS_PER_SOL));
+    const tokenLegValueLamports =
+      depositLamports > plan.leaderSolRaw ? depositLamports - plan.leaderSolRaw : 0n;
     const { solLamports: sizeLamports, tokenTarget } = sizeTwoSided(
       plan.leaderSolRaw,
       plan.leaderTokenRaw,
+      tokenLegValueLamports,
       ec.sizing.tradeRatioPct ?? 100,
-      BigInt(Math.round(ec.sizing.maxTradeSizeSol * LAMPORTS_PER_SOL)),
+      maxDeployLamports,
     );
-    const sizeSol = Number(sizeLamports) / LAMPORTS_PER_SOL;
     const dist: WeightBin[] = fillContiguousWeights(
       plan.weights.map((w) => ({
         binId: w.binId,
@@ -1116,6 +1141,15 @@ export async function createUserRuntime(
     // (actual − preBuy), so a pre-existing residual of the same mint is never co-deposited past the leader composition.
     const preBuyTokenRaw = await readOwnerTokenBalance(conn, ownerPk, new PublicKey(tokenMint));
 
+    // `sizeSol` = OUR SOL leg = the SOL the OPEN command actually deposits → each command's per-command coffre
+    // re-clamp stays a true, always-in-bounds figure (the SOL leg is ≤ the cap by construction, so a fresh open is
+    // never spuriously rejected). `recordedSizeSol` = the COMBINED deployment (SOL leg + the SOL the buy spends, the
+    // ExactIn input) → recorded on the MIRROR so exposure caps count BOTH legs (finding #94 §3: the SOL-leg-only
+    // mirror size undercounted deployed capital by up to ~2×). The buy is its OWN separately-clamped command, so it
+    // is never folded into a command re-clamp (drift could push that over maxTradeSol → a dropped open).
+    const sizeSol = Number(sizeLamports) / LAMPORTS_PER_SOL;
+    const recordedSizeSol = Number(sizeLamports + BigInt(buyQuote.inAmount)) / LAMPORTS_PER_SOL;
+
     // Stash the open context → built+published once the buy lands; the build reads the ACTUAL token bought (ExactIn
     // output is variable) and deposits THAT, keyed by solSide/tokenMint (not a pre-planned exact amount).
     pendingTwoSidedOpens.set(buyCommandId, {
@@ -1126,6 +1160,7 @@ export async function createUserRuntime(
       solSide,
       tokenMint,
       sizeSol,
+      recordedSizeSol,
       preBuyTokenRaw,
       expectedTokenRaw: BigInt(buyQuote.outAmount),
       buySlippageBps: ec.execution.slippageBps,
@@ -1182,9 +1217,10 @@ export async function createUserRuntime(
       lower: number;
       upper: number;
       sizeSol: number;
+      recordedSizeSol: number;
     },
   ): Promise<void> {
-    const { dist, totalX, totalY, lower, upper, sizeSol } = args;
+    const { dist, totalX, totalY, lower, upper, sizeSol, recordedSizeSol } = args;
     const createEventKey = `${leader}:${e.pool}:open-create:${e.position}:${e.signature}`;
     const createCommandId = commandIdFor(createEventKey);
     const posKp: Keypair = derivePositionKeypair(createCommandId); // the coffre signs 'open' with derivePositionKeypair(commandId) → MUST match
@@ -1207,6 +1243,7 @@ export async function createUserRuntime(
       lower,
       upper,
       sizeSol,
+      recordedSizeSol,
     });
     buildingToken2022Positions.set(posKp.publicKey.toBase58(), Date.now()); // orphan-close grace until the deposit lands
     await publish(
@@ -1250,9 +1287,11 @@ export async function createUserRuntime(
       lower: number;
       upper: number;
       sizeSol: number;
+      recordedSizeSol: number;
     },
   ): Promise<void> {
     const { createTx, depositTx, posPubkey, commandId, eventKey, lower, upper, sizeSol } = args;
+    const { recordedSizeSol } = args;
     const { issuedAtSlot, deadlineSlot } = await slots();
     pendingToken2022Deposits.set(commandId, {
       e,
@@ -1260,6 +1299,7 @@ export async function createUserRuntime(
       lower,
       upper,
       sizeSol,
+      recordedSizeSol,
       prebuiltDeposit: depositTx,
     });
     buildingToken2022Positions.set(posPubkey, Date.now()); // orphan-close grace until the deposit lands
@@ -1291,7 +1331,7 @@ export async function createUserRuntime(
     const ctx = pendingTwoSidedOpens.get(buyCommandId);
     if (!ctx) return;
     await runContinuation(pendingTwoSidedOpens, buyCommandId, async () => {
-      const { e, leader, dist, sizeLamports, solSide, tokenMint, sizeSol } = ctx;
+      const { e, leader, dist, sizeLamports, solSide, tokenMint, sizeSol, recordedSizeSol } = ctx;
       if (consumeOpenCancellation(e.position, e.pool)) return; // leader closed before the buy landed → don't open into an exited pool
       const poolPk = new PublicKey(e.pool);
       const pair = await createDlmmPair(conn, poolPk);
@@ -1359,6 +1399,7 @@ export async function createUserRuntime(
           lower,
           upper,
           sizeSol,
+          recordedSizeSol,
         });
       }
 
@@ -1415,6 +1456,7 @@ export async function createUserRuntime(
           lower,
           upper,
           sizeSol,
+          recordedSizeSol,
         });
       }
       const { issuedAtSlot, deadlineSlot } = await slots();
@@ -1441,7 +1483,7 @@ export async function createUserRuntime(
         pool: e.pool,
         nonSolSymbol: e.nonSolSymbol,
         nonSolMint: tokenMint, // the token we bought = the per-token concurrency-cap key
-        sizeSol,
+        sizeSol: recordedSizeSol, // COMBINED deployment (SOL leg + buy spend) → exposure counts both legs (#94 §3)
         lowerBin: lower,
         upperBin: upper,
         openedAt: Date.now(),
@@ -1463,7 +1505,7 @@ export async function createUserRuntime(
     const ctx = pendingToken2022Deposits.get(createCommandId);
     if (!ctx) return;
     await runContinuation(pendingToken2022Deposits, createCommandId, async () => {
-      const { e, leader, lower, upper, sizeSol } = ctx;
+      const { e, leader, lower, upper, sizeSol, recordedSizeSol } = ctx;
       if (consumeOpenCancellation(e.position, e.pool)) return; // leader closed before the create landed → don't fund an exited pool (the empty position is orphan-closed)
       const poolPk = new PublicKey(e.pool);
       const posKp: Keypair = derivePositionKeypair(createCommandId); // SAME position the create made
@@ -1516,6 +1558,7 @@ export async function createUserRuntime(
         nonSolSymbol: e.nonSolSymbol,
         nonSolMint: e.nonSolMint ?? '', // per-token concurrency-cap key
         sizeSol,
+        recordedSizeSol,
         lower,
         upper,
         leaderSizeSol: e.depositSol,
@@ -1569,7 +1612,7 @@ export async function createUserRuntime(
         pool: pend.pool,
         nonSolSymbol: pend.nonSolSymbol,
         nonSolMint: pend.nonSolMint, // per-token concurrency-cap key
-        sizeSol: pend.sizeSol,
+        sizeSol: pend.recordedSizeSol, // COMBINED deployment (SOL leg + buy spend) → exposure counts both legs (#94 §3)
         lowerBin: pend.lower,
         upperBin: pend.upper,
         openedAt: Date.now(),
@@ -1895,6 +1938,7 @@ export async function createUserRuntime(
     let ourShape: Awaited<ReturnType<typeof readLeaderPositionShape>> = null;
     let plan: ReturnType<typeof planTwoSidedReshape> | null = null;
     let leaderBins: Array<{ offset: number; sol: number }> = []; // hoisted: also used post-loop for the new-size calc
+    let leaderTokenRawTotal = 0; // hoisted: leader's full token-leg raw units → valued in SOL for the new-size calc
     for (let r = 0; r <= (changeExpected ? RESYNC_READ_RETRIES : 0); r++) {
       if (r > 0) await sleep(OPEN_SHAPE_READ_DELAY_MS);
       const leaderShape = await readStableShape(poolPk, leaderPk, e.position, pair);
@@ -1923,6 +1967,7 @@ export async function createUserRuntime(
         offset: b.binId - leaderShape.lowerBinId,
         sol: tokenOf(b),
       }));
+      leaderTokenRawTotal = leaderTokenBins.reduce((s, b) => s + b.sol, 0); // full token leg (raw) for the size calc
       const ourTokenBins = os.perBin.map((b) => ({
         offset: b.binId - os.lowerBinId,
         sol: tokenOf(b),
@@ -2205,8 +2250,29 @@ export async function createUserRuntime(
       }
     }
 
+    // Exposure basis (finding #94 §3): the recorded size must count BOTH legs, exactly like the two-sided OPEN —
+    // else the FIRST resync clobbers the open's combined size back to a SOL-leg-only figure and undercounts deployed
+    // capital by up to ~2×. Value the leader's full token leg in SOL via the fully-routed SELL quote, but ONLY when
+    // we actually copy the token leg (twoSidedMode 'on' AND the leader holds token). This runs AFTER every reshape
+    // command is already published (off the copy SLA path) and is guarded: a quote failure falls back to the SOL-leg
+    // basis (never worse than before the fix), and it feeds ONLY the recorded size — the deposits are unaffected.
+    const leaderSolSizeSol = leaderBins.reduce((s, b) => s + b.sol, 0);
+    let tokenLegValueSol = 0;
+    if (ec.twoSidedMode === 'on' && leaderTokenRawTotal > 0) {
+      try {
+        const valueQuote = await getJupiterQuote(
+          jupiterBaseUrl,
+          tokenMint,
+          BigInt(Math.round(leaderTokenRawTotal)),
+          ec.execution.slippageBps,
+        );
+        tokenLegValueSol = Number(valueQuote.outAmount) / LAMPORTS_PER_SOL;
+      } catch {
+        tokenLegValueSol = 0; // SOL-leg basis fallback — same as before the fix, never an overcount
+      }
+    }
     const newSize = Math.min(
-      copyRatio * leaderBins.reduce((s, b) => s + b.sol, 0),
+      copyRatio * (leaderSolSizeSol + tokenLegValueSol),
       ec.sizing.maxTradeSizeSol,
     );
     registry.adjustSize(e.position, newSize);

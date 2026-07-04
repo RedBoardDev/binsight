@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CAPS_DEFAULTS, type CapsConfig, type CapsState, checkCaps, exposureFor } from './caps';
+import { sizeTwoSided } from './two-sided';
 
 const state = (over: Partial<CapsState> = {}): CapsState => ({
   openPositions: 0,
@@ -192,5 +193,38 @@ describe('exposureFor — per-leader exposure sum (the leaderExposureSol input, 
     // WHY: '' is the NULL-fallback of a pre-3b row — attributing it to a real leader would inflate that leader's
     // exposure and wrongly block its opens.
     expect(exposureFor([{ leaderAddress: '', sizeSol: 5 }], 'A')).toBe(0);
+  });
+});
+
+describe('exposure counts BOTH legs of a two-sided copy (finding #94 §3)', () => {
+  const SOL = 1_000_000_000n;
+  const PRICE = 500n; // lamports of SOL value per raw token unit → buySpend = tokenTarget × PRICE
+  // A rich-wallet two-sided open: 4 SOL leg + token worth 4 SOL, ratio 100%, combined capped at 5 SOL.
+  const { solLamports, tokenTarget } = sizeTwoSided(4n * SOL, 8_000_000n, 4n * SOL, 100, 5n * SOL);
+  const buySpendLamports = tokenTarget * PRICE;
+  const combinedSol = Number(solLamports + buySpendLamports) / 1e9; // what openTwoSided now records
+  const solLegOnlySol = Number(solLamports) / 1e9; // the OLD (buggy) SOL-leg-only recording
+
+  it('the recorded mirror size is the COMBINED deployment (SOL leg + buy spend), not the SOL leg alone', () => {
+    expect(combinedSol).toBe(5); // 2.5 leg + 2.5 buy = the 5 SOL actually deployed
+    expect(solLegOnlySol).toBe(2.5); // the old undercount recorded only half
+  });
+
+  it('exposureFor sums the FULL deployed capital of a two-sided mirror (both legs)', () => {
+    expect(exposureFor([{ leaderAddress: 'A', sizeSol: combinedSol }], 'A')).toBe(5);
+  });
+
+  it('WHY it is money-critical: the SOL-leg-only undercount let the total-exposure cap UNDER-block a new open', () => {
+    const cfg: CapsConfig = { ...CAPS_DEFAULTS, maxTotalExposureSol: 6 };
+    const NEW_OPEN = 2; // a proposed new position
+    // Correct (both legs counted): 5 already deployed + 2 = 7 > 6 → BLOCK (refuses to over-deploy real capital).
+    expect(checkCaps(cfg, state({ totalExposureSol: combinedSol }), NEW_OPEN, NOW)).toEqual({
+      action: 'block',
+      reason: 'max_total_exposure',
+    });
+    // Buggy (SOL leg only): 2.5 + 2 = 4.5 ≤ 6 → ALLOW → 7 SOL of REAL capital slips past a 6 SOL cap.
+    expect(checkCaps(cfg, state({ totalExposureSol: solLegOnlySol }), NEW_OPEN, NOW).action).toBe(
+      'allow',
+    );
   });
 });

@@ -934,6 +934,7 @@ describe('UserRuntime — a deferred continuation is NEVER dropped after our buy
       nonSolSymbol: 'TKN',
       nonSolMint: WSOL,
       sizeSol: 1,
+      recordedSizeSol: 1, // combined (SOL leg + buy spend) → the persisted mirror's sizeSol (#94 §3)
       lower: -5,
       upper: 5,
       leaderSizeSol: 1,

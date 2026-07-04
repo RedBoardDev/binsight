@@ -57,15 +57,24 @@ export function twoSidedLegTotals(
 
 /**
  * Size a two-sided copy: scale BOTH legs by `pct`% of the leader (preserves the leader's SOL:token composition),
- * capping the SOL leg at `maxSolLamports` (the token leg scales down by the SAME cap factor so composition holds).
- * Pure, bigint-exact. NB: must scale each leg by the ratio of LEADER legs — NOT decideEntry's sizeSol, which is
- * the COPY_RATIO of the leader's TOTAL value and would over-deploy the SOL leg.
+ * capping the COMBINED SOL deployment at `maxDeployLamports`. Pure, bigint-exact.
+ *
+ * The token leg is funded by a SEPARATE SOL command (an ExactIn buy), so capping ONLY the SOL leg let the combined
+ * deployment (SOL leg + the SOL spent buying the token) run to ~2× the ceiling — or, when the token leg's SOL value
+ * alone exceeded maxTradeSol, the coffre HARD-rejected the buy and the whole open was silently dropped (finding #94).
+ * We value the token leg in SOL (`tokenLegValueLamports` — the detected event already prices BOTH legs in SOL) and
+ * cap the TOTAL: the effective factor is `min(pct/100, maxDeployLamports / (leaderSolRaw + tokenLegValueLamports))`,
+ * applied to BOTH legs so composition holds and `solLamports + expectedBuySpend ≤ maxDeployLamports`.
+ *
+ * NB: still scales each leg by the ratio of LEADER legs (composition) — NOT decideEntry's sizeSol directly; the
+ * caller folds decideEntry's sizeSol into `maxDeployLamports` (min with maxTradeSol) so reduce-to-fit is honored.
  */
 export function sizeTwoSided(
   leaderSolRaw: bigint,
   leaderTokenRaw: bigint,
+  tokenLegValueLamports: bigint,
   pct: number,
-  maxSolLamports: bigint,
+  maxDeployLamports: bigint,
 ): { solLamports: bigint; tokenTarget: bigint } {
   // Scale via BASIS POINTS, not `BigInt(pct)`: a fractional ratio the UI accepts (12.5%, 0.5%) would make
   // `BigInt(12.5)` throw a RangeError → EVERY two-sided open silently dropped (mirror error, no feed row).
@@ -74,9 +83,14 @@ export function sizeTwoSided(
   const bps = BigInt(Math.round(pct * 100));
   let solLamports = (leaderSolRaw * bps) / 10_000n;
   let tokenTarget = (leaderTokenRaw * bps) / 10_000n;
-  if (maxSolLamports > 0n && solLamports > maxSolLamports) {
-    tokenTarget = (tokenTarget * maxSolLamports) / solLamports; // cap the SOL leg, scale token by the same factor
-    solLamports = maxSolLamports;
+  // Combined SOL deployment at the ratio = SOL leg + the token leg valued in SOL (both scaled by the same bps). When
+  // it exceeds the cap, scale BOTH legs by the SAME factor (maxDeploy / combined) so the total is bounded and the
+  // SOL:token composition is preserved. token value 0 ⇒ combined == solLamports ⇒ identical to a pure SOL-leg cap.
+  const tokenLegValueScaled = (tokenLegValueLamports * bps) / 10_000n;
+  const combined = solLamports + tokenLegValueScaled;
+  if (maxDeployLamports > 0n && combined > maxDeployLamports) {
+    solLamports = (solLamports * maxDeployLamports) / combined;
+    tokenTarget = (tokenTarget * maxDeployLamports) / combined;
   }
   return { solLamports, tokenTarget };
 }

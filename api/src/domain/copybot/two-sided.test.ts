@@ -79,45 +79,110 @@ describe('planTwoSided — replicate BOTH legs (or fall back to SOL-only)', () =
   });
 });
 
-describe('sizeTwoSided — scale BOTH legs by the leader-leg ratio (NOT total value), SOL leg capped', () => {
+describe('sizeTwoSided — scale BOTH legs by the leader-leg ratio (composition), COMBINED deployment capped', () => {
   it('50% → exactly half of EACH leg (composition preserved)', () => {
-    expect(sizeTwoSided(120_000_000n, 5_000_000n, 50, 1_000_000_000n)).toEqual({
+    // 3rd arg = token-leg SOL value; here small enough that the cap never binds → pure ratio.
+    expect(sizeTwoSided(120_000_000n, 5_000_000n, 5_000_000n, 50, 1_000_000_000n)).toEqual({
       solLamports: 60_000_000n,
       tokenTarget: 2_500_000n,
     });
   });
 
   it('100% → both legs at full leader size', () => {
-    expect(sizeTwoSided(120_000_000n, 5_000_000n, 100, 1_000_000_000n)).toEqual({
+    expect(sizeTwoSided(120_000_000n, 5_000_000n, 5_000_000n, 100, 1_000_000_000n)).toEqual({
       solLamports: 120_000_000n,
       tokenTarget: 5_000_000n,
     });
   });
 
-  it('cap: SOL leg over maxSol → SOL clamped AND token scaled by the SAME factor (composition still holds)', () => {
-    // 100% of 1 SOL leg, cap 0.5 SOL → factor 0.5 → token also halved.
-    expect(sizeTwoSided(1_000_000_000n, 4_000_000n, 100, 500_000_000n)).toEqual({
+  it('cap (token value 0) → combined == the SOL leg, so it behaves as a plain SOL-leg cap; token scaled by the same factor', () => {
+    // token value 0 ⇒ combined == the SOL leg ⇒ the OLD SOL-leg-only cap is the token-value-0 special case of the
+    // combined cap. 100% of 1 SOL leg, cap 0.5 SOL → factor 0.5 → token also halved (composition holds).
+    expect(sizeTwoSided(1_000_000_000n, 4_000_000n, 0n, 100, 500_000_000n)).toEqual({
       solLamports: 500_000_000n,
       tokenTarget: 2_000_000n,
     });
   });
 
-  it('no cap (maxSol 0) → pure ratio, no clamp', () => {
-    expect(sizeTwoSided(100n, 80n, 50, 0n)).toEqual({ solLamports: 50n, tokenTarget: 40n });
+  it('no cap (maxDeploy 0) → pure ratio, no clamp', () => {
+    expect(sizeTwoSided(100n, 80n, 80n, 50, 0n)).toEqual({ solLamports: 50n, tokenTarget: 40n });
   });
 
   it('FRACTIONAL ratio (12.5%) does NOT throw and scales via bps (ULTRACODE #38/#49)', () => {
     // WHY: `BigInt(12.5)` throws a RangeError — a UI-valid fractional ratio would silently drop EVERY
     // two-sided open (swallowed as a generic "mirror error"). The domain function must be TOTAL for any ratio.
-    expect(() => sizeTwoSided(1_000_000n, 800_000n, 12.5, 0n)).not.toThrow();
-    expect(sizeTwoSided(1_000_000n, 800_000n, 12.5, 0n)).toEqual({
+    expect(() => sizeTwoSided(1_000_000n, 800_000n, 800_000n, 12.5, 0n)).not.toThrow();
+    expect(sizeTwoSided(1_000_000n, 800_000n, 800_000n, 12.5, 0n)).toEqual({
       solLamports: 125_000n, // 1_000_000 × 1250bps / 10000
       tokenTarget: 100_000n, // 800_000 × 1250bps / 10000
     });
   });
 
   it('sub-percent ratio (0.5%) also holds (bps rounding is total)', () => {
-    expect(sizeTwoSided(1_000_000n, 0n, 0.5, 0n)).toEqual({ solLamports: 5_000n, tokenTarget: 0n });
+    expect(sizeTwoSided(1_000_000n, 0n, 0n, 0.5, 0n)).toEqual({
+      solLamports: 5_000n,
+      tokenTarget: 0n,
+    });
+  });
+});
+
+describe('sizeTwoSided — combined-deployment cap counts the token buy too (finding #94)', () => {
+  const SOL = 1_000_000_000n;
+  const PRICE = 500n; // lamports of SOL value per raw token unit (all scenarios), so buySpend = tokenTarget × PRICE
+
+  it('symptom 1 — rich wallet: the SOL leg alone never trips the cap, but combined = ~2× the ceiling → both legs scaled so combined ≤ cap', () => {
+    // leader 4 SOL leg + token worth 4 SOL, ratio 100%, maxTradeSize 5 SOL. OLD (SOL-leg-only cap): SOL leg 4 < 5 →
+    // no clamp, token 8_000_000 → an ~4 SOL buy → ~8 SOL deployed vs the 5 SOL cap. NEW: combined 8 SOL > 5 → factor
+    // 0.625 on BOTH legs → SOL 2.5 + buy 2.5 = exactly the 5 SOL cap.
+    const leaderTokenRaw = 8_000_000n; // × PRICE = 4 SOL of value
+    const maxDeploy = 5n * SOL; // = min(decision.sizeSol 8, maxTradeSize 5)
+    const { solLamports, tokenTarget } = sizeTwoSided(
+      4n * SOL,
+      leaderTokenRaw,
+      4n * SOL,
+      100,
+      maxDeploy,
+    );
+    expect(solLamports).toBe(2_500_000_000n); // 4 SOL × 0.625
+    expect(tokenTarget).toBe(5_000_000n); // 8_000_000 × 0.625
+    // combined = SOL leg + the SOL spent buying the token = EXACTLY the cap (the old cap let this reach 8 SOL).
+    expect(solLamports + tokenTarget * PRICE).toBe(maxDeploy);
+  });
+
+  it('symptom 2 — token-heavy: the token buy ALONE would exceed maxTradeSol → both legs scaled so the buy fits (no coffre hard-reject / silent drop; old #12)', () => {
+    // leader 1 SOL leg + token worth 8 SOL, ratio 100%, maxTradeSol 5. OLD: SOL leg 1 < 5 → no clamp, token buy
+    // ~8 SOL > maxTradeSol 5 → the coffre HARD-rejects the buy → the whole open is silently DROPPED. NEW: combined
+    // 9 SOL > 5 → factor 5/9 → the buy is scaled UNDER the per-command cap, so it is no longer rejected.
+    const leaderTokenRaw = 16_000_000n; // × PRICE = 8 SOL of value
+    const maxTradeSol = 5n * SOL; // the coffre's per-command hard cap (process-command.ts:442)
+    const { solLamports, tokenTarget } = sizeTwoSided(
+      1n * SOL,
+      leaderTokenRaw,
+      8n * SOL,
+      100,
+      maxTradeSol,
+    );
+    const buySpend = tokenTarget * PRICE;
+    expect(buySpend).toBeLessThanOrEqual(maxTradeSol); // the buy fits the cap → NOT dropped (old: 8 SOL > 5 → dropped)
+    expect(tokenTarget).toBeLessThan(leaderTokenRaw); // scaled down from the uncapped full leg
+    expect(solLamports + buySpend).toBeLessThanOrEqual(maxTradeSol); // combined bounded
+  });
+
+  it('symptom 3 — the size to RECORD = SOL leg + buy spend counts BOTH legs (exposure basis), not the SOL leg alone', () => {
+    // leader 1 SOL leg + token worth 1 SOL, ratio 100%, cap not binding. What the caller records on the mirror is the
+    // COMBINED (SOL leg + SOL spent buying the token) = 2 SOL; recording only the 1 SOL leg undercounts exposure by
+    // the token leg (2× here) and lets the exposure caps under-block.
+    const leaderTokenRaw = 2_000_000n; // × PRICE = 1 SOL of value
+    const { solLamports, tokenTarget } = sizeTwoSided(
+      1n * SOL,
+      leaderTokenRaw,
+      1n * SOL,
+      100,
+      100n * SOL, // huge cap → full ratio on both legs
+    );
+    expect(solLamports).toBe(1n * SOL);
+    expect(tokenTarget * PRICE).toBe(1n * SOL); // the buy spend
+    expect(solLamports + tokenTarget * PRICE).toBe(2n * SOL); // recorded exposure = BOTH legs
   });
 });
 
