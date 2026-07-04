@@ -525,10 +525,14 @@ export async function process1(
   }
   // Retry config (fresh blockhash on each attempt), then ALERT "verify/close manually" (Valhalla-style).
   let lastErr: Error | undefined;
-  // Once the tx is ON THE WIRE the lane's job is DONE (3c): confirmation is the async worker's. We record the
-  // broadcast here and break out of the retry scope: the worker hand-off runs BELOW, OUTSIDE the try, so nothing
-  // after a successful broadcast can re-enter sign/land (which would DOUBLE-execute — a 2nd add/buy/sell/remove
-  // has no on-chain idempotency).
+  // Once markSubmitted persists the signature and we call `land()`, that signature is LIVE — it may already be on
+  // the wire, because a land()/RPC error AFTER a successful forward (e.g. a 502) is AMBIGUOUS. From that instant the
+  // lane's job is DONE (3c): confirmation belongs to the async worker. BOTH a clean broadcast AND an ambiguous
+  // land() failure record the broadcast and LEAVE the retry scope — the worker hand-off runs BELOW, OUTSIDE the try
+  // — so nothing after the signature goes live can re-sign/re-land (a 2nd signature with a fresh blockhash could
+  // land in the same window → a real-money DOUBLE add/buy/sell/remove; no on-chain idempotency, finding #133).
+  // Retries are reserved for failures BEFORE the signature goes live (decode/blockhash/sign), where nothing is on
+  // the wire and a fresh-blockhash re-sign is safe.
   const publishCtx: SubmittedPublishCtx = {
     kind: sr.kind,
     pool: sr.pool,
@@ -542,6 +546,12 @@ export async function process1(
   let dryRunSkipped = false; // the signer declined (DryRunSkip): finalize a benign 'skipped', NOT a land failure
   let signErrorClass: Exclude<SignErrorClass, 'other'> | undefined; // 4e: a per-user Privy custody failure (outage/revoked)
   for (let attempt = 0; attempt <= ctx.retryMax; attempt++) {
+    // This attempt's LIVE signature — set the instant markSubmitted persists it (immediately before `land`). Its
+    // presence in the catch is the exactly-once tripwire: a throw AFTER this point may have put the tx on the wire,
+    // so we hand THIS sig to the confirm worker rather than re-sign. Reset per attempt (only a PRE-broadcast retry
+    // ever reaches the next iteration).
+    let submittedSig: string | undefined;
+    let submittedLvbh = 0;
     try {
       const tSign = Date.now();
       const fresh = Transaction.from(Buffer.from(sr.txBase64, 'base64')); // fresh tx per attempt
@@ -570,6 +580,10 @@ export async function process1(
         Date.now(),
         publishCtx,
       );
+      // The signature is now LIVE: persisted 'submitted' and about to hit the wire. Set BEFORE `land` so that even a
+      // broadcast which FORWARDED-then-errored is captured by the catch and handed to the worker (never re-signed).
+      submittedSig = signature;
+      submittedLvbh = bh.lastValidBlockHeight;
       // Land via a Jito bundle when configured (anti-sandwich; falls back to plain RPC internally), else plain RPC.
       if (jitoBundleUrl) await landViaJito(conn, jitoBundleUrl, raw, signature);
       else await land(conn, raw);
@@ -579,12 +593,29 @@ export async function process1(
         { kind: sr.kind, sig: signature, busMs, submitMs: Date.now() - tSign },
         LOG_MARKER_SUBMITTED,
       );
-      // Broadcast → TERMINAL for the lane. Record it and LEAVE the retry scope; the worker hand-off runs below
+      // Clean broadcast → TERMINAL for the lane. Record it and LEAVE the retry scope; the worker hand-off runs below
       // where a failure can no longer re-sign/re-land.
       broadcastSig = signature;
       broadcastLvbh = bh.lastValidBlockHeight;
       break;
     } catch (e) {
+      // EXACTLY-ONCE tripwire (finding #133): the signature already went 'submitted' this attempt, so `land()` may
+      // have put it on the wire (an RPC error after a successful forward is ambiguous). NEVER re-sign — hand THIS sig
+      // to the confirm worker (via broadcastSig below) and let its existing expiry/recovery machinery decide: landed
+      // → finalize 'landed'; provably dead past the blockhash deadline → re-claim + re-sign; still in-flight → keep
+      // watching. Re-signing here (a fresh blockhash → a 2nd signature broadcast ~1.5s later) is exactly the blind
+      // re-land that double-executes. Checked FIRST: a live signature overrides every other verdict below (a
+      // DryRunSkip/custody error can only be thrown by sign(), BEFORE markSubmitted, so submittedSig is unset there).
+      if (submittedSig) {
+        broadcastSig = submittedSig;
+        broadcastLvbh = submittedLvbh;
+        lastErr = e as Error;
+        log.warn(
+          { kind: sr.kind, sig: submittedSig, attempt, error: lastErr.message },
+          'land ambiguous after broadcast — handing the live sig to the confirm worker (no re-sign)',
+        );
+        break;
+      }
       if (e instanceof DryRunSkip) {
         // The signer declined (a real user while the live flag is OFF): NOT a land failure — never retried, and the
         // throw is BEFORE markSubmitted so NOTHING is on the wire. Finalize a benign 'skipped' below.
@@ -677,11 +708,12 @@ export async function process1(
     });
     return { ok: true, reason: 'submitted', kind: sr.kind };
   }
-  // Definitive failure (land threw after retries — no broadcast succeeded) → emergency. The shared failure pair:
-  // the INTERNAL sign trace + the FEED-VISIBLE pinned "VERIFY/CLOSE MANUALLY" alert. State 'failed' so the
-  // reconcile/orphan backstop re-drives it. NOTE: the row may sit in 'submitted' (markSubmitted ran, then land
-  // threw) — the worker never tracked it (onSubmitted only fires after a successful broadcast), so this
-  // unconditional finalize has no concurrent owner to race.
+  // Definitive failure — reached ONLY when every attempt threw BEFORE the signature went live (decode/blockhash/sign
+  // errors), so `land()` was never called and NOTHING is on the wire (an ambiguous POST-broadcast failure instead
+  // handed the live sig to the worker above, setting broadcastSig — finding #133). The shared failure pair: the
+  // INTERNAL sign trace + the FEED-VISIBLE pinned "VERIFY/CLOSE MANUALLY" alert. State 'failed' (re-claimable) so the
+  // reconcile/orphan backstop re-drives it. Safe as an UNCONDITIONAL finalize: with no live signature there is no
+  // confirm-worker owner to race, and no landed tx can be stranded as a re-claimable 'failed' row.
   emitLandFailure(
     events,
     { kind: sr.kind, pool: sr.pool, positionPubkey: sr.positionPubkey, commandId: sr.commandId },

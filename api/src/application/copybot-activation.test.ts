@@ -145,16 +145,54 @@ describe('CopybotActivationService signing gate (SYSTEM reconciler)', () => {
     expect(ready.activation?.signingDisabled).toBe(false);
   });
 
-  it('re-gates (signing_disabled back ON) if the account drops below the funded floor', async () => {
+  it('does NOT re-gate when the idle balance drops below the floor — a leader CLOSE must stay signable (#132)', async () => {
     const svc = build();
     await svc.provision(USER, DID, { address: ADDRESS });
     await svc.consentComplete(USER);
     balance = MIN_ACTIVATION_LAMPORTS;
     startedLeaders = 1;
     expect((await svc.state(USER)).activation?.signingDisabled).toBe(false);
-    // Balance falls below 1 SOL ⇒ the reconciler disables signing again (a starved wallet only makes failed opens).
+    // A mirror opens and spends the idle balance below 1 SOL. The old gate re-set signing_disabled here, making the
+    // leader's eventual CLOSE unsignable (the mirror would bleed in a dumping pool). The gate is ONE-WAY: no re-gate.
     balance = MIN_ACTIVATION_LAMPORTS - 1;
+    expect((await svc.state(USER)).activation?.signingDisabled).toBe(false);
+    // The coffre sign path reads exactly this flag; false ⇒ the CLOSE signs (no SigningDisabledError).
+    expect((await repo.resolveSignableWallet(USER))?.signingDisabled).toBe(false);
+  });
+
+  it('does NOT re-gate when the last started leader is stopped — the stop force-closes must stay signable (#132)', async () => {
+    const svc = build();
+    await svc.provision(USER, DID, { address: ADDRESS });
+    await svc.consentComplete(USER);
+    balance = MIN_ACTIVATION_LAMPORTS;
+    startedLeaders = 1;
+    expect((await svc.state(USER)).activation?.signingDisabled).toBe(false);
+    // Stopping the only leader force-closes its mirrors. If that flipped signing_disabled back ON, teardown would
+    // loop forever on unsignable closes. One-way gate: the flag stays clear so the force-closes sign.
+    startedLeaders = 0;
+    expect((await svc.state(USER)).activation?.signingDisabled).toBe(false);
+    expect((await repo.resolveSignableWallet(USER))?.signingDisabled).toBe(false);
+  });
+
+  it('a genuine kill (revoked signer / operator) stays disabled — a later ready-state reconcile does NOT clear it (#132)', async () => {
+    const svc = build();
+    await svc.provision(USER, DID, { address: ADDRESS });
+    await svc.consentComplete(USER);
+    balance = MIN_ACTIVATION_LAMPORTS;
+    startedLeaders = 1;
+    expect((await svc.state(USER)).activation?.signingDisabled).toBe(false);
+    // Operator kill / revoked delegation (#21/#55): signing disabled AND signer_added cleared (sticky). This is the
+    // real per-user kill switch the coffre reads — the balance-driven reconciler must never overwrite/clear it.
+    await repo.markSigningRevoked(USER, Date.now());
     expect((await svc.state(USER)).activation?.signingDisabled).toBe(true);
+    // Even with full funding + a started leader present, the reconciler must NOT clear the kill: signer_added=false
+    // keeps signingReady false, so the one-way clear never fires. The coffre keeps skipping THAT user.
+    balance = MIN_ACTIVATION_LAMPORTS;
+    startedLeaders = 1;
+    const after = await svc.state(USER);
+    expect(after.activation?.signingDisabled).toBe(true);
+    expect(after.signingReady).toBe(false);
+    expect((await repo.resolveSignableWallet(USER))?.signingDisabled).toBe(true);
   });
 
   it('exportAck stamps the ack and advances the wizard to done', async () => {

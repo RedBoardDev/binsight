@@ -18,9 +18,11 @@ import { derivePositionKeypair } from '@/copybot/ephemeral-position';
 import type { CopyEvents } from '@/copybot/observability/copy-events';
 import type { RedisBus } from '@/infrastructure/bus/redis-bus';
 import type { Database } from '@/infrastructure/persistence/database';
+import { PositionLedgerRepository } from '@/infrastructure/persistence/position-ledger-repository';
 import * as schema from '@/infrastructure/persistence/schema';
 import { copyPositions, executions } from '@/infrastructure/persistence/schema';
 import type { BlockhashCache } from '@/infrastructure/solana/blockhash-cache';
+import { ConfirmWorker } from './confirm-worker';
 import { type Ctx, process1 } from './process-command';
 import { DryRunSigner, LocalKeypairSigner, PrivyOutageError, type Signer } from './signer';
 
@@ -286,6 +288,164 @@ describe('process1 — #3: a successful broadcast is TERMINAL for the lane (noth
 
   // NOTE: the post-CONFIRM terminal guarantee (a publish failure after a confirmed land never re-lands) now lives
   // with its owner: confirm-worker.test.ts ("a publish failure after a confirmed land stays landed").
+});
+
+describe('process1 — #133: an AMBIGUOUS land() failure hands the LIVE sig to the confirm worker (no blind re-land)', () => {
+  // finding #133 (CRITICAL): once markSubmitted persists the signature the tx MAY be on the wire — a land()/RPC error
+  // AFTER a successful forward (a 502) is ambiguous. The pre-fix loop re-signed with a FRESH blockhash and re-broadcast
+  // ~1.5s later with NO on-chain check of the prior sig → BOTH could land in the same blockhash window = a real-money
+  // DOUBLE deposit/buy/sell/remove (no on-chain idempotency). The fix records the live sig and hands it to the confirm
+  // worker; retries are reserved for PRE-broadcast failures where nothing is on the wire.
+  const AMBIGUOUS_LVBH = 1_000; // lastValidBlockHeight the (ambiguous) broadcast is stamped with
+
+  /** A signer delegating to the SYSTEM LocalKeypairSigner but COUNTING sign() calls — lets a test assert that an
+   *  ambiguous land() failure produces NO second signature (the core #133 guard). */
+  function countingSignerOf(): { signer: Signer; calls: { count: number } } {
+    const calls = { count: 0 };
+    const base = new LocalKeypairSigner(copier);
+    const signer: Signer = {
+      publicKey: base.publicKey,
+      sign: async (tx: Transaction, co: Keypair[]) => {
+        calls.count += 1;
+        return base.sign(tx, co);
+      },
+    };
+    return { signer, calls };
+  }
+
+  /** A conn whose sendRawTransaction (the ONLY land primitive, landing.ts) throws — the ambiguous transport error a
+   *  502 gives AFTER the tx was forwarded. `status` scripts the confirm worker's LATER view of the same sig. */
+  function ambiguousLandConn(land: () => Promise<string>, status: () => Status): Connection {
+    return {
+      getSlot: async () => 200,
+      getLatestBlockhash: async () => ({
+        blockhash: Keypair.generate().publicKey.toBase58(),
+        lastValidBlockHeight: AMBIGUOUS_LVBH,
+      }),
+      getBlockHeight: async () => 500,
+      getSignatureStatus: async () => status(),
+      getSignatureStatuses: async (sigs: string[]) => ({ value: sigs.map(() => status().value) }),
+      getTransaction: async () => null, // position-ledger bookkeeping is off the money path (no row is fine)
+      sendRawTransaction: land,
+    } as unknown as Connection;
+  }
+
+  it('a land() throw AFTER markSubmitted → ONE sign, ONE broadcast attempt, sig handed to the worker, row stays "submitted"', async () => {
+    // WHY: the exactly-once guard. retryMax=3 would let the pre-fix loop re-sign + re-broadcast up to 4 times; the fix
+    // must produce EXACTLY one signature and one broadcast attempt, then hand the live sig off. The row must NOT be
+    // finalized 'failed' (that would strand a possibly-landed tx as a re-claimable row) — the worker owns the verdict.
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const { signer, calls } = countingSignerOf();
+    const land = vi.fn(async (): Promise<string> => {
+      throw new Error('502 Bad Gateway (ambiguous — the tx may already be forwarded)');
+    });
+    const conn = ambiguousLandConn(land, () => ({ value: null }));
+    const sr = closeReq();
+    const ctx: Ctx = { ...ctxFor(conn, bus), retryMax: 3, signerFor: async () => signer };
+    const verdict = await process1(sr, ctx);
+    expect(verdict).toEqual({ ok: true, reason: 'submitted', kind: 'close' });
+    expect(calls.count).toBe(1); // ← NO second signature (the double-land guard)
+    expect(land).toHaveBeenCalledTimes(1); // ← NO second broadcast racing the first
+    expect(ctx.onSubmitted).toHaveBeenCalledTimes(1); // the live sig is handed to the worker to confirm/expire
+    const tracked = vi.mocked(ctx.onSubmitted).mock.calls[0]?.[0];
+    expect(tracked?.signature).toBeTruthy();
+    expect(tracked?.lastValidBlockHeight).toBe(AMBIGUOUS_LVBH); // the worker declares it dead/alive by THIS expiry
+    expect(bus.publish).not.toHaveBeenCalled(); // no premature ev:executed — the worker publishes on confirmation only
+    const row = (
+      await db
+        .select()
+        .from(executions)
+        .where(eq(executions.commandId, sr.commandId as string))
+    )[0];
+    expect(row?.state).toBe('submitted'); // NOT 'failed' — the worker drives the terminal state
+    expect(row?.signature).toBe(tracked?.signature); // the persisted sig IS the one handed off (the worker's pin)
+  });
+
+  it('★ the handed-off sig that ACTUALLY LANDED is finalized "landed" by the REAL worker — never re-signed, never "failed"', async () => {
+    // WHY (the tail the fix closes, end-to-end): the ambiguous case where land() FORWARDED the tx (it WILL land) but
+    // returned a 502. Wiring the REAL ConfirmWorker to the lane's hand-off proves the full exactly-once path composes:
+    // one broadcast attempt, then the worker sees the sig confirmed → finalize 'landed' + ev:executed ONCE, and the
+    // command is NEVER re-signed and NEVER finalized 'failed' (which would be a re-claimable row for landed money).
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const events2 = { emit: vi.fn() } as unknown as CopyEvents;
+    const { signer, calls } = countingSignerOf();
+    const land = vi.fn(async (): Promise<string> => {
+      throw new Error('502 — forwarded then ambiguous');
+    });
+    // The forward actually landed: the worker's later status read sees the same sig confirmed.
+    const conn = ambiguousLandConn(land, () => ({ value: { confirmationStatus: 'confirmed' } }));
+    const worker = new ConfirmWorker({
+      conn,
+      db,
+      bus,
+      events: events2,
+      ledger: new PositionLedgerRepository(db),
+      hmacKey: 'k',
+      log,
+    });
+    const sr = closeReq();
+    const ctx: Ctx = {
+      ...ctxFor(conn, bus),
+      events: events2,
+      retryMax: 3,
+      signerFor: async () => signer,
+      onSubmitted: (t) => worker.track(t), // the REAL lane→worker hand-off (coffre-main wiring)
+    };
+    const verdict = await process1(sr, ctx);
+    expect(verdict).toEqual({ ok: true, reason: 'submitted', kind: 'close' });
+    expect(calls.count).toBe(1);
+    expect(land).toHaveBeenCalledTimes(1);
+    expect(worker.inflightCount).toBe(1); // the worker now owns the live sig
+    await worker.tick(); // the forwarded tx is observed confirmed
+    const row = (
+      await db
+        .select()
+        .from(executions)
+        .where(eq(executions.commandId, sr.commandId as string))
+    )[0];
+    expect(row?.state).toBe('landed'); // ← finalized landed by the worker; never 'failed', never re-signed
+    expect(calls.count).toBe(1); // still one — the worker confirms, it does not re-sign
+    expect(bus.publish).toHaveBeenCalledTimes(1); // ev:executed published EXACTLY once, on confirmation
+    expect(worker.inflightCount).toBe(0);
+  });
+
+  it('every attempt throws BEFORE the signature goes live (blockhash fetch fails) → "failed", nothing broadcast, nothing handed off', async () => {
+    // WHY (the tail invariant the fix relies on): a failure BEFORE markSubmitted never reached land() — no tx is on
+    // the wire — so exhausting the retries is a genuine inline 'failed' (re-claimable), with NO hand-off and NO
+    // signature persisted. This is the ONLY path that may finalize 'failed' inline; a POST-broadcast ambiguous failure
+    // is handed to the worker instead (above). It also proves a pre-broadcast transient DOES still retry.
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const land = vi.fn(async (): Promise<string> => 'SHOULD_NOT_BE_CALLED');
+    let blockhashCalls = 0;
+    const conn = {
+      getSlot: async () => 200,
+      getLatestBlockhash: async () => {
+        blockhashCalls += 1;
+        throw new Error('RPC down (pre-broadcast, transient)'); // classifies 'other' → the bounded retry
+      },
+      getBlockHeight: async () => 500,
+      getSignatureStatus: async () => ({ value: null }),
+      sendRawTransaction: land,
+    } as unknown as Connection;
+    // A stale cache (getFresh miss) so attempt 0 ALSO falls back to the live getLatestBlockhash — every attempt fails
+    // before the signature goes live.
+    const staleCache = { get: () => null, getFresh: () => undefined } as unknown as BlockhashCache;
+    const sr = closeReq();
+    const ctx: Ctx = { ...ctxFor(conn, bus), retryMax: 2, blockhashCache: staleCache };
+    const verdict = await process1(sr, ctx);
+    expect(verdict).toMatchObject({ ok: false, reason: 'sign_land_failed', kind: 'close' });
+    expect(land).not.toHaveBeenCalled(); // never reached the wire
+    expect(ctx.onSubmitted).not.toHaveBeenCalled(); // nothing handed to the worker
+    expect(blockhashCalls).toBe(3); // retryMax=2 → 3 attempts, each failing before the signature goes live
+    const row = (
+      await db
+        .select()
+        .from(executions)
+        .where(eq(executions.commandId, sr.commandId as string))
+    )[0];
+    expect(row?.state).toBe('failed');
+    expect(row?.signature).toBeFalsy(); // no signature ever persisted (markSubmitted never ran)
+  });
 });
 
 // --- OPEN with a WSOL wrap: exercises the position-signer path + the #3 Wall-B SOL-spend cap, END-TO-END in process1.

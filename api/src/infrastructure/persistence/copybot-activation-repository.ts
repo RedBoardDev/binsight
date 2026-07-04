@@ -149,12 +149,16 @@ export class CopybotActivationRepository {
   }
 
   /**
-   * Apply the SYSTEM signing-gate decision: set `signing_disabled` and, the first time the account is seen funded,
-   * stamp `funded_at`. Only writes when something actually changes (a no-op reconcile doesn't churn the row).
+   * Apply the SYSTEM signing-gate reconciler decision — deliberately ONE-WAY (#132). It may only ever CLEAR
+   * `signing_disabled` (true → false), once the account is provably ready; it can NEVER re-set it. A leader CLOSE
+   * returns funds and must always be signable, so a spent idle balance or a stopped last leader must never re-gate
+   * signing. A genuine kill (revoked signer / operator, `signer_added=false`) keeps `signingReady` false, so
+   * `clearSigningDisabled` is never requested for it — the kill is preserved. Also stamps `funded_at` the first time
+   * the account is seen funded. Only writes when something actually changes (a no-op reconcile doesn't churn the row).
    */
   async applySigningGate(
     userId: string,
-    next: { signingDisabled: boolean; funded: boolean },
+    next: { clearSigningDisabled: boolean; funded: boolean },
     now: number,
   ): Promise<void> {
     // Stamp funded_at ONCE (idempotent): only where it is still null and the wallet is now funded.
@@ -164,9 +168,13 @@ export class CopybotActivationRepository {
         .set({ fundedAt: now })
         .where(and(eq(copybotActivation.userId, userId), isNull(copybotActivation.fundedAt)));
     }
-    await this.db
-      .update(copybotActivation)
-      .set({ signingDisabled: next.signingDisabled, updatedAt: now })
-      .where(eq(copybotActivation.userId, userId));
+    // ONE-WAY: only ever CLEARS the gate (never sets it). Without a clear request, `signing_disabled` is untouched —
+    // so this reconciler can neither re-gate a funded wallet that spent its idle balance nor clear a genuine kill.
+    if (next.clearSigningDisabled) {
+      await this.db
+        .update(copybotActivation)
+        .set({ signingDisabled: false, updatedAt: now })
+        .where(eq(copybotActivation.userId, userId));
+    }
   }
 }

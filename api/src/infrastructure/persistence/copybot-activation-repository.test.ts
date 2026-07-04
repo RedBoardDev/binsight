@@ -118,12 +118,12 @@ describe('CopybotActivationRepository', () => {
       policyId: null,
     });
     const t1 = Date.now();
-    await repo.applySigningGate(USER, { signingDisabled: false, funded: true }, t1);
+    await repo.applySigningGate(USER, { clearSigningDisabled: true, funded: true }, t1);
     let s = await repo.find(USER);
     expect(s?.signingDisabled).toBe(false);
     expect(s?.fundedAt).toBe(t1);
     // A later gate pass must NOT re-stamp funded_at (it records the FIRST funding).
-    await repo.applySigningGate(USER, { signingDisabled: false, funded: true }, t1 + 5000);
+    await repo.applySigningGate(USER, { clearSigningDisabled: true, funded: true }, t1 + 5000);
     s = await repo.find(USER);
     expect(s?.fundedAt).toBe(t1);
   });
@@ -150,7 +150,7 @@ describe('CopybotActivationRepository', () => {
       policyId: null,
     });
     await repo.markConsentComplete(USER, Date.now());
-    await repo.applySigningGate(USER, { signingDisabled: false, funded: true }, Date.now());
+    await repo.applySigningGate(USER, { clearSigningDisabled: true, funded: true }, Date.now());
     const before = await repo.find(USER);
     expect(before?.signerAdded).toBe(true);
     expect(before?.signingDisabled).toBe(false);

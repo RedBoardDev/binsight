@@ -426,6 +426,11 @@ describe('LeaderDetector — cursor race (never advance past an unresolved / in-
   // changes, this test must change WITH it — the retry-cap behavior is the contract being locked here.
   const UNRESOLVED_MAX_RETRIES = 8;
 
+  /** Drains the microtask queue (a macrotask boundary) so a poll suspended in `listSignaturesSince` advances to its
+   *  `classify` await before we drive the interleaving. No fake timers here (see vitest.config.ts) → `setTimeout(0)`
+   *  is a real macrotask, after which every pending microtask has run. */
+  const flushMicrotasks = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
   it('C1 (poll): an unresolved close sig HOLDS the cursor; a later poll that resolves it emits it (never lost)', async () => {
     // The proven miss: a poll lists a close sig S whose tx cannot be fetched (null after retries) → classify returns
     // it as UNRESOLVED (no throw). The buggy code advanced the cursor to S anyway → the next poll skipped S forever.
@@ -499,6 +504,138 @@ describe('LeaderDetector — cursor race (never advance past an unresolved / in-
     await det.poll(); // the cursor never moved → the poll re-covers S and now resolves it
     expect(emitted).toEqual(['S']); // recovered, exactly once
     expect(det.cursorSignature).toBe('S');
+  });
+
+  it('C3 (WS un-reserves an OLDER sig via unresolved-retry mid-poll): the poll HOLDS the cursor, the next poll re-lists it', async () => {
+    // finding #131 (the detection cursor race). Chain = [X (older), Y (newer)]. The WS delivers X and SUSPENDS in
+    // classify (RPC lag). The 15s poll lists [Y, X], sees X still reserved in `seen` (fresh = [Y] only), reserves Y
+    // and SUSPENDS in classify(Y). The WS then resolves UNRESOLVED → X is un-reserved (must be re-listed). By the
+    // time the poll resumes, X is already gone from `inFlight`, so the OLD `inFlight.size === 0` guard alone would
+    // let the poll advance the cursor to Y — burning X (a possible leader CLOSE → we stay oversized FOREVER). The
+    // fix: the poll snapshots `unreserveEpoch` at entry and refuses to advance because X was un-reserved AFTER it.
+    const emitted: string[] = [];
+    const gaps: string[] = [];
+    let resolveWsX!: () => void; // resolves the WS's classify(X) as UNRESOLVED (the null-tx race)
+    let resolvePollY!: () => void; // resolves the poll's classify(Y) with Y's event
+    let xClassifyCalls = 0;
+    const deps: DetectorDeps = {
+      async listSignaturesSince(until) {
+        // newest-first like the RPC: chronological [X, Y] → [Y, X]; once the cursor reaches Y nothing is newer.
+        return until === undefined ? [{ signature: 'Y' }, { signature: 'X' }] : [];
+      },
+      classify(sigs) {
+        const only = sigs.length === 1 ? sigs[0] : undefined;
+        if (only === 'X') {
+          xClassifyCalls += 1;
+          if (xClassifyCalls === 1) {
+            // the WS's first attempt: tx not queryable yet → UNRESOLVED, with test-controlled timing.
+            return new Promise<ClassifyResult>((res) => {
+              resolveWsX = () => res({ events: new Map(), unresolved: new Set(['X']) });
+            });
+          }
+          // the recovery poll's re-list of X: now queryable → emit the event.
+          return Promise.resolve({
+            events: new Map([['X', [fakeEvent('X', 1)]]]),
+            unresolved: new Set<string>(),
+          });
+        }
+        if (only === 'Y') {
+          return new Promise<ClassifyResult>((res) => {
+            resolvePollY = () =>
+              res({ events: new Map([['Y', [fakeEvent('Y', 2)]]]), unresolved: new Set<string>() });
+          });
+        }
+        return Promise.resolve({ events: new Map(), unresolved: new Set<string>() });
+      },
+      onEvent(e) {
+        emitted.push(e.signature);
+      },
+      onGap(signature) {
+        gaps.push(signature);
+      },
+    };
+    const det = new LeaderDetector(deps);
+
+    const wsPromise = det.onWsSignature('X'); // reserves X (seen + inFlight), SUSPENDS in classify(X)
+    const pollPromise = det.poll(); // lists [Y, X]; X still in `seen` → fresh = [Y]; reserves Y, SUSPENDS in classify(Y)
+    await flushMicrotasks(); // let the poll reach its classify(Y) suspension before we interleave
+
+    resolveWsX(); // WS resolves UNRESOLVED → un-reserves X (bumps unreserveEpoch) while the poll is still suspended
+    await wsPromise;
+    resolvePollY(); // the poll resumes with an EMPTY inFlight — only the epoch guard (not inFlight) can hold it
+    await pollPromise;
+
+    expect(det.cursorSignature).toBeUndefined(); // HELD: the cursor did NOT skip past the un-reserved X to Y
+    expect(emitted).toEqual(['Y']); // Y emitted early; X was un-reserved (not committed, not yet re-listed)
+    expect(gaps).toEqual([]); // NO false gap (X came back unresolved once, well under the cap)
+
+    await det.poll(); // recovery: lists [Y, X]; Y is committed → fresh = [X]; X now resolves
+    expect(emitted).toEqual(['Y', 'X']); // X re-listed and recovered by the next poll, exactly once
+    expect(det.cursorSignature).toBe('Y'); // window now fully covered → the cursor finally advances
+  });
+
+  it('C4 (WS un-reserves an OLDER sig via the rollback/throw path mid-poll): the poll HOLDS the cursor, the next poll re-lists it', async () => {
+    // Same finding #131 race, but the WS un-reserves X through the ROLLBACK path (classify THROWS — RPC 429/lag),
+    // not the unresolved-retry path. Both un-reserve sites bump `unreserveEpoch`, so the poll — resuming with an
+    // empty inFlight — still refuses to advance past X. Note the rollback path adds NOTHING to `pendingUnresolved`:
+    // that is exactly why a guard keyed on "a pendingUnresolved sig absent from `seen`" would MISS this, and the
+    // epoch counter does not — it is the reason we bump at BOTH sites.
+    const emitted: string[] = [];
+    const gaps: string[] = [];
+    let rejectWsX!: () => void; // rejects the WS's classify(X) → drives the rollback/throw path
+    let resolvePollY!: () => void;
+    let xClassifyCalls = 0;
+    const deps: DetectorDeps = {
+      async listSignaturesSince(until) {
+        return until === undefined ? [{ signature: 'Y' }, { signature: 'X' }] : [];
+      },
+      classify(sigs) {
+        const only = sigs.length === 1 ? sigs[0] : undefined;
+        if (only === 'X') {
+          xClassifyCalls += 1;
+          if (xClassifyCalls === 1) {
+            return new Promise<ClassifyResult>((_res, rej) => {
+              rejectWsX = () => rej(new Error('rpc 429'));
+            });
+          }
+          return Promise.resolve({
+            events: new Map([['X', [fakeEvent('X', 1)]]]),
+            unresolved: new Set<string>(),
+          });
+        }
+        if (only === 'Y') {
+          return new Promise<ClassifyResult>((res) => {
+            resolvePollY = () =>
+              res({ events: new Map([['Y', [fakeEvent('Y', 2)]]]), unresolved: new Set<string>() });
+          });
+        }
+        return Promise.resolve({ events: new Map(), unresolved: new Set<string>() });
+      },
+      onEvent(e) {
+        emitted.push(e.signature);
+      },
+      onGap(signature) {
+        gaps.push(signature);
+      },
+    };
+    const det = new LeaderDetector(deps);
+
+    const wsPromise = det.onWsSignature('X'); // reserves X, SUSPENDS in classify(X)
+    const pollPromise = det.poll(); // fresh = [Y]; reserves Y, SUSPENDS in classify(Y)
+    await flushMicrotasks();
+
+    rejectWsX(); // WS classify throws → rollback un-reserves X (seen + inFlight) and bumps unreserveEpoch
+    await expect(wsPromise).rejects.toThrow('rpc 429');
+    resolvePollY(); // poll resumes: inFlight is empty, but the epoch changed since entry → HOLD
+    await pollPromise;
+
+    expect(det.cursorSignature).toBeUndefined(); // HELD despite an empty inFlight at commit
+    expect(emitted).toEqual(['Y']);
+    expect(gaps).toEqual([]);
+
+    await det.poll(); // recovery re-lists X (the cursor never moved)
+    expect(emitted).toEqual(['Y', 'X']); // X recovered, exactly once
+    expect(det.cursorSignature).toBe('Y');
   });
 
   it('retry cap: an unresolved sig force-passes after UNRESOLVED_MAX_RETRIES polls (onGap ONCE), then is never re-listed', async () => {

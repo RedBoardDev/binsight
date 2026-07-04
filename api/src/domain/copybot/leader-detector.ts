@@ -60,6 +60,12 @@ export class LeaderDetector {
   /** Single-flight guard: a poll already running → the next tick is skipped (the interval no longer stacks). */
   private polling = false;
   private cursor: string | undefined;
+  /** Monotonic counter bumped on EVERY un-reserve (rollback throw + unresolved-retry). A sweep snapshots it at
+   *  entry and the cursor may advance ONLY if it is unchanged at commit: a sig un-reserved by a CONCURRENT classify
+   *  during this sweep's `await` was filtered out here while still in `seen`, so it MUST be re-listed — advancing
+   *  would skip it forever (the WS/poll race, finding #131). The `inFlight.size` check alone misses this because the
+   *  racing classify has already cleared its `inFlight` entry by the time this sweep resumes and commits. */
+  private unreserveEpoch = 0;
 
   constructor(
     private readonly deps: DetectorDeps,
@@ -83,13 +89,18 @@ export class LeaderDetector {
   ): Promise<void> {
     const newest = sigInfosNewestFirst[0]?.signature;
     if (newest === undefined) return;
+    // Snapshot the un-reserve epoch BEFORE reading `seen` (the filter below). If a concurrent classify un-reserves
+    // any sig while this sweep is awaiting `classify`, the epoch changes and the cursor MUST hold: that sig was
+    // filtered out here while still reserved in `seen`, so it needs re-listing (finding #131). Captured locally (not
+    // a field) so a concurrent WS `ingest` and this poll `ingest` each keep their own view.
+    const unreserveEpochAtEntry = this.unreserveEpoch;
     const freshNewestFirst = sigInfosNewestFirst.filter((s) => !this.seen.has(s.signature));
 
     if (freshNewestFirst.length === 0) {
       // Nothing fresh (all committed or reserved in-flight). The sweep is contiguous up to `newest`, but we may
       // only advance if NO concurrent classify still holds a reservation — otherwise it could un-reserve a sig
       // the advanced cursor would then skip forever (the WS/poll race). `false` = nothing was retried this pass.
-      this.maybeAdvanceCursor(advanceCursor, newest, false);
+      this.maybeAdvanceCursor(advanceCursor, newest, false, unreserveEpochAtEntry);
       return;
     }
 
@@ -121,6 +132,7 @@ export class LeaderDetector {
         this.seen.delete(s.signature); // rollback → retried on the next poll
         this.inFlight.delete(s.signature);
       }
+      this.unreserveEpoch++; // un-reserve → a concurrent sweep's snapshot is now stale → it must hold its cursor
       throw err; // do NOT advance the cursor: the window remains to be re-swept
     }
 
@@ -145,6 +157,7 @@ export class LeaderDetector {
         if (attempts < UNRESOLVED_MAX_RETRIES) {
           this.pendingUnresolved.set(sig, attempts);
           this.seen.delete(sig); // un-reserve → the next poll re-lists and retries
+          this.unreserveEpoch++; // same as rollback: a concurrent sweep's snapshot is now stale → it must hold
           retriedThisPass = true;
         } else {
           this.deps.onGap?.(sig, attempts); // exhausted → accept a LOUD gap; keep `seen` so it is never re-listed
@@ -155,22 +168,33 @@ export class LeaderDetector {
       this.pendingUnresolved.delete(sig); // resolved non-DLMM → committed
     }
 
-    this.maybeAdvanceCursor(advanceCursor, newest, retriedThisPass);
+    this.maybeAdvanceCursor(advanceCursor, newest, retriedThisPass, unreserveEpochAtEntry);
     for (const event of detected) this.deps.onEvent(event, source);
   }
 
   /**
    * Advance the cursor to `newest` ONLY when the window is provably, fully covered: the caller is a contiguous
-   * sweep (`advanceCursor`), NO sig is still reserved in-flight (a concurrent classify could un-reserve one), and
-   * NOTHING was un-reserved for retry this pass. Otherwise leave the cursor behind → the next poll re-lists the
-   * window (`seen` dedups the committed ones; the unresolved ones get retried). This is the critical no-miss rule.
+   * sweep (`advanceCursor`), NO sig is still reserved in-flight (a concurrent classify could un-reserve one),
+   * NOTHING was un-reserved for retry this pass, AND no un-reserve happened CONCURRENTLY since this sweep took its
+   * view (`unreserveEpoch === unreserveEpochAtEntry`). The last condition closes finding #131: a WS classify that
+   * un-reserves an older sig mid-poll clears its own `inFlight` before the poll resumes, so `inFlight.size` reads 0
+   * and would wrongly let the poll advance past that sig; the epoch changed, so we hold instead. Otherwise leave the
+   * cursor behind → the next poll re-lists the window (`seen` dedups the committed ones; unresolved ones get retried).
    */
   private maybeAdvanceCursor(
     advanceCursor: boolean,
     newest: string,
     retriedThisPass: boolean,
+    unreserveEpochAtEntry: number,
   ): void {
-    if (advanceCursor && this.inFlight.size === 0 && !retriedThisPass) this.cursor = newest;
+    if (
+      advanceCursor &&
+      this.inFlight.size === 0 &&
+      !retriedThisPass &&
+      this.unreserveEpoch === unreserveEpochAtEntry
+    ) {
+      this.cursor = newest;
+    }
   }
 
   /** The backstop: lists everything since the cursor and ingests it (advances the cursor). On a cold start

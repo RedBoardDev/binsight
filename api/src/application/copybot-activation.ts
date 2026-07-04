@@ -121,10 +121,13 @@ export class CopybotActivationService {
   }
 
   /**
-   * Build the view for a (possibly null) row and run the SYSTEM signing-gate reconciler: `signing_disabled` is
-   * cleared IFF `signingReady` (signer added + funded ≥ 1 SOL + ≥ 1 started leader). Kept idempotent — it only
-   * writes when the flag or funded stamp actually changes. Called on every read/transition; a periodic brain/API
-   * reconciler can call `state(userId)` on the same cadence (documented; no separate scheduler needed this wave).
+   * Build the view for a (possibly null) row and run the SYSTEM signing-gate reconciler. The reconciler is ONE-WAY
+   * (#132): it CLEARS `signing_disabled` once `signingReady` (signer added + funded ≥ 1 SOL + ≥ 1 started leader),
+   * but NEVER re-sets it — a leader CLOSE returns funds and must always be signable, so a spent idle balance or a
+   * stopped last leader can never re-gate signing (funding gates OPENs only, via the returned `signingReady`). A
+   * genuine kill (revoked signer / operator) stays disabled through `signer_added=false`. Idempotent — it only writes
+   * when the gate actually clears or the funded stamp is first set. Called on every read/transition; a periodic
+   * brain/API reconciler can call `state(userId)` on the same cadence (documented; no separate scheduler this wave).
    */
   private async viewOf(userId: string, row: ActivationState | null): Promise<ActivationView> {
     if (!row) {
@@ -145,20 +148,20 @@ export class CopybotActivationService {
     const ready = signingReady(row, balanceLamports, startedLeaderCount);
     const funded = balanceLamports >= MIN_ACTIVATION_LAMPORTS;
 
-    const desiredSigningDisabled = !ready;
-    const gateChanged = row.signingDisabled !== desiredSigningDisabled;
+    // ONE-WAY signing gate (#132): the reconciler may only CLEAR `signing_disabled` once the account is provably
+    // ready — it must NEVER re-set it from idle balance or started-leader count. A leader CLOSE returns funds and
+    // must always be signable, so a mirror that spent the idle balance (or a stopped last leader) can never re-gate
+    // signing. A genuine kill (revoked signer / operator) sets signer_added=false ⇒ `signingReady` stays false ⇒
+    // `clearGate` is never true for it, so the kill is never cleared here. Funding gates OPENs only (via `signingReady`).
+    const clearGate = ready && row.signingDisabled; // the only `signing_disabled` transition we persist: true → false
     const fundedStampNeeded = funded && row.fundedAt == null;
     let effectiveRow = row;
-    if (gateChanged || fundedStampNeeded) {
+    if (clearGate || fundedStampNeeded) {
       const now = Date.now();
-      await this.deps.repo.applySigningGate(
-        userId,
-        { signingDisabled: desiredSigningDisabled, funded },
-        now,
-      );
+      await this.deps.repo.applySigningGate(userId, { clearSigningDisabled: clearGate, funded }, now);
       effectiveRow = {
         ...row,
-        signingDisabled: desiredSigningDisabled,
+        signingDisabled: clearGate ? false : row.signingDisabled,
         fundedAt: fundedStampNeeded ? now : row.fundedAt,
         updatedAt: now,
       };
