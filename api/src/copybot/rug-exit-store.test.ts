@@ -21,6 +21,24 @@ const USER = 'test-user-1';
 const USER_2 = 'test-user-2';
 const store = new RugExitStore(db, log, USER);
 
+// A db whose READS (`select`) reject the first `failures` attempts, then delegate to `healthy` — simulates a
+// Postgres that is briefly saturated on restart (finding #152). `failures = Infinity` = persistently down. `calls`
+// counts read attempts so a test can assert the bounded retry actually retried before failing loud.
+const makeFlakyReadDb = (
+  healthy: Database,
+  failures: number,
+): { db: Database; state: { calls: number } } => {
+  const state = { calls: 0 };
+  const flaky = {
+    select: (...args: Parameters<Database['select']>) => {
+      state.calls++;
+      if (state.calls <= failures) throw new Error('db saturated (transient)');
+      return healthy.select(...args); // member call keeps `this === healthy` for the real query
+    },
+  } as unknown as Database;
+  return { db: flaky, state };
+};
+
 describe('RugExitStore — durable suppression of re-opening a rug-exited leader position', () => {
   it('an unseeded store loads an empty set', async () => {
     expect((await store.load()).size).toBe(0);
@@ -97,6 +115,54 @@ describe('RugExitStore — durable rug-exit-PENDING set (retry a failed rug-SL/s
     await store2.addPending('OUR_ONLY_U2');
     expect((await store.loadPending()).has('OUR_ONLY_U2')).toBe(false);
     expect((await store2.loadPending()).has('OUR_ONLY_U2')).toBe(true);
+  });
+});
+
+describe('RugExitStore — boot-seed reads FAIL LOUD, never a silent empty set (finding #152)', () => {
+  it('a PERSISTENTLY failing loadPending() REJECTS after bounded retries — it never resolves to an empty set', async () => {
+    // WHY (#152): loadPending seeds the rug-exit-PENDING set ONCE per runtime at boot. If it silently returned an
+    // empty set on a saturated Postgres, createUserRuntime would seed a rug-exit-pending position as a NORMAL open
+    // mirror — no sweep ever re-closes it and the position bleeds in the rugged pool. Failing LOUD makes
+    // createUserRuntime reject, so the reload loop SKIPS the spawn and retries it next pass (locked in
+    // user-reload.test.ts "per-user spawn isolation: u1's throwing spawn leaves NO half-entry") instead of booting a
+    // runtime with a wrong empty set. This test FAILS if the read ever swallows the error and returns empty.
+    const { db: down, state } = makeFlakyReadDb(db, Number.POSITIVE_INFINITY);
+    await expect(new RugExitStore(down, log, USER).loadPending()).rejects.toThrow('db saturated');
+    expect(state.calls).toBe(4); // RUG_EXIT_SEED_READ_RETRIES (3) + the initial attempt — the bounded retry ran
+  });
+
+  it('a PERSISTENTLY failing load() REJECTS too — the re-open-suppression seed is never silently empty', async () => {
+    // WHY: symmetric to loadPending — a silently-empty re-open-suppression set would let the leader's next add
+    // RE-ENTER a rug-exited position (bughunt finding #2). Both boot-seed reads must fail loud so the runtime is
+    // deferred, never mis-seeded.
+    const { db: down } = makeFlakyReadDb(db, Number.POSITIVE_INFINITY);
+    await expect(new RugExitStore(down, log, USER).load()).rejects.toThrow('db saturated');
+  });
+
+  it('a TRANSIENT read that recovers within the retry budget seeds the REAL set (heals a saturated restart)', async () => {
+    // WHY (#152 scenario, "Postgres briefly saturated on restart"): the bounded backoff must retry and HEAL to the
+    // real durable set — a momentary hiccup neither drops the pending re-close nor defers the spawn unnecessarily.
+    const freshDb = await newDb();
+    await new RugExitStore(freshDb, log, USER).addPending('OUR_RECOVER');
+    const { db: flaky, state } = makeFlakyReadDb(freshDb, 1); // one transient failure, then it recovers
+    const recovered = await new RugExitStore(flaky, log, USER).loadPending();
+    expect([...recovered]).toEqual(['OUR_RECOVER']); // healed to the REAL set — never a silent empty
+    expect(state.calls).toBe(2); // 1 failure + 1 success — it STOPPED retrying the moment the read succeeded
+  });
+
+  it('a mid-run addPending WRITE failure stays FAIL-SAFE: logged, never thrown (in-memory still re-closes this run)', async () => {
+    // WHY: the boot-seed READS fail loud (above), but a mid-run WRITE must NOT crash the live process — the
+    // in-memory pending set still drives the re-close this run; only cross-restart durability is at risk (re-armed
+    // by the next rug-SL/reconcile pass). This is the deliberate boot-seed-vs-mid-run split.
+    const broken = {
+      insert: () => {
+        throw new Error('db down');
+      },
+    } as unknown as Database;
+    await expect(
+      new RugExitStore(broken, log, USER).addPending('OUR_MIDRUN'),
+    ).resolves.toBeUndefined();
+    expect(log.warn).toHaveBeenCalled();
   });
 });
 

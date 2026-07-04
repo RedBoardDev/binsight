@@ -11,9 +11,13 @@
  *    restarts (never-miss-close). A row is DELETED once the close is confirmed (ev:executed close-confirm or the
  *    reconcile purge).
  * Bound to ONE user at construction (the boot binds SYSTEM_USER_ID today; the multi-user fan-out constructs one
- * store per runtime). Writes stay FAIL-SAFE (logged, never thrown): the in-memory set still drives the current
- * process; only cross-restart durability is at risk on a write error. Reads never throw either (empty + loud log
- * on a DB error — the brain must still boot).
+ * store per runtime). Mid-run WRITES stay FAIL-SAFE (logged, never thrown): the in-memory set still drives the
+ * current process; only cross-restart durability is at risk on a write error. Boot-SEED reads (`load`/`loadPending`,
+ * called once per runtime at spawn) instead FAIL LOUD — they retry a transient DB error with bounded backoff and,
+ * on a PERSISTENT error, THROW so the caller REFUSES to spawn that runtime. A silently-empty set would drop the
+ * re-open suppression AND the pending re-close in one shot (finding #152): the runtime would seed a rug-exit-pending
+ * position as a NORMAL open mirror, so no sweep ever re-closes it and it bleeds in the rugged pool. A deferred spawn
+ * is retried on the next reload (a normal user); SYSTEM, booted once outside the reload loop, fails the brain loud.
  */
 import { and, eq } from 'drizzle-orm';
 import type { Logger } from 'pino';
@@ -21,6 +25,15 @@ import type { openDatabase } from '@/infrastructure/persistence/database';
 import { rugExitPendings, rugExits } from '@/infrastructure/persistence/schema';
 
 type Db = ReturnType<typeof openDatabase>;
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+// Boot-seed reads (load/loadPending) FAIL LOUD, never silently empty: a briefly-saturated Postgres on restart must
+// not seed an empty set (finding #152 — a dropped rug-exit-PENDING entry means a rugging position is never
+// re-closed). Bounded so a genuinely-down DB still surfaces (the reload loop skips + retries the spawn; SYSTEM
+// fails the brain loud) instead of hanging boot. Mirrors the coffre signer's bounded backoff (coffre/signer.ts).
+const RUG_EXIT_SEED_READ_RETRIES = 3; // retries AFTER the initial attempt before refusing to spawn (never seed empty)
+const RUG_EXIT_SEED_READ_BASE_DELAY_MS = 250; // exponential backoff base (250→500→1000ms): sub-second, no healthy-boot stall
 
 export class RugExitStore {
   constructor(
@@ -30,37 +43,65 @@ export class RugExitStore {
     private readonly userId: string,
   ) {}
 
-  /** Load this user's rug-exited LEADER positions (re-open suppression). Empty (and logged) on a read error. */
-  async load(): Promise<Set<string>> {
-    try {
-      const rows = await this.db
-        .select({ leaderPosition: rugExits.leaderPosition })
-        .from(rugExits)
-        .where(eq(rugExits.userId, this.userId));
-      return new Set(rows.map((r) => r.leaderPosition));
-    } catch (e) {
-      this.log.warn({ e: (e as Error).message }, 'rug-exit set load failed → starting empty');
-      return new Set();
+  /** Run a boot-SEED read with bounded exponential backoff, then FAIL LOUD (rethrow). A transient DB error (a
+   *  saturated Postgres on restart) is retried; a PERSISTENT one throws so `createUserRuntime` refuses to spawn this
+   *  runtime — the reload loop skips + retries it next pass (a normal user), or the brain fails loud (SYSTEM, booted
+   *  once). NEVER returns a silently-empty set: an empty set would drop the re-open suppression / pending re-close
+   *  and let a rugging position bleed un-re-closed (finding #152). */
+  private async seedRead<T>(read: () => PromiseLike<T>, table: string): Promise<T> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= RUG_EXIT_SEED_READ_RETRIES; attempt++) {
+      try {
+        return await read();
+      } catch (e) {
+        lastError = e;
+        if (attempt < RUG_EXIT_SEED_READ_RETRIES) {
+          this.log.warn(
+            { e: (e as Error).message, table, attempt },
+            'rug-exit seed read failed → bounded retry',
+          );
+          await sleep(RUG_EXIT_SEED_READ_BASE_DELAY_MS * 2 ** attempt);
+        }
+      }
     }
+    this.log.error(
+      { e: (lastError as Error)?.message, table, attempts: RUG_EXIT_SEED_READ_RETRIES + 1 },
+      'rug-exit seed read failed after retries → refusing to seed (runtime spawn deferred, never seeded empty)',
+    );
+    throw lastError instanceof Error
+      ? lastError
+      : new Error(`rug-exit seed read failed for ${table}`);
   }
 
-  /** Load this user's rug-exit-PENDING OUR positions (rug-SL/stop-closed, awaiting on-chain confirmation →
-   *  re-close). Empty (and logged) on a read error — never throws. Seeded at boot so a failed rug-SL close is
-   *  retried across a brain restart (never-miss-close pillar) until the close is confirmed. */
+  /** Seed this user's rug-exited LEADER positions (re-open suppression) at boot. FAILS LOUD after bounded retries
+   *  (never a silent empty set → never a re-entered rug); the caller then refuses to spawn (deferred to the next
+   *  reload). Seeded once per runtime so a leader add can't re-enter a rug-exited position across a restart. */
+  async load(): Promise<Set<string>> {
+    const rows = await this.seedRead(
+      () =>
+        this.db
+          .select({ leaderPosition: rugExits.leaderPosition })
+          .from(rugExits)
+          .where(eq(rugExits.userId, this.userId)),
+      'rug_exits',
+    );
+    return new Set(rows.map((r) => r.leaderPosition));
+  }
+
+  /** Seed this user's rug-exit-PENDING OUR positions (rug-SL/stop-closed, awaiting on-chain confirmation → re-close)
+   *  at boot. FAILS LOUD after bounded retries (finding #152: a silent empty set would seed a rug-exit-pending
+   *  position as a NORMAL open mirror — no sweep re-closes it and it bleeds); the caller then refuses to spawn.
+   *  Seeded once per runtime so a failed rug-SL close keeps being re-closed across a restart until confirmed gone. */
   async loadPending(): Promise<Set<string>> {
-    try {
-      const rows = await this.db
-        .select({ ourPosition: rugExitPendings.ourPosition })
-        .from(rugExitPendings)
-        .where(eq(rugExitPendings.userId, this.userId));
-      return new Set(rows.map((r) => r.ourPosition));
-    } catch (e) {
-      this.log.warn(
-        { e: (e as Error).message },
-        'rug-exit-pending set load failed → starting empty',
-      );
-      return new Set();
-    }
+    const rows = await this.seedRead(
+      () =>
+        this.db
+          .select({ ourPosition: rugExitPendings.ourPosition })
+          .from(rugExitPendings)
+          .where(eq(rugExitPendings.userId, this.userId)),
+      'rug_exit_pending',
+    );
+    return new Set(rows.map((r) => r.ourPosition));
   }
 
   /** Persist ONE rug-exited leader position (atomic row insert; idempotent on re-add). Fail-safe: a write error
