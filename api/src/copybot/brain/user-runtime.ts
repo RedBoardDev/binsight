@@ -78,7 +78,11 @@ import {
 import { reanchorShape } from '@/domain/copybot/reanchor';
 import { decideResidualSell, minOutWithSlippage } from '@/domain/copybot/residual-sell';
 import { RugSlTracker } from '@/domain/copybot/rug-sl';
-import { planBootStopCloses, planStopCloses, type StopClosePlan } from '@/domain/copybot/stop-closes';
+import {
+  planBootStopCloses,
+  planStopCloses,
+  type StopClosePlan,
+} from '@/domain/copybot/stop-closes';
 import {
   inRangeTokenAdds,
   planTwoSided,
@@ -121,6 +125,7 @@ import type { PriorityFeeOracle } from '@/infrastructure/solana/priority-fee-ora
 import { readOwnerTokenBalance } from '@/infrastructure/solana/token-balance-reader';
 import type { HeliusTokenMetadataGateway } from '@/infrastructure/solana/token-metadata-gateway';
 import { applyPriorityFee, withCuLimit } from './compute-budget';
+import { runContinuation, TerminalContinuationError } from './dispatch-executed';
 import { type Mirror, MirrorRegistry } from './mirror-registry';
 import { MirrorStore } from './mirror-store';
 import {
@@ -208,7 +213,7 @@ const firstTx = (t: Transaction | Transaction[]): Transaction =>
 const onlyTx = (t: Transaction | Transaction[], context: string): Transaction => {
   const arr = Array.isArray(t) ? t : [t];
   if (arr.length !== 1)
-    throw new Error(
+    throw new TerminalContinuationError(
       `${context}: build chunked into ${arr.length} txs (range too wide) — aborting, no partial open/deposit`,
     );
   return arr[0] as Transaction;
@@ -1280,55 +1285,86 @@ export async function createUserRuntime(
   async function publishTwoSidedOpenAfterBuy(buyCommandId: string): Promise<void> {
     const ctx = pendingTwoSidedOpens.get(buyCommandId);
     if (!ctx) return;
-    pendingTwoSidedOpens.delete(buyCommandId);
-    const { e, leader, dist, sizeLamports, solSide, tokenMint, sizeSol } = ctx;
-    if (consumeOpenCancellation(e.position, e.pool)) return; // leader closed before the buy landed → don't open into an exited pool
-    const poolPk = new PublicKey(e.pool);
-    const pair = await createDlmmPair(conn, poolPk);
-    // Deposit the token we ACTUALLY bought (ExactIn output is variable). #33 — the balance read can LAG the buy confirm
-    // (read-after-write): guard it until the BOUGHT delta clears the quote-derived floor. If it never settles, SKIP the
-    // whole open (both-or-nothing) — NEVER deposit a short/stale token leg (a forbidden one-sided half copy). The
-    // bought token is recovered by the wallet sweep. `depositableToken` still reserves a hair for per-bin bps rounding.
-    const settled = await settledTwoSidedDeposit(
-      tokenMint,
-      ctx.preBuyTokenRaw,
-      ctx.expectedTokenRaw,
-      ctx.buySlippageBps,
-    );
-    if (!settled.ready) {
-      events.emit('eligibility.twosided.unbuyable', {
-        stage: 'open',
-        outcome: 'skipped',
-        reason: 'twosided_unbuyable',
-        leader,
-        pool: e.pool,
-        leaderPosition: e.position,
-        eventKey: openSkipKey(e, leader),
-        adminDetail: {
-          mint: tokenMint,
-          nonSolSymbol: e.nonSolSymbol,
-          err: 'token balance never settled to the buy floor (read-after-write) — both-or-nothing skip',
-        },
-      });
-      return;
-    }
-    const actualToken = depositableToken(settled.depositRaw);
-    const { totalX, totalY } = twoSidedLegTotals(solSide, sizeLamports, actualToken);
-    const lower = Math.min(...dist.map((d) => d.binId));
-    const upper = Math.max(...dist.map((d) => d.binId));
-
-    // TOKEN-2022 leg → the v1 by-weight open is rejected on-chain (token program pinned to classic). Split into TX1
-    // createEmptyPosition (kind 'open') + TX2 addLiquidityByWeight2 (kind 'add'), sequenced via ev:executed. Both legs
-    // span the active bin so the two-sided add2 deposits correctly. The mirror is persisted ONLY after the deposit
-    // lands → a crash between the two leaves an UNTRACKED empty position the orphan-sweep auto-closes (no dormant).
-    if (isToken2022Pool(pair)) {
-      if (dist.length > TOKEN2022_MAX_OPEN_BINS) {
-        // Wider than a single create + single add2 chunk → SKIP (never a partial deposit). The bought token is
-        // recovered by the wallet sweep (sold back to SOL); a >70-bin two-sided memecoin copy is rare.
-        events.emit('eligibility.twosided.token2022_too_wide', {
+    await runContinuation(pendingTwoSidedOpens, buyCommandId, async () => {
+      const { e, leader, dist, sizeLamports, solSide, tokenMint, sizeSol } = ctx;
+      if (consumeOpenCancellation(e.position, e.pool)) return; // leader closed before the buy landed → don't open into an exited pool
+      const poolPk = new PublicKey(e.pool);
+      const pair = await createDlmmPair(conn, poolPk);
+      // Deposit the token we ACTUALLY bought (ExactIn output is variable). #33 — the balance read can LAG the buy confirm
+      // (read-after-write): guard it until the BOUGHT delta clears the quote-derived floor. If it never settles, SKIP the
+      // whole open (both-or-nothing) — NEVER deposit a short/stale token leg (a forbidden one-sided half copy). The
+      // bought token is recovered by the wallet sweep. `depositableToken` still reserves a hair for per-bin bps rounding.
+      const settled = await settledTwoSidedDeposit(
+        tokenMint,
+        ctx.preBuyTokenRaw,
+        ctx.expectedTokenRaw,
+        ctx.buySlippageBps,
+      );
+      if (!settled.ready) {
+        events.emit('eligibility.twosided.unbuyable', {
           stage: 'open',
           outcome: 'skipped',
-          reason: 'twosided_token2022_too_wide',
+          reason: 'twosided_unbuyable',
+          leader,
+          pool: e.pool,
+          leaderPosition: e.position,
+          eventKey: openSkipKey(e, leader),
+          adminDetail: {
+            mint: tokenMint,
+            nonSolSymbol: e.nonSolSymbol,
+            err: 'token balance never settled to the buy floor (read-after-write) — both-or-nothing skip',
+          },
+        });
+        return;
+      }
+      const actualToken = depositableToken(settled.depositRaw);
+      const { totalX, totalY } = twoSidedLegTotals(solSide, sizeLamports, actualToken);
+      const lower = Math.min(...dist.map((d) => d.binId));
+      const upper = Math.max(...dist.map((d) => d.binId));
+
+      // TOKEN-2022 leg → the v1 by-weight open is rejected on-chain (token program pinned to classic). Split into TX1
+      // createEmptyPosition (kind 'open') + TX2 addLiquidityByWeight2 (kind 'add'), sequenced via ev:executed. Both legs
+      // span the active bin so the two-sided add2 deposits correctly. The mirror is persisted ONLY after the deposit
+      // lands → a crash between the two leaves an UNTRACKED empty position the orphan-sweep auto-closes (no dormant).
+      if (isToken2022Pool(pair)) {
+        if (dist.length > TOKEN2022_MAX_OPEN_BINS) {
+          // Wider than a single create + single add2 chunk → SKIP (never a partial deposit). The bought token is
+          // recovered by the wallet sweep (sold back to SOL); a >70-bin two-sided memecoin copy is rare.
+          events.emit('eligibility.twosided.token2022_too_wide', {
+            stage: 'open',
+            outcome: 'skipped',
+            reason: 'twosided_token2022_too_wide',
+            leader,
+            pool: e.pool,
+            leaderPosition: e.position,
+            eventKey: openSkipKey(e, leader),
+            adminDetail: {
+              mint: tokenMint,
+              nonSolSymbol: e.nonSolSymbol,
+              bins: dist.length,
+              max: TOKEN2022_MAX_OPEN_BINS,
+            },
+          });
+          return;
+        }
+        return publishOpenViaCreateDeposit(e, leader, pair, {
+          dist,
+          totalX,
+          totalY,
+          lower,
+          upper,
+          sizeSol,
+        });
+      }
+
+      // A span wider than a single DLMM position can't be replicated as one create + deposit (it would chunk into
+      // multiple positions → a partial/forbidden half copy). Typed skip BEFORE buildOpenByWeight (#18); the bought
+      // token is recovered by the wallet sweep — same guarantee as the Token-2022 branch above.
+      if (dist.length > MAX_SINGLE_POSITION_BINS) {
+        events.emit('eligibility.too_wide', {
+          stage: 'open',
+          outcome: 'skipped',
+          reason: 'too_wide',
           leader,
           pool: e.pool,
           leaderPosition: e.position,
@@ -1337,110 +1373,82 @@ export async function createUserRuntime(
             mint: tokenMint,
             nonSolSymbol: e.nonSolSymbol,
             bins: dist.length,
-            max: TOKEN2022_MAX_OPEN_BINS,
+            max: MAX_SINGLE_POSITION_BINS,
           },
         });
         return;
       }
-      return publishOpenViaCreateDeposit(e, leader, pair, {
-        dist,
+
+      // CLASSIC SPL two-sided. WIDE (≥26 bins) → the atomic open chunks into [pre, main(addLiquidityByWeight), post] →
+      // sequence it (publishSplitOpen) so the deposit isn't dropped. NARROW (≤25) → the atomic 1-tx open (token held now
+      // → CU estimation works). v1 addLiquidityByWeight is correct for a CLASSIC two-sided deposit (both legs span active).
+      const wide = isWideOpen(dist.length);
+      const eventKey = wide
+        ? `${leader}:${e.pool}:open-create:${e.position}:${e.signature}`
+        : `${leader}:${e.pool}:open:${e.position}:${e.signature}`;
+      const commandId = commandIdFor(eventKey);
+      const posKp: Keypair = derivePositionKeypair(commandId);
+      const built = await buildOpenByWeight(
+        conn,
+        poolPk,
+        ownerPk,
+        posKp.publicKey,
         totalX,
         totalY,
-        lower,
-        upper,
-        sizeSol,
-      });
-    }
-
-    // A span wider than a single DLMM position can't be replicated as one create + deposit (it would chunk into
-    // multiple positions → a partial/forbidden half copy). Typed skip BEFORE buildOpenByWeight (#18); the bought
-    // token is recovered by the wallet sweep — same guarantee as the Token-2022 branch above.
-    if (dist.length > MAX_SINGLE_POSITION_BINS) {
-      events.emit('eligibility.too_wide', {
-        stage: 'open',
-        outcome: 'skipped',
-        reason: 'too_wide',
-        leader,
-        pool: e.pool,
-        leaderPosition: e.position,
-        eventKey: openSkipKey(e, leader),
-        adminDetail: {
-          mint: tokenMint,
-          nonSolSymbol: e.nonSolSymbol,
-          bins: dist.length,
-          max: MAX_SINGLE_POSITION_BINS,
-        },
-      });
-      return;
-    }
-
-    // CLASSIC SPL two-sided. WIDE (≥26 bins) → the atomic open chunks into [pre, main(addLiquidityByWeight), post] →
-    // sequence it (publishSplitOpen) so the deposit isn't dropped. NARROW (≤25) → the atomic 1-tx open (token held now
-    // → CU estimation works). v1 addLiquidityByWeight is correct for a CLASSIC two-sided deposit (both legs span active).
-    const wide = isWideOpen(dist.length);
-    const eventKey = wide
-      ? `${leader}:${e.pool}:open-create:${e.position}:${e.signature}`
-      : `${leader}:${e.pool}:open:${e.position}:${e.signature}`;
-    const commandId = commandIdFor(eventKey);
-    const posKp: Keypair = derivePositionKeypair(commandId);
-    const built = await buildOpenByWeight(
-      conn,
-      poolPk,
-      ownerPk,
-      posKp.publicKey,
-      totalX,
-      totalY,
-      dist,
-      depositSlippagePct(leader),
-      pair,
-    );
-    if (wide) {
-      const arr = Array.isArray(built) ? built : [built]; // ≥26 bins → [pre, main, post]
-      return publishSplitOpen(e, leader, {
-        createTx: arr[0] as Transaction,
-        depositTx: mergeDeposit(arr.slice(1)),
-        posPubkey: posKp.publicKey.toBase58(),
+        dist,
+        depositSlippagePct(leader),
+        pair,
+      );
+      if (wide) {
+        const arr = Array.isArray(built) ? built : [built]; // ≥26 bins → [pre, main, post]
+        return publishSplitOpen(e, leader, {
+          createTx: arr[0] as Transaction,
+          depositTx: mergeDeposit(arr.slice(1)),
+          posPubkey: posKp.publicKey.toBase58(),
+          commandId,
+          eventKey,
+          lower,
+          upper,
+          sizeSol,
+        });
+      }
+      const { issuedAtSlot, deadlineSlot } = await slots();
+      const sr: Omit<SignRequest, 'issuedAtMs' | 'userId'> = {
         commandId,
         eventKey,
-        lower,
-        upper,
+        kind: 'open',
+        pool: e.pool,
+        positionPubkey: posKp.publicKey.toBase58(),
+        owner: ownerPk.toBase58(),
+        txBase64: serializeUnsigned(
+          withCuLimit(onlyTx(built, 'two-sided open'), TWO_SIDED_CU_LIMIT),
+        ),
         sizeSol,
+        targetBinRange: { lower, upper },
+        issuedAtSlot,
+        deadlineSlot,
+      };
+      if (consumeOpenCancellation(e.position, e.pool)) return; // a close arrived DURING the build → abort before the on-chain publish
+      const mirror = openMirror({
+        leaderPosition: e.position,
+        leaderAddress: leader, // the EVENT's leader (3b fan-out) — drives per-leader stop-closes/exposure/rug config
+        ourPosition: sr.positionPubkey,
+        pool: e.pool,
+        nonSolSymbol: e.nonSolSymbol,
+        nonSolMint: tokenMint, // the token we bought = the per-token concurrency-cap key
+        sizeSol,
+        lowerBin: lower,
+        upperBin: upper,
+        openedAt: Date.now(),
       });
-    }
-    const { issuedAtSlot, deadlineSlot } = await slots();
-    const sr: Omit<SignRequest, 'issuedAtMs' | 'userId'> = {
-      commandId,
-      eventKey,
-      kind: 'open',
-      pool: e.pool,
-      positionPubkey: posKp.publicKey.toBase58(),
-      owner: ownerPk.toBase58(),
-      txBase64: serializeUnsigned(withCuLimit(onlyTx(built, 'two-sided open'), TWO_SIDED_CU_LIMIT)),
-      sizeSol,
-      targetBinRange: { lower, upper },
-      issuedAtSlot,
-      deadlineSlot,
-    };
-    if (consumeOpenCancellation(e.position, e.pool)) return; // a close arrived DURING the build → abort before the on-chain publish
-    const mirror = openMirror({
-      leaderPosition: e.position,
-      leaderAddress: leader, // the EVENT's leader (3b fan-out) — drives per-leader stop-closes/exposure/rug config
-      ourPosition: sr.positionPubkey,
-      pool: e.pool,
-      nonSolSymbol: e.nonSolSymbol,
-      nonSolMint: tokenMint, // the token we bought = the per-token concurrency-cap key
-      sizeSol,
-      lowerBin: lower,
-      upperBin: upper,
-      openedAt: Date.now(),
+      pendingOpens.clear(e.position); // now tracked → lift the duplicate-open reservation for this leader position
+      await store.saveOpen(mirror); // persist BEFORE publishing → never an untracked open
+      await publish(sr, { leader, leaderPosition: e.position, leaderSizeSol: e.depositSol });
+      log.info(
+        { our: sr.positionPubkey, bins: dist.length },
+        '🪙 two-sided OPEN published (after buy landed)',
+      );
     });
-    pendingOpens.clear(e.position); // now tracked → lift the duplicate-open reservation for this leader position
-    await store.saveOpen(mirror); // persist BEFORE publishing → never an untracked open
-    await publish(sr, { leader, leaderPosition: e.position, leaderSizeSol: e.depositSol });
-    log.info(
-      { our: sr.positionPubkey, bins: dist.length },
-      '🪙 two-sided OPEN published (after buy landed)',
-    );
   }
 
   /** TX2 of a Token-2022 two-sided open: once the empty position (TX1) has CONFIRMED on-chain, build + publish the
@@ -1449,89 +1457,90 @@ export async function createUserRuntime(
   async function publishDepositAfterPositionCreated(createCommandId: string): Promise<void> {
     const ctx = pendingToken2022Deposits.get(createCommandId);
     if (!ctx) return;
-    pendingToken2022Deposits.delete(createCommandId);
-    const { e, leader, lower, upper, sizeSol } = ctx;
-    if (consumeOpenCancellation(e.position, e.pool)) return; // leader closed before the create landed → don't fund an exited pool (the empty position is orphan-closed)
-    const poolPk = new PublicKey(e.pool);
-    const posKp: Keypair = derivePositionKeypair(createCommandId); // SAME position the create made
-    let depositTx: Transaction;
-    if (ctx.prebuiltDeposit) {
-      // SPLIT path (one-sided wide / classic-wide two-sided): the deposit (native addLiquidityOneSide / by-weight +
-      // unwrap) was built ATOMICALLY with the create, so its accounts are already correct — publish it as-is.
-      depositTx = ctx.prebuiltDeposit;
-    } else {
-      // REBUILD path (Token-2022 two-sided): addLiquidityByWeight2 fetches the positionV2 account → must build AFTER
-      // the create lands. A transient "not yet readable" must not drop the deposit → retry the build.
-      const pair = await createDlmmPair(conn, poolPk); // fresh: the position now exists on-chain
-      let built: Transaction | Transaction[] | undefined;
-      for (let r = 0; r < OPEN_SHAPE_READ_RETRIES && built === undefined; r++) {
-        try {
-          built = await buildAddByWeight(
-            conn,
-            poolPk,
-            ownerPk,
-            posKp.publicKey,
-            ctx.totalX as bigint,
-            ctx.totalY as bigint,
-            ctx.dist as WeightBin[],
-            depositSlippagePct(leader),
-            pair,
-          );
-        } catch (err) {
-          if (r === OPEN_SHAPE_READ_RETRIES - 1) throw err;
-          await sleep(OPEN_SHAPE_READ_DELAY_MS);
+    await runContinuation(pendingToken2022Deposits, createCommandId, async () => {
+      const { e, leader, lower, upper, sizeSol } = ctx;
+      if (consumeOpenCancellation(e.position, e.pool)) return; // leader closed before the create landed → don't fund an exited pool (the empty position is orphan-closed)
+      const poolPk = new PublicKey(e.pool);
+      const posKp: Keypair = derivePositionKeypair(createCommandId); // SAME position the create made
+      let depositTx: Transaction;
+      if (ctx.prebuiltDeposit) {
+        // SPLIT path (one-sided wide / classic-wide two-sided): the deposit (native addLiquidityOneSide / by-weight +
+        // unwrap) was built ATOMICALLY with the create, so its accounts are already correct — publish it as-is.
+        depositTx = ctx.prebuiltDeposit;
+      } else {
+        // REBUILD path (Token-2022 two-sided): addLiquidityByWeight2 fetches the positionV2 account → must build AFTER
+        // the create lands. A transient "not yet readable" must not drop the deposit → retry the build.
+        const pair = await createDlmmPair(conn, poolPk); // fresh: the position now exists on-chain
+        let built: Transaction | Transaction[] | undefined;
+        for (let r = 0; r < OPEN_SHAPE_READ_RETRIES && built === undefined; r++) {
+          try {
+            built = await buildAddByWeight(
+              conn,
+              poolPk,
+              ownerPk,
+              posKp.publicKey,
+              ctx.totalX as bigint,
+              ctx.totalY as bigint,
+              ctx.dist as WeightBin[],
+              depositSlippagePct(leader),
+              pair,
+            );
+          } catch (err) {
+            if (r === OPEN_SHAPE_READ_RETRIES - 1) throw err;
+            await sleep(OPEN_SHAPE_READ_DELAY_MS);
+          }
         }
+        // addLiquidityByWeight2 returns Transaction[]; ≤70 bins = a single chunk. More than one chunk would be a
+        // PARTIAL deposit (shape mismatch) → abort (the empty position is then orphan-closed).
+        const txs = Array.isArray(built) ? built : [built as Transaction];
+        if (txs.length !== 1)
+          throw new TerminalContinuationError(
+            `token2022 deposit chunked into ${txs.length} txs (range too wide) — aborting, no partial deposit`,
+          );
+        depositTx = txs[0] as Transaction;
       }
-      // addLiquidityByWeight2 returns Transaction[]; ≤70 bins = a single chunk. More than one chunk would be a
-      // PARTIAL deposit (shape mismatch) → abort (the empty position is then orphan-closed).
-      const txs = Array.isArray(built) ? built : [built as Transaction];
-      if (txs.length !== 1)
-        throw new Error(
-          `token2022 deposit chunked into ${txs.length} txs (range too wide) — aborting, no partial deposit`,
-        );
-      depositTx = txs[0] as Transaction;
-    }
-    if (consumeOpenCancellation(e.position, e.pool)) return; // a close arrived DURING the deposit build → abort before the on-chain deposit
-    const depositEventKey = `${leader}:${e.pool}:open-deposit:${e.position}:${e.signature}`;
-    const depositCommandId = commandIdFor(depositEventKey);
-    const { issuedAtSlot, deadlineSlot } = await slots();
-    pendingToken2022Mirrors.set(depositCommandId, {
-      leaderPosition: e.position,
-      leader,
-      ourPosition: posKp.publicKey.toBase58(),
-      pool: e.pool,
-      nonSolSymbol: e.nonSolSymbol,
-      nonSolMint: e.nonSolMint ?? '', // per-token concurrency-cap key
-      sizeSol,
-      lower,
-      upper,
-      leaderSizeSol: e.depositSol,
-    });
-    await publish(
-      {
-        commandId: depositCommandId,
-        eventKey: depositEventKey,
-        kind: 'add',
+      if (consumeOpenCancellation(e.position, e.pool)) return; // a close arrived DURING the deposit build → abort before the on-chain deposit
+      const depositEventKey = `${leader}:${e.pool}:open-deposit:${e.position}:${e.signature}`;
+      const depositCommandId = commandIdFor(depositEventKey);
+      const { issuedAtSlot, deadlineSlot } = await slots();
+      pendingToken2022Mirrors.set(depositCommandId, {
+        leaderPosition: e.position,
+        leader,
+        ourPosition: posKp.publicKey.toBase58(),
         pool: e.pool,
-        positionPubkey: posKp.publicKey.toBase58(),
-        owner: ownerPk.toBase58(),
-        txBase64: serializeUnsigned(withCuLimit(depositTx, TWO_SIDED_CU_LIMIT)),
+        nonSolSymbol: e.nonSolSymbol,
+        nonSolMint: e.nonSolMint ?? '', // per-token concurrency-cap key
         sizeSol,
-        targetBinRange: { lower, upper },
-        issuedAtSlot,
-        deadlineSlot,
-      },
-      { leader, leaderPosition: e.position, leaderSizeSol: e.depositSol },
-    );
-    log.info(
-      {
-        our: posKp.publicKey.toBase58(),
-        prebuilt: ctx.prebuiltDeposit !== undefined,
         lower,
         upper,
-      },
-      '🔨 open DEPOSIT published (position created → deposit)',
-    );
+        leaderSizeSol: e.depositSol,
+      });
+      await publish(
+        {
+          commandId: depositCommandId,
+          eventKey: depositEventKey,
+          kind: 'add',
+          pool: e.pool,
+          positionPubkey: posKp.publicKey.toBase58(),
+          owner: ownerPk.toBase58(),
+          txBase64: serializeUnsigned(withCuLimit(depositTx, TWO_SIDED_CU_LIMIT)),
+          sizeSol,
+          targetBinRange: { lower, upper },
+          issuedAtSlot,
+          deadlineSlot,
+        },
+        { leader, leaderPosition: e.position, leaderSizeSol: e.depositSol },
+      );
+      log.info(
+        {
+          our: posKp.publicKey.toBase58(),
+          prebuilt: ctx.prebuiltDeposit !== undefined,
+          lower,
+          upper,
+        },
+        '🔨 open DEPOSIT published (position created → deposit)',
+      );
+    });
   }
 
   /** Finalize a Token-2022 two-sided open once its deposit (TX2) has landed: NOW persist the mirror (the position is
@@ -1539,51 +1548,52 @@ export async function createUserRuntime(
   async function finalizeToken2022Open(depositCommandId: string): Promise<void> {
     const pend = pendingToken2022Mirrors.get(depositCommandId);
     if (!pend) return;
-    pendingToken2022Mirrors.delete(depositCommandId);
-    const leader = pend.leader; // the ORIGINATING event's leader, threaded create → deposit → mirror (3b)
-    if (consumeOpenCancellation(pend.leaderPosition, pend.pool)) {
-      // Leader closed while the deposit was in flight. The deposit already landed (this is its confirm) → capital is
-      // in the pool, but we do NOT register the mirror: lift the orphan-close grace so the reconcile/orphan sweep
-      // closes the now-funded, untracked position and pulls the capital back out.
+    await runContinuation(pendingToken2022Mirrors, depositCommandId, async () => {
+      const leader = pend.leader; // the ORIGINATING event's leader, threaded create → deposit → mirror (3b)
+      if (consumeOpenCancellation(pend.leaderPosition, pend.pool)) {
+        // Leader closed while the deposit was in flight. The deposit already landed (this is its confirm) → capital is
+        // in the pool, but we do NOT register the mirror: lift the orphan-close grace so the reconcile/orphan sweep
+        // closes the now-funded, untracked position and pulls the capital back out.
+        buildingToken2022Positions.delete(pend.ourPosition);
+        return;
+      }
+      const mirror = openMirror({
+        leaderPosition: pend.leaderPosition,
+        leaderAddress: leader, // the EVENT's leader (3b fan-out) — drives per-leader stop-closes/exposure/rug config
+        ourPosition: pend.ourPosition,
+        pool: pend.pool,
+        nonSolSymbol: pend.nonSolSymbol,
+        nonSolMint: pend.nonSolMint, // per-token concurrency-cap key
+        sizeSol: pend.sizeSol,
+        lowerBin: pend.lower,
+        upperBin: pend.upper,
+        openedAt: Date.now(),
+      });
+      pendingOpens.clear(pend.leaderPosition); // now tracked → lift the duplicate-open reservation for this leader position
+      await store.saveOpen(mirror); // tracked only NOW — a funded, deposited position
       buildingToken2022Positions.delete(pend.ourPosition);
-      return;
-    }
-    const mirror = openMirror({
-      leaderPosition: pend.leaderPosition,
-      leaderAddress: leader, // the EVENT's leader (3b fan-out) — drives per-leader stop-closes/exposure/rug config
-      ourPosition: pend.ourPosition,
-      pool: pend.pool,
-      nonSolSymbol: pend.nonSolSymbol,
-      nonSolMint: pend.nonSolMint, // per-token concurrency-cap key
-      sizeSol: pend.sizeSol,
-      lowerBin: pend.lower,
-      upperBin: pend.upper,
-      openedAt: Date.now(),
+      // Token-2022 open is COMPLETE (deposit landed → mirror persisted) → emit the FEED `lifecycle.open_confirmed`,
+      // the SAME confirm a classic open fires in onOpenConfirmed (the classic branch's ev:executed 'open' carries the
+      // empty-position create, never the funded mirror, so it is excluded there). Observability-only.
+      events.opened({
+        stage: 'open',
+        outcome: 'confirmed',
+        leader,
+        pool: mirror.pool,
+        leaderPosition: mirror.leaderPosition,
+        ourPosition: mirror.ourPosition,
+        ourSizeSol: mirror.sizeSol,
+        eventKey: openConfirmedKey(leader, mirror.pool, mirror.ourPosition),
+        adminDetail: {
+          nonSolSymbol: mirror.nonSolSymbol,
+          openCount: registry.openPositions().length,
+        },
+      });
+      log.info(
+        { our: pend.ourPosition },
+        '🪙 two-sided Token-2022 OPEN complete (deposit landed → mirror persisted)',
+      );
     });
-    pendingOpens.clear(pend.leaderPosition); // now tracked → lift the duplicate-open reservation for this leader position
-    await store.saveOpen(mirror); // tracked only NOW — a funded, deposited position
-    buildingToken2022Positions.delete(pend.ourPosition);
-    // Token-2022 open is COMPLETE (deposit landed → mirror persisted) → emit the FEED `lifecycle.open_confirmed`,
-    // the SAME confirm a classic open fires in onOpenConfirmed (the classic branch's ev:executed 'open' carries the
-    // empty-position create, never the funded mirror, so it is excluded there). Observability-only.
-    events.opened({
-      stage: 'open',
-      outcome: 'confirmed',
-      leader,
-      pool: mirror.pool,
-      leaderPosition: mirror.leaderPosition,
-      ourPosition: mirror.ourPosition,
-      ourSizeSol: mirror.sizeSol,
-      eventKey: openConfirmedKey(leader, mirror.pool, mirror.ourPosition),
-      adminDetail: {
-        nonSolSymbol: mirror.nonSolSymbol,
-        openCount: registry.openPositions().length,
-      },
-    });
-    log.info(
-      { our: pend.ourPosition },
-      '🪙 two-sided Token-2022 OPEN complete (deposit landed → mirror persisted)',
-    );
   }
 
   /** Build + publish a two-sided RESHAPE ADD once its token BUY (ExactIn) has landed — deposit the ACTUAL bought
@@ -1591,121 +1601,122 @@ export async function createUserRuntime(
   async function publishReshapeAddAfterBuy(buyCommandId: string): Promise<void> {
     const ctx = pendingReshapeAdds.get(buyCommandId);
     if (!ctx) return;
-    pendingReshapeAdds.delete(buyCommandId);
-    const {
-      dist,
-      addLamports,
-      solSide,
-      tokenMint,
-      lower,
-      upper,
-      totalAddSol,
-      ourPosition,
-      pool,
-      leaderPosition,
-      leader,
-      signature,
-    } = ctx;
-    // A reshape ADD is on an EXISTING (registered) mirror — NOT an open, so a leader close finds the mirror and runs
-    // the normal close path. But that close may land WHILE this add's buy was in flight: don't ADD liquidity to a
-    // position the leader closed (registry.close flips its status). The bought token is recovered by the sweep.
-    if (!registry.hasOpen(leaderPosition)) {
-      events.emit('reshape.noop', {
-        stage: 'reshape',
-        outcome: 'noop',
-        leader,
+    await runContinuation(pendingReshapeAdds, buyCommandId, async () => {
+      const {
+        dist,
+        addLamports,
+        solSide,
+        tokenMint,
+        lower,
+        upper,
+        totalAddSol,
+        ourPosition,
         pool,
         leaderPosition,
-        ourPosition,
-        // userId folded: shared wallet until Inc.4 — see the skip-key rationale above.
-        eventKey: `${userId}:${leader}:${pool}:reshape-add-cancelled:${signature}`,
-        adminDetail: { phase: 'mirror_closed_before_reshape_add' },
-      });
-      return;
-    }
-    const poolPk = new PublicKey(pool);
-    const pair = await createDlmmPair(conn, poolPk);
-    // #33 — the ExactIn output is variable, so deposit the REAL balance — but guard the read against a read-after-write
-    // lag: retry until the BOUGHT delta clears the quote-derived floor. If it never settles, SKIP the token add (the
-    // SOL-leg removes already published stand; the reconcile self-corrects on the next event) — never a short leg.
-    const settled = await settledTwoSidedDeposit(
-      tokenMint,
-      ctx.preBuyTokenRaw,
-      ctx.expectedTokenRaw,
-      ctx.buySlippageBps,
-    );
-    if (!settled.ready) {
-      events.emit('reshape.token_unbuyable', {
-        stage: 'reshape',
-        outcome: 'skipped',
-        reason: 'reshape_token_unbuyable',
         leader,
-        pool,
-        leaderPosition,
-        ourPosition,
-        eventKey: `${userId}:${leader}:${pool}:reshape-add-unsettled:${signature}`,
-        adminDetail: {
-          mint: tokenMint,
-          err: 'token balance never settled to the buy floor (read-after-write) — both-or-nothing skip',
+        signature,
+      } = ctx;
+      // A reshape ADD is on an EXISTING (registered) mirror — NOT an open, so a leader close finds the mirror and runs
+      // the normal close path. But that close may land WHILE this add's buy was in flight: don't ADD liquidity to a
+      // position the leader closed (registry.close flips its status). The bought token is recovered by the sweep.
+      if (!registry.hasOpen(leaderPosition)) {
+        events.emit('reshape.noop', {
+          stage: 'reshape',
+          outcome: 'noop',
+          leader,
+          pool,
+          leaderPosition,
+          ourPosition,
+          // userId folded: shared wallet until Inc.4 — see the skip-key rationale above.
+          eventKey: `${userId}:${leader}:${pool}:reshape-add-cancelled:${signature}`,
+          adminDetail: { phase: 'mirror_closed_before_reshape_add' },
+        });
+        return;
+      }
+      const poolPk = new PublicKey(pool);
+      const pair = await createDlmmPair(conn, poolPk);
+      // #33 — the ExactIn output is variable, so deposit the REAL balance — but guard the read against a read-after-write
+      // lag: retry until the BOUGHT delta clears the quote-derived floor. If it never settles, SKIP the token add (the
+      // SOL-leg removes already published stand; the reconcile self-corrects on the next event) — never a short leg.
+      const settled = await settledTwoSidedDeposit(
+        tokenMint,
+        ctx.preBuyTokenRaw,
+        ctx.expectedTokenRaw,
+        ctx.buySlippageBps,
+      );
+      if (!settled.ready) {
+        events.emit('reshape.token_unbuyable', {
+          stage: 'reshape',
+          outcome: 'skipped',
+          reason: 'reshape_token_unbuyable',
+          leader,
+          pool,
+          leaderPosition,
+          ourPosition,
+          eventKey: `${userId}:${leader}:${pool}:reshape-add-unsettled:${signature}`,
+          adminDetail: {
+            mint: tokenMint,
+            err: 'token balance never settled to the buy floor (read-after-write) — both-or-nothing skip',
+          },
+        });
+        return;
+      }
+      const depositToken = depositableToken(settled.depositRaw); // reserve a hair for per-bin bps rounding (else TransferChecked → insufficient funds)
+      // TWO-SIDED add. WIDE (≥26 bins) → addLiquidityByWeight2 (v1 would chunk at 26 → onlyTx throw → the wide grow would
+      // fail); fits ≤70 bins in one tx, works classic + Token-2022. NARROW (≤25) → keep the PROVEN buildAddByWeight (v1
+      // classic / add2 Token-2022) untouched — exact per-bin placement (changing it perturbs precise spike/refill copies).
+      // SOL/token → pool X/Y via the SHARED mapping (ULTRACODE #16: this path had the operands inverted vs the
+      // open path — SOL landed on the token side — so a two-sided grow failed or deposited swapped legs).
+      const { totalX, totalY } = twoSidedLegTotals(solSide, addLamports, depositToken);
+      const built =
+        dist.length >= ATOMIC_BY_WEIGHT_BIN_LIMIT
+          ? await buildAddByWeight2(
+              conn,
+              poolPk,
+              ownerPk,
+              new PublicKey(ourPosition),
+              totalX,
+              totalY,
+              dist,
+              depositSlippagePct(leader),
+              pair,
+            )
+          : await buildAddByWeight(
+              conn,
+              poolPk,
+              ownerPk,
+              new PublicKey(ourPosition),
+              totalX,
+              totalY,
+              dist,
+              depositSlippagePct(leader),
+              pair,
+            );
+      const { issuedAtSlot, deadlineSlot } = await slots();
+      const addKey = `${leader}:${pool}:reshape-add:${signature}`;
+      await publish(
+        {
+          commandId: commandIdFor(addKey),
+          eventKey: addKey,
+          kind: 'add',
+          pool,
+          positionPubkey: ourPosition,
+          owner: ownerPk.toBase58(),
+          txBase64: serializeUnsigned(
+            withCuLimit(onlyTx(built, 'reshape add (two-sided)'), TWO_SIDED_CU_LIMIT),
+          ),
+          sizeSol: totalAddSol,
+          targetBinRange: { lower, upper },
+          issuedAtSlot,
+          deadlineSlot,
         },
-      });
-      return;
-    }
-    const depositToken = depositableToken(settled.depositRaw); // reserve a hair for per-bin bps rounding (else TransferChecked → insufficient funds)
-    // TWO-SIDED add. WIDE (≥26 bins) → addLiquidityByWeight2 (v1 would chunk at 26 → onlyTx throw → the wide grow would
-    // fail); fits ≤70 bins in one tx, works classic + Token-2022. NARROW (≤25) → keep the PROVEN buildAddByWeight (v1
-    // classic / add2 Token-2022) untouched — exact per-bin placement (changing it perturbs precise spike/refill copies).
-    // SOL/token → pool X/Y via the SHARED mapping (ULTRACODE #16: this path had the operands inverted vs the
-    // open path — SOL landed on the token side — so a two-sided grow failed or deposited swapped legs).
-    const { totalX, totalY } = twoSidedLegTotals(solSide, addLamports, depositToken);
-    const built =
-      dist.length >= ATOMIC_BY_WEIGHT_BIN_LIMIT
-        ? await buildAddByWeight2(
-            conn,
-            poolPk,
-            ownerPk,
-            new PublicKey(ourPosition),
-            totalX,
-            totalY,
-            dist,
-            depositSlippagePct(leader),
-            pair,
-          )
-        : await buildAddByWeight(
-            conn,
-            poolPk,
-            ownerPk,
-            new PublicKey(ourPosition),
-            totalX,
-            totalY,
-            dist,
-            depositSlippagePct(leader),
-            pair,
-          );
-    const { issuedAtSlot, deadlineSlot } = await slots();
-    const addKey = `${leader}:${pool}:reshape-add:${signature}`;
-    await publish(
-      {
-        commandId: commandIdFor(addKey),
-        eventKey: addKey,
-        kind: 'add',
-        pool,
-        positionPubkey: ourPosition,
-        owner: ownerPk.toBase58(),
-        txBase64: serializeUnsigned(
-          withCuLimit(onlyTx(built, 'reshape add (two-sided)'), TWO_SIDED_CU_LIMIT),
-        ),
-        sizeSol: totalAddSol,
-        targetBinRange: { lower, upper },
-        issuedAtSlot,
-        deadlineSlot,
-      },
-      { stage: 'reshape', leader, leaderPosition },
-    );
-    log.info(
-      { our: ourPosition, bins: dist.length },
-      '🪙 two-sided reshape ADD published (after buy landed)',
-    );
+        { stage: 'reshape', leader, leaderPosition },
+      );
+      log.info(
+        { our: ourPosition, bins: dist.length },
+        '🪙 two-sided reshape ADD published (after buy landed)',
+      );
+    });
   }
 
   // A cancelled multi-tx open surfaces as the leader-closed FAILSAFE (SAME semantics as the reClose alias
@@ -2261,7 +2272,8 @@ export async function createUserRuntime(
       const m = open.find((x) => x.ourPosition === c.ourPosition);
       if (!m) continue;
       // Grace: a close already published for this mirror (failsafe/rug-SL/an earlier stop) is still landing.
-      if (Date.now() - (recentlyPublishedClose.get(m.ourPosition) ?? 0) < RECLOSE_GRACE_MS) continue;
+      if (Date.now() - (recentlyPublishedClose.get(m.ourPosition) ?? 0) < RECLOSE_GRACE_MS)
+        continue;
       log.warn(
         { our: m.ourPosition, leaderPosition: m.leaderPosition, reason: c.reason },
         '🛑 stop → force-close',
@@ -2294,7 +2306,10 @@ export async function createUserRuntime(
   async function applyStopCloses(prev: CopybotConfig, next: CopybotConfig): Promise<void> {
     const open = registry.openPositions();
     if (open.length === 0) return;
-    await executeStopClosePlan(planStopCloses(prev, next, open.map(toStopCloseMirror)).toClose, open);
+    await executeStopClosePlan(
+      planStopCloses(prev, next, open.map(toStopCloseMirror)).toClose,
+      open,
+    );
   }
 
   // STOP = FORCE-CLOSE (SPEC §4.3) — BOOT/seed path (finding #135): after a (re)spawn reloaded this runtime's

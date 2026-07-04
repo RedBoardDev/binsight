@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { and, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { describe, expect, it } from 'vitest';
@@ -160,5 +161,54 @@ describe('MirrorStore — no-dormant persistence, per user', () => {
     expect(
       (await new MirrorStore(db, USER_2).loadOpen()).some((m) => m.leaderPosition === LP),
     ).toBe(true);
+  });
+
+  it('★ re-open over a force-closed row REWRITES it to open — no untracked funded position (finding #45/#63)', async () => {
+    // WHY (the stop→re-enable bug class): a user stops copying → we force-close OUR row (status='closed') while the
+    // LEADER's position stays open on-chain. The user re-enables and the leader adds liquidity → the brain opens a
+    // fresh copy and calls saveOpen for the SAME (userId, leaderPosition). With onConflictDoNothing that save would
+    // no-op on the PK conflict, leaving the funded on-chain copy hidden under the stale 'closed' row: loadOpen skips
+    // it at boot → an UNTRACKED money position, the leader's eventual close mirrored late (global orphan pass only),
+    // fee/journal attribution lost. The upsert must REWRITE the row back to 'open' with the fresh open's fields.
+    const REOPEN_LP = '__test_reopen_after_close__';
+    await store.saveOpen({ ...mirror, leaderPosition: REOPEN_LP, ourPosition: 'OUR_FIRST' });
+    await store.markClosed(REOPEN_LP); // user stopped → our row force-closed while the leader stays open on-chain
+    expect((await store.loadOpen()).some((m) => m.leaderPosition === REOPEN_LP)).toBe(false); // stale closed row
+
+    // Re-enable + leader adds liquidity → fresh copy opened; saveOpen must revive the row (different fields prove a
+    // real rewrite, not just a status flip).
+    await store.saveOpen({
+      ...mirror,
+      leaderPosition: REOPEN_LP,
+      ourPosition: 'OUR_REOPEN',
+      sizeSol: 0.9,
+    });
+    const reopened = (await new MirrorStore(db, USER).loadOpen()).find(
+      (m) => m.leaderPosition === REOPEN_LP,
+    ); // fresh store ≈ restarted process → also proves the revived row survives a restart (no-dormant)
+    expect(reopened).toMatchObject({ status: 'open', ourPosition: 'OUR_REOPEN', sizeSol: 0.9 });
+  });
+
+  it('saveOpen of the SAME open twice is idempotent — exactly one row, fields intact (no PK-conflict corruption)', async () => {
+    // WHY: the open path may re-run saveOpen for an already-persisted mirror (registry admits at most ONE live
+    // mirror per (userId, leaderPosition)); a second save must not throw and must leave exactly one row with the
+    // same fields — never a duplicate nor a partially-rewritten row.
+    const IDEMPOTENT_LP = '__test_saveopen_idempotent__';
+    const twice: Mirror = { ...mirror, leaderPosition: IDEMPOTENT_LP, ourPosition: 'OUR_IDEMP' };
+    await store.saveOpen(twice);
+    await store.saveOpen(twice); // same open again → onConflictDoUpdate rewrites identical values (no-op effect)
+
+    const rows = await db
+      .select()
+      .from(schema.copyPositions)
+      .where(
+        and(
+          eq(schema.copyPositions.userId, USER),
+          eq(schema.copyPositions.leaderPosition, IDEMPOTENT_LP),
+        ),
+      );
+    expect(rows).toHaveLength(1); // composite PK holds → exactly one row, never a duplicate
+    const loaded = (await store.loadOpen()).find((m) => m.leaderPosition === IDEMPOTENT_LP);
+    expect(loaded).toMatchObject({ status: 'open', ourPosition: 'OUR_IDEMP', sizeSol: 0.25 });
   });
 });

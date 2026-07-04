@@ -12,8 +12,10 @@
  *
  * All handlers are idempotent on re-delivery: `onCloseConfirmed` → markClosed no-ops once the mirror is closed;
  * the deferred-publish handlers (`publish*AfterBuy` / `publishDepositAfterPositionCreated` / `finalizeToken2022Open`)
- * consume a delete-on-use pending map keyed by a deterministic commandId, so a re-run after success is a clean
- * no-op; the `*Confirmed` handlers are observability-only (emit-deduped).
+ * consume a pending map keyed by a deterministic commandId whose entry is a RETRY TOKEN dropped only once the
+ * continuation SETTLES (finding #137 — see runContinuation below), so a re-run after success is a clean no-op AND a
+ * transient RPC/DB failure keeps the token for the PEL retry instead of losing the open; the `*Confirmed` handlers
+ * are observability-only (emit-deduped).
  */
 
 /** The subset of an `ev:executed` payload the dispatch reads (kind + the correlation keys). */
@@ -135,4 +137,77 @@ export async function processExecutedBatch(
       deps.onLoopError(err, msg.id);
     }
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Deferred-continuation retry semantics (finding #137 — never drop an open after our buy landed)
+// ─────────────────────────────────────────────────────────────────────────────
+// The deferred publishers (publish*AfterBuy / publishDepositAfterPositionCreated / finalizeToken2022Open) run from
+// this ev:executed loop AFTER our buy or position-create already LANDED on chain — real SOL moved. Dropping the
+// continuation there loses money: the open/add/deposit is abandoned and the bought token is recovered only by the
+// wallet sweep (selling it back at a spread). So each pending-stash entry is a RETRY TOKEN: it is deleted ONLY once
+// the continuation settles (published/persisted, or a deterministic in-body skip), never before the fallible work.
+// A TRANSIENT failure (RPC/DB/bus) keeps the token and rethrows → the message stays un-ACKed and the next
+// consumePending drain re-runs the continuation. That retry is a clean no-op-or-complete: the deterministic
+// commandId + the vault's per-commandId claim (process1 step 8) make a re-publish a duplicate the coffre rejects
+// (no double open), and a re-run after a success that raced the ACK finds the token already gone (`if (!ctx) return`).
+
+/**
+ * A DETERMINISTIC deferred-continuation failure: re-running would fail identically (e.g. a Token-2022 open/deposit
+ * whose liquidity chunks into >1 tx — a range too wide to replicate as one create+deposit). Marking it TERMINAL lets
+ * the consumer ACK it (emit *_failed) instead of holding the message for a pointless, poison PEL retry. Every other
+ * continuation throw (RPC/DB/bus) is TRANSIENT by default → retried. A coffre-side DryRunSkip never reaches here: the
+ * brain only PUBLISHES to the bus; process1 finalizes a signer-declined command 'skipped' on the coffre side.
+ */
+export class TerminalContinuationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TerminalContinuationError';
+  }
+}
+
+/** A continuation failure is retryable UNLESS it is a known-deterministic one. The safe default is "retry" so an open
+ *  or add is NEVER dropped after our buy already landed (robustness pillar: missing an open is forbidden). */
+export function isRetryableContinuationError(err: unknown): boolean {
+  return !(err instanceof TerminalContinuationError);
+}
+
+/** The slice of a pending-stash Map a continuation needs to drop its retry token. */
+interface RetryTokenStash {
+  delete(key: string): boolean;
+}
+
+/**
+ * Run a deferred continuation whose retry token is `stash[key]`, deleting the token only on a SETTLED outcome:
+ *  · body resolves (published/persisted, or a terminal in-body skip that emitted + returned) → delete (done).
+ *  · body throws TRANSIENT → KEEP the token + rethrow → the ev:executed message stays un-ACKed and the PEL drain
+ *    re-runs the continuation (idempotent) — never drop an open/add after our buy landed.
+ *  · body throws DETERMINISTIC (TerminalContinuationError) → delete the token (no poison loop) + rethrow so the
+ *    consumer emits *_failed and ACKs.
+ * The caller peeks the TYPED entry first (`const ctx = stash.get(key); if (!ctx) return;`); this owns only the
+ * delete-on-settled lifecycle, so a re-delivery after a prior success is already a no-op at the caller's peek.
+ */
+export async function runContinuation(
+  stash: RetryTokenStash,
+  key: string,
+  body: () => Promise<void>,
+): Promise<void> {
+  try {
+    await body();
+  } catch (err) {
+    if (!isRetryableContinuationError(err)) stash.delete(key);
+    throw err;
+  }
+  stash.delete(key);
+}
+
+/**
+ * Settle a deferred-continuation failure at the ev:executed consumer: rethrow a TRANSIENT error so the per-message
+ * guard leaves the message un-ACKed for an idempotent PEL retry (the runtime kept the retry token), or run the
+ * DETERMINISTIC-failure side effect `onTerminal` (emit the *_failed feed row) and swallow so the message ACKs (no
+ * poison retry). Pairs with runContinuation: the runtime keeps/drops the token exactly as the consumer un-ACKs/ACKs.
+ */
+export function settleContinuationFailure(err: unknown, onTerminal: () => void): void {
+  if (isRetryableContinuationError(err)) throw err;
+  onTerminal();
 }

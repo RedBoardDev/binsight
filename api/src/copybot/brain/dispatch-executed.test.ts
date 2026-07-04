@@ -3,7 +3,11 @@ import {
   dispatchExecuted,
   type ExecutedBatchDeps,
   type ExecutedMessage,
+  isRetryableContinuationError,
   processExecutedBatch,
+  runContinuation,
+  settleContinuationFailure,
+  TerminalContinuationError,
 } from './dispatch-executed';
 
 // A full set of stub handlers (all no-ops / not-pending by default); each test overrides what it asserts on.
@@ -204,5 +208,69 @@ describe('processExecutedBatch — per-message isolation + non-ack-on-throw (no-
     await processExecutedBatch([], deps);
     expect(deps.ack).not.toHaveBeenCalled();
     expect(deps.onLoopError).not.toHaveBeenCalled();
+  });
+});
+
+describe('deferred-continuation retry semantics (finding #137 — never drop an open after our buy landed)', () => {
+  it('isRetryableContinuationError: a transient error is retryable; a TerminalContinuationError is not', () => {
+    // WHY: the split decides ACK vs un-ACK. Mis-classifying a transient RPC/DB error as terminal DROPS an open after
+    // our buy already spent real SOL (forbidden). So the default is "retry"; only a known-deterministic build failure
+    // is terminal. This test fails if the default ever flips to "terminal" (which would silently drop opens).
+    expect(isRetryableContinuationError(new Error('RPC 429 Too Many Requests'))).toBe(true);
+    expect(isRetryableContinuationError(new TypeError('cannot read x'))).toBe(true);
+    expect(isRetryableContinuationError(new TerminalContinuationError('range too wide'))).toBe(
+      false,
+    );
+  });
+
+  it('runContinuation: a resolved body DROPS the retry token (the continuation settled → ACK)', async () => {
+    const stash = new Map<string, number>([['K', 1]]);
+    let ran = false;
+    await runContinuation(stash, 'K', async () => {
+      ran = true;
+    });
+    expect(ran).toBe(true);
+    expect(stash.has('K')).toBe(false);
+  });
+
+  it('runContinuation: a TRANSIENT throw KEEPS the token and rethrows (→ un-ACK → PEL retry re-runs it, open NOT lost)', async () => {
+    // The core of finding #137: the token is the retry handle. A transient failure must leave it in place so the
+    // un-ACKed ev:executed message re-drives the continuation — otherwise the open bought with real SOL is dropped.
+    const stash = new Map<string, number>([['K', 1]]);
+    const boom = new Error('createDlmmPair 429');
+    await expect(
+      runContinuation(stash, 'K', async () => {
+        throw boom;
+      }),
+    ).rejects.toBe(boom);
+    expect(stash.has('K')).toBe(true); // token intact → the continuation is retried, never abandoned
+  });
+
+  it('runContinuation: a DETERMINISTIC (Terminal) throw DROPS the token and rethrows (→ *_failed + ACK, no poison loop)', async () => {
+    // A permanently-invalid shape must NOT hold the message for an endless PEL retry: drop the token so it acks out,
+    // but still rethrow so the consumer emits the *_failed feed row.
+    const stash = new Map<string, number>([['K', 1]]);
+    const term = new TerminalContinuationError('deposit chunked into 2 txs (range too wide)');
+    await expect(
+      runContinuation(stash, 'K', async () => {
+        throw term;
+      }),
+    ).rejects.toBe(term);
+    expect(stash.has('K')).toBe(false); // token dropped → never poison-retried
+  });
+
+  it('settleContinuationFailure: a TRANSIENT error RETHROWS (leaves the message un-ACKed) and does NOT emit *_failed', () => {
+    const onTerminal = vi.fn();
+    const boom = new Error('db blip in saveOpen');
+    expect(() => settleContinuationFailure(boom, onTerminal)).toThrow(boom);
+    expect(onTerminal).not.toHaveBeenCalled(); // not a failure — it will be retried
+  });
+
+  it('settleContinuationFailure: a DETERMINISTIC error emits *_failed (message ACKs) and does NOT rethrow', () => {
+    const onTerminal = vi.fn();
+    expect(() =>
+      settleContinuationFailure(new TerminalContinuationError('too wide'), onTerminal),
+    ).not.toThrow();
+    expect(onTerminal).toHaveBeenCalledTimes(1); // emit the feed row + let the message ACK (no infinite retry)
   });
 });

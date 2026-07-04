@@ -65,7 +65,11 @@ import {
 import { PriorityFeeOracle } from '@/infrastructure/solana/priority-fee-oracle';
 import { readAllOwnerTokenBalances } from '@/infrastructure/solana/token-balance-reader';
 import { HeliusTokenMetadataGateway } from '@/infrastructure/solana/token-metadata-gateway';
-import { type ExecutedBatchDeps, processExecutedBatch } from './dispatch-executed';
+import {
+  type ExecutedBatchDeps,
+  processExecutedBatch,
+  settleContinuationFailure,
+} from './dispatch-executed';
 import { resolveExecutedTarget } from './executed-router';
 import { runFeeSweep } from './fee-sweep';
 import { LeaderHub } from './leader-hub';
@@ -602,11 +606,12 @@ async function main(): Promise<void> {
   // Per-message dispatch deps — now a ROUTER (3b step 5, INC3B-PLAN §3): each callback resolves the OWNING runtime
   // (ev.userId → runtime; else position/commandId ownership — see executed-router) and dispatches with that
   // runtime's handlers. With the single SYSTEM runtime every message resolves to it, exactly as before.
-  // Each deferred-publish handler keeps its OWN domain-specific failure emit (open_failed / add_failed /
-  // swap.failed) via an inline `.catch()` — those are terminal (the pending-map entry is already consumed → a
-  // retry no-ops) so the message is still acked. `onCloseConfirmed` is routed WITHOUT a catch: a DB blip in
-  // markClosed must REJECT so the batch guard leaves the close UNACKED for an idempotent PEL-drain retry (never
-  // silently drop a close). See dispatch-executed.ts.
+  // Each deferred-publish handler routes its failure through `settleContinuationFailure` (finding #137): a
+  // DETERMINISTIC build failure emits the domain-specific *_failed code (open_failed / add_failed) and ACKs, but a
+  // TRANSIENT RPC/DB failure RETHROWS so the batch guard leaves the message UNACKED — the runtime kept the pending
+  // retry token, so the PEL drain re-runs the continuation instead of dropping the open after our buy already landed.
+  // `onCloseConfirmed` is routed WITHOUT a catch: a DB blip in markClosed must REJECT so the batch guard leaves the
+  // close UNACKED for an idempotent PEL-drain retry (never silently drop a close). See dispatch-executed.ts.
   const ownerOfCommand = (commandId: string): UserRuntime | undefined =>
     resolveExecutedTarget(runtimes, { commandId });
   const executedDeps: ExecutedBatchDeps = {
@@ -649,28 +654,32 @@ async function main(): Promise<void> {
       const owner = ownerOfCommand(commandId);
       if (!owner) return;
       await owner.publishReshapeAddAfterBuy(commandId).catch((e) =>
-        owner.events.emit('reshape.add_failed', {
-          stage: 'reshape',
-          outcome: 'failed',
-          reason: 'add_failed',
-          leader: cfg.leader,
-          commandId,
-          adminDetail: { error: (e as Error).message, commandId },
-        }),
+        settleContinuationFailure(e, () =>
+          owner.events.emit('reshape.add_failed', {
+            stage: 'reshape',
+            outcome: 'failed',
+            reason: 'add_failed',
+            leader: cfg.leader,
+            commandId,
+            adminDetail: { error: (e as Error).message, commandId },
+          }),
+        ),
       );
     },
     publishTwoSidedOpenAfterBuy: async (commandId) => {
       const owner = ownerOfCommand(commandId);
       if (!owner) return;
       await owner.publishTwoSidedOpenAfterBuy(commandId).catch((e) =>
-        owner.events.emit('lifecycle.open_failed', {
-          stage: 'open',
-          outcome: 'failed',
-          reason: 'open_failed',
-          leader: cfg.leader,
-          commandId,
-          adminDetail: { error: (e as Error).message, commandId },
-        }),
+        settleContinuationFailure(e, () =>
+          owner.events.emit('lifecycle.open_failed', {
+            stage: 'open',
+            outcome: 'failed',
+            reason: 'open_failed',
+            leader: cfg.leader,
+            commandId,
+            adminDetail: { error: (e as Error).message, commandId },
+          }),
+        ),
       );
     },
     hasPendingToken2022Deposit: (commandId) =>
@@ -680,14 +689,16 @@ async function main(): Promise<void> {
       if (!owner) return;
       await owner.publishDepositAfterPositionCreated(commandId).catch((e) =>
         // the deposit leg of a Token-2022 OPEN failed to build/publish → the open did not complete (open_failed).
-        owner.events.emit('lifecycle.open_failed', {
-          stage: 'open',
-          outcome: 'failed',
-          reason: 'open_failed',
-          leader: cfg.leader,
-          commandId,
-          adminDetail: { error: (e as Error).message, commandId, leg: 'token2022_deposit' },
-        }),
+        settleContinuationFailure(e, () =>
+          owner.events.emit('lifecycle.open_failed', {
+            stage: 'open',
+            outcome: 'failed',
+            reason: 'open_failed',
+            leader: cfg.leader,
+            commandId,
+            adminDetail: { error: (e as Error).message, commandId, leg: 'token2022_deposit' },
+          }),
+        ),
       );
     },
     onOpenConfirmed: (ourPosition) =>
@@ -700,14 +711,16 @@ async function main(): Promise<void> {
       const owner = ownerOfCommand(commandId);
       if (!owner) return;
       await owner.finalizeToken2022Open(commandId).catch((e) =>
-        owner.events.emit('lifecycle.open_failed', {
-          stage: 'open',
-          outcome: 'failed',
-          reason: 'open_failed',
-          leader: cfg.leader,
-          commandId,
-          adminDetail: { error: (e as Error).message, commandId, leg: 'token2022_finalize' },
-        }),
+        settleContinuationFailure(e, () =>
+          owner.events.emit('lifecycle.open_failed', {
+            stage: 'open',
+            outcome: 'failed',
+            reason: 'open_failed',
+            leader: cfg.leader,
+            commandId,
+            adminDetail: { error: (e as Error).message, commandId, leg: 'token2022_finalize' },
+          }),
+        ),
       );
     },
     onAddConfirmed: (ourPosition, commandId) =>

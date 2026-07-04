@@ -47,6 +47,7 @@ vi.mock('@/infrastructure/solana/dlmm/leader-position-reader', async (orig) => {
   return { ...actual, readLeaderPositionShape: vi.fn() };
 });
 
+import { createDlmmPair } from '@/infrastructure/solana/dlmm/dlmm-tx-builder';
 import { readLeaderPositionShape } from '@/infrastructure/solana/dlmm/leader-position-reader';
 import { createUserRuntime, INFLIGHT_BUY_GRACE_MS, type SharedBrainDeps } from './user-runtime';
 
@@ -803,5 +804,90 @@ describe('UserRuntime — a leader position wider than one DLMM position skips t
     expect(rows.map((r) => r.code)).toContain('eligibility.too_wide');
     expect(publish).not.toHaveBeenCalled(); // never published an open (no partial/half copy)
     expect(errs).toEqual([]); // and NO generic mirror error was thrown/logged (the whole point of #18) (no partial/half copy)
+  });
+});
+
+describe('UserRuntime — a deferred continuation is NEVER dropped after our buy/deposit landed (finding #137)', () => {
+  const WSOL = 'So11111111111111111111111111111111111111112';
+
+  it('publishTwoSidedOpenAfterBuy: a TRANSIENT createDlmmPair failure after the buy landed KEEPS the stash + rejects (retryable — the open is not lost)', async () => {
+    // WHY (money-critical, finding #137): our buy already swapped real SOL → token. If the deferred open throws on a
+    // transient RPC 429, the pending stash must SURVIVE and the call must REJECT so the un-ACKed ev:executed message
+    // re-runs the open on the next PEL drain. Deleting the stash BEFORE the fallible createDlmmPair (the pre-fix bug)
+    // permanently dropped the open — the bought token was recoverable only by the wallet sweep, at a two-spread loss.
+    const rt = await createUserRuntime(shared, 'retry-user-open-137', opts);
+    const CMD = 'buy-cmd-137-open';
+    const pool = Keypair.generate().publicKey.toBase58();
+    // The view exposes ReadonlyMaps (read-only for callers); a test seeds the underlying real Map to stage the exact
+    // post-buy state the ev:executed(buy) confirm hands to the continuation.
+    const twoSidedOpens = rt.pendingOpenMapsView().twoSidedOpens as unknown as Map<string, unknown>;
+    twoSidedOpens.set(CMD, {
+      e: {
+        signature: 'sig-137-open',
+        blockTime: 1,
+        instruction: 'AddLiquidityByStrategy2',
+        depositSol: 1,
+        depositTokenRaw: 0,
+        withdrawSol: 0,
+        claimSol: 0,
+        closed: false,
+        pool,
+        position: 'LP_137_OPEN',
+        nonSolMint: WSOL,
+        nonSolSymbol: 'TKN',
+      },
+      leader: LEADER,
+      dist: [{ binId: 0, x: 1n, y: 1n }],
+      sizeLamports: 1_000n,
+      solSide: 'Y',
+      tokenMint: WSOL,
+      sizeSol: 1,
+      preBuyTokenRaw: 0n,
+      expectedTokenRaw: 0n,
+      buySlippageBps: 0,
+    });
+
+    // createDlmmPair is the first fallible RPC after the buy — make it fail transiently (a 429).
+    vi.mocked(createDlmmPair).mockRejectedValueOnce(new Error('429 Too Many Requests'));
+
+    await expect(rt.publishTwoSidedOpenAfterBuy(CMD)).rejects.toThrow('429');
+    expect(twoSidedOpens.has(CMD)).toBe(true); // stash intact → the open is retried on the next PEL drain, never dropped
+  });
+
+  it('finalizeToken2022Open: a TRANSIENT saveOpen (DB) failure after the deposit landed KEEPS the stash + rejects; the retry persists the mirror + drops the stash', async () => {
+    // WHY (money-critical, finding #137): the Token-2022 deposit already landed → capital is IN the pool. If persisting
+    // the mirror hits a DB blip, the stash must SURVIVE and the call REJECT so the retry re-persists it — otherwise the
+    // funded position stays UNTRACKED and the orphan-sweep force-closes it (the copy is lost). saveOpen is an
+    // idempotent upsert, so re-running the whole tail is safe.
+    const rt = await createUserRuntime(shared, 'retry-user-finalize-137', opts);
+    const CMD = 'deposit-cmd-137-finalize';
+    const ourPosition = Keypair.generate().publicKey.toBase58();
+    const mirrors = rt.pendingOpenMapsView().token2022Mirrors as unknown as Map<string, unknown>;
+    mirrors.set(CMD, {
+      leaderPosition: 'LP_137_FIN',
+      leader: LEADER,
+      ourPosition,
+      pool: Keypair.generate().publicKey.toBase58(),
+      nonSolSymbol: 'TKN',
+      nonSolMint: WSOL,
+      sizeSol: 1,
+      lower: -5,
+      upper: 5,
+      leaderSizeSol: 1,
+    });
+
+    const saveOpen = vi.spyOn(rt.store, 'saveOpen');
+    saveOpen.mockRejectedValueOnce(new Error('db connection blip'));
+
+    // 1) DB blip after the deposit landed → REJECT + stash INTACT (retryable — the funded deposit is not dropped).
+    await expect(rt.finalizeToken2022Open(CMD)).rejects.toThrow('db connection blip');
+    expect(mirrors.has(CMD)).toBe(true);
+
+    // 2) The PEL retry re-runs it; saveOpen now succeeds (call-through) → RESOLVES, stash DROPPED, mirror persisted+loadable.
+    await expect(rt.finalizeToken2022Open(CMD)).resolves.toBeUndefined();
+    expect(mirrors.has(CMD)).toBe(false);
+    const open = await rt.store.loadOpen();
+    expect(open.map((m) => m.ourPosition)).toEqual([ourPosition]); // tracked open — never an untracked funded position
+    saveOpen.mockRestore();
   });
 });

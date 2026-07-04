@@ -20,6 +20,13 @@ export class MirrorStore {
   ) {}
 
   async saveOpen(m: Mirror): Promise<void> {
+    // Upsert (NOT insert-or-ignore): re-opening the SAME (userId, leaderPosition) after a prior force-close
+    // (our row was left at status='closed' while the leader's position stayed open on-chain) must REWRITE the row
+    // back to 'open'. With onConflictDoNothing the fresh, funded on-chain copy would stay hidden under the stale
+    // 'closed' row and loadOpen would skip it at boot → an UNTRACKED money position (finding #45/#63). Idempotent
+    // and safe: mirror-registry admits at most ONE live mirror per (userId, leaderPosition), so a re-save of the
+    // same open just rewrites identical values. The PK columns are the conflict target and never change, so `set`
+    // updates every NON-PK column, mirroring exactly what `.values()` writes (leave no field stale).
     await this.db
       .insert(copyPositions)
       .values({
@@ -37,7 +44,22 @@ export class MirrorStore {
         openedAt: m.openedAt,
         closedAt: null,
       })
-      .onConflictDoNothing({ target: [copyPositions.userId, copyPositions.leaderPosition] });
+      .onConflictDoUpdate({
+        target: [copyPositions.userId, copyPositions.leaderPosition],
+        set: {
+          leader: m.leaderAddress,
+          ourPosition: m.ourPosition,
+          pool: m.pool,
+          nonSolSymbol: m.nonSolSymbol,
+          nonSolMint: m.nonSolMint,
+          sizeSol: m.sizeSol,
+          lowerBin: m.lowerBin,
+          upperBin: m.upperBin,
+          status: 'open',
+          openedAt: m.openedAt,
+          closedAt: null,
+        },
+      });
   }
 
   /** Persist the new SOL size after a proportional add/remove (so the effective ratio survives a restart). */
