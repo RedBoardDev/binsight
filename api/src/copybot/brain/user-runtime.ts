@@ -157,13 +157,17 @@ const DEADLINE_SLOTS = 150; // ~60s
 // decides whether a leader TOKEN LEG is worth buying — a different concern). So selling uses 0 here. Exported for
 // brain-main's wallet sweep (the same floor gates the close-sell and the sweep).
 export const SELL_RESIDUAL_DUST_RAW = 0n;
-// A two-sided open's BOUGHT token sits on the wallet between the buy landing and the deposit landing. Selling it in
+// A two-sided open's BOUGHT token sits on the wallet from the buy landing until the DEPOSIT lands — a MULTI-hop,
+// multi-tx window (buy → open/deposit; a Token-2022 open is create → deposit; a reshape is buy → add). Selling it in
 // that window (close-triggered sell OR safety sweep — both read the WHOLE shared-wallet balance) would empty the
-// token leg — on the shared wallet even ANOTHER user's in-flight open is at risk (Inc.3b step 6). Kept SHORT so it
-// expires soon after the deposit lands — else it would also delay selling that same token's CLOSE residual for too
-// long. The wallet sweep backstop picks up whatever a deferred sell leaves. Exported: brain-main's sweep applies
-// the same grace over the shared `inFlightBuyMints` map.
-export const INFLIGHT_BUY_GRACE_MS = 30_000;
+// token leg mid-open — on the shared wallet even ANOTHER user's in-flight open is at risk (Inc.3b step 6). It is
+// RE-STAMPED at EACH hop (buy-publish + every deposit-publish continuation) so the window restarts per hop: a single
+// hop's window need only outlast ONE tx's land time, never the whole buy→deposit chain. Finding #96: a fixed 30s
+// window stamped ONCE at buy-publish expired before a congested deposit landed → the leg was sold mid-open and the
+// open aborted. Sized to OPEN_PENDING_TTL_MS (the multi-tx open reservation window — the same window this guards).
+// The wallet sweep backstop recovers a genuinely stranded token one window after the last hop. Exported: brain-main's
+// sweep applies the same grace over the shared `inFlightBuyMints` map.
+export const INFLIGHT_BUY_GRACE_MS = 90_000; // == OPEN_PENDING_TTL_MS; re-stamped at each open hop (finding #96)
 // eventKey prefix for WALLET-context (no-leader) actions — today the orphan close (INC3B-PLAN §4): an orphan is
 // tracked by NO user and copies NO leader, so a leader-address prefix would fabricate an attribution AND alias the
 // commandId with that leader's real closes. Exported for the tests that pin the derived keys.
@@ -1333,6 +1337,11 @@ export async function createUserRuntime(
     await runContinuation(pendingTwoSidedOpens, buyCommandId, async () => {
       const { e, leader, dist, sizeLamports, solSide, tokenMint, sizeSol, recordedSizeSol } = ctx;
       if (consumeOpenCancellation(e.position, e.pool)) return; // leader closed before the buy landed → don't open into an exited pool
+      // The buy landed and its bought token is on the wallet; RE-STAMP the in-flight grace so it covers THIS hop's
+      // deposit landing (finding #96 — the buy-publish stamp can expire before a congested deposit lands → the sweep/
+      // close-sell would sell the leg mid-open). Every downstream branch (build, split, Token-2022, or a late skip) is
+      // protected for one more window; a genuinely stranded token is recovered by the sweep a window later.
+      inFlightBuyMints.set(tokenMint, Date.now());
       const poolPk = new PublicKey(e.pool);
       const pair = await createDlmmPair(conn, poolPk);
       // Deposit the token we ACTUALLY bought (ExactIn output is variable). #33 — the balance read can LAG the buy confirm
@@ -1507,6 +1516,11 @@ export async function createUserRuntime(
     await runContinuation(pendingToken2022Deposits, createCommandId, async () => {
       const { e, leader, lower, upper, sizeSol, recordedSizeSol } = ctx;
       if (consumeOpenCancellation(e.position, e.pool)) return; // leader closed before the create landed → don't fund an exited pool (the empty position is orphan-closed)
+      // TX2 is the actual token deposit of a Token-2022 open (create→deposit chain); RE-STAMP an already-in-flight
+      // bought token so its grace outlasts THIS hop's landing too (finding #96). Gated on `.has`: a one-sided wide
+      // open reaches here via the prebuilt path with NO bought token, so its untouched pool mint must not be protected.
+      if (e.nonSolMint && inFlightBuyMints.has(e.nonSolMint))
+        inFlightBuyMints.set(e.nonSolMint, Date.now());
       const poolPk = new PublicKey(e.pool);
       const posKp: Keypair = derivePositionKeypair(createCommandId); // SAME position the create made
       let depositTx: Transaction;
@@ -1681,6 +1695,10 @@ export async function createUserRuntime(
         });
         return;
       }
+      // The buy landed and its bought token is on the wallet; RE-STAMP the in-flight grace so it covers THIS reshape
+      // add's deposit landing (finding #96 — the buy-publish stamp can expire before a congested add lands → the
+      // sweep/close-sell would sell the leg mid-add). A stranded token (settle-skip below) is recovered by the sweep.
+      inFlightBuyMints.set(tokenMint, Date.now());
       const poolPk = new PublicKey(pool);
       const pair = await createDlmmPair(conn, poolPk);
       // #33 — the ExactIn output is variable, so deposit the REAL balance — but guard the read against a read-after-write

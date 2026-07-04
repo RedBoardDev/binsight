@@ -769,6 +769,48 @@ describe('runResidualSweep — per-distinct-wallet residual safety sweep (Inc.4c
     expect(calls.sweepDetected).toBe(0); // nothing to sweep this tick
   });
 
+  // finding #96 — a two-sided open is a MULTI-hop chain (buy → deposit; the deposit can land ~100s after the buy
+  // under congestion). The brain RE-STAMPS inFlightBuyMints at EVERY hop, so the sweep keeps seeing a fresh stamp for
+  // the whole open — even long past the ORIGINAL buy. The grace is sized to the multi-tx open window (mirrors the
+  // production INFLIGHT_BUY_GRACE_MS, raised from 30s so one hop's window outlasts one tx's land time).
+  const INFLIGHT_GRACE_MS = 90_000; // == the production INFLIGHT_BUY_GRACE_MS (== OPEN_PENDING_TTL_MS)
+  const DEPOSIT_INFLIGHT_AGE_MS = 60_000; // time since the DEPOSIT hop re-stamped it; > the pre-fix 30s, < the grace
+
+  it('a mint whose in-flight deposit was re-stamped past the OLD 30s window is NOT swept (finding #96)', async () => {
+    // WHY: at 60s the pre-fix 30s grace had expired → the sweep sold the bought leg while its deposit was still
+    // landing → the deposit failed insufficient-funds, the open aborted (leader open MISSED, two swap fees burned).
+    // The re-stamped, multi-tx-sized grace spares the leg for the whole open.
+    const { rt, calls } = makeResidualRt('user-a', WALLET_A);
+    const inFlightBuyMints = new Map<string, number>([
+      ['MINT_INFLIGHT', NOW - DEPOSIT_INFLIGHT_AGE_MS],
+    ]);
+    const { deps } = makeResidualDeps(
+      [rt],
+      { [WALLET_A]: [bal('MINT_INFLIGHT', 100n)] },
+      { inFlightBuyMints, inflightGraceMs: INFLIGHT_GRACE_MS },
+    );
+    await runResidualSweep(deps);
+    expect(calls.sold).toEqual([]); // spared: its deposit is still in flight
+    expect(calls.sweepDetected).toBe(0);
+  });
+
+  it('once the open completes (grace elapsed, no more re-stamp) a genuine residual of that mint IS swept', async () => {
+    // WHY: the guard must be a DELAY, not a mute — past the grace a still-present token is a real stranded residual
+    // (a failed/aborted open, or leftover dust) and MUST be recovered by the safety sweep, never held forever.
+    const { rt, calls } = makeResidualRt('user-a', WALLET_A);
+    const inFlightBuyMints = new Map<string, number>([
+      ['MINT_INFLIGHT', NOW - (INFLIGHT_GRACE_MS + 1)],
+    ]);
+    const { deps } = makeResidualDeps(
+      [rt],
+      { [WALLET_A]: [bal('MINT_INFLIGHT', 100n)] },
+      { inFlightBuyMints, inflightGraceMs: INFLIGHT_GRACE_MS },
+    );
+    await runResidualSweep(deps);
+    expect(calls.sold).toEqual([{ mint: 'MINT_INFLIGHT', amountRaw: 100n, pool: WALLET_A }]);
+    expect(calls.sweepDetected).toBe(1);
+  });
+
   it('a residual that is only WSOL/dust is not swept (nothing to do)', async () => {
     const { rt, calls } = makeResidualRt('user-a', WALLET_A);
     const { deps } = makeResidualDeps([rt], { [WALLET_A]: [bal(WSOL, 5n)] }); // WSOL is excluded by planWalletSweep

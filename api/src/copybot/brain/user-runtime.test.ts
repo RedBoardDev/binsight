@@ -372,6 +372,24 @@ describe('UserRuntime — close-sell respects the shared inFlightBuyMints grace 
       shared.inFlightBuyMints.delete(MINT);
     }
   });
+
+  it('a close-sell during an in-flight open whose deposit is still landing (re-stamped past the OLD 30s window) DEFERS (finding #96)', async () => {
+    // WHY: a two-sided open is a MULTI-hop chain — under congestion the deposit lands ~100s after the buy, and the
+    // brain RE-STAMPS this grace at each hop (buy-publish → deposit-publish). At 60s the pre-fix 30s window had
+    // expired, so this close-sell would have sold the bought leg out from under the still-landing deposit → the open
+    // aborts insufficient-funds and the leg is lost (two swap fees burned). The grace, raised to the multi-tx open
+    // window, keeps deferring for the whole open. Resolving cleanly (no RPC on the fake conn) IS the proof; a regressed
+    // grace < 60s would proceed to the wallet-balance read and reject. Binds to the real INFLIGHT_BUY_GRACE_MS.
+    const DEPOSIT_INFLIGHT_AGE_MS = 60_000; // time since the deposit hop re-stamped it; > the pre-fix 30s, < the grace
+    shared.inFlightBuyMints.set(MINT, Date.now() - DEPOSIT_INFLIGHT_AGE_MS);
+    try {
+      await expect(
+        rtA.onCloseExecuted({ pool: POOL, positionPubkey: 'OUR_X' }),
+      ).resolves.toBeUndefined();
+    } finally {
+      shared.inFlightBuyMints.delete(MINT);
+    }
+  });
 });
 
 describe('UserRuntime — per-user opens-per-window ring (Inc.3b S8)', () => {
