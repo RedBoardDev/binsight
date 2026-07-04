@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { RUG_SL_RETAIN_MS } from '../rug-sl';
 import {
   CONFIG_DEFAULTS,
   type CopybotConfig,
@@ -339,5 +340,43 @@ describe('config · execution group', () => {
     const cfg = parseConfig(JSON.stringify({ user: { execution: { minSellOutLamports: 1 } } }));
     expect(cfg.user.execution.minSellOutLamports).toBe(1);
     expect(cfg.user.execution.slippageBps).toBe(CONFIG_DEFAULTS.user.execution.slippageBps);
+  });
+});
+
+describe('config · rugSl windowSeconds bound (finding #154)', () => {
+  // WHY (#154): the rug-SL tracker prunes price samples to RUG_SL_RETAIN_MS, so a windowSeconds beyond that could
+  // never be observed and the stop-loss would silently never fire. The schema bound must EQUAL the tracker retention
+  // (in seconds) so the two can't drift — assert the boundary against RUG_SL_RETAIN_MS itself, not a copied literal.
+  const boundSeconds = RUG_SL_RETAIN_MS / 1000;
+  const withWindow = (windowSeconds: number): CopybotConfig => ({
+    ...CONFIG_DEFAULTS,
+    user: { ...CONFIG_DEFAULTS.user, rugSl: { ...CONFIG_DEFAULTS.user.rugSl, windowSeconds } },
+  });
+
+  it('the schema max EQUALS the tracker retention (accept AT the bound, reject just beyond it)', () => {
+    expect(CopybotConfigSchema.safeParse(withWindow(boundSeconds)).success).toBe(true);
+    expect(CopybotConfigSchema.safeParse(withWindow(boundSeconds + 1)).success).toBe(false);
+  });
+
+  it('a window within the bound is accepted (the default 60s and just under the bound both validate)', () => {
+    expect(CopybotConfigSchema.safeParse(withWindow(60)).success).toBe(true);
+    expect(CopybotConfigSchema.safeParse(withWindow(boundSeconds - 1)).success).toBe(true);
+  });
+
+  it('the bound also holds on the leader-override path (RugSlSchema.partial() keeps the max)', () => {
+    // WHY: overrides use RugSlSchema.partial(), which only makes fields optional — it must NOT drop the .max, else a
+    // per-leader window could smuggle past the user-level guard and re-open the same silent-never-fire hole.
+    const cfg: CopybotConfig = {
+      ...CONFIG_DEFAULTS,
+      leaders: [
+        {
+          address: LEADER,
+          enabled: true,
+          maxTotalExposureSol: null,
+          overrides: { rugSl: { windowSeconds: boundSeconds + 1 } },
+        },
+      ],
+    };
+    expect(CopybotConfigSchema.safeParse(cfg).success).toBe(false);
   });
 });

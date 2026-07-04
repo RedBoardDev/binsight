@@ -12,7 +12,7 @@ import { z } from 'zod';
 import type { CapsConfig } from '../caps';
 import type { FilterConfig } from '../filters';
 import { PRIORITY_FEE_TIERS, type PriorityFeeConfig } from '../priority-fee';
-import type { RugSlConfig } from '../rug-sl';
+import { RUG_SL_MAX_WINDOW_SECONDS, type RugSlConfig } from '../rug-sl';
 import type { SizingConfig } from '../sizing';
 import {
   CONFIG_DEFAULTS,
@@ -77,7 +77,15 @@ const PriorityFeeSchema = z.object({
 const RugSlSchema = z.object({
   enabled: z.boolean(),
   dropPercent: z.number().nonnegative(),
-  windowSeconds: z.number().positive(),
+  // Bounded to the tracker's retention: a window longer than RugSlTracker retains could never be observed, so the
+  // stop-loss would silently never fire. Reject it at write time (loud) instead of capping it invisibly (finding #154).
+  windowSeconds: z
+    .number()
+    .positive()
+    .max(
+      RUG_SL_MAX_WINDOW_SECONDS,
+      `windowSeconds cannot exceed ${RUG_SL_MAX_WINDOW_SECONDS}s (the rug-SL price-window retention)`,
+    ),
 }) satisfies z.ZodType<RugSlConfig>;
 
 const UserSchema = z

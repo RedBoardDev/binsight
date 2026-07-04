@@ -3,6 +3,18 @@
  * if the token price drops ≥ `dropPercent` within `windowSeconds`. Fed a rolling price window (collected by the
  * brain from the DLMM active-bin price — no extra RPC). See docs/reference/copybot-settings.md §7.
  */
+
+/**
+ * Retention of a per-position price window, in ms. `RugSlTracker.record` prunes anything older, so this is the HARD
+ * ceiling on how far back a crash can be measured — sized ≥ any sane crash window. The config schema bounds
+ * `RugSlConfig.windowSeconds` to `RUG_SL_MAX_WINDOW_SECONDS` (derived from this) precisely because a window longer
+ * than the tracker retains could never be observed: the stop-loss would silently never fire (finding #154). Kept
+ * here (not in the brain) so the schema bound and the production tracker retention share ONE source and can't drift.
+ */
+export const RUG_SL_RETAIN_MS = 180_000;
+/** Ceiling for `RugSlConfig.windowSeconds`: the tracker retains only `RUG_SL_RETAIN_MS`, so a longer lookback is unenforceable. */
+export const RUG_SL_MAX_WINDOW_SECONDS = RUG_SL_RETAIN_MS / 1000;
+
 export interface RugSlConfig {
   /** Master toggle for this safety exit (default on). */
   enabled: boolean;

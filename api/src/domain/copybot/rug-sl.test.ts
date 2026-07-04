@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { decideRugSl, type PricePoint, type RugSlConfig, RugSlTracker } from './rug-sl';
+import {
+  decideRugSl,
+  type PricePoint,
+  RUG_SL_MAX_WINDOW_SECONDS,
+  RUG_SL_RETAIN_MS,
+  type RugSlConfig,
+  RugSlTracker,
+} from './rug-sl';
 
 const CFG: RugSlConfig = { enabled: true, dropPercent: 40, windowSeconds: 60 };
 const NOW = 1_000_000;
@@ -82,5 +89,34 @@ describe('rug-sl · RugSlTracker', () => {
 
   it('check on an unknown position is false (no window)', () => {
     expect(new RugSlTracker(RETAIN).check('never-seen', CFG, NOW)).toBe(false);
+  });
+});
+
+describe('rug-sl · retention honors the configured window bound (finding #154)', () => {
+  // WHY (#154): the config schema caps windowSeconds at RUG_SL_MAX_WINDOW_SECONDS *because* the tracker retains
+  // RUG_SL_RETAIN_MS. These use the PRODUCTION retention, so they would FAIL if retention ever shrank below the
+  // bound — the exact regression where a stop the settings page advertises can no longer be observed.
+  const prod = () => new RugSlTracker(RUG_SL_RETAIN_MS);
+
+  it('a window WITHIN the bound still fires (a normal 60s stop is observable)', () => {
+    const cfg: RugSlConfig = { enabled: true, dropPercent: 40, windowSeconds: 60 };
+    const t = prod();
+    t.record('posA', 1.0, NOW - 30_000);
+    t.record('posA', 0.5, NOW); // −50% within 60s → rug
+    expect(t.check('posA', cfg, NOW)).toBe(true);
+  });
+
+  it('a crash spanning the FULL max window is still detected (retention ≥ the schema bound)', () => {
+    // The high sits at the very edge of the window: if retention were even 1ms short of the bound it would be
+    // pruned and the drop go unseen. Inclusive retain/window boundaries keep the edge sample → the rug is caught.
+    const cfg: RugSlConfig = {
+      enabled: true,
+      dropPercent: 40,
+      windowSeconds: RUG_SL_MAX_WINDOW_SECONDS,
+    };
+    const t = prod();
+    t.record('posA', 1.0, NOW - RUG_SL_MAX_WINDOW_SECONDS * 1000); // edge-of-window high
+    t.record('posA', 0.5, NOW); // −50% across the full window → rug
+    expect(t.check('posA', cfg, NOW)).toBe(true);
   });
 });

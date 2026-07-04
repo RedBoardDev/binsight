@@ -77,7 +77,7 @@ import {
 } from '@/domain/copybot/position-adjust';
 import { reanchorShape } from '@/domain/copybot/reanchor';
 import { decideResidualSell, minOutWithSlippage } from '@/domain/copybot/residual-sell';
-import { RugSlTracker } from '@/domain/copybot/rug-sl';
+import { RUG_SL_RETAIN_MS, RugSlTracker } from '@/domain/copybot/rug-sl';
 import {
   planBootStopCloses,
   planStopCloses,
@@ -175,7 +175,6 @@ export const WALLET_EVENT_PREFIX = 'wallet';
 // Retention of the per-user opens-per-window ring (caps.maxOpensPerWindow): far above any sane `windowMinutes`
 // (minutes-scale by design), so pruning can never eat a live window, while bounding the ring to O(day) entries.
 const OPEN_TIMESTAMPS_RETAIN_MS = 24 * 60 * 60_000;
-const RUG_SL_RETAIN_MS = 180_000; // keep ≥ any sane windowSeconds so the detector always has its full lookback
 // A leader OPEN's WS event can arrive BEFORE the position account is readable on our RPC node (read-after-write lag).
 // Retry the shape read briefly so a transient read-miss never DROPS a leader open (the sig is already deduped, so the
 // poll won't re-cover it → no other backstop). The normal case reads on the 1st try → zero added latency.
