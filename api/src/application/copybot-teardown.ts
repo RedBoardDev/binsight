@@ -12,7 +12,12 @@
  */
 import type { Logger } from 'pino';
 import { SYSTEM_USER_ID } from '@/copybot/journal-store';
-import { canTeardown, DUST_LAMPORTS, type TeardownRefusal } from '@/domain/copybot/teardown';
+import {
+  canDetachAfterDrain,
+  canTeardown,
+  DUST_LAMPORTS,
+  type TeardownRefusal,
+} from '@/domain/copybot/teardown';
 import type { CopybotActivationRepository } from '@/infrastructure/persistence/copybot-activation-repository';
 
 export interface CopybotTeardownDeps {
@@ -67,6 +72,19 @@ export class CopybotTeardownService {
     // (2) CONFIRM no open mirrors remain before the irreversible delete (never-miss). A force-close still in flight →
     //     tell the caller to retry; the reconcile keeps closing, and nothing is deleted while a position is open.
     if ((await this.deps.openMirrorCount(userId)) > 0) return { ok: false, reason: 'in_progress' };
+
+    // (2b) POST-DRAIN fund re-check (finding #141): the force-close in (1) converted every open position back into
+    //      idle SOL, so the balance the entry gate measured PRE-stop is stale — real money can now sit in the wallet
+    //      it never saw. A withdrawal ack is sticky (never cleared by a later re-deposit) and says nothing about that
+    //      freshly-drained SOL, so it must NOT wave the detach through; only a key-export ack lets the user recover
+    //      funds after the soft-detach. Re-read the LIVE balance and refuse the irreversible detach if funds remain.
+    const drainedBalanceLamports = address ? await this.deps.balances(address) : 0;
+    const postDrain = canDetachAfterDrain({
+      balanceLamports: drainedBalanceLamports,
+      exportAck: activation?.exportAckAt != null,
+      dustLamports: DUST_LAMPORTS,
+    });
+    if (!postDrain.ok) return { ok: false, reason: postDrain.reason };
 
     // (3) Privy user delete — IRREVERSIBLE, LAST before the local cascade. Only when the account actually has a
     //     provisioned Privy wallet; on failure, surface it and DO NOT half-delete locally (idempotently retryable).

@@ -4,8 +4,12 @@
  * ONE pass reconciles the process to the DB configs; the SAME pass serves boot (empty runtime map) and the live
  * reload (control ping + CONFIG_POLL_MS backstop — reloading everyone per edit is O(users) DB reads, fine at this
  * scale):
- *  1. every ACTIVE user without a runtime is SPAWNED (config seed + persisted mirrors → registry + rug sets,
- *     inside `spawn`) — per-user try/catch: one user's broken boot never blocks the others;
+ *  1. the boot/reload spawn set is the UNION of ACTIVE users AND users still holding an OPEN mirror row: a user
+ *     STOPPED while the brain was DOWN (enabled:false ⇒ absent from listActiveUserIds) is still spawned so their
+ *     stranded positions can drain (finding #134). Each is SPAWNED (config seed + persisted mirrors → registry +
+ *     rug sets, inside `spawn`) — per-user try/catch: one user's broken boot never blocks the others; then any
+ *     seeded mirror the boot config no longer starts is force-closed on the spot (finding #135), because the
+ *     phase-2 diff can't see a stop written during downtime (a fresh spawn has no prev≠next transition);
  *  2. every EXISTING runtime gets a fresh config; the prev/next diff drives `applyStopCloses` (STOP =
  *     FORCE-CLOSE, SPEC §4.3). A DEACTIVATED (or fail-closed) user's runtime is RETAINED — its own stop-close
  *     diff (user_stopped) force-closes everything and it keeps reconciling until its mirrors and rugExitPending
@@ -28,11 +32,20 @@ export interface ReloadableRuntime {
   getConfig(): CopybotConfig;
   setConfig(next: CopybotConfig): void;
   applyStopCloses(prev: CopybotConfig, next: CopybotConfig): Promise<void>;
+  /** Boot-seed force-close: after this runtime is (re)spawned with its persisted open mirrors, force-close any
+   *  whose leader is disabled/absent in `boot` — a STOP written while the brain was down (finding #135). Replay-safe
+   *  by the "open mirror ⇒ started leader" invariant; the runtime's RECLOSE_GRACE_MS gate dedupes an in-flight close. */
+  applyBootStopCloses(boot: CopybotConfig): Promise<void>;
 }
 
 export interface ReloadDeps<R extends ReloadableRuntime> {
   log: Logger;
   listActiveUserIds(): Promise<string[]>;
+  /** copy_positions projection: DISTINCT user_id WHERE status='open'. The boot/reload spawn set is
+   *  activeUsers ∪ theseUsers, so a user STOPPED (or disabled) while the brain was DOWN still gets a runtime —
+   *  drained (disabled config ⇒ out of the open fan-out) but reconciling + stop-closing + sweeping until their
+   *  stranded mirrors force-close (the forbidden missed close, finding #134). */
+  listUserIdsWithOpenMirrors(): Promise<string[]>;
   /** ConfigStore.load — fail-safe AND fail-closed (a corrupt row parses to a stopped config, never throws). */
   loadConfig(userId: string): Promise<CopybotConfig>;
   /** createUserRuntime + durable seeding (persisted mirrors → registry + opens-window ring; rug sets inside).
@@ -54,21 +67,36 @@ export interface ReloadDeps<R extends ReloadableRuntime> {
 export async function reloadAllUsers<R extends ReloadableRuntime>(
   deps: ReloadDeps<R>,
 ): Promise<void> {
-  // 1. Spawn NEW active users.
+  // 1. Spawn the boot/reload UNION: every ACTIVE user PLUS every user still holding an OPEN mirror row. The second
+  //    set is the never-miss backstop (finding #134): a user STOPPED — or whose disabling was written — while the
+  //    brain was DOWN is enabled:false (⇒ absent from listActiveUserIds), yet their positions sit on-chain. They
+  //    are spawned DRAINED: the disabled config keeps them OUT of the open fan-out (userConfigs, step 3), while
+  //    reconcile + stop-close + sweeps run on their wallet until the stranded mirrors force-close. Each listing is
+  //    guarded independently — a hiccup in one must neither block spawning from the other nor the existing refresh.
   let activeIds: string[];
   try {
     activeIds = await deps.listActiveUserIds();
   } catch (e) {
-    // Without the active list we can't spawn, but the EXISTING runtimes must still refresh (a kill-switch edit
-    // must land even when the listing query hiccups).
     deps.log.error(
       { e: (e as Error).message },
-      'reload: listActiveUserIds failed → no new users this pass',
+      'reload: listActiveUserIds failed → no new active users this pass',
     );
     activeIds = [];
   }
+  let openMirrorIds: string[];
+  try {
+    openMirrorIds = await deps.listUserIdsWithOpenMirrors();
+  } catch (e) {
+    // The never-miss backstop query hiccuped; existing runtimes still refresh and the next reload retries. A
+    // truly-stranded stopped user is re-spawned the moment this query succeeds again.
+    deps.log.error(
+      { e: (e as Error).message },
+      'reload: listUserIdsWithOpenMirrors failed → no drain-only spawns this pass',
+    );
+    openMirrorIds = [];
+  }
   const spawnedNow = new Set<string>();
-  for (const userId of activeIds) {
+  for (const userId of new Set([...activeIds, ...openMirrorIds])) {
     if (deps.runtimes.has(userId)) continue;
     try {
       const config = await deps.loadConfig(userId);
@@ -90,11 +118,31 @@ export async function reloadAllUsers<R extends ReloadableRuntime>(
     }
   }
 
+  // 1b. Boot-seed FORCE-CLOSE (finding #135): each freshly-spawned runtime reloaded its persisted open mirrors. Any
+  //     whose leader is disabled/absent in the boot config — or whose user is globally stopped — is a STOP written
+  //     while the brain was DOWN. The phase-2 prev/next diff below CANNOT catch it (a fresh spawn has no transition:
+  //     its prev would equal its next), so replay it here from the "open mirror ⇒ started leader" invariant. A no-op
+  //     on a healthy boot; the runtime's RECLOSE_GRACE_MS gate dedupes an in-flight prior close. Guarded per user so
+  //     one failing replay never blocks the others (rug-exit-pending + the reconcile retry it anyway).
+  for (const userId of spawnedNow) {
+    const rt = deps.runtimes.get(userId);
+    const boot = deps.userConfigs.get(userId);
+    if (!rt || !boot) continue;
+    try {
+      await rt.applyBootStopCloses(boot);
+    } catch (e) {
+      deps.log.error(
+        { e: (e as Error).message, userId },
+        'reload: boot stop-close failed → reconcile/next reload retries',
+      );
+    }
+  }
+
   // 2. Refresh EVERY existing runtime (including deactivated ones — retention, see module doc). STOP =
   // FORCE-CLOSE (SPEC §4.3): diff the config we were RUNNING (prev, the last loaded value in memory — never a
   // stale/boot snapshot, so a restart can't replay an old stop) against the fresh load.
   for (const rt of deps.runtimes.values()) {
-    if (spawnedNow.has(rt.userId)) continue; // just loaded+spawned — nothing to diff yet
+    if (spawnedNow.has(rt.userId)) continue; // just spawned — its boot stop-closes ran in 1b, nothing to diff yet
     try {
       const prev = rt.getConfig();
       const next = await deps.loadConfig(rt.userId);

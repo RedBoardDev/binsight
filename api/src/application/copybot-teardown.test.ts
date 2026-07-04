@@ -22,6 +22,8 @@ interface Scenario {
   row?: Row | null;
   address?: string | null;
   balance?: number;
+  /** LIVE balance AFTER the force-close (positions → idle SOL). Defaults to `balance` (no drain modelled). */
+  balanceAfterStop?: number;
   openBefore?: number;
   openAfterStop?: number;
   privyThrows?: boolean;
@@ -35,16 +37,19 @@ function makeService(s: Scenario = {}) {
       ? { withdrawalAckAt: null, exportAckAt: null, privyWalletId: 'pw_1' }
       : s.row;
   let openCount = s.openBefore ?? 0;
+  let balanceLamports = s.balance ?? 0;
   const deps: CopybotTeardownDeps = {
     activation: activationRepo(row, s.address === undefined ? 'WALLET' : s.address),
     openMirrorCount: vi.fn(async () => {
       calls.push('count');
       return openCount;
     }),
-    balances: vi.fn(async () => s.balance ?? 0),
+    balances: vi.fn(async () => balanceLamports),
     stopBot: vi.fn(async () => {
       calls.push('stop');
       openCount = s.openAfterStop ?? 0; // the stop=force-close path drains the open mirrors
+      // The force-close converts positions → idle SOL, so the LIVE balance RISES after the stop (finding #141).
+      if (s.balanceAfterStop !== undefined) balanceLamports = s.balanceAfterStop;
     }),
     deletePrivyUser: vi.fn(async () => {
       calls.push('privy');
@@ -84,9 +89,10 @@ describe('CopybotTeardownService — the ordered, fund-safe delete (SPEC §2.4 /
   });
 
   it('on PASS, runs in order: stop → confirm-closed → Privy delete (once) → local cascade', async () => {
-    // Withdrawal ack lifts the gate even with open mirrors + funds; the stop force-closes them, then the delete runs.
+    // A key-export ack lifts the entry gate AND the post-drain guard even with open mirrors + funds: the stop
+    // force-closes the mirrors (positions → idle SOL) and, because the user holds the key, the delete then runs.
     const { service, deps, calls } = makeService({
-      row: { withdrawalAckAt: 123, exportAckAt: null, privyWalletId: 'pw_1' },
+      row: { withdrawalAckAt: null, exportAckAt: 123, privyWalletId: 'pw_1' },
       openBefore: 2,
       openAfterStop: 0,
       balance: 10 * DUST_LAMPORTS,
@@ -150,5 +156,37 @@ describe('CopybotTeardownService — the ordered, fund-safe delete (SPEC §2.4 /
       openAfterStop: 0,
     });
     expect(await service.teardown('u1', 'did:1')).toEqual({ ok: true });
+  });
+
+  it('a STALE withdrawal ack over force-closed capital is BLOCKED post-drain — funds are never stranded (#141)', async () => {
+    // The stranding scenario: the user withdrew fully long ago (sticky withdrawalAck), then RE-DEPOSITED and re-opened
+    // mirrors — the capital is locked in POSITIONS, so the pre-stop idle balance reads empty and the entry gate waves
+    // the delete through on the stale ack. The force-close then converts the positions into ~5 SOL of idle SOL; with
+    // no key-export ack, a soft-detach here would permanently strand it. The post-drain re-read must refuse.
+    const { service, deps } = makeService({
+      row: { withdrawalAckAt: 123, exportAckAt: null, privyWalletId: 'pw_1' },
+      openBefore: 2,
+      openAfterStop: 0,
+      balance: 0, // idle wallet empty pre-stop — the funds are inside the open positions
+      balanceAfterStop: 5 * DUST_LAMPORTS, // …and the force-close drains them back into the idle wallet
+    });
+    expect(await service.teardown('u1', 'did:1')).toEqual({ ok: false, reason: 'funds_remain' });
+    expect(deps.stopBot).toHaveBeenCalledTimes(1); // the force-close DID run (entry gate passed on the stale ack)
+    expect(deps.deletePrivyUser).not.toHaveBeenCalled(); // …but the IRREVERSIBLE detach did NOT
+    expect(deps.deleteLocalCascade).not.toHaveBeenCalled(); // account stays intact → user can withdraw + retry
+  });
+
+  it('a stale withdrawal ack over idle re-deposited funds is BLOCKED even with nothing to force-close', async () => {
+    // No open mirrors → no drain, but the idle wallet holds re-deposited SOL the sticky ack cannot cover; the
+    // entry gate short-circuits on the ack, so only the post-drain re-read catches it.
+    const { service, deps } = makeService({
+      row: { withdrawalAckAt: 123, exportAckAt: null, privyWalletId: 'pw_1' },
+      openBefore: 0,
+      openAfterStop: 0,
+      balance: 5 * DUST_LAMPORTS,
+    });
+    expect(await service.teardown('u1', 'did:1')).toEqual({ ok: false, reason: 'funds_remain' });
+    expect(deps.deletePrivyUser).not.toHaveBeenCalled();
+    expect(deps.deleteLocalCascade).not.toHaveBeenCalled();
   });
 });

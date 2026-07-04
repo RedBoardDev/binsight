@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CONFIG_DEFAULTS, type CopybotConfig, type LeaderSettings } from './config';
-import { planStopCloses, type StopCloseMirror } from './stop-closes';
+import { planBootStopCloses, planStopCloses, type StopCloseMirror } from './stop-closes';
 
 const A = 'LeaderA1111111111111111111111111111111111111';
 const B = 'LeaderB2222222222222222222222222222222222222';
@@ -135,12 +135,65 @@ describe('planStopCloses · no-op transitions (forward-only start, SPEC §4.3)',
     ]);
   });
 
-  it('a mirror of a leader ABSENT from prev is not closed (no boot-from-stale-prev force-close)', () => {
-    // WHY: prev must be the config the brain actually ran. A mirror whose leader is in neither config belongs to
-    // an earlier transition (downtime reconciliation is increment-3 territory) — planning a close here would mean
-    // the diff came from a stale prev, exactly what the wiring contract forbids.
-    const prev = cfg(true, [leader(B, true)]);
-    const next = cfg(true, [leader(B, true)]);
-    expect(planStopCloses(prev, next, [mirror(A, 1)]).toClose).toEqual([]);
+  it('a mirror of a leader ABSENT from prev is not closed by the LIVE diff, but IS by the boot replay (#134/#135)', () => {
+    // WHY: the LIVE planStopCloses must still refuse a stale-prev close — its `prev` is the config the brain
+    // actually ran, so a mirror whose leader is in NEITHER config belongs to an earlier transition (re-closing it
+    // on every reload would republish forever). The BOOT/seed replay has NO observed prev: by the "open mirror ⇒
+    // started leader" invariant, a seeded open mirror whose leader the boot config no longer starts is a STOP
+    // written while the brain was DOWN → planBootStopCloses force-closes it (the stranded-at-restart fix).
+    const boot = cfg(true, [leader(B, true)]); // A was removed during downtime; the user itself is still enabled
+    expect(planStopCloses(boot, boot, [mirror(A, 1)]).toClose).toEqual([]);
+    expect(planBootStopCloses(boot, [mirror(A, 1)]).toClose).toEqual([
+      { ...mirror(A, 1), reason: 'leader_removed' },
+    ]);
+  });
+});
+
+describe('planBootStopCloses · boot/seed replay (findings #134/#135 — stranded-at-restart force-close)', () => {
+  it('a healthy restart (user + every mirror leader still started) force-closes NOTHING', () => {
+    // WHY: the invariant means a normal restart re-seeds mirrors whose leaders are ALL still started — replaying a
+    // close here would wrongly tear down live copies on every brain reboot. This is the load-bearing no-op.
+    const boot = cfg(true, [leader(A, true), leader(B, true)]);
+    expect(planBootStopCloses(boot, MIRRORS).toClose).toEqual([]);
+  });
+
+  it('the user was globally STOPPED during downtime → every seeded mirror force-closes (user_stopped)', () => {
+    // WHY (finding #134): a user who pressed STOP while the brain was down is enabled:false at boot; without this
+    // their live positions would sit in a possibly-rugging pool forever — the forbidden missed close.
+    const boot = cfg(false, [leader(A, true), leader(B, true)]);
+    expect(planBootStopCloses(boot, MIRRORS).toClose).toEqual(
+      MIRRORS.map((m) => ({ ...m, reason: 'user_stopped' })),
+    );
+  });
+
+  it('a leader STOPPED during downtime → only ITS seeded mirrors force-close (leader_stopped)', () => {
+    const boot = cfg(true, [leader(A, false), leader(B, true)]);
+    expect(planBootStopCloses(boot, MIRRORS).toClose).toEqual([
+      { ...mirror(A, 1), reason: 'leader_stopped' },
+      { ...mirror(A, 2), reason: 'leader_stopped' },
+    ]);
+  });
+
+  it('a leader REMOVED during downtime → its seeded mirrors force-close (leader_removed)', () => {
+    const boot = cfg(true, [leader(B, true)]);
+    expect(planBootStopCloses(boot, MIRRORS).toClose).toEqual([
+      { ...mirror(A, 1), reason: 'leader_removed' },
+      { ...mirror(A, 2), reason: 'leader_removed' },
+    ]);
+  });
+
+  it("a legacy '' mirror is closed ONLY by a global stop, never by the per-leader absence rule", () => {
+    // WHY: '' cannot be attributed to a leader (MirrorStore NULL→'' contract). On an enabled user it must stay
+    // open (the reconcile owns it) — force-closing every legacy row just because a '' leader is "absent" would
+    // tear down live copies at boot. A GLOBAL stop still catches it (same contract as planStopCloses).
+    const legacy: StopCloseMirror = { ourPosition: 'ourL', leaderPosition: 'lpL', leaderAddress: '' };
+    expect(planBootStopCloses(cfg(true, [leader(A, true)]), [legacy]).toClose).toEqual([]);
+    expect(planBootStopCloses(cfg(false, [leader(A, true)]), [legacy]).toClose).toEqual([
+      { ...legacy, reason: 'user_stopped' },
+    ]);
+  });
+
+  it('no open mirrors → nothing to close', () => {
+    expect(planBootStopCloses(cfg(false, []), []).toClose).toEqual([]);
   });
 });

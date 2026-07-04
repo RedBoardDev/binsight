@@ -47,3 +47,29 @@ export function canTeardown(input: TeardownGateInput): TeardownGate {
   if (input.balanceLamports > input.dustLamports) return { ok: false, reason: 'funds_remain' };
   return { ok: true };
 }
+
+export interface PostDrainGateInput {
+  /** The wallet's LIVE idle SOL balance (lamports), RE-READ after the force-close converted positions back to SOL. */
+  balanceLamports: number;
+  /** The user acknowledged the key export — they hold the key and can recover the wallet AFTER the soft-detach. */
+  exportAck: boolean;
+  /** Dust ceiling (DUST_LAMPORTS); injected so the threshold is explicit + independently testable. */
+  dustLamports: number;
+}
+
+/**
+ * The POST-DRAIN fund re-check (finding #141) — run AFTER the teardown force-closes every mirror and BEFORE the
+ * irreversible detach. The force-close converts open positions back into idle SOL, so the balance the entry
+ * `canTeardown` measured pre-stop is stale: real money can now sit in the wallet that the entry gate never saw.
+ *
+ * Deliberately NOT parameterised by `withdrawalAck`: a completed withdrawal is a point-in-time fact about the balance
+ * THEN and says nothing about SOL that re-appeared after it (a re-deposit, or the freshly force-closed capital). The
+ * ack is also sticky — never cleared by a later deposit — so trusting it here is exactly the stranding bug. Only a
+ * key-EXPORT ack lets the user recover funds from a soft-detached wallet, so it is the ONLY ack accepted at this
+ * point. Pure; every branch is a unit-tested refusal/pass case.
+ */
+export function canDetachAfterDrain(input: PostDrainGateInput): TeardownGate {
+  if (input.exportAck) return { ok: true };
+  if (input.balanceLamports > input.dustLamports) return { ok: false, reason: 'funds_remain' };
+  return { ok: true };
+}

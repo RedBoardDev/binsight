@@ -9,9 +9,20 @@
 import type { Connection } from '@solana/web3.js';
 import { land } from './landing';
 
+// Hard ceiling on the Jito sendBundle round-trip before the block engine is treated as unavailable and we fall back.
+// A black-holed engine (accepts TCP, never answers) would otherwise hang ~300s on the undici default, holding a
+// signing lane + one of the MAX_CONCURRENT_SIGNING_LANES global slots and stalling EVERY user's CLOSE (finding #139).
+// 3s is well beyond a healthy sendBundle yet fails fast into the mandatory land() fallback.
+const JITO_SUBMIT_TIMEOUT_MS = 3_000;
+
 type HttpFetch = (
   url: string,
-  init: { method: string; headers: Record<string, string>; body: string },
+  init: {
+    method: string;
+    headers: Record<string, string>;
+    body: string;
+    signal: AbortSignal;
+  },
 ) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
 
 /**
@@ -36,6 +47,8 @@ export async function landViaJito(
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body,
+      // Abort a slow/black-holed engine into the catch below (→ land()), instead of hanging ~300s (finding #139).
+      signal: AbortSignal.timeout(JITO_SUBMIT_TIMEOUT_MS),
     });
     if (!res.ok) throw new Error(`jito sendBundle HTTP ${res.status}`);
     await res.json(); // bundle id — accepted; the tx lands by its own signature

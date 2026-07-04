@@ -22,6 +22,7 @@ const cfg = (enabled: boolean, leaders: string[]): CopybotConfig => ({
 function makeRt(userId: string, initial: CopybotConfig) {
   let current = initial;
   const stopDiffs: Array<{ prev: CopybotConfig; next: CopybotConfig }> = [];
+  const bootStopConfigs: CopybotConfig[] = []; // the boot config each applyBootStopCloses pass saw (#135)
   const rt: ReloadableRuntime = {
     userId,
     getConfig: () => current,
@@ -31,12 +32,16 @@ function makeRt(userId: string, initial: CopybotConfig) {
     applyStopCloses: async (prev, next) => {
       stopDiffs.push({ prev, next });
     },
+    applyBootStopCloses: async (boot) => {
+      bootStopConfigs.push(boot);
+    },
   };
-  return { rt, stopDiffs };
+  return { rt, stopDiffs, bootStopConfigs };
 }
 
-/** Harness around reloadAllUsers with scripted DB rows; records spawns / leader-set applications / reconciles. */
-function makeHarness(rows: Map<string, CopybotConfig>) {
+/** Harness around reloadAllUsers with scripted DB rows; records spawns / leader-set applications / reconciles.
+ *  `openMirrorUserIds` = the copy_positions DISTINCT-open projection (a DB fact, independent of config enabled). */
+function makeHarness(rows: Map<string, CopybotConfig>, openMirrorUserIds: string[] = []) {
   const runtimes = new Map<string, ReloadableRuntime>();
   const userConfigs = new Map<string, CopybotConfig>();
   const spawned: string[] = [];
@@ -47,6 +52,7 @@ function makeHarness(rows: Map<string, CopybotConfig>) {
     log,
     listActiveUserIds: async () =>
       [...rows.entries()].filter(([, c]) => c.user.enabled).map(([uid]) => uid),
+    listUserIdsWithOpenMirrors: async () => openMirrorUserIds,
     loadConfig: async (uid) => {
       const row = rows.get(uid);
       if (!row) throw new Error(`no config row for ${uid}`);
@@ -94,6 +100,50 @@ describe('reloadAllUsers — boot + live reload (Inc.3b S7)', () => {
     expect(h.userConfigs.get('u1')).toBe(rows.get('u1'));
     expect(h.appliedLeaderSets).toEqual([new Set([LEADER_A, LEADER_B])]);
     expect(h.reconciles()).toBe(1); // fresh users join the reconcile immediately (boot failsafe)
+  });
+
+  it('RESTART with a STOPPED config + persisted OPEN mirrors: the user is spawned DRAINED and boot-force-closed (#134/#135)', async () => {
+    // WHY (the forbidden missed close): a user who pressed STOP — or whose disabling was written — while the brain
+    // was DOWN is enabled:false, so listActiveUserIds omits them; yet their live positions sit on-chain. Boot MUST
+    // still spawn them (from the open-mirror UNION) so reconcile/stop-close/sweeps run on their wallet and
+    // force-close the stranded mirrors — WITHOUT ever making the disabled user an OPEN fan-out target.
+    const rows = new Map([['u1', cfg(false, [LEADER_A])]]); // the config on disk is STOPPED
+    const h = makeHarness(rows, ['u1']); // ...yet u1 still owns an OPEN mirror row (persisted before the downtime)
+    await reloadAllUsers(h.deps);
+    expect(h.spawned).toEqual(['u1']); // Bug A: spawned despite being inactive — the open-mirror union caught it
+    expect(h.runtimes.has('u1')).toBe(true); // retained: keeps reconciling until the mirror drains
+    expect(usersCopying(LEADER_A, h.userConfigs)).toEqual([]); // drained: NEVER an open fan-out target
+    expect(h.appliedLeaderSets.at(-1)).toEqual(new Set()); // and its leader is not watched for opens either
+    // Bug B: the seeded mirror is force-closed at boot — applyBootStopCloses ran with the STOPPED boot config. The
+    // phase-2 prev/next diff NEVER runs for a fresh spawn, so this is the only path that can close a downtime STOP.
+    expect(h.perRt.get('u1')?.bootStopConfigs).toEqual([cfg(false, [LEADER_A])]);
+    expect(h.perRt.get('u1')?.stopDiffs).toEqual([]); // not the live prev/next path (spawnedNow skips phase 2)
+    expect(h.reconciles()).toBe(1); // the drained user still joins the immediate reconcile backstop
+  });
+
+  it('every FRESH spawn (even a healthy active user) gets a boot stop-close pass (#135 covers per-leader downtime stops too)', async () => {
+    // WHY: the boot replay is NOT gated to globally-stopped users. An ACTIVE user who disabled ONE leader during
+    // downtime keeps user.enabled=true (still in listActiveUserIds); the ONLY thing that force-closes that one
+    // leader's stranded mirror is the per-fresh-spawn boot stop-close (the runtime no-ops it when nothing is
+    // stranded). Here we pin the WIRING: the boot config reaches applyBootStopCloses for every fresh spawn.
+    const rows = new Map([
+      ['u1', cfg(true, [LEADER_A])],
+      ['u2', cfg(true, [LEADER_B])],
+    ]);
+    const h = makeHarness(rows);
+    await reloadAllUsers(h.deps);
+    expect(h.perRt.get('u1')?.bootStopConfigs).toEqual([rows.get('u1')]);
+    expect(h.perRt.get('u2')?.bootStopConfigs).toEqual([rows.get('u2')]);
+  });
+
+  it('a user that is BOTH active and holds open mirrors is spawned exactly ONCE (union dedup)', async () => {
+    // WHY: the spawn set is a UNION — a normally-running user appears in both listActiveUserIds and the open-mirror
+    // projection. Dedup must yield a single runtime (a double spawn would clobber the first with a half-entry).
+    const rows = new Map([['u1', cfg(true, [LEADER_A])]]);
+    const h = makeHarness(rows, ['u1']);
+    await reloadAllUsers(h.deps);
+    expect(h.spawned).toEqual(['u1']);
+    expect(h.perRt.get('u1')?.bootStopConfigs).toHaveLength(1);
   });
 
   it('live ADD: only the new user is spawned; existing runtimes are diffed, not respawned', async () => {

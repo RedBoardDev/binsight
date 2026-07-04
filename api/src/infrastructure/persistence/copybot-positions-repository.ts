@@ -30,4 +30,17 @@ export class CopybotPositionsRepository {
       .where(and(eq(copyPositions.userId, userId), eq(copyPositions.status, 'open')));
     return Number(r?.s ?? 0);
   }
+
+  /** DISTINCT `user_id` of every mirror still OPEN, across ALL tenants — the brain's boot/reload spawn UNION. A
+   *  user STOPPED (or whose disabling was written) while the brain was DOWN is `enabled:false`, so the config
+   *  store's active-user list omits them; but their positions sit on-chain. (Re)spawning them from this set is
+   *  what lets reconcile + stop-close + sweeps drain and force-close the stranded mirrors — the forbidden missed
+   *  close (finding #134). Deliberately cross-tenant: this is the ONE brain-wide open-mirror scan. */
+  async listUserIdsWithOpenMirrors(): Promise<string[]> {
+    const rows = await this.db
+      .selectDistinct({ userId: copyPositions.userId })
+      .from(copyPositions)
+      .where(eq(copyPositions.status, 'open'));
+    return rows.map((r) => r.userId);
+  }
 }

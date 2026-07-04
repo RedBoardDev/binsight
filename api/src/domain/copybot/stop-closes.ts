@@ -27,6 +27,19 @@ function isStarted(cfg: CopybotConfig, leaderAddress: string): boolean {
   return cfg.leaders.some((l) => l.address === leaderAddress && l.enabled);
 }
 
+/** How `cfg` currently treats `leaderAddress`: `'leader_removed'` (absent from the list) or `'leader_stopped'`
+ *  (present but disabled) — or `null` when it is still started. The per-leader half of a stop plan, shared by the
+ *  live diff (`planStopCloses`) and the boot replay (`planBootStopCloses`) so the two paths can NEVER disagree on
+ *  what counts as "stopped" (any drift there = a mirror closed on one path but silently stranded on the other). */
+function leaderStopReason(
+  cfg: CopybotConfig,
+  leaderAddress: string,
+): 'leader_removed' | 'leader_stopped' | null {
+  const l = cfg.leaders.find((x) => x.address === leaderAddress);
+  if (l === undefined) return 'leader_removed';
+  return l.enabled ? null : 'leader_stopped';
+}
+
 /**
  * Diff `prev` → `next` and plan the force-closes for the observed STOP transitions:
  *  - global stop (`user.enabled` true→false) ⇒ close ALL open mirrors;
@@ -52,12 +65,42 @@ export function planStopCloses(
     // whose leader was already stopped/absent in `prev` is owned by the earlier transition (or the reconcile),
     // not re-closed on every reload.
     if (!isStarted(prev, m.leaderAddress)) continue;
-    const nextLeader = next.leaders.find((l) => l.address === m.leaderAddress);
-    if (nextLeader === undefined) {
-      plan.toClose.push({ ...m, reason: 'leader_removed' });
-    } else if (!nextLeader.enabled) {
-      plan.toClose.push({ ...m, reason: 'leader_stopped' });
-    }
+    const reason = leaderStopReason(next, m.leaderAddress);
+    if (reason !== null) plan.toClose.push({ ...m, reason });
+  }
+  return plan;
+}
+
+
+/**
+ * Boot/seed FORCE-CLOSE planning (PURE, no I/O). A mirror is only ever persisted OPEN while BOTH the user AND its
+ * leader are STARTED — the "open mirror ⇒ started leader" invariant. So when the brain (re)spawns a user from the
+ * DB and finds a seeded open mirror the FRESH boot config no longer starts (leader disabled/removed, or the user
+ * globally stopped), that is a STOP that was written while the brain was DOWN: force-close it. `planStopCloses`
+ * cannot catch this — a fresh spawn has no `prev`≠`next` transition to observe — so here we replay from the
+ * invariant instead of an observed `prev`. Like `planStopCloses` this NEVER plans an open (forward-only: enabling
+ * a leader must not copy its already-open positions), and the caller's `RECLOSE_GRACE_MS` gate dedupes an
+ * in-flight prior close so a stop caught mid-flight by a restart is not double-published.
+ */
+export function planBootStopCloses(
+  boot: CopybotConfig,
+  openMirrors: StopCloseMirror[],
+): StopClosePlan {
+  const plan: StopClosePlan = { toClose: [] };
+  if (openMirrors.length === 0) return plan;
+
+  // Global stop: the user is stopped in the config we booted with ⇒ every seeded mirror is stranded → close all.
+  if (!boot.user.enabled) {
+    plan.toClose = openMirrors.map((m) => ({ ...m, reason: 'user_stopped' as const }));
+    return plan;
+  }
+
+  for (const m of openMirrors) {
+    // A legacy '' mirror can't be attributed to a leader (the MirrorStore NULL→'' contract): exactly like
+    // planStopCloses it is stopped-by-definition, so only the GLOBAL stop above closes it — never per-leader here.
+    if (m.leaderAddress === '') continue;
+    const reason = leaderStopReason(boot, m.leaderAddress);
+    if (reason !== null) plan.toClose.push({ ...m, reason });
   }
   return plan;
 }

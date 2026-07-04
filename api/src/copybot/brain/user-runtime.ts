@@ -78,7 +78,7 @@ import {
 import { reanchorShape } from '@/domain/copybot/reanchor';
 import { decideResidualSell, minOutWithSlippage } from '@/domain/copybot/residual-sell';
 import { RugSlTracker } from '@/domain/copybot/rug-sl';
-import { planStopCloses } from '@/domain/copybot/stop-closes';
+import { planBootStopCloses, planStopCloses, type StopClosePlan } from '@/domain/copybot/stop-closes';
 import {
   inRangeTokenAdds,
   planTwoSided,
@@ -2248,32 +2248,20 @@ export async function createUserRuntime(
   const publishReClose = (m: Mirror, reCloseAttempt?: number): Promise<void> =>
     publishSafetyClose(m, 'failsafe', 'leader_closed', reCloseAttempt);
 
-  // STOP = FORCE-CLOSE (SPEC §4.3): close the mirrors concerned by an observed config stop transition (leader
-  // disabled/removed → its mirrors; global user.enabled off → all). Reuses the SAME deterministic safety-close
-  // publisher as the reconcile — and marks each mirror rug-exit-pending so a close that fails to land is re-closed
-  // by the reconcile until confirmed gone (the leader is still OPEN on its side, so the `leaderClosed` retry never
-  // fires for a stop; the pending set is the existing our-exit retry channel, shared with rug-SL). Config preserved.
-  async function applyStopCloses(prev: CopybotConfig, next: CopybotConfig): Promise<void> {
-    const open = registry.openPositions();
-    if (open.length === 0) return;
-    // Per-mirror leader (3b): each mirror carries the leader it copies, so a stop of leader A closes ONLY A's
-    // mirrors even when several leaders are watched. A legacy '' leaderAddress is stopped-by-definition for
-    // planStopCloses (isStarted('') is false) → only a global stop closes it.
-    const { toClose } = planStopCloses(
-      prev,
-      next,
-      open.map((m) => ({
-        ourPosition: m.ourPosition,
-        leaderPosition: m.leaderPosition,
-        leaderAddress: m.leaderAddress,
-      })),
-    );
+  // Publish a failsafe close for each mirror a stop PLAN targets — the shared executor for BOTH the live prev/next
+  // diff (applyStopCloses) and the boot-seed replay (applyBootStopCloses). Grace-gated so a close already in flight
+  // is not re-published, and every target is marked rug-exit-pending (+ persisted) so a close that fails to land is
+  // re-closed by the reconcile until confirmed gone. A stop leaves the LEADER position OPEN, so the `leaderClosed`
+  // retry never fires for it — this our-exit pending channel (shared with rug-SL) is what guarantees no silent orphan.
+  async function executeStopClosePlan(
+    toClose: StopClosePlan['toClose'],
+    open: Mirror[],
+  ): Promise<void> {
     for (const c of toClose) {
       const m = open.find((x) => x.ourPosition === c.ourPosition);
       if (!m) continue;
       // Grace: a close already published for this mirror (failsafe/rug-SL/an earlier stop) is still landing.
-      if (Date.now() - (recentlyPublishedClose.get(m.ourPosition) ?? 0) < RECLOSE_GRACE_MS)
-        continue;
+      if (Date.now() - (recentlyPublishedClose.get(m.ourPosition) ?? 0) < RECLOSE_GRACE_MS) continue;
       log.warn(
         { our: m.ourPosition, leaderPosition: m.leaderPosition, reason: c.reason },
         '🛑 stop → force-close',
@@ -2289,6 +2277,35 @@ export async function createUserRuntime(
       rugExitPending.add(m.ourPosition); // retry-until-confirmed-gone via the reconcile (SPEC §4.3 failure branch)
       void rugExitStore.addPending(m.ourPosition); // persist so the retry survives a brain restart
     }
+  }
+
+  // A mirror projected to the 3 keys the stop planners correlate on (the executor re-finds the full Mirror by
+  // ourPosition). Per-mirror leader (3b): a stop of leader A closes ONLY A's mirrors even with several watched; a
+  // legacy '' leaderAddress is stopped-by-definition for the planners → only a GLOBAL stop closes such a row.
+  const toStopCloseMirror = (m: Mirror) => ({
+    ourPosition: m.ourPosition,
+    leaderPosition: m.leaderPosition,
+    leaderAddress: m.leaderAddress,
+  });
+
+  // STOP = FORCE-CLOSE (SPEC §4.3) — LIVE path: close the mirrors concerned by an OBSERVED config stop transition.
+  // `prev` is the config the brain was RUNNING, so a start is a structural no-op (forward-only) and a stale prev
+  // can never replay an old stop. Config preserved (never written here).
+  async function applyStopCloses(prev: CopybotConfig, next: CopybotConfig): Promise<void> {
+    const open = registry.openPositions();
+    if (open.length === 0) return;
+    await executeStopClosePlan(planStopCloses(prev, next, open.map(toStopCloseMirror)).toClose, open);
+  }
+
+  // STOP = FORCE-CLOSE (SPEC §4.3) — BOOT/seed path (finding #135): after a (re)spawn reloaded this runtime's
+  // persisted open mirrors, force-close any whose leader is now disabled/absent — or whose user is globally
+  // stopped — i.e. a STOP written while the brain was DOWN. The live diff above cannot see it (a fresh spawn has no
+  // transition to observe), so we replay from the "open mirror ⇒ started leader" invariant. Same executor ⇒ the
+  // grace gate dedupes an in-flight prior close and a failed publish is retry-tracked exactly like the live path.
+  async function applyBootStopCloses(boot: CopybotConfig): Promise<void> {
+    const open = registry.openPositions();
+    if (open.length === 0) return;
+    await executeStopClosePlan(planBootStopCloses(boot, open.map(toStopCloseMirror)).toClose, open);
   }
 
   // Force-close a STRAY (untracked) position on our wallet — pool + bins come from the on-chain enumerator. The
@@ -2771,6 +2788,7 @@ export async function createUserRuntime(
       runtimeConfig = next;
     },
     applyStopCloses,
+    applyBootStopCloses,
     oracleOn,
     capsState,
     commandIdFor,

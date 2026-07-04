@@ -45,6 +45,7 @@ import { ControlChannel } from '@/infrastructure/bus/control-channel';
 import { RedisBus } from '@/infrastructure/bus/redis-bus';
 import { JupiterTokenGateway } from '@/infrastructure/jupiter/jupiter-token-gateway';
 import { CopybotActivationRepository } from '@/infrastructure/persistence/copybot-activation-repository';
+import { CopybotPositionsRepository } from '@/infrastructure/persistence/copybot-positions-repository';
 import { openDatabase } from '@/infrastructure/persistence/database';
 import { FeeLedgerRepository } from '@/infrastructure/persistence/fee-ledger-repository';
 import { PositionLedgerRepository } from '@/infrastructure/persistence/position-ledger-repository';
@@ -195,6 +196,9 @@ async function main(): Promise<void> {
     );
   const positionLedgerRepo = new PositionLedgerRepository(db); // fee-base source (read at close; written by the coffre)
   const feeLedgerRepo = new FeeLedgerRepository(db); // per-position fee ledger (assessed at close, swept by the feeSweep)
+  // Cross-tenant open-mirror projection: the boot/reload spawn UNION (finding #134) so a user STOPPED while the
+  // brain was down is still (re)spawned to drain + force-close their stranded mirrors — never a missed close.
+  const copybotPositionsRepo = new CopybotPositionsRepository(db);
 
   // Process-level deps shared by every user runtime (ONE detection/RPC/cache/bus layer + the wallet-level maps).
   const shared: SharedBrainDeps = {
@@ -274,6 +278,10 @@ async function main(): Promise<void> {
   }
   runtimes.set(SYSTEM_USER_ID, systemRt);
   userConfigs.set(SYSTEM_USER_ID, systemConfig);
+  // SYSTEM is spawned OUTSIDE reloadAllUsers, so the boot-seed force-close (finding #135) can't reach it there:
+  // if the bench config was STOPPED while the brain was down, its seeded mirrors would strand (the phase-2 diff
+  // sees prev==next → no transition). Replay it here from the same invariant — a no-op unless SYSTEM is stopped.
+  await systemRt.applyBootStopCloses(systemConfig);
 
   // Shared detection-context emitter (SYSTEM-bound, INC3B-PLAN §3): detection is ONE on-chain fact — the hub's
   // `detect.routed` / `detect.gap` / per-leader `system.detection_stale` and the consumer-loop errors are emitted
@@ -472,6 +480,7 @@ async function main(): Promise<void> {
     await reloadAllUsers({
       log,
       listActiveUserIds: () => configStore.listActiveUserIds(),
+      listUserIdsWithOpenMirrors: () => copybotPositionsRepo.listUserIdsWithOpenMirrors(),
       loadConfig: (uid) => configStore.load(uid),
       spawn: spawnRuntime,
       runtimes,
