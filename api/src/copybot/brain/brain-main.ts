@@ -474,8 +474,9 @@ async function main(): Promise<void> {
   const feeSweep = (): Promise<void> =>
     runFeeSweep({
       log,
-      listPending: (limit) => feeLedgerRepo.listPending(limit),
+      listPending: (bootedUserIds, limit) => feeLedgerRepo.listPending(bootedUserIds, limit),
       batchLimit: FEE_SWEEP_BATCH,
+      bootedUserIds: () => [...runtimes.keys()],
       runtimeFor: (userId) => runtimes.get(userId),
       bumpAttempts: (userId, ourPosition) => feeLedgerRepo.bumpAttempts(userId, ourPosition),
     });

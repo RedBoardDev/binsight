@@ -1,4 +1,4 @@
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { Database } from './database';
 import { feeLedger } from './schema';
 
@@ -51,8 +51,14 @@ export class FeeLedgerRepository {
     return inserted.length > 0;
   }
 
-  /** The oldest `pending` fees, bounded — the feeSweep publishes a transfer for each (SPEC §9). */
-  async listPending(limit: number): Promise<PendingFee[]> {
+  /**
+   * The oldest `pending` fees OWNED BY A CURRENTLY-BOOTED RUNTIME, bounded — the feeSweep publishes a transfer for
+   * each (SPEC §9). Filtering to booted users at the SOURCE stops un-bootable fees (a user deactivated before its
+   * fee swept and never respawned) from permanently occupying the bounded batch and head-of-line-blocking live
+   * users' fees (finding #155). The bound is applied AFTER the filter, so a live user's fee is never starved.
+   */
+  async listPending(bootedUserIds: string[], limit: number): Promise<PendingFee[]> {
+    if (bootedUserIds.length === 0) return []; // no runtime booted → no actionable fee this sweep
     return this.db
       .select({
         userId: feeLedger.userId,
@@ -61,7 +67,7 @@ export class FeeLedgerRepository {
         attempts: feeLedger.attempts,
       })
       .from(feeLedger)
-      .where(eq(feeLedger.state, 'pending'))
+      .where(and(eq(feeLedger.state, 'pending'), inArray(feeLedger.userId, bootedUserIds)))
       .orderBy(asc(feeLedger.createdAt))
       .limit(limit);
   }

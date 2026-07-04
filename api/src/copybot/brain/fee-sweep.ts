@@ -23,9 +23,18 @@ export interface FeeSweepRuntime {
 
 export interface FeeSweepDeps {
   log: Logger;
-  /** The oldest bounded batch of 'pending' fees (FeeLedgerRepository.listPending). */
-  listPending(limit: number): Promise<SweepableFee[]>;
+  /**
+   * The oldest bounded batch of 'pending' fees OWNED BY A BOOTED RUNTIME (FeeLedgerRepository.listPending). Passing
+   * the booted set filters un-bootable fees out at the SOURCE, so they can't head-of-line-block the bounded batch
+   * and stall live users' fee collection (finding #155).
+   */
+  listPending(bootedUserIds: string[], limit: number): Promise<SweepableFee[]>;
   batchLimit: number;
+  /**
+   * The userIds whose runtime is currently booted — only their fees are actionable this sweep. Enumerated so the
+   * query excludes fees no runtime can publish (finding #155); the concrete runtime is then resolved by runtimeFor.
+   */
+  bootedUserIds(): string[];
   /** Resolve the runtime OWNING a fee's user — its wallet + signer publish the transfer. undefined ⇒ retry later. */
   runtimeFor(userId: string): FeeSweepRuntime | undefined;
   /** Count a publish attempt (per-attempt journaling); the row stays pending until its transfer lands. */
@@ -34,10 +43,10 @@ export interface FeeSweepDeps {
 
 /** ONE sweep pass: publish a fee transfer for each pending fee whose user runtime is booted. Never blocks a close. */
 export async function runFeeSweep(deps: FeeSweepDeps): Promise<void> {
-  const pending = await deps.listPending(deps.batchLimit);
+  const pending = await deps.listPending(deps.bootedUserIds(), deps.batchLimit);
   for (const f of pending) {
     const rt = deps.runtimeFor(f.userId);
-    if (!rt) continue; // the user's runtime isn't booted → leave the fee pending, retry next sweep
+    if (!rt) continue; // runtime torn down between the query and here (TOCTOU) → leave pending, retry next sweep
     // Count the attempt BEFORE the publish so a failed publish still records the try (the row stays retryable).
     await deps.bumpAttempts(f.userId, f.ourPosition);
     await rt

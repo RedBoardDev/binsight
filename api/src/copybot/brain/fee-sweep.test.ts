@@ -5,7 +5,9 @@
  *  - every publish attempt is COUNTED before the publish, so a failing publish still records the try and the row
  *    stays retryable (a fee is retried each sweep until it lands, never dropped);
  *  - a publish failure is swallowed — a fee failure must NEVER throw out of the sweep (it must never block a close);
- *  - a fee whose user runtime is not booted is skipped (left pending, retried later) — never lost, never mis-signed.
+ *  - a fee whose user runtime is not booted is skipped (left pending, retried later) — never lost, never mis-signed;
+ *  - the sweep passes the CURRENTLY-BOOTED userIds to listPending, so un-bootable fees are excluded at the query
+ *    level and can never head-of-line-block a live user's fee out of the bounded batch (finding #155).
  */
 import { pino } from 'pino';
 import { describe, expect, it, vi } from 'vitest';
@@ -25,6 +27,7 @@ function depsOf(over: Partial<FeeSweepDeps> & { pending?: SweepableFee[] } = {})
     log,
     listPending: async () => over.pending ?? [],
     batchLimit: 50,
+    bootedUserIds: () => ['U'], // the default fee's owner is booted
     runtimeFor: over.runtimeFor ?? (() => rt),
     bumpAttempts: bump,
     ...over,
@@ -72,5 +75,36 @@ describe('runFeeSweep', () => {
     const { deps, publishFee } = depsOf({ pending: [] });
     await runFeeSweep(deps);
     expect(publishFee).not.toHaveBeenCalled();
+  });
+
+  it('passes the currently-booted userIds + batch limit to listPending (query-level exclusion of un-bootable fees, finding #155)', async () => {
+    const listPending = vi.fn(async () => [] as SweepableFee[]);
+    const { deps } = depsOf({ bootedUserIds: () => ['A', 'B'], listPending });
+    await runFeeSweep(deps);
+    expect(listPending).toHaveBeenCalledWith(['A', 'B'], 50); // the booted set, not just the limit, reaches the query
+  });
+
+  it("sweeps a live user's newer fee despite older un-bootable pending rows — no head-of-line block (finding #155)", async () => {
+    const publishFee = vi.fn(async () => {});
+    const bump = vi.fn(async () => {});
+    // The store filters to booted users at the SOURCE and applies the bound AFTER; model that faithfully here.
+    const all: SweepableFee[] = [
+      fee({ userId: 'GONE', ourPosition: 'OLD' }), // oldest, but 'GONE' has no booted runtime
+      fee({ userId: 'LIVE', ourPosition: 'NEW', feeLamports: 7_000_000 }),
+    ];
+    const deps: FeeSweepDeps = {
+      log,
+      bootedUserIds: () => ['LIVE'],
+      listPending: async (booted, limit) =>
+        all.filter((f) => booted.includes(f.userId)).slice(0, limit),
+      batchLimit: 50,
+      runtimeFor: (userId) => (userId === 'LIVE' ? { publishFee } : undefined),
+      bumpAttempts: bump,
+    };
+    await runFeeSweep(deps);
+    expect(publishFee).toHaveBeenCalledTimes(1);
+    expect(publishFee).toHaveBeenCalledWith('NEW', 7_000_000); // the live fee is published…
+    expect(bump).toHaveBeenCalledWith('LIVE', 'NEW'); // …and its attempt counted
+    expect(bump).toHaveBeenCalledTimes(1); // the un-bootable OLD row never entered the batch
   });
 });
