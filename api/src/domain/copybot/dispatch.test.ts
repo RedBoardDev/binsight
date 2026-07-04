@@ -199,6 +199,7 @@ describe('routeWithPending — a follow-up add during a MULTI-TX open routes to 
     const action = routeWithPending(ev(deposit), {
       hasOpen: () => false,
       isPendingOpen: () => false,
+      hasPendingOpenStash: () => false,
       cfg,
       rugExited: false,
     });
@@ -211,6 +212,7 @@ describe('routeWithPending — a follow-up add during a MULTI-TX open routes to 
     const action = routeWithPending(ev(deposit), {
       hasOpen: () => false,
       isPendingOpen: () => true,
+      hasPendingOpenStash: () => false,
       cfg,
       rugExited: false,
     });
@@ -221,6 +223,32 @@ describe('routeWithPending — a follow-up add during a MULTI-TX open routes to 
     const action = routeWithPending(ev(deposit), {
       hasOpen: () => false,
       isPendingOpen: () => true,
+      hasPendingOpenStash: () => false,
+      cfg: { infiniteAdd: false, claimFloorSol: 0 },
+      rugExited: false,
+    });
+    expect(action).toBe('ignore');
+  });
+
+  it('★ a follow-up deposit while ONLY the in-flight open STASH covers it (reservation lapsed) → resync, not a duplicate open', () => {
+    // Defense-in-depth (#136): a slow multi-tx open (Token-2022 / two-sided, retried under congestion) can outlast the
+    // TTL-bounded reservation. If it lapses mid-chain, `isPendingOpen` is false — but the continuation stash still
+    // holds the position, so `hasPendingOpenStash` keeps the follow-up add tracked → resync, never a 2nd on-chain open.
+    const action = routeWithPending(ev(deposit), {
+      hasOpen: () => false,
+      isPendingOpen: () => false, // reservation lapsed (TTL) mid multi-tx open
+      hasPendingOpenStash: () => true, // …but the in-flight open stash still holds the position
+      cfg,
+      rugExited: false,
+    });
+    expect(action).toBe('resync');
+  });
+
+  it('a follow-up deposit covered only by the stash with infiniteAdd OFF → ignore (matches a normal add), still not a 2nd open', () => {
+    const action = routeWithPending(ev(deposit), {
+      hasOpen: () => false,
+      isPendingOpen: () => false,
+      hasPendingOpenStash: () => true,
       cfg: { infiniteAdd: false, claimFloorSol: 0 },
       rugExited: false,
     });
@@ -231,6 +259,7 @@ describe('routeWithPending — a follow-up add during a MULTI-TX open routes to 
     const action = routeWithPending(ev(deposit), {
       hasOpen: () => true,
       isPendingOpen: () => false,
+      hasPendingOpenStash: () => false,
       cfg,
       rugExited: false,
     });
@@ -241,16 +270,18 @@ describe('routeWithPending — a follow-up add during a MULTI-TX open routes to 
     const action = routeWithPending(ev({ instruction: 'ClosePosition', withdrawSol: 0.1 }), {
       hasOpen: () => false,
       isPendingOpen: () => true,
+      hasPendingOpenStash: () => false,
       cfg,
       rugExited: false,
     });
     expect(action).toBe('close');
   });
 
-  it('neither open nor pending, no deposit → ignore (no stale copying)', () => {
+  it('neither open nor pending nor stashed, no deposit → ignore (no stale copying)', () => {
     const action = routeWithPending(ev({ instruction: 'ClaimFee', claimSol: 0.01 }), {
       hasOpen: () => false,
       isPendingOpen: () => false,
+      hasPendingOpenStash: () => false,
       cfg,
       rugExited: false,
     });

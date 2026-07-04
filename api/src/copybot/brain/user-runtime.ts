@@ -1342,6 +1342,11 @@ export async function createUserRuntime(
       // close-sell would sell the leg mid-open). Every downstream branch (build, split, Token-2022, or a late skip) is
       // protected for one more window; a genuinely stranded token is recovered by the sweep a window later.
       inFlightBuyMints.set(tokenMint, Date.now());
+      // RE-ARM the duplicate-open reservation for THIS hop too (#136): the route-time reservation is TTL-bounded, and a
+      // slow multi-tx open (buy retried under congestion → deposit still to build/land) can outlast it. Re-stamping at
+      // each open-continuation hop bounds the TTL to a SINGLE hop, so a leader ADD to this same position mid-chain
+      // never sees an expired reservation and routes to a SECOND real-money open. Same per-hop re-stamp as the grace above.
+      pendingOpens.reserve(e.position);
       const poolPk = new PublicKey(e.pool);
       const pair = await createDlmmPair(conn, poolPk);
       // Deposit the token we ACTUALLY bought (ExactIn output is variable). #33 — the balance read can LAG the buy confirm
@@ -1521,6 +1526,11 @@ export async function createUserRuntime(
       // open reaches here via the prebuilt path with NO bought token, so its untouched pool mint must not be protected.
       if (e.nonSolMint && inFlightBuyMints.has(e.nonSolMint))
         inFlightBuyMints.set(e.nonSolMint, Date.now());
+      // RE-ARM the duplicate-open reservation for THIS hop too (#136 — see publishTwoSidedOpenAfterBuy): the create
+      // landed but the deposit is still to build/publish/land, and the route-time reservation may have lapsed. Bound
+      // the TTL to this single hop so a leader ADD mid-chain never routes to a SECOND open. Unconditional (unlike the
+      // bought-token grace above): a one-sided wide open has no bought token but the same in-flight-open window.
+      pendingOpens.reserve(e.position);
       const poolPk = new PublicKey(e.pool);
       const posKp: Keypair = derivePositionKeypair(createCommandId); // SAME position the create made
       let depositTx: Transaction;
@@ -2818,12 +2828,17 @@ export async function createUserRuntime(
     positionQueue.run(e.position, async () => {
       const kind = classifyInstruction(e.instruction);
       const ecRoute = effFor(leader);
-      // tracked = already-open OR open-in-flight (pending reservation bridges the multi-tx open window) → a
-      // follow-up add during an open routes to resync, never a 2nd open. `rugExited` ⇒ no re-open. Pure routing.
-      const tracked = registry.hasOpen(e.position) || pendingOpens.isPending(e.position);
+      // tracked = already-open OR open-in-flight — a pending reservation (re-armed at each open-continuation hop) OR
+      // an in-flight multi-tx open stash bridges the window before `registry.open` runs → a follow-up add during an
+      // open routes to resync, never a 2nd open. `rugExited` ⇒ no re-open. Pure routing.
+      const tracked =
+        registry.hasOpen(e.position) ||
+        pendingOpens.isPending(e.position) ||
+        hasPendingOpenStash(e.position);
       const action = routeWithPending(e, {
         hasOpen: (p) => registry.hasOpen(p),
         isPendingOpen: (p) => pendingOpens.isPending(p),
+        hasPendingOpenStash: (p) => hasPendingOpenStash(p),
         cfg: { infiniteAdd: ecRoute.infiniteAdd, claimFloorSol: ecRoute.claimFloorSol },
         rugExited: rugExited.has(e.position),
       });

@@ -973,3 +973,96 @@ describe('UserRuntime — a deferred continuation is NEVER dropped after our buy
     saveOpen.mockRestore();
   });
 });
+
+describe('UserRuntime — a multi-tx open RE-ARMS the duplicate-open reservation at each continuation hop (#136)', () => {
+  const WSOL = 'So11111111111111111111111111111111111111112';
+
+  it('publishTwoSidedOpenAfterBuy re-arms pendingOpens for the leader position (a mid-chain add cannot route to a 2nd open even if the route-time reservation lapsed)', async () => {
+    // WHY (money-critical, #136): the route-time reservation is TTL-bounded (OPEN_PENDING_TTL_MS). A slow multi-tx
+    // open — buy retried under congestion, deposit still to build/land — can outlast it; if it lapses mid-chain a
+    // leader ADD to the SAME position would route to a SECOND real-money open. Each open-continuation hop must
+    // RE-STAMP the reservation so the TTL bounds ONE hop, not the whole chain. This drives the buy-landed hop and
+    // proves it re-armed the reservation — it FAILS if `pendingOpens.reserve(e.position)` is removed from that hop.
+    const rt = await createUserRuntime(shared, 'rearm-buy-136', opts);
+    const CMD = 'buy-cmd-136-rearm';
+    const LP = 'LP_136_REARM_BUY';
+    const pool = Keypair.generate().publicKey.toBase58();
+    const twoSidedOpens = rt.pendingOpenMapsView().twoSidedOpens as unknown as Map<string, unknown>;
+    twoSidedOpens.set(CMD, {
+      e: {
+        signature: 'sig-136-buy',
+        blockTime: 1,
+        instruction: 'AddLiquidityByStrategy2',
+        depositSol: 1,
+        depositTokenRaw: 0,
+        withdrawSol: 0,
+        claimSol: 0,
+        closed: false,
+        pool,
+        position: LP,
+        nonSolMint: WSOL,
+        nonSolSymbol: 'TKN',
+      },
+      leader: LEADER,
+      dist: [{ binId: 0, x: 1n, y: 1n }],
+      sizeLamports: 1_000n,
+      solSide: 'Y',
+      tokenMint: WSOL,
+      sizeSol: 1,
+      preBuyTokenRaw: 0n,
+      expectedTokenRaw: 0n,
+      buySlippageBps: 0,
+    });
+    // Fail the FIRST post-buy RPC so the hop exits right after the re-arm (which runs before createDlmmPair) — no
+    // need to mock the whole build/publish tail. The 429 is retryable, so the stash is KEPT (the open is not lost).
+    vi.mocked(createDlmmPair).mockRejectedValueOnce(new Error('429 Too Many Requests'));
+    await expect(rt.publishTwoSidedOpenAfterBuy(CMD)).rejects.toThrow('429');
+
+    // Isolate the reservation from the stash: drop the (retained) stash entry so the ONLY thing that can still make
+    // the runtime OWN LP is the re-armed pendingOpens reservation (registry.open never ran ⇒ hasOpen is false).
+    twoSidedOpens.delete(CMD);
+    expect(rt.ownsLeaderPosition(LP)).toBe(true); // re-armed ⇒ a follow-up add on LP routes as tracked, never a 2nd open
+    expect(rt.ownsLeaderPosition('LP_136_UNTOUCHED')).toBe(false); // per-position: a genuine new open elsewhere is NOT suppressed
+  });
+
+  it('publishDepositAfterPositionCreated re-arms pendingOpens for the leader position (the create→deposit hop is bounded too)', async () => {
+    // WHY (#136): the second hop — create landed, deposit still to publish/land — must also re-stamp the reservation,
+    // or a chain that already spent its TTL on the buy hop would lapse here. Drive it to the first post-hop RPC
+    // (getSlot) and prove the reservation is armed. FAILS if the re-arm in this hop is removed. nonSolMint is null
+    // (a one-sided wide open has NO bought token) to prove the re-arm is unconditional, unlike the bought-token grace.
+    const conn = new Connection('http://127.0.0.1:1');
+    vi.spyOn(conn, 'getSlot').mockRejectedValue(new Error('getSlot 429'));
+    const rt = await createUserRuntime({ ...shared, conn }, 'rearm-deposit-136', opts);
+    const CMD = 'create-cmd-136-rearm';
+    const LP = 'LP_136_REARM_DEPOSIT';
+    const pool = Keypair.generate().publicKey.toBase58();
+    const deposits = rt.pendingOpenMapsView().token2022Deposits as unknown as Map<string, unknown>;
+    deposits.set(CMD, {
+      e: {
+        signature: 'sig-136-deposit',
+        blockTime: 1,
+        instruction: 'AddLiquidityByStrategy2',
+        depositSol: 1,
+        depositTokenRaw: 0,
+        withdrawSol: 0,
+        claimSol: 0,
+        closed: false,
+        pool,
+        position: LP,
+        nonSolMint: null,
+        nonSolSymbol: null,
+      },
+      leader: LEADER,
+      lower: -5,
+      upper: 5,
+      sizeSol: 1,
+      recordedSizeSol: 1,
+      prebuiltDeposit: new Transaction(), // SPLIT path ⇒ no createDlmmPair/buildAddByWeight; exits at getSlot before serialize
+    });
+    await expect(rt.publishDepositAfterPositionCreated(CMD)).rejects.toThrow('getSlot 429');
+
+    deposits.delete(CMD); // isolate the reservation from the stash (see above)
+    expect(rt.ownsLeaderPosition(LP)).toBe(true); // re-armed at the create→deposit hop
+    expect(rt.ownsLeaderPosition('LP_136_UNTOUCHED')).toBe(false);
+  });
+});

@@ -43,18 +43,28 @@ export function classifyEventAction(
   return 'ignore';
 }
 
-/** Dependencies for {@link routeWithPending}: the tracked test (already-open + pending-open) plus the routing config. */
+/** Dependencies for {@link routeWithPending}: the tracked test (already-open + pending-open reservation + in-flight
+ *  open stash) plus the routing config. */
 export interface RouteWithPendingDeps {
   hasOpen: (pos: string) => boolean;
   isPendingOpen: (pos: string) => boolean;
+  /** True while a MULTI-TX open for `pos` is mid-chain (a continuation stash still holds it). Defense-in-depth
+   *  alongside `isPendingOpen`: the reservation is TTL-bounded and can lapse under extreme congestion, whereas the
+   *  stash follows the actual in-flight open — so a follow-up add during the window the stash covers still routes as
+   *  tracked, never a 2nd open. */
+  hasPendingOpenStash: (pos: string) => boolean;
   cfg: RoutingConfig;
   rugExited: boolean;
 }
 
-/** Route an event treating a position as TRACKED if it is already open OR has an open in flight (pending reservation).
- *  This is the exact tracked test the brain uses so a follow-up add during a multi-tx open window routes to resync/
- *  ignore instead of a duplicate open. Pure (no I/O) → unit-testable against real {@link classifyEventAction}. */
+/** Route an event treating a position as TRACKED if it is already open OR has an open in flight — either a pending
+ *  reservation (re-armed at each open-continuation hop) OR an in-flight multi-tx open stash. This is the exact tracked
+ *  test the brain uses so a follow-up add during a multi-tx open window routes to resync/ignore instead of a duplicate
+ *  open. Pure (no I/O) → unit-testable against real {@link classifyEventAction}. */
 export function routeWithPending(e: DetectedEvent, deps: RouteWithPendingDeps): EventAction {
-  const tracked = deps.hasOpen(e.position) || deps.isPendingOpen(e.position);
+  const tracked =
+    deps.hasOpen(e.position) ||
+    deps.isPendingOpen(e.position) ||
+    deps.hasPendingOpenStash(e.position);
   return classifyEventAction(e, tracked, deps.cfg, deps.rugExited);
 }
