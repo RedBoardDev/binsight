@@ -79,6 +79,42 @@ describe('planTwoSided — replicate BOTH legs (or fall back to SOL-only)', () =
   });
 });
 
+describe('planTwoSided — gate two-sided on OUR SCALED token target (finding #144)', () => {
+  // A leader with a REAL token leg (2_000_000 raw) on a mostly-SOL position; dust threshold 100_000 raw.
+  const legs: LeaderBinLegs[] = [
+    { binId: 100, solRaw: 500_000_000n, tokenRaw: 0n }, // SOL-heavy bin
+    { binId: 101, solRaw: 10_000_000n, tokenRaw: 2_000_000n }, // active/mixed bin carries the token leg
+  ];
+  const DUST = 100_000n;
+
+  it('small ratio scales a REAL two-sided leader down to a DUST token target → twoSided=false (falls through to SOL-only, NOT skipped)', () => {
+    // WHY: at 2% our token target = 2_000_000 × 200bps / 10000 = 40_000 ≤ 100_000 dust. Buying 40_000 raw hits
+    // Jupiter NO_ROUTES → the buy throws → the WHOLE open was dropped. Gating on the SCALED target makes the copy
+    // fall through to the one-sided SOL path (still copied). The leg is real — only the small ratio makes it dust.
+    const small = planTwoSided(legs, 101, 101, DUST, 2);
+    expect(small.twoSided).toBe(false); // → handleOpen's `if (plan.twoSided …)` guard fails → SOL-only path taken
+    // Proof it is the RATIO, not the leg: the SAME leader at a full 1:1 copy IS two-sided (the raw leg > dust).
+    expect(planTwoSided(legs, 101, 101, DUST, 100).twoSided).toBe(true);
+  });
+
+  it('normal ratio keeps OUR scaled token target above dust → twoSided=true (both legs still replicated, each BPS sum 10000)', () => {
+    // 50% → 2_000_000 × 5000bps / 10000 = 1_000_000 > 100_000 dust → a genuine two-sided copy is unaffected.
+    const p = planTwoSided(legs, 101, 101, DUST, 50);
+    expect(p.twoSided).toBe(true);
+    expect(sumSol(p.weights)).toBe(10000);
+    expect(sumToken(p.weights)).toBe(10000); // token leg reproduced
+  });
+
+  it('a genuinely one-sided leader (no token leg) stays SOL-only at ANY ratio — the scaled gate never invents a token side', () => {
+    const solOnly: LeaderBinLegs[] = [
+      { binId: 100, solRaw: 100n, tokenRaw: 0n },
+      { binId: 101, solRaw: 100n, tokenRaw: 0n },
+    ];
+    expect(planTwoSided(solOnly, 101, 101, DUST, 2).twoSided).toBe(false); // 0 × any ratio = 0 ≤ dust
+    expect(planTwoSided(solOnly, 101, 101, DUST, 100).twoSided).toBe(false);
+  });
+});
+
 describe('sizeTwoSided — scale BOTH legs by the leader-leg ratio (composition), COMBINED deployment capped', () => {
   it('50% → exactly half of EACH leg (composition preserved)', () => {
     // 3rd arg = token-leg SOL value; here small enough that the cap never binds → pure ratio.

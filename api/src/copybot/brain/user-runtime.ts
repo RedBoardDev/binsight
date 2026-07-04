@@ -935,6 +935,7 @@ export async function createUserRuntime(
         shape.activeBinId,
         shape.activeBinId,
         BigInt(ec.execution.dustTokenRaw),
+        ec.sizing.tradeRatioPct ?? 100, // gate two-sided on OUR scaled token target (the ratio openTwoSided buys at) — #144
       );
       if (plan.twoSided && plan.leaderSolRaw > 0n && e.nonSolMint) {
         log.info(

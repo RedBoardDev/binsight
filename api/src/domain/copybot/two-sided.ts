@@ -5,8 +5,9 @@
  * leg via the tested `reanchorShape`), then merged per bin into `{ solBps, tokenBps }`.
  *
  * The caller (gated by the SOL-only flag) buys `ratio × leaderTokenRaw` of the token (ExactOut) and deposits
- * BOTH legs via the SDK by-weight (`totalXAmount`/`totalYAmount` + per-bin `xBps`/`yBps`). When the token leg is
- * ≤ dust the position is plain one-sided → `twoSided=false` and the caller keeps the fast SOL-only path.
+ * BOTH legs via the SDK by-weight (`totalXAmount`/`totalYAmount` + per-bin `xBps`/`yBps`). When OUR SCALED token
+ * leg (`ratio × leaderTokenRaw`) is ≤ dust the position is one-sided → `twoSided=false` and the caller keeps the
+ * fast SOL-only path (finding #144: gating on the leader's RAW leg dropped small-ratio copies of real two-sided leaders).
  */
 import { type BinSol, planReshape, type ReshapeOp } from './position-adjust';
 import { type LeaderBinAmount, type ReanchoredShape, reanchorShape } from './reanchor';
@@ -27,7 +28,7 @@ export interface TwoSidedBin {
 }
 
 export interface TwoSidedPlan {
-  /** false → token leg ≤ dust (plain one-sided SOL position) → caller uses the existing SOL-only path. */
+  /** false → OUR SCALED token leg (ratio × leaderTokenRaw) ≤ dust (one-sided SOL position) → caller uses the SOL-only path. */
   twoSided: boolean;
   /** merged per-bin SOL+token BPS, anchored on OUR active bin. */
   weights: TwoSidedBin[];
@@ -55,6 +56,19 @@ export function twoSidedLegTotals(
     : { totalX: tokenAmount, totalY: solAmount };
 }
 
+/** Default copy ratio (%) = a 1:1 copy → classify two-sided on the FULL leader token leg (pre-#144 behavior). */
+const FULL_COPY_RATIO_PCT = 100;
+
+/**
+ * Percentage ratio → integer basis points, bigint. Scale via BASIS POINTS, not `BigInt(pct)`: a fractional ratio
+ * the UI accepts (12.5%, 0.5%) would make `BigInt(12.5)` throw a RangeError → EVERY two-sided open silently dropped
+ * (mirror error, no feed row). Single source of truth so two-sided CLASSIFICATION (planTwoSided) and SIZING
+ * (sizeTwoSided) can never diverge on how a leg is scaled by the ratio (ULTRACODE #38/#49; finding #144).
+ */
+function ratioToBps(pct: number): bigint {
+  return BigInt(Math.round(pct * 100));
+}
+
 /**
  * Size a two-sided copy: scale BOTH legs by `pct`% of the leader (preserves the leader's SOL:token composition),
  * capping the COMBINED SOL deployment at `maxDeployLamports`. Pure, bigint-exact.
@@ -76,11 +90,7 @@ export function sizeTwoSided(
   pct: number,
   maxDeployLamports: bigint,
 ): { solLamports: bigint; tokenTarget: bigint } {
-  // Scale via BASIS POINTS, not `BigInt(pct)`: a fractional ratio the UI accepts (12.5%, 0.5%) would make
-  // `BigInt(12.5)` throw a RangeError → EVERY two-sided open silently dropped (mirror error, no feed row).
-  // `pct × 100` rounded to an integer bps, divided by 10000, keeps the domain function TOTAL for any ratio
-  // (ULTRACODE #38/#49).
-  const bps = BigInt(Math.round(pct * 100));
+  const bps = ratioToBps(pct); // pct → integer bps (fractional-ratio safe; see ratioToBps · ULTRACODE #38/#49)
   let solLamports = (leaderSolRaw * bps) / 10_000n;
   let tokenTarget = (leaderTokenRaw * bps) / 10_000n;
   // Combined SOL deployment at the ratio = SOL leg + the token leg valued in SOL (both scaled by the same bps). When
@@ -206,11 +216,18 @@ export function planTwoSided(
   leaderActiveBinId: number,
   ourActiveBinId: number,
   dustTokenRaw: bigint,
+  ratioPct: number = FULL_COPY_RATIO_PCT,
 ): TwoSidedPlan {
   const leaderSolRaw = legs.reduce((s, b) => s + b.solRaw, 0n);
   const leaderTokenRaw = legs.reduce((s, b) => s + b.tokenRaw, 0n);
   const solShape = reanchorLeg(legs, (b) => b.solRaw, leaderActiveBinId, ourActiveBinId);
-  const twoSided = leaderTokenRaw > dustTokenRaw;
+  // Finding #144 — classify two-sided on OUR SCALED token target, NOT the leader's raw leg. The caller buys
+  // `ratio × leaderTokenRaw` (sizeTwoSided): a small ratio scales a REAL leader leg down to dust, for which Jupiter
+  // returns NO_ROUTES → the buy throws → the WHOLE open is dropped (a copy the SOL-only path would have made is
+  // MISSED). Gating on the scaled target here yields twoSided=false, so the caller FALLS THROUGH to the one-sided
+  // SOL path (position still copied, not missed). Mirrors sizeTwoSided's pre-clamp scale via the shared ratioToBps.
+  const scaledTokenRaw = (leaderTokenRaw * ratioToBps(ratioPct)) / 10_000n;
+  const twoSided = scaledTokenRaw > dustTokenRaw;
 
   const byBin = new Map<number, TwoSidedBin>();
   if (solShape)
