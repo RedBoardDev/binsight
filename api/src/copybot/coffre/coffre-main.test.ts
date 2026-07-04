@@ -1,5 +1,5 @@
 import { Keypair } from '@solana/web3.js';
-import { pino } from 'pino';
+import { type Logger, pino } from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 import { SYSTEM_USER_ID } from '@/copybot/journal-store';
 import { CODE_REGISTRY } from '@/domain/copybot/observability/codes';
@@ -9,6 +9,7 @@ import {
   createSignerResolver,
   deadLetterCode,
   type MessageHandlerDeps,
+  reloadUserConfigs,
   routeVerdict,
   type SignerResolverDeps,
   SigningDisabledError,
@@ -284,5 +285,67 @@ describe('coffre lanes ⨯ handler — user B is acked while user A is still sig
     finishA({ ok: true }); // release A (cleanup)
     await Promise.all(batch);
     expect(deps.acks).toHaveBeenCalledTimes(2);
+  });
+});
+
+// #138 — reloadUserConfigs isolates each user's config load. reloadConfig runs FIRE-AND-FORGET on a poll timer and a
+// control ping, so a rejecting configStore.load (a Postgres blip) would otherwise become an unhandled rejection that
+// kills the SOLE signer. The guarantee: keep the last-good config for the failing user, log loudly, never reject.
+describe('coffre reloadUserConfigs — a DB blip KEEPS the previous config, never rejects (#138)', () => {
+  const capturing = (): { log: Pick<Logger, 'error'>; errs: unknown[] } => {
+    const errs: unknown[] = [];
+    return {
+      errs,
+      log: {
+        error: (o: unknown) => {
+          errs.push(o);
+        },
+      } as unknown as Pick<Logger, 'error'>,
+    };
+  };
+
+  it('a throwing load keeps that user PREVIOUS config (same reference) and does NOT reject', async () => {
+    // WHY: a stale config is safe (it just misses a live web edit for one poll); a dead coffre strands in-flight
+    // closes. So the failing load must be swallowed with the last-good value intact — never propagated.
+    const prev = { v: 1 };
+    const userConfigs = new Map<string, { v: number }>([[SYSTEM_USER_ID, prev]]);
+    const { log, errs } = capturing();
+    await expect(
+      reloadUserConfigs({
+        userConfigs,
+        load: async () => {
+          throw new Error('db connection blip');
+        },
+        log,
+      }),
+    ).resolves.toBeUndefined();
+    expect(userConfigs.get(SYSTEM_USER_ID)).toBe(prev); // last-good STANDS — never cleared/overwritten
+    expect(errs).toHaveLength(1); // …and the failure was logged LOUDLY (operator visibility)
+  });
+
+  it('a healthy load REPLACES the cached config (the normal live-edit path is intact)', async () => {
+    const next = { v: 2 };
+    const userConfigs = new Map<string, { v: number }>([[SYSTEM_USER_ID, { v: 1 }]]);
+    await reloadUserConfigs({ userConfigs, load: async () => next, log: silentLog });
+    expect(userConfigs.get(SYSTEM_USER_ID)).toBe(next);
+  });
+
+  it('one user failing does NOT block the other users from refreshing (per-user isolation)', async () => {
+    const good = { v: 9 };
+    const userConfigs = new Map<string, { v: number }>([
+      ['A', { v: 1 }],
+      ['B', { v: 1 }],
+    ]);
+    const { log } = capturing();
+    await reloadUserConfigs({
+      userConfigs,
+      load: async (id) => {
+        if (id === 'A') throw new Error('blip');
+        return good;
+      },
+      log,
+    });
+    expect(userConfigs.get('A')).toEqual({ v: 1 }); // A kept its previous
+    expect(userConfigs.get('B')).toBe(good); // B still refreshed despite A's failure
   });
 });

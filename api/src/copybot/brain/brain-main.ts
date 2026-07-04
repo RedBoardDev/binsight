@@ -137,6 +137,24 @@ const pendingSellMints = new Map<
 const TOKEN2022_DEPOSIT_GRACE_MS = 90_000; // orphan-close grace for an empty position whose deposit is still in flight; past it, a non-deposited position is cleaned
 
 async function main(): Promise<void> {
+  // Last-resort process backstop (#138): registered FIRST so it covers the whole run. A rejection/throw that escapes
+  // every try/catch and detached-promise tee must NOT silently kill the brain — these are OPERATIONAL/transient
+  // escapes (e.g. a `getSlot()` 429 landing after a filtered-skip open), so — matching the consume loop's documented
+  // "record + backoff + continue, never crash" convention (a genuinely-fatal BOOT error still exits via the
+  // `main().catch` below) — LOG LOUDLY at error level and STAY UP: a dead brain would miss a leader close (the
+  // copy-bot's #1 sin); the periodic reconcile then heals any state the escaped path left half-done.
+  process.on('unhandledRejection', (reason) => {
+    log.error(
+      { err: reason instanceof Error ? reason.message : String(reason) },
+      'brain unhandledRejection — logged and kept alive (#138 backstop)',
+    );
+  });
+  process.on('uncaughtException', (err) => {
+    log.error(
+      { err: err.message },
+      'brain uncaughtException — logged and kept alive (#138 backstop)',
+    );
+  });
   if (!cfg.httpUrl) {
     log.error('SOLANA_HTTP_URL missing');
     process.exit(1);

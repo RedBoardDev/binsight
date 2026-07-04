@@ -823,10 +823,17 @@ export async function createUserRuntime(
       nowMs: Date.now(),
       timeoutMs: FILTER_TIMEOUT_MS,
     });
+    // Tee a no-op rejection handler on EACH in-flight read the instant it is created (#138). Every filtered/skipped
+    // open path below (non-SOL, no-shape, filter-skip, two-sided, too-wide) returns WITHOUT awaiting these, so a
+    // transient reject (e.g. a `getSlot()` 429 landing after the skip) would otherwise bubble to the process as an
+    // unhandledRejection and crash the whole brain. Teeing marks each promise handled for the process detector; every
+    // `await pairP/slotsP/filterDataP` on the REAL open path below still observes a genuine failure and surfaces it.
+    pairP.catch(() => {});
+    slotsP.catch(() => {});
+    filterDataP.catch(() => {});
 
     const meta = await poolReader.loadPoolMeta(e.pool);
     if (!meta?.solSide) {
-      void pairP.catch(() => undefined); // non-SOL skip → discard the in-flight pair read (no unhandled rejection)
       events.emit('eligibility.non_sol_paired', {
         stage: 'open',
         outcome: 'skipped',
@@ -952,7 +959,6 @@ export async function createUserRuntime(
     // (a >MAX_SINGLE_POSITION_BINS span chunks into multiple positions → a partial/forbidden half copy). Emit a
     // TYPED skip BEFORE buildOpenByWeight so an extended leader position never throws a generic mirror error (#18).
     if (dist.length > MAX_SINGLE_POSITION_BINS) {
-      void slotsP.catch(() => undefined); // the parallel slot fetch is unused on this skip path (mirrors the wide path)
       events.emit('eligibility.too_wide', {
         stage: 'open',
         outcome: 'skipped',
@@ -998,7 +1004,6 @@ export async function createUserRuntime(
       pair,
     );
     if (wide) {
-      void slotsP.catch(() => undefined); // the parallel slot fetch is unused on this path; publishSplitOpen fetches its own
       const arr = Array.isArray(built) ? built : [built]; // ≥26 bins → [pre, main, post]
       return publishSplitOpen(e, leader, {
         createTx: arr[0] as Transaction,

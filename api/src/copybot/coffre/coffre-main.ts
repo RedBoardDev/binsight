@@ -251,7 +251,50 @@ const privyCfg = {
 const log = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Refresh EVERY cached user's config row from the store, ISOLATED per user (mirrors `user-reload.ts`'s per-phase
+ * isolation). A throwing `load` — e.g. a Postgres blip — KEEPS that user's PREVIOUS cached config and is logged
+ * loudly; it MUST NEVER reject, because `reloadConfig` runs fire-and-forget on a timer AND a control ping, so an
+ * unhandled rejection here would crash the SOLE signer (#138). Extracted as a pure helper over injected deps so the
+ * keep-previous / never-reject guarantee is unit-tested; the caller binds `configStore.load` and the process logger.
+ */
+export async function reloadUserConfigs<C>(deps: {
+  userConfigs: Map<string, C>;
+  load: (userId: string) => Promise<C>;
+  log: Pick<Logger, 'error'>;
+}): Promise<void> {
+  for (const userId of deps.userConfigs.keys()) {
+    try {
+      deps.userConfigs.set(userId, await deps.load(userId));
+    } catch (e) {
+      // Keep the last-good config for THIS user and move on — a stale row is safe; a dead coffre is not.
+      deps.log.error(
+        { err: (e as Error).message, userId },
+        'vault: config reload failed → previous config stands (retried next poll)',
+      );
+    }
+  }
+}
+
 async function main(): Promise<void> {
+  // Last-resort process backstop (#138): registered FIRST so it covers the whole run. A rejection/throw that escapes
+  // every try/catch and detached-promise tee must NOT silently kill the SOLE signer — these are OPERATIONAL/transient
+  // escapes (e.g. a Postgres blip in a fire-and-forget reload), so — matching the consume loop's documented "record +
+  // backoff + continue, never crash" convention (a genuinely-fatal BOOT error still exits via the `main().catch`
+  // below) — LOG LOUDLY at error level and STAY UP: a dead coffre would strand an in-flight close (the copy-bot's #1
+  // sin), and it is the ONLY signer, so restarting is strictly worse than degrading.
+  process.on('unhandledRejection', (reason) => {
+    log.error(
+      { err: reason instanceof Error ? reason.message : String(reason) },
+      'vault unhandledRejection — logged and kept alive (#138 backstop)',
+    );
+  });
+  process.on('uncaughtException', (err) => {
+    log.error(
+      { err: err.message },
+      'vault uncaughtException — logged and kept alive (#138 backstop)',
+    );
+  });
   if (!cfg.httpUrl) {
     log.error('SOLANA_HTTP_URL missing');
     process.exit(1);
@@ -305,9 +348,9 @@ async function main(): Promise<void> {
     };
   };
   const reloadConfig = async (): Promise<void> => {
-    // Refresh EVERY cached user's row (today: the SYSTEM row) so web edits apply live for each tenant.
-    for (const userId of userConfigs.keys())
-      userConfigs.set(userId, await configStore.load(userId));
+    // Refresh EVERY cached user's row (today: the SYSTEM row) so web edits apply live for each tenant. Delegates to
+    // the per-user-isolated helper so a DB blip keeps the PREVIOUS cached config and never crashes the signer (#138).
+    await reloadUserConfigs({ userConfigs, load: (id) => configStore.load(id), log });
   };
   const control = ControlChannel.connect(cfg.redisUrl); // instant config-reload pings (re-clamp ceiling in <100ms)
   const heartbeat = new HeartbeatStore(db, log, 'coffre'); // process status the web reads (vault online + signing state)

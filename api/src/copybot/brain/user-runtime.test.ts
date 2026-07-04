@@ -807,6 +807,69 @@ describe('UserRuntime — a leader position wider than one DLMM position skips t
   });
 });
 
+describe('UserRuntime — a transient getSlot() 429 on a filtered-skip open never crashes the brain (#138)', () => {
+  it('a rejecting getSlot() on a skip path resolves handleOpen cleanly and emits NO process unhandledRejection', async () => {
+    // WHY (#138, robustness pillar): handleOpen fires pairP/slotsP/filterDataP in PARALLEL, then several skip/return
+    // paths (here the on-chain non-SOL guard) return WITHOUT awaiting them. slots() wraps conn.getSlot(); a 429 that
+    // lands after the skip must be absorbed by the creation-time tee — never bubble to process 'unhandledRejection'
+    // and take down the whole brain. This FAILS if that tee regresses: the un-awaited slotsP would go unhandled.
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      // A real Connection surface (nothing else on the skip path touches it) whose getSlot() rejects immediately and
+      // deterministically — the transient 429 the leader-event burst would trigger against a rate-limited RPC.
+      const conn = new Connection('http://127.0.0.1:1');
+      vi.spyOn(conn, 'getSlot').mockRejectedValue(new Error('429 Too Many Requests'));
+      const publish = vi.fn(async () => undefined);
+      // The default poolReader returns null meta for an unknown pool ⇒ handleOpen hits the `!meta.solSide` skip AFTER
+      // the three parallel reads are already in flight — exactly the window where an un-awaited slotsP would leak.
+      const sharedReject: SharedBrainDeps = {
+        ...shared,
+        conn,
+        bus: { publish } as unknown as RedisBus,
+      };
+      const rt = await createUserRuntime(sharedReject, 'slot-429-user-138', opts);
+      // A configured+enabled leader so caps PASS and we reach the parallel-reads block (an unknown leader is paused
+      // BEFORE slotsP is ever created, and the tee would never be exercised).
+      const leader = CONFIG_DEFAULTS.leaders[0]!.address;
+      const e = {
+        signature: 'sig-138-slot-429',
+        blockTime: 1,
+        instruction: 'AddLiquidityByStrategy2',
+        depositSol: 1,
+        depositTokenRaw: 0,
+        withdrawSol: 0,
+        claimSol: 0,
+        closed: false,
+        pool: Keypair.generate().publicKey.toBase58(), // valid pubkey, unknown pool ⇒ null meta ⇒ non-SOL skip
+        position: '__slot_429_pos__',
+        nonSolMint: Keypair.generate().publicKey.toBase58(),
+        nonSolSymbol: 'X429',
+      };
+      await expect(Promise.resolve(rt.onEvent(e, 'ws', leader, 1))).resolves.not.toThrow();
+      // The skip path ran to its typed emit ⇒ slotsP has settled (rejected) by now.
+      const rows = await waitFor(
+        () =>
+          db
+            .select({ code: schema.copyJournal.code })
+            .from(schema.copyJournal)
+            .where(inArray(schema.copyJournal.userId, ['slot-429-user-138'])),
+        (r) => r.length > 0,
+      );
+      // Flush one macrotask so any UNHANDLED rejection would have been reported by the runtime before we assert.
+      await new Promise((r) => setTimeout(r, 0));
+      expect(rows.map((r) => r.code)).toContain('eligibility.non_sol_paired'); // we DID exercise the intended skip
+      expect(unhandled).toEqual([]); // …and the tee absorbed the 429 — the brain stays up
+      expect(publish).not.toHaveBeenCalled(); // a skip never publishes an open
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+});
+
 describe('UserRuntime — a deferred continuation is NEVER dropped after our buy/deposit landed (finding #137)', () => {
   const WSOL = 'So11111111111111111111111111111111111111112';
 
