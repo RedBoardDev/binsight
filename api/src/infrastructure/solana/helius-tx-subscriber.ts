@@ -10,6 +10,7 @@
  * only delivers early (signature + logs) what the poll would re-cover. Resilience modeled on
  * `HeliusSubscriber` (backoff + jitter reconnect, anti-silence heartbeat, re-subscribe on reconnect).
  */
+import type { ParsedTransactionWithMeta } from '@solana/web3.js';
 import type { Logger } from 'pino';
 import { WebSocket } from 'undici';
 import { isWsDead, WS_PING_INTERVAL_MS } from './ws-keepalive';
@@ -18,8 +19,14 @@ const BACKOFF_BASE_MS = 1000;
 const BACKOFF_MAX_MS = 30_000;
 const SILENCE_TIMEOUT_MS = 300_000; // backstop only — the unanswered-keepalive check (below) trips far sooner
 
-/** Called per tx of the watched wallet: the signature + the logs (to filter DLMM on the consumer side). */
-export type TxActivityCb = (signature: string, logs: string[]) => void;
+/** Called per tx of the watched wallet: the signature, the logs (DLMM pre-filter on the consumer side), and the
+ *  full parsed tx reconstructed from the delivered payload — the fast-path classifies from it, skipping an RPC
+ *  re-fetch (finding #32). `tx` is `null` when the payload is incomplete → the consumer falls back to the fetch. */
+export type TxActivityCb = (
+  signature: string,
+  logs: string[],
+  tx: ParsedTransactionWithMeta | null,
+) => void;
 
 /** Subscription confirmation `{ id, result: subscriptionId }` → null otherwise. (Pure, testable.) */
 export function parseSubAck(msg: Record<string, unknown>): { id: number; subId: number } | null {
@@ -33,10 +40,40 @@ export interface ParsedTxNotification {
   subId: number;
   signature: string;
   logs: string[];
+  /** The full parsed tx reconstructed from the delivered payload — the WS fast-path classifies from it and
+   *  skips the RPC re-fetch (finding #32). `null` when the payload is incomplete → the consumer RPC-fetches. */
+  tx: ParsedTransactionWithMeta | null;
 }
 
-/** Extracts (subId, signature, logs) from a Helius `transactionNotification` → null if it is not one.
- *  Documented format: params.result.{signature, transaction.meta.logMessages}. (Pure, testable.) */
+/**
+ * Reshapes a `transactionNotification` result (encoding `jsonParsed` + transactionDetails `full`) into the
+ * `ParsedTransactionWithMeta` the detection pipeline already consumes, so the WS fast-path can classify from the
+ * DELIVERED bytes instead of re-fetching the tx over RPC (finding #32). PURE, testable.
+ *
+ * Returns `null` unless the payload is STRUCTURALLY COMPLETE for the #117 DLMM gate: `meta.innerInstructions`
+ * (an array — the truncation-proof DLMM signal that classify decodes) AND the inner `transaction.signatures`
+ * (an array, i.e. the jsonParsed tx object, not a base64 tuple) must BOTH be present. An incomplete payload
+ * yields `null` so the caller falls back to the authoritative RPC fetch — the never-miss guarantee is preserved,
+ * never weakened. The notification carries no `blockTime` → `null` (non-load-bearing for the open/close
+ * decision; the cursor poll re-covers the audit-grade timestamp).
+ */
+export function reshapeFullTx(result: Record<string, unknown>): ParsedTransactionWithMeta | null {
+  const wsTx = result.transaction as Record<string, unknown> | undefined;
+  const meta = wsTx?.meta as Record<string, unknown> | undefined;
+  const inner = wsTx?.transaction as Record<string, unknown> | undefined;
+  if (!meta || !Array.isArray(meta.innerInstructions)) return null;
+  if (!inner || Array.isArray(inner) || !Array.isArray(inner.signatures)) return null;
+  return {
+    slot: typeof result.slot === 'number' ? result.slot : 0,
+    blockTime: null,
+    transaction: inner,
+    meta,
+    version: wsTx?.version,
+  } as unknown as ParsedTransactionWithMeta;
+}
+
+/** Extracts (subId, signature, logs, tx) from a Helius `transactionNotification` → null if it is not one.
+ *  Documented format: params.result.{signature, transaction.transaction, transaction.meta}. (Pure, testable.) */
 export function parseTxNotification(msg: Record<string, unknown>): ParsedTxNotification | null {
   if (msg.method !== 'transactionNotification') return null;
   const params = msg.params as Record<string, unknown> | undefined;
@@ -48,7 +85,7 @@ export function parseTxNotification(msg: Record<string, unknown>): ParsedTxNotif
   const transaction = result.transaction as Record<string, unknown> | undefined;
   const meta = transaction?.meta as Record<string, unknown> | undefined;
   const logs = (meta?.logMessages as string[]) ?? [];
-  return { subId, signature, logs };
+  return { subId, signature, logs, tx: reshapeFullTx(result) };
 }
 
 export class HeliusTxSubscriber {
@@ -228,6 +265,6 @@ export class HeliusTxSubscriber {
     const notif = parseTxNotification(msg);
     if (!notif) return;
     const wallet = this.subToWallet.get(notif.subId);
-    if (wallet) this.watched.get(wallet)?.(notif.signature, notif.logs);
+    if (wallet) this.watched.get(wallet)?.(notif.signature, notif.logs, notif.tx);
   }
 }

@@ -95,6 +95,67 @@ describe('helius-tx-subscriber — frame parsing (documented format + real ack)'
   });
 });
 
+describe('helius-tx-subscriber — full-tx reshape (WS fast-path, finding #32)', () => {
+  const DLMM = 'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo';
+  // A jsonParsed + transactionDetails:full notification: result.transaction = { transaction:{message,signatures},
+  // meta:{innerInstructions,...} }. This is what Helius delivers under the subscription options we send — so the
+  // fast-path can classify from the payload WITHOUT re-fetching the tx over RPC.
+  const TX_NOTIF_FULL = {
+    jsonrpc: '2.0',
+    method: 'transactionNotification',
+    params: {
+      subscription: 99,
+      result: {
+        signature: 'SIGFULL',
+        slot: 224341380,
+        transaction: {
+          transaction: { message: { accountKeys: [], instructions: [] }, signatures: ['SIGFULL'] },
+          meta: {
+            err: null,
+            logMessages: [`Program ${DLMM} invoke [1]`],
+            innerInstructions: [
+              { index: 0, instructions: [{ programId: DLMM, data: 'deadbeef' }] },
+            ],
+          },
+          version: 0,
+        },
+      },
+    },
+  };
+
+  it('reshapes a full jsonParsed payload into a ParsedTransactionWithMeta (the #117 gate survives the transport)', () => {
+    // WHY (#32): the WS already carries the full tx — classify must decode from THESE bytes, not re-buy it over
+    // RPC. The reshape must preserve exactly what the DLMM gate reads: meta.innerInstructions + transaction.signatures.
+    const n = parseTxNotification(TX_NOTIF_FULL);
+    expect(n?.tx).not.toBeNull();
+    expect(n?.tx?.meta?.innerInstructions).toHaveLength(1); // the truncation-proof DLMM signal (#117) is intact
+    expect(n?.tx?.transaction?.signatures?.[0]).toBe('SIGFULL');
+    expect(n?.tx?.blockTime).toBeNull(); // not delivered by the notification → null (poll re-covers the timestamp)
+  });
+
+  it('returns tx:null for an INCOMPLETE payload → classify falls back to the RPC fetch (never-miss preserved)', () => {
+    // WHY (never-miss): trusting an incomplete payload could read a real close as non-DLMM and burn it in `seen`
+    // (the poll never re-classifies a seen sig) → a permanently missed close. So an incomplete payload MUST refetch.
+    // (a) meta without an innerInstructions array (the documented summary/log-only fixture) → cannot gate → refetch.
+    expect(parseTxNotification(TX_NOTIF)?.tx).toBeNull();
+    // (b) a base64 tx tuple (not the jsonParsed { message, signatures } object) → no signatures array → refetch.
+    const base64Payload = {
+      method: 'transactionNotification',
+      params: {
+        subscription: 7,
+        result: {
+          signature: 'sig',
+          transaction: {
+            transaction: ['...base64...', 'base64'],
+            meta: { innerInstructions: [], logMessages: [] },
+          },
+        },
+      },
+    };
+    expect(parseTxNotification(base64Payload)?.tx).toBeNull();
+  });
+});
+
 describe('helius-tx-subscriber — unwatch (Inc.3b S4 leader-set changes)', () => {
   const log = pino({ level: 'silent' });
   const ack = (id: number, subId: number) => ({ jsonrpc: '2.0', id, result: subId });

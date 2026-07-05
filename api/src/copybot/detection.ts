@@ -4,7 +4,7 @@
  * (brain). Pagination/no-miss-guardrail logic taken from the P1 CLI (proven).
  */
 import { DLMM_PROGRAM_ID } from '@binsight/shared';
-import type { Connection, PublicKey } from '@solana/web3.js';
+import type { Connection, ParsedTransactionWithMeta, PublicKey } from '@solana/web3.js';
 import {
   buildDetectedEvents,
   type PoolMetaLookup,
@@ -119,9 +119,23 @@ export function makeDetectionDeps(args: {
       return out;
     },
 
-    async classify(signatures: string[]): Promise<ClassifyResult> {
+    async classify(
+      signatures: string[],
+      prefetched?: ReadonlyMap<string, ParsedTransactionWithMeta>,
+    ): Promise<ClassifyResult> {
       const opts = { maxSupportedTransactionVersion: 0 as const, commitment: 'confirmed' as const };
-      let txs = await getParsedTransactionsBatched(conn, signatures, opts);
+      // WS fast-path (#32): seed each slot from the tx the WS already delivered — those bytes carry the
+      // innerInstructions classify decodes (#117), so we skip the RPC round-trip AND its up-to-~1s null-retry
+      // sleeps. Only the sigs WITHOUT a delivered tx are fetched; the cursor poll passes none → a full re-fetch.
+      let txs: Awaited<ReturnType<Connection['getParsedTransactions']>> = signatures.map(
+        (s) => prefetched?.get(s) ?? null,
+      );
+      const toFetch = signatures.filter((_, i) => txs[i] === null);
+      if (toFetch.length > 0) {
+        const fetched = await getParsedTransactionsBatched(conn, toFetch, opts);
+        let f = 0;
+        txs = txs.map((t) => (t === null ? (fetched[f++] ?? null) : t));
+      }
       // Refetch ONLY the still-null slots (WS outran RPC availability). Keeps the poll cheap; makes the live
       // WS close/open path resolve in ~1s instead of waiting for the next cursor poll.
       for (let attempt = 0; attempt < TX_FETCH_RETRIES && txs.some((t) => t === null); attempt++) {

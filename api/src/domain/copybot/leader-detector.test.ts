@@ -1,3 +1,4 @@
+import type { ParsedTransactionWithMeta } from '@solana/web3.js';
 import { describe, expect, it } from 'vitest';
 import {
   type ClassifyResult,
@@ -701,5 +702,39 @@ describe('LeaderDetector — cursor race (never advance past an unresolved / in-
     expect(emitted).toEqual(['a']);
     expect(listCalls).toBe(1); // still one list total
     expect(classifyCalls).toBe(1); // and one classify total (no stacked sweep)
+  });
+});
+
+describe('LeaderDetector — WS fast-path plumbs the delivered tx into classify (#32)', () => {
+  it('onWsSignature(sig, tx) forwards the tx to classify as `prefetched`; omitting it leaves prefetched undefined', async () => {
+    // WHY (#32): the fix is only real if the delivered tx actually REACHES classify. A regression that dropped the
+    // tx on the way through `ingest` would silently reintroduce the RPC re-fetch (and its ~1s null-retry sleeps).
+    const seenPrefetch: Array<ReadonlyMap<string, ParsedTransactionWithMeta> | undefined> = [];
+    const emitted: string[] = [];
+    const deps: DetectorDeps = {
+      async listSignaturesSince(): Promise<SigInfo[]> {
+        return [];
+      },
+      async classify(signatures, prefetched): Promise<ClassifyResult> {
+        seenPrefetch.push(prefetched);
+        const m = new Map<string, DetectedEvent[]>();
+        // Emulate the real classify: emit straight from the delivered bytes when present (a WS fast-path with NO
+        // fetch). If prefetched is absent it would RPC-fetch — here it simply yields nothing.
+        for (const s of signatures) if (prefetched?.has(s)) m.set(s, [fakeEvent(s, 1)]);
+        return { events: m, unresolved: new Set() };
+      },
+      onEvent(e) {
+        emitted.push(e.signature);
+      },
+    };
+    const det = new LeaderDetector(deps);
+
+    const tx = { meta: { innerInstructions: [] } } as unknown as ParsedTransactionWithMeta;
+    await det.onWsSignature('S', tx);
+    expect(seenPrefetch[0]?.get('S')).toBe(tx); // the delivered tx reached classify, keyed by its signature
+    expect(emitted).toEqual(['S']); // classified from the payload — no fetch needed
+
+    await det.onWsSignature('T'); // no delivered tx → classify receives no prefetch → it would RPC-fetch
+    expect(seenPrefetch[1]).toBeUndefined();
   });
 });

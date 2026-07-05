@@ -18,6 +18,7 @@
  * removal only stops scheduling.
  */
 import { DLMM_PROGRAM_ID } from '@binsight/shared';
+import type { ParsedTransactionWithMeta } from '@solana/web3.js';
 import type { Logger } from 'pino';
 import type { CopyEvents } from '@/copybot/observability/copy-events';
 import type { CopybotConfig } from '@/domain/copybot/config';
@@ -35,12 +36,15 @@ import { classifyInstruction } from '@/domain/dlmm';
 /** The detector surface the hub drives (structural — `LeaderDetector` satisfies it; tests stub it). */
 export interface HubDetector {
   poll(source?: EventSource): Promise<void>;
-  onWsSignature(signature: string): Promise<void>;
+  onWsSignature(signature: string, tx?: ParsedTransactionWithMeta | null): Promise<void>;
 }
 
 /** The WS-trigger surface the hub drives (structural — `HeliusTxSubscriber` satisfies it; tests stub it). */
 export interface TxWatcher {
-  watch(wallet: string, onActivity: (signature: string, logs: string[]) => void): void;
+  watch(
+    wallet: string,
+    onActivity: (signature: string, logs: string[], tx: ParsedTransactionWithMeta | null) => void,
+  ): void;
   unwatch(wallet: string): void;
   onReconnect(cb: () => void): void;
 }
@@ -200,12 +204,15 @@ export class LeaderHub {
   }
 
   private watch(entry: LeaderEntry): void {
-    this.deps.watcher?.watch(entry.leader, (sig, logs) => {
+    this.deps.watcher?.watch(entry.leader, (sig, logs, tx) => {
       const hasDlmm = logs.some((l) => l.includes(DLMM_PROGRAM_ID));
-      this.deps.log.debug({ sig, hasDlmm, nLogs: logs.length }, '📡 ws notif');
+      this.deps.log.debug({ sig, hasDlmm, nLogs: logs.length, wsTx: tx !== null }, '📡 ws notif');
       if (hasDlmm)
+        // Pass the delivered tx (finding #32): when the payload is complete the detector classifies from it,
+        // skipping the RPC re-fetch; `null` (incomplete) → it falls back to the fetch. Log-gate unchanged — a
+        // truncated-log DLMM tx is still caught by the completeness poll (WS stays a best-effort trigger).
         entry.detector
-          .onWsSignature(sig)
+          .onWsSignature(sig, tx)
           .catch((e) => this.deps.log.error({ e: (e as Error).message }, 'ws'));
     });
   }

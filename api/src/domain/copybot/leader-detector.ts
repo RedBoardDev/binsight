@@ -13,6 +13,7 @@
 
 // `DetectedEvent` is a DOMAIN type (shared with the P2 brain) → defined in the domain, re-exported here
 // for the existing P1 consumers (watch-leader, classify-dlmm-tx, tests).
+import type { ParsedTransactionWithMeta } from '@solana/web3.js';
 import type { DetectedEvent } from './events';
 export type { DetectedEvent };
 
@@ -35,8 +36,13 @@ export interface DetectorDeps {
   /** NEW signatures (newest → oldest) since `untilSig`, contiguous (full pagination).
    *  `untilSig === undefined` = cold start → return only the recent history (bounded). */
   listSignaturesSince(untilSig: string | undefined): Promise<SigInfo[]>;
-  /** Decodes/values a batch of signatures (any order) → DLMM `events` + the `unresolved` (null-tx) sigs. */
-  classify(signatures: string[]): Promise<ClassifyResult>;
+  /** Decodes/values a batch of signatures (any order) → DLMM `events` + the `unresolved` (null-tx) sigs.
+   *  `prefetched` (WS fast-path): sigs whose full tx the WS already delivered — classify decodes from those
+   *  bytes and skips the RPC fetch for them (finding #32). The cursor poll passes none → a full re-fetch. */
+  classify(
+    signatures: string[],
+    prefetched?: ReadonlyMap<string, ParsedTransactionWithMeta>,
+  ): Promise<ClassifyResult>;
   /** Called once per fresh DLMM event, in chronological order (display). */
   onEvent(event: DetectedEvent, source: EventSource): void;
   /** (optional) Persists fresh events BEFORE committing the cursor. A failure → rollback + retry on the
@@ -86,6 +92,7 @@ export class LeaderDetector {
     sigInfosNewestFirst: SigInfo[],
     source: EventSource,
     advanceCursor: boolean,
+    prefetched?: ReadonlyMap<string, ParsedTransactionWithMeta>,
   ): Promise<void> {
     const newest = sigInfosNewestFirst[0]?.signature;
     if (newest === undefined) return;
@@ -117,7 +124,7 @@ export class LeaderDetector {
     let detected: DetectedEvent[];
     let unresolved: Set<string>;
     try {
-      const result = await this.deps.classify(freshChronological);
+      const result = await this.deps.classify(freshChronological, prefetched);
       unresolved = result.unresolved;
       // Fan out each signature's 1..N position-events (finding #37) in signature order, then sort by blockTime:
       // the RPC signature order is not strictly monotonic in time, so we order emission (and persistence) by the
@@ -211,9 +218,12 @@ export class LeaderDetector {
     }
   }
 
-  /** WS trigger: emits a signature early, without advancing the cursor (the poll will re-cover it). */
-  async onWsSignature(signature: string): Promise<void> {
-    await this.ingest([{ signature }], 'ws', false);
+  /** WS trigger: emits a signature early, without advancing the cursor (the poll will re-cover it). `tx` — the
+   *  full parsed tx from the delivered payload, when complete — lets classify decode from the WS bytes instead
+   *  of re-fetching over RPC (finding #32); `null`/omitted → classify falls back to the fetch. */
+  async onWsSignature(signature: string, tx?: ParsedTransactionWithMeta | null): Promise<void> {
+    const prefetched = tx ? new Map([[signature, tx]]) : undefined;
+    await this.ingest([{ signature }], 'ws', false, prefetched);
   }
 
   private markSeen(signature: string): void {

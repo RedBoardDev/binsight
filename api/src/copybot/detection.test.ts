@@ -1,4 +1,6 @@
-import type { Connection, PublicKey } from '@solana/web3.js';
+import { DLMM_PROGRAM_ID } from '@binsight/shared';
+import { utils } from '@coral-xyz/anchor';
+import type { Connection, ParsedTransactionWithMeta, PublicKey } from '@solana/web3.js';
 import { describe, expect, it, vi } from 'vitest';
 import { chunk, makeDetectionDeps } from './detection';
 
@@ -207,5 +209,98 @@ describe('makeDetectionDeps.classify — getParsedTransactions is batched (bound
     expect(batchSizes).toEqual([100, 100, 50]); // bounded — never a single oversized call
     expect(Math.max(...batchSizes)).toBeLessThanOrEqual(100);
     expect(seen).toEqual(signatures); // every sig fetched exactly once, in order (index alignment preserved)
+  });
+});
+
+// --- WS fast-path (#32): the WS delivers the full tx; classify must decode from THOSE bytes and skip the RPC
+// re-fetch. Real Event-CPI byte layout ([8 self-CPI tag][8 disc][borsh]), same technique as classify-dlmm-tx.test. ---
+const b58 = utils.bytes.bs58;
+const PKB = (b: number): Buffer => Buffer.alloc(32, b);
+const cpi = (disc: number[], body: Buffer): string =>
+  b58.encode(Buffer.concat([Buffer.alloc(8), Buffer.from(disc), body]));
+const amountsBuf = (x: bigint, y: bigint): Buffer => {
+  const b = Buffer.alloc(16);
+  b.writeBigUInt64LE(x, 0);
+  b.writeBigUInt64LE(y, 8);
+  return b;
+};
+const binBuf = (bin: number): Buffer => {
+  const b = Buffer.alloc(4);
+  b.writeInt32LE(bin, 0);
+  return b;
+};
+const removeLiquidity = (x: bigint, y: bigint, bin: number): string =>
+  cpi(
+    [116, 244, 97, 232, 103, 31, 152, 58],
+    Buffer.concat([PKB(1), PKB(2), PKB(3), amountsBuf(x, y), binBuf(bin)]),
+  );
+const closePosition = (): string =>
+  cpi([255, 196, 16, 107, 28, 202, 53, 128], Buffer.concat([PKB(3), PKB(9)]));
+const POSITION = b58.encode(PKB(3));
+const SOL = 'So11111111111111111111111111111111111111112';
+const NONSOL = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+// SOL on side Y + bin 0 (price = 1) → legValueSol equals exactly amountY/1e9 (deterministic, no bin math).
+const SOL_Y = { binStep: 1, solSide: 'Y' as const, mintX: NONSOL, mintY: SOL };
+
+// A full parsed tx as the WS delivers it (real DLMM Event-CPI bytes in innerInstructions — the #117 gate path).
+const wsTx = (datas: string[]): ParsedTransactionWithMeta =>
+  ({
+    blockTime: null, // the notification carries no blockTime → null (poll re-covers the audit timestamp)
+    transaction: { signatures: ['sigWs'] },
+    meta: {
+      logMessages: [`Program ${DLMM_PROGRAM_ID} invoke [1]`],
+      innerInstructions: [
+        { index: 0, instructions: datas.map((d) => ({ programId: DLMM_PROGRAM_ID, data: d })) },
+      ],
+    },
+  }) as unknown as ParsedTransactionWithMeta;
+
+describe('makeDetectionDeps.classify — WS fast-path (delivered tx skips the RPC re-fetch, #32)', () => {
+  function fastPathDeps() {
+    // Any fetch returns a non-DLMM tx — so a call is unambiguous proof of a FETCH, isolating the prefetch path.
+    const getParsedTransactions = vi.fn(async (sigs: string[]) =>
+      sigs.map(() => ({
+        blockTime: 1,
+        meta: { innerInstructions: [] },
+        transaction: { signatures: ['x'], message: { instructions: [] } },
+      })),
+    );
+    const conn = { getParsedTransactions } as unknown as Connection;
+    const loadPoolMeta = vi.fn(async () => SOL_Y);
+    const deps = makeDetectionDeps({
+      conn,
+      pk: PK,
+      poolReader: { loadPoolMeta } as never,
+      tokenMeta: { resolve: async () => new Map() } as never,
+      onEvent: () => undefined,
+    });
+    return { deps, getParsedTransactions };
+  }
+
+  it('a complete WS-delivered close classifies from the payload — getParsedTransactions is NEVER called', async () => {
+    // THE FIX (#32): the WS already carries the full tx (incl. innerInstructions). classify must decode THAT and
+    // never re-fetch — a re-fetch can hit a lagging read replica and burn up to ~1s of null-retry sleeps for a tx
+    // we already hold. Assert zero RPC fetches AND that the close is detected from the delivered bytes.
+    const { deps, getParsedTransactions } = fastPathDeps();
+    const closeTx = wsTx([removeLiquidity(0n, 2_000_000_000n, 0), closePosition()]);
+    const { events, unresolved } = await deps.classify(['sigWs'], new Map([['sigWs', closeTx]]));
+    expect(getParsedTransactions).not.toHaveBeenCalled(); // NO re-fetch — the whole point of the fix
+    expect(unresolved.size).toBe(0);
+    const ev = events.get('sigWs')?.[0];
+    expect(ev?.closed).toBe(true); // the close IS detected straight from the WS payload
+    expect(ev?.withdrawSol).toBeCloseTo(2, 9);
+    expect(ev?.position).toBe(POSITION);
+  });
+
+  it('mixed batch: ONLY the sigs without a delivered tx are fetched (per-sig fallback, never-miss)', async () => {
+    // The prefetched sig skips the fetch; a sig with no delivered payload still falls back to RPC — so the fast
+    // path can never SUPPRESS a fetch a non-delivered sig needs (no silent miss), yet still saves the delivered one.
+    const { deps, getParsedTransactions } = fastPathDeps();
+    const closeTx = wsTx([removeLiquidity(0n, 1_000_000_000n, 0), closePosition()]);
+    const { events } = await deps.classify(['sigWs', 'sigMiss'], new Map([['sigWs', closeTx]]));
+    expect(getParsedTransactions).toHaveBeenCalledTimes(1);
+    expect(getParsedTransactions.mock.calls[0]?.[0]).toEqual(['sigMiss']); // ONLY the un-delivered sig is fetched
+    expect(events.get('sigWs')?.[0]?.closed).toBe(true); // prefetched close still detected
+    expect(events.has('sigMiss')).toBe(false); // the fetched non-DLMM sig produced no event
   });
 });
