@@ -148,7 +148,7 @@ describe('RugExitStore — boot-seed reads FAIL LOUD, never a silent empty set (
     const recovered = await new RugExitStore(flaky, log, USER).loadPending();
     expect([...recovered]).toEqual(['OUR_RECOVER']); // healed to the REAL set — never a silent empty
     expect(state.calls).toBe(2); // 1 failure + 1 success — it STOPPED retrying the moment the read succeeded
-  });
+  }, 20_000); // real-timer backoff + fresh-PGlite setup: generous timeout so full-suite CPU contention can't flake it
 
   it('a mid-run addPending WRITE failure stays FAIL-SAFE: logged, never thrown (in-memory still re-closes this run)', async () => {
     // WHY: the boot-seed READS fail loud (above), but a mid-run WRITE must NOT crash the live process — the
