@@ -40,9 +40,9 @@ vi.mock('@meteora-ag/dlmm', () => ({
 // `createDlmmPair` (a discarded dummy — the guard returns before any build) and `readLeaderPositionShape` (driven
 // per-test to a wide one-sided shape). `buildCloseTx` is a passthrough spy (defaults to the REAL impl, so behavior
 // is unchanged) that the stop-close ordering test (#153) overrides ONCE to observe when publishSafetyClose enters
-// its close-publish path. `buildRemovePartial` is a passthrough spy the fixed-size RESYNC test (#143) overrides to
-// observe that handleResync reaches the remove-build tail (i.e. planned a shrink). No other test in this file calls
-// any of these, so their behavior is unchanged.
+// its close-publish path. `buildRemovePartial`/`buildAddByWeight` are passthrough spies the RESYNC size tests
+// (#143 shrink, #145 published-only sizing) override to drive/observe handleResync's remove and add build tails.
+// No other test in this file calls any of these, so their behavior is unchanged.
 vi.mock('@/infrastructure/solana/dlmm/dlmm-tx-builder', async (orig) => {
   const actual = await orig<typeof import('@/infrastructure/solana/dlmm/dlmm-tx-builder')>();
   return {
@@ -50,19 +50,44 @@ vi.mock('@/infrastructure/solana/dlmm/dlmm-tx-builder', async (orig) => {
     createDlmmPair: vi.fn(async () => ({}) as never),
     buildCloseTx: vi.fn(actual.buildCloseTx),
     buildRemovePartial: vi.fn(actual.buildRemovePartial),
+    buildAddByWeight: vi.fn(actual.buildAddByWeight),
   };
 });
 vi.mock('@/infrastructure/solana/dlmm/leader-position-reader', async (orig) => {
   const actual = await orig<typeof import('@/infrastructure/solana/dlmm/leader-position-reader')>();
   return { ...actual, readLeaderPositionShape: vi.fn() };
 });
+// Passthrough spies: every export keeps its REAL behavior; the #145 two-sided-resync tests override them — a
+// rejection for the UNQUOTABLE-grow case, and resolved quotes for the deferred defer→record flow.
+vi.mock('@/infrastructure/solana/jupiter/jupiter-swap-builder', async (orig) => {
+  const actual =
+    await orig<typeof import('@/infrastructure/solana/jupiter/jupiter-swap-builder')>();
+  return {
+    ...actual,
+    getJupiterQuote: vi.fn(actual.getJupiterQuote),
+    getJupiterBuyQuoteExactIn: vi.fn(actual.getJupiterBuyQuoteExactIn),
+    buildJupiterSwapTx: vi.fn(actual.buildJupiterSwapTx),
+  };
+});
+// Passthrough spy: only the #145 deferred two-sided GROW test overrides readOwnerTokenBalance (pre-buy 0 → settled).
+vi.mock('@/infrastructure/solana/token-balance-reader', async (orig) => {
+  const actual = await orig<typeof import('@/infrastructure/solana/token-balance-reader')>();
+  return { ...actual, readOwnerTokenBalance: vi.fn(actual.readOwnerTokenBalance) };
+});
 
 import {
+  buildAddByWeight,
   buildCloseTx,
   buildRemovePartial,
   createDlmmPair,
 } from '@/infrastructure/solana/dlmm/dlmm-tx-builder';
 import { readLeaderPositionShape } from '@/infrastructure/solana/dlmm/leader-position-reader';
+import {
+  buildJupiterSwapTx,
+  getJupiterBuyQuoteExactIn,
+  getJupiterQuote,
+} from '@/infrastructure/solana/jupiter/jupiter-swap-builder';
+import { readOwnerTokenBalance } from '@/infrastructure/solana/token-balance-reader';
 import { runClosedFeeBackstop } from './fee-sweep';
 import { createUserRuntime, INFLIGHT_BUY_GRACE_MS, type SharedBrainDeps } from './user-runtime';
 
@@ -1613,5 +1638,258 @@ describe('UserRuntime — fixed-size RESYNC mirrors a leader de-risk (finding #1
     // Guard: the fix must not alter ratio mode (never broken). 50% × the de-risked leader still shrinks the copy.
     await drive('resync-ratio-143', 50);
     expect(buildRemovePartial).toHaveBeenCalled();
+  });
+});
+
+describe('UserRuntime — a RESYNC records the tracked size from PUBLISHED ops only (finding #145)', () => {
+  const WSOL = 'So11111111111111111111111111111111111111112';
+  const R_LEADER = Keypair.generate().publicKey.toBase58();
+  const R_LEADER_POS = Keypair.generate().publicKey.toBase58();
+  const R_OUR_POS = Keypair.generate().publicKey.toBase58();
+  const R_POOL = Keypair.generate().publicKey.toBase58();
+  const R_MINT = Keypair.generate().publicKey.toBase58();
+  // A valid 32-byte base58 blockhash so a published remove/add tx serializes (the coffre re-sets a fresh one).
+  const R_BLOCKHASH = Keypair.generate().publicKey.toBase58();
+
+  // A 2-bin DLMM shape with BOTH legs on each bin over [0,1] (both-legs ⇒ readStableShape settles on the first poll).
+  // `xRaw` = the non-SOL/X (token) leg per bin (raw units); `ySol` = the SOL/Y leg per bin (lamports).
+  const shape = (xRaw: bigint, ySol: bigint) => ({
+    positionPubkey: '__resync_145__',
+    activeBinId: 0,
+    lowerBinId: 0,
+    upperBinId: 1,
+    perBin: [
+      { binId: 0, x: xRaw, y: ySol },
+      { binId: 1, x: xRaw, y: ySol },
+    ],
+  });
+
+  const sharedR: SharedBrainDeps = {
+    ...shared,
+    poolReader: {
+      loadPoolMeta: async (pool: string) =>
+        pool === R_POOL
+          ? ({ solSide: 'Y', binStep: 20, mintX: R_MINT, mintY: WSOL } as LoadedPoolMeta)
+          : null,
+    } as unknown as OnchainPoolMetaReader,
+  };
+
+  // ratio 100% ⇒ copyRatio 1.0 (deterministic newSize = leader SOL total, capped at maxTradeSizeSol = 5). infiniteAdd
+  // ON so a leader ADD (deposit) routes to resync (a GROW) — a withdrawal always resyncs regardless (spec §8).
+  const cfg = (twoSidedMode: 'on' | 'off') => ({
+    ...CONFIG_DEFAULTS,
+    user: {
+      ...CONFIG_DEFAULTS.user,
+      twoSidedMode,
+      infiniteAdd: true,
+      sizing: { ...CONFIG_DEFAULTS.user.sizing, tradeRatioPct: 100, maxTradeSizeSol: 5 },
+    },
+    leaders: [{ address: R_LEADER, enabled: true, maxTotalExposureSol: null, overrides: {} }],
+  });
+
+  /** Boot a runtime whose bus CAPTURES published commands, open a mirror at `startSizeSol`, drive ONE resync event,
+   *  and wait until handleResync's terminal `store.updateSize` fires (a precise, race-free completion signal). */
+  async function driveResync(p: {
+    userId: string;
+    twoSidedMode: 'on' | 'off';
+    startSizeSol: number;
+    leader: { x: bigint; y: bigint };
+    ours: { x: bigint; y: bigint };
+    depositSol: number;
+    withdrawSol: number;
+    instruction: string;
+  }) {
+    const published: Array<Record<string, unknown>> = [];
+    const conn = new Connection('http://127.0.0.1:1');
+    vi.spyOn(conn, 'getSlot').mockResolvedValue(1_000); // slots() resolves so handleResync reaches the build/publish tail
+    const blockhashCache = new BlockhashCache(async () => ({
+      blockhash: R_BLOCKHASH,
+      lastValidBlockHeight: 0,
+    }));
+    await blockhashCache.start();
+    const bus = {
+      publish: async (_s: string, _h: string, _k: string, payload: Record<string, unknown>) => {
+        published.push(payload);
+        return 'sid';
+      },
+    } as unknown as RedisBus;
+    const rt = await createUserRuntime({ ...sharedR, conn, bus, blockhashCache }, p.userId, {
+      ...opts,
+      leader: R_LEADER,
+      initialConfig: cfg(p.twoSidedMode),
+    });
+    rt.registry.open({
+      leaderPosition: R_LEADER_POS,
+      leaderAddress: R_LEADER,
+      ourPosition: R_OUR_POS,
+      pool: R_POOL,
+      nonSolSymbol: 'TKN',
+      nonSolMint: R_MINT,
+      sizeSol: p.startSizeSol,
+      lowerBin: 0,
+      upperBin: 1,
+      openedAt: Date.now(),
+    });
+    await rt.store.saveOpen(rt.registry.get(R_LEADER_POS)!);
+    const updateSize = vi.spyOn(rt.store, 'updateSize');
+    // readStableShape(leader) and readLeaderPositionShape(our) both hit this mock — split by the position pubkey.
+    vi.mocked(readLeaderPositionShape).mockImplementation(async (_c, _pool, _o, position) =>
+      position === R_LEADER_POS ? shape(p.leader.x, p.leader.y) : shape(p.ours.x, p.ours.y),
+    );
+    rt.onEvent(
+      {
+        signature: `sig-145-${p.userId}`,
+        blockTime: 1,
+        instruction: p.instruction,
+        depositSol: p.depositSol,
+        depositTokenRaw: 0,
+        withdrawSol: p.withdrawSol,
+        claimSol: 0,
+        closed: false,
+        pool: R_POOL,
+        position: R_LEADER_POS,
+        nonSolMint: R_MINT,
+        nonSolSymbol: 'TKN',
+      },
+      'ws',
+      R_LEADER,
+      1,
+    );
+    await waitFor(
+      () => Promise.resolve(updateSize.mock.calls.length),
+      (n) => n > 0,
+    );
+    const recorded = updateSize.mock.calls.find((c) => c[0] === R_LEADER_POS)?.[1];
+    return { rt, published, recorded };
+  }
+
+  it('a two-sided GROW whose token deficit is UNQUOTABLE does NOT bump the recorded size (caps stay accurate)', async () => {
+    // WHY (#145, money): a leader doubles the position but the token leg can't be quoted (Jupiter blip) → NO add is
+    // published, so the copy did NOT grow. Pre-fix handleResync wrote the computed TARGET unconditionally → sizeSol
+    // doubled in the registry + DB with no matching on-chain liquidity: the exposure caps then block legitimate opens
+    // and the feed reports capital the copy never deployed. The size MUST stay at the current exposure until an add
+    // actually publishes. A wide-open Jupiter rejection here reproduces the blip deterministically.
+    vi.mocked(getJupiterQuote).mockRejectedValue(new Error('jupiter blip — token unquotable'));
+    const { rt, published, recorded } = await driveResync({
+      userId: 'resync-145-grow-skip',
+      twoSidedMode: 'on',
+      startSizeSol: 2.5, // we currently hold half the (about-to-double) leader
+      leader: { x: 2_000n, y: 2_500_000_000n }, // leader SOL leg 2.5/bin × 2 = 5.0 (a 2× grow) + a real token deficit
+      ours: { x: 1_000n, y: 1_250_000_000n }, // our SOL leg 1.25/bin × 2 = 2.5
+      depositSol: 2, // a leader ADD → routes the tracked position to resync
+      withdrawSol: 0,
+      instruction: 'AddLiquidityByStrategy2',
+    });
+    // The grow was skipped (buy unquotable) → NOTHING published, and the size is CLAMPED to the current 2.5 (not 5.0).
+    expect(published.some((c) => c.kind === 'buy' || c.kind === 'add')).toBe(false);
+    expect(recorded).toBeCloseTo(2.5);
+    expect(rt.registry.get(R_LEADER_POS)?.sizeSol).toBeCloseTo(2.5);
+    // Caps read the same tracked size → they never over-count exposure for an add that never landed.
+    expect(rt.capsState(R_LEADER, R_MINT).totalExposureSol).toBeCloseTo(2.5);
+    expect(rt.capsState(R_LEADER, R_MINT).leaderExposureSol).toBeCloseTo(2.5);
+    vi.mocked(getJupiterQuote).mockReset();
+  });
+
+  it('a SHRINK whose removes DO publish records the shrunk size (removes land synchronously)', async () => {
+    // WHY: the mirror side of #145 — a published op MUST update the tracked size. A leader de-risk publishes removes
+    // (which land synchronously), so the recorded size drops to the shrunk target; this pins that the shrink path
+    // still records (the same recording path that must NOT fire for a skipped grow, above).
+    vi.mocked(buildRemovePartial).mockImplementation(async () => [new Transaction()]);
+    const { rt, published, recorded } = await driveResync({
+      userId: 'resync-145-shrink',
+      twoSidedMode: 'off',
+      startSizeSol: 5, // full size before the de-risk
+      leader: { x: 1_000n, y: 500_000_000n }, // leader SOL leg 0.5/bin × 2 = 1.0 (a de-risk)
+      ours: { x: 1_000n, y: 2_500_000_000n }, // our SOL leg 2.5/bin × 2 = 5.0
+      depositSol: 0,
+      withdrawSol: 2, // a leader REMOVE → resync
+      instruction: 'RemoveLiquidityByRange2',
+    });
+    expect(published.some((c) => c.kind === 'remove')).toBe(true);
+    expect(recorded).toBeCloseTo(1); // copyRatio 1.0 × leader 1.0 SOL, capped at 5
+    expect(rt.registry.get(R_LEADER_POS)?.sizeSol).toBeCloseTo(1);
+    expect(
+      (await rt.store.loadOpen()).find((m) => m.leaderPosition === R_LEADER_POS)?.sizeSol,
+    ).toBe(1);
+  });
+
+  it('a one-sided GROW whose add DOES publish records the grown size (the published add is real)', async () => {
+    // WHY: the fix must still RECORD a grow that actually publishes — otherwise the clamp would silently UNDER-count
+    // every legitimate grow (the dangerous inverse: caps over-admit). A one-sided add publishes synchronously here,
+    // so the tracked size rises to the full target; this pins the `growPublished` recording path.
+    vi.mocked(buildAddByWeight).mockImplementation(async () => new Transaction());
+    const { rt, published, recorded } = await driveResync({
+      userId: 'resync-145-grow',
+      twoSidedMode: 'off',
+      startSizeSol: 1, // undersized before the leader adds
+      leader: { x: 1_000n, y: 2_500_000_000n }, // leader SOL leg 2.5/bin × 2 = 5.0 (a grow)
+      ours: { x: 1_000n, y: 500_000_000n }, // our SOL leg 0.5/bin × 2 = 1.0
+      depositSol: 2, // a leader ADD → resync
+      withdrawSol: 0,
+      instruction: 'AddLiquidityByStrategy2',
+    });
+    expect(published.some((c) => c.kind === 'add')).toBe(true);
+    expect(recorded).toBeCloseTo(5); // copyRatio 1.0 × leader 5.0 SOL, capped at 5
+    expect(rt.registry.get(R_LEADER_POS)?.sizeSol).toBeCloseTo(5);
+    expect(
+      (await rt.store.loadOpen()).find((m) => m.leaderPosition === R_LEADER_POS)?.sizeSol,
+    ).toBe(5);
+    vi.mocked(buildAddByWeight).mockReset();
+  });
+
+  it('a two-sided GROW defers the size to the buy CONFIRM: clamped on resync, recorded when the add publishes', async () => {
+    // WHY (#145, the deferred half): when the token leg IS quotable, handleResync publishes the BUY and DEFERS the
+    // add to the buy's ev:executed. The size must NOT jump on resync (the add has not landed) — it stays at the
+    // current exposure — and must rise to the target ONLY once publishReshapeAddAfterBuy actually publishes the add.
+    // This drives the REAL two-sided path end to end, so a regression at EITHER site (defer or record) fails here.
+    vi.mocked(getJupiterQuote).mockResolvedValue({
+      inputMint: R_MINT,
+      outputMint: WSOL,
+      inAmount: '0',
+      outAmount: '500000000', // token leg valued at 0.5 SOL (both the price quote and the size-basis value quote)
+      raw: {},
+    });
+    vi.mocked(getJupiterBuyQuoteExactIn).mockResolvedValue({
+      inputMint: WSOL,
+      outputMint: R_MINT,
+      inAmount: '500000000', // 0.5 SOL spent buying the token deficit
+      outAmount: '1000', // expected token out (raw)
+      raw: {},
+    });
+    vi.mocked(buildJupiterSwapTx).mockResolvedValue('buytx-b64');
+    // pre-buy snapshot 0 → post-buy the wallet holds the full expected 1000 (settles on the first settle read).
+    vi.mocked(readOwnerTokenBalance).mockReset();
+    vi.mocked(readOwnerTokenBalance).mockResolvedValueOnce(0n).mockResolvedValue(1_000n);
+    vi.mocked(buildAddByWeight).mockImplementation(async () => new Transaction());
+
+    const { rt, published, recorded } = await driveResync({
+      userId: 'resync-145-2s-defer',
+      twoSidedMode: 'on',
+      startSizeSol: 2, // current exposure before the leader grows
+      leader: { x: 2_000n, y: 2_000_000_000n }, // leader SOL leg 2.0/bin × 2 = 4.0 + a real token deficit
+      ours: { x: 1_000n, y: 1_000_000_000n }, // our SOL leg 1.0/bin × 2 = 2.0
+      depositSol: 2,
+      withdrawSol: 0,
+      instruction: 'AddLiquidityByStrategy2',
+    });
+    // DEFER: the buy is published, the add is NOT, and the size stays clamped at the current 2.0 (target would be 4.5).
+    const buy = published.find((c) => c.kind === 'buy');
+    expect(buy).toBeDefined();
+    expect(published.some((c) => c.kind === 'add')).toBe(false);
+    expect(recorded).toBeCloseTo(2);
+    expect(rt.registry.get(R_LEADER_POS)?.sizeSol).toBeCloseTo(2);
+
+    // RECORD: simulate the buy's ev:executed → the deferred add publishes → the size rises to the target 4.5.
+    await rt.publishReshapeAddAfterBuy(buy?.commandId as string, 'buysig');
+    expect(published.some((c) => c.kind === 'add')).toBe(true);
+    expect(rt.registry.get(R_LEADER_POS)?.sizeSol).toBeCloseTo(4.5); // 1.0 × (4.0 SOL + 0.5 token)
+    expect(
+      (await rt.store.loadOpen()).find((m) => m.leaderPosition === R_LEADER_POS)?.sizeSol,
+    ).toBeCloseTo(4.5);
+    vi.mocked(getJupiterQuote).mockReset();
+    vi.mocked(getJupiterBuyQuoteExactIn).mockReset();
+    vi.mocked(buildJupiterSwapTx).mockReset();
+    vi.mocked(readOwnerTokenBalance).mockReset();
+    vi.mocked(buildAddByWeight).mockReset();
   });
 });

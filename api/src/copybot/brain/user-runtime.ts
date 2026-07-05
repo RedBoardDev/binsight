@@ -569,6 +569,10 @@ export async function createUserRuntime(
       preBuyTokenRaw: bigint;
       expectedTokenRaw: bigint;
       buySlippageBps: number;
+      /** #145 — exposure target for a DEFERRED two-sided grow. handleResync records the size only up to the CURRENT
+       *  exposure (removes land synchronously; the grow is not real until its add publishes); this target is applied
+       *  when publishReshapeAddAfterBuy actually publishes the add — never inflating caps for an add that never lands. */
+      deferredSizeSol?: number;
     }
   >();
   const buildingToken2022Positions = new Map<string, number>(); // ourPosition → ms the create was published (orphan-close grace while the deposit lands)
@@ -1849,6 +1853,14 @@ export async function createUserRuntime(
       );
       // #140 — attribute the reshape token buy to the EXISTING position this add grows (the add published above).
       await appendBuyRow(ourPosition, ctx.buyInLamports, buySig);
+      // #145 — the DEFERRED two-sided grow is REAL now (the add published above): record the exposure target
+      // handleResync stashed. Until this point the tracked size stayed at the pre-grow value, so the caps never
+      // counted a grow whose add had not landed (a Jupiter blip / unsettled balance returns above, before the
+      // publish → the size is never inflated for an add that never happened).
+      if (ctx.deferredSizeSol !== undefined) {
+        registry.adjustSize(leaderPosition, ctx.deferredSizeSol);
+        await store.updateSize(leaderPosition, ctx.deferredSizeSol);
+      }
       log.info(
         { our: ourPosition, bins: dist.length },
         '🪙 two-sided reshape ADD published (after buy landed)',
@@ -2151,6 +2163,12 @@ export async function createUserRuntime(
       );
       rm++;
     }
+    // #145 — track what the GROW side actually PUBLISHES so the recorded size never runs ahead of on-chain reality.
+    // A one-sided add publishes synchronously below (`growPublished`); a two-sided add is DEFERRED to the buy's
+    // confirm (`deferredGrowKey`, applied in publishReshapeAddAfterBuy). A skipped/unquotable grow sets NEITHER, so
+    // the size block clamps to the current exposure (no inflation). Removes always publish above → shrinks still count.
+    let growPublished = false;
+    let deferredGrowKey: string | null = null;
     if (twoSidedAdd) {
       // TWO-SIDED reshape add: a deficit on the SOL leg AND the token leg → BUY the token deficit via ExactIn (ExactOut
       // has no Token-2022 route), then ADD both legs once the buy lands — the bought amount is variable, so we
@@ -2262,6 +2280,7 @@ export async function createUserRuntime(
           { our: m.ourPosition, tokenMint, bins: dist.length },
           '🪙 two-sided reshape BUY (ExactIn) published — the add follows once the buy lands',
         );
+        deferredGrowKey = buyCommandId; // #145 — grow recorded ONLY when the deferred add publishes (see the size block)
       } catch (err) {
         // SAFE: can't acquire the token deficit → the SOL-leg removes already published stand; skip the token add (no
         // partial two-sided add). The reconcile self-corrects on the next leader event.
@@ -2338,6 +2357,7 @@ export async function createUserRuntime(
         );
         ci++;
       }
+      growPublished = true; // #145 — ≥1 one-sided add chunk published synchronously → the grow is REAL, record the target
     }
 
     // Exposure basis (finding #94 §3): the recorded size must count BOTH legs, exactly like the two-sided OPEN —
@@ -2365,10 +2385,26 @@ export async function createUserRuntime(
       copyRatio * (leaderSolSizeSol + tokenLegValueSol),
       ec.sizing.maxTradeSizeSol,
     );
-    registry.adjustSize(e.position, newSize);
-    await store.updateSize(e.position, newSize);
+    // #145 — record ONLY what actually published. Removes land synchronously, so a SHRINK (or a one-sided grow whose
+    // adds published) records the full target now; a grow whose add was DEFERRED (two-sided) or SKIPPED
+    // (token_unbuyable / all adds out of range) must NOT inflate exposure → clamp to the current size so the caps and
+    // the feed track the copy's real deployed capital. A deferred two-sided grow records `newSize` later, when
+    // publishReshapeAddAfterBuy publishes its add (the target is stashed on the pending-add ctx just below).
+    const recordedSize = growPublished ? newSize : Math.min(newSize, m.sizeSol);
+    registry.adjustSize(e.position, recordedSize);
+    await store.updateSize(e.position, recordedSize);
+    if (deferredGrowKey) {
+      const pending = pendingReshapeAdds.get(deferredGrowKey);
+      if (pending) pending.deferredSizeSol = newSize; // applied on the deferred add's publish (buy confirm)
+    }
     log.info(
-      { position: e.position, removes: calls.removes.length, adds: adds.length, newSize },
+      {
+        position: e.position,
+        removes: calls.removes.length,
+        adds: adds.length,
+        recordedSize,
+        target: newSize,
+      },
       '🔧 reshape published (per-bin exact)',
     );
   }
