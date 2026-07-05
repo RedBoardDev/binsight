@@ -2,6 +2,7 @@ import { DLMM_PROGRAM_ID } from '@binsight/shared';
 import { utils } from '@coral-xyz/anchor';
 import type { ParsedTransactionWithMeta } from '@solana/web3.js';
 import { describe, expect, it } from 'vitest';
+import { dlmmTxCodec } from '../../infrastructure/solana/dlmm/dlmm-tx-codec';
 import type { LoadedPoolMeta } from '../dlmm';
 import { classifyInstruction } from '../dlmm';
 import { buildDetectedEvents, type PoolMetaLookup, poolsOf } from './classify-dlmm-tx';
@@ -15,7 +16,7 @@ const buildDetectedEvent = (
   tx: Parameters<typeof buildDetectedEvents>[1],
   poolMeta: PoolMetaLookup,
 ): DetectedEvent | null => {
-  const evs = buildDetectedEvents(signature, tx, poolMeta);
+  const evs = buildDetectedEvents(signature, tx, poolMeta, dlmmTxCodec);
   expect(evs.length).toBeLessThanOrEqual(1); // one position → one event, never a spurious split
   return evs[0] ?? null;
 };
@@ -369,8 +370,8 @@ describe('buildDetectedEvent — routing DLMM legs into SOL (golden: open/close/
   });
 
   it('poolsOf lists the touched lbPairs (meta pre-loading) and tolerates null', () => {
-    expect(poolsOf(tx('ClaimFee2', [claimFee2(0n, 1n, 0)]))).toEqual([LB_PAIR]);
-    expect(poolsOf(null)).toEqual([]);
+    expect(poolsOf(tx('ClaimFee2', [claimFee2(0n, 1n, 0)]), dlmmTxCodec)).toEqual([LB_PAIR]);
+    expect(poolsOf(null, dlmmTxCodec)).toEqual([]);
   });
 });
 
@@ -413,6 +414,7 @@ describe('buildDetectedEvents — ONE event PER position on a multi-position tx 
         addLiquidityFor(0n, 1_500_000_000n, 0, 4, 5),
       ]),
       lookupSolY,
+      dlmmTxCodec,
     );
     expect(events).toHaveLength(2); // NOT collapsed to one
 
@@ -442,6 +444,7 @@ describe('buildDetectedEvents — ONE event PER position on a multi-position tx 
         removeLiquidityFor(0n, 750_000_000n, 0, 4, 5),
       ]),
       lookupSolY,
+      dlmmTxCodec,
     );
     expect(events).toHaveLength(2);
     const a = events.find((e) => e.position === POSITION);
@@ -465,6 +468,7 @@ describe('buildDetectedEvents — ONE event PER position on a multi-position tx 
         closePositionFor(4),
       ]),
       lookupSolY,
+      dlmmTxCodec,
     );
     expect(events).toHaveLength(2);
     const a = events.find((e) => e.position === POSITION);
@@ -489,6 +493,7 @@ describe('buildDetectedEvents — ONE event PER position on a multi-position tx 
         addLiquidityFor(0n, 800_000_000n, 0, 3, 1),
       ]),
       lookupSolY,
+      dlmmTxCodec,
     );
     expect(events).toHaveLength(1);
     expect(events[0]?.position).toBe(POSITION);

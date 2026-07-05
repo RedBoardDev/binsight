@@ -15,7 +15,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
-    "bot:firewall": "depcruise src/copybot --config .dependency-cruiser.cjs",
+    "bot:firewall": "depcruise src/copybot src/domain/copybot --config .dependency-cruiser.cjs",
     "bot:build": "tsup --config tsup.copybot.config.ts",
     "bot:brain": "node --env-file=../.env dist/copybot/src/copybot/brain/brain-main.cjs",
     "bot:coffre": "node --import tsx --env-file=../.env src/copybot/coffre/coffre-main.ts",

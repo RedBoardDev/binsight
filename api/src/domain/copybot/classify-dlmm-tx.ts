@@ -9,23 +9,38 @@
  *
  * The non-SOL token's symbol is resolved elsewhere (batched I/O call in `watch-leader.ts`) → `nonSolSymbol`
  * stays `null` here. The byte decoding itself remains the binsight engine (`decodeDlmmLegs`, tested against
- * the real Event-CPI layout in `dlmm-event-decoder.test.ts`).
+ * the real Event-CPI layout in `dlmm-event-decoder.test.ts`); this module owns NO infrastructure — the decoder
+ * is injected as a `DlmmTxCodec` PORT (finding #59: domain purity) implemented by an infrastructure adapter.
  */
 import { SOL_MINT } from '@binsight/shared';
 import type { ParsedTransactionWithMeta } from '@solana/web3.js';
-import { decodeDlmmLegs, hasDlmmEvents } from '../../infrastructure/solana/dlmm/dlmm-event-decoder';
-import { parseInstruction } from '../../infrastructure/solana/helius-subscriber';
-import type { LoadedPoolMeta } from '../dlmm';
+import type { DlmmLeg, LoadedPoolMeta } from '../dlmm';
 import { legValueSol } from '../dlmm-pnl';
 import type { DetectedEvent } from './events';
 
 /** Synchronous pool→meta lookup (already loaded). `null` = unknown pool or not valuable in SOL. */
 export type PoolMetaLookup = (lbPair: string) => LoadedPoolMeta | null;
 
+/**
+ * Injected PURE DLMM tx codec: byte/Anchor Event-CPI decode (`decodeDlmmLegs`/`hasDlmmEvents`) + log-label
+ * parse (`parseInstruction`). Defined in the domain and supplied by an infrastructure adapter so this module
+ * imports NO decoder from `src/infrastructure` (finding #59, dependency-cruiser rule `D1`). The concrete codec
+ * (`infrastructure/solana/dlmm/dlmm-tx-codec.ts`) just composes the existing engine functions — behavior is
+ * unchanged; this only inverts the dependency direction.
+ */
+export interface DlmmTxCodec {
+  /** True iff the tx emitted any DLMM Event-CPI — the robust DLMM-detection signal, immune to 10KB log truncation. */
+  hasDlmmEvents(tx: ParsedTransactionWithMeta): boolean;
+  /** Normalize the tx's DLMM events into deposit/withdraw/claim/close legs. */
+  decodeDlmmLegs(tx: ParsedTransactionWithMeta): DlmmLeg[];
+  /** Best-effort human instruction label from (truncatable) logs; routing keys off `closed`, not this label. */
+  parseInstruction(logs: string[]): string | null;
+}
+
 /** The pools (lbPair) touched by a tx — used to pre-load the metas (I/O) BEFORE the pure call. */
-export function poolsOf(tx: ParsedTransactionWithMeta | null): string[] {
+export function poolsOf(tx: ParsedTransactionWithMeta | null, codec: DlmmTxCodec): string[] {
   if (!tx) return [];
-  return [...new Set(decodeDlmmLegs(tx).map((l) => l.lbPair))];
+  return [...new Set(codec.decodeDlmmLegs(tx).map((l) => l.lbPair))];
 }
 
 /**
@@ -52,12 +67,13 @@ export function buildDetectedEvents(
   signature: string,
   tx: ParsedTransactionWithMeta | null,
   poolMeta: PoolMetaLookup,
+  codec: DlmmTxCodec,
 ): DetectedEvent[] {
-  if (!tx || !hasDlmmEvents(tx)) return [];
+  if (!tx || !codec.hasDlmmEvents(tx)) return [];
 
-  const instruction = parseInstruction(tx.meta?.logMessages ?? []) ?? '(DLMM)';
+  const instruction = codec.parseInstruction(tx.meta?.logMessages ?? []) ?? '(DLMM)';
   const blockTime = tx.blockTime ?? null;
-  const legs = decodeDlmmLegs(tx);
+  const legs = codec.decodeDlmmLegs(tx);
 
   // Group the legs by their position pubkey (the aggregation key). Real DLMM events (open/add/remove/claim/close)
   // all decode a `position`; an empty-position leg is a decoder degenerate. To keep the single-position identity

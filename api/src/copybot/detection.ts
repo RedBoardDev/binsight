@@ -13,6 +13,7 @@ import {
 import type { DetectedEvent } from '../domain/copybot/events';
 import type { ClassifyResult, DetectorDeps, SigInfo } from '../domain/copybot/leader-detector';
 import type { LoadedPoolMeta } from '../domain/dlmm';
+import { dlmmTxCodec } from '../infrastructure/solana/dlmm/dlmm-tx-codec';
 import type { OnchainPoolMetaReader } from '../infrastructure/solana/dlmm/pool-meta';
 import type { HeliusTokenMetadataGateway } from '../infrastructure/solana/token-metadata-gateway';
 
@@ -163,7 +164,7 @@ export function makeDetectionDeps(args: {
         if (sig && txs[i] === null) unresolved.add(sig);
       }
       const pools = new Set<string>();
-      for (const tx of txs) for (const pl of poolsOf(tx)) pools.add(pl);
+      for (const tx of txs) for (const pl of poolsOf(tx, dlmmTxCodec)) pools.add(pl);
       await Promise.all([...pools].map((pl) => getPoolMeta(pl)));
       const poolMeta: PoolMetaLookup = (lbPair) => poolMetaCache.get(lbPair) ?? null;
 
@@ -173,7 +174,7 @@ export function makeDetectionDeps(args: {
       for (let i = 0; i < signatures.length; i++) {
         const sig = signatures[i];
         if (!sig) continue;
-        const evs = buildDetectedEvents(sig, txs[i] ?? null, poolMeta);
+        const evs = buildDetectedEvents(sig, txs[i] ?? null, poolMeta, dlmmTxCodec);
         if (evs.length > 0) map.set(sig, evs);
       }
       // Symbol resolution: one batched call over EVERY position-event across all signatures.
