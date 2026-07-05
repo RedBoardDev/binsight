@@ -9,6 +9,12 @@ import * as schema from './schema';
 async function newRepo(): Promise<PushRepository> {
   const db = drizzle(new PGlite(), { schema });
   await migrate(db, { migrationsFolder: './drizzle' });
+  // push_subscriptions.user_id is now an enforced FK → users.id (ON DELETE CASCADE, finding #102), so a
+  // subscriber must be a real account. Seed the two accounts these ownership tests subscribe under.
+  await db.insert(schema.users).values([
+    { id: 'userA', privyUserId: 'did:privy:userA', createdAt: 1 },
+    { id: 'userB', privyUserId: 'did:privy:userB', createdAt: 1 },
+  ]);
   return new PushRepository(db as unknown as Database);
 }
 const sub = (endpoint: string): PushSub => ({ endpoint, p256dh: 'p', auth: 'a' });

@@ -386,7 +386,11 @@ export const pushSubscriptions = pgTable(
   'push_subscriptions',
   {
     endpoint: text('endpoint').primaryKey(),
-    userId: text('user_id').notNull(),
+    // FK → users.id ON DELETE CASCADE: a deleted account must never keep a live push subscription
+    // (finding #102). The DB-level cascade guarantees removal even if a code path forgets to.
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
     p256dh: text('p256dh').notNull(),
     auth: text('auth').notNull(),
     createdAt: ms('created_at').notNull(),

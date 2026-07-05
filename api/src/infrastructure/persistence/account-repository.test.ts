@@ -16,8 +16,10 @@ import {
   feeLedger,
   positionLedger,
   positions as positionsTable,
+  pushSubscriptions,
   rugExitPendings,
   rugExits,
+  users as usersTable,
 } from './schema';
 
 async function setup() {
@@ -358,6 +360,45 @@ describe('PostgresAccountRepository — admin', () => {
     }
     expect(await accounts.findById(a.id)).toBeNull();
     expect(await accounts.findById(b.id)).not.toBeNull();
+  });
+
+  it('deleteAccount removes the account push_subscriptions so a removed user stops receiving web-push (finding #102)', async () => {
+    // WHY (#102): push_subscriptions is user-scoped notification state. If a deleted account keeps its rows,
+    // every wallet event it once watched keeps pushing to that dead account's browser endpoints forever. The
+    // delete must run in the SAME transaction as the account, leaving no orphan — and only for A, not B.
+    const { db, accounts } = await setup();
+    const a = await accounts.createUser({ privyUserId: did('a'), isOwner: false });
+    const b = await accounts.createUser({ privyUserId: did('b'), isOwner: false });
+    await db.insert(pushSubscriptions).values([
+      { endpoint: 'ep-a', userId: a.id, p256dh: 'p', auth: 'k', createdAt: 1 },
+      { endpoint: 'ep-b', userId: b.id, p256dh: 'p', auth: 'k', createdAt: 1 },
+    ]);
+
+    await accounts.deleteAccount(a.id);
+
+    const remaining = await db.select().from(pushSubscriptions);
+    expect(remaining.map((s) => s.endpoint)).toEqual(['ep-b']); // A's subs gone, B's kept (per-tenant)
+    expect(remaining.every((s) => s.userId === b.id)).toBe(true);
+  });
+
+  it('the push_subscriptions → users FK cascades on a direct account-row delete (DB-level backstop, #102)', async () => {
+    // WHY (#102): the FK (migration 0022, ON DELETE CASCADE) must hold even when a users row is deleted OUTSIDE
+    // deleteAccount, so a future/forgotten code path can never strand a live subscription. Deleting the account
+    // row directly (bypassing the repo) must still remove its push subscription — this also proves the migration
+    // actually applied the constraint to the test DB, not merely declared it in the schema.
+    const { db, accounts } = await setup();
+    const a = await accounts.createUser({ privyUserId: did('a'), isOwner: false });
+    await db.insert(pushSubscriptions).values({
+      endpoint: 'ep-a',
+      userId: a.id,
+      p256dh: 'p',
+      auth: 'k',
+      createdAt: 1,
+    });
+
+    await db.delete(usersTable).where(eq(usersTable.id, a.id)); // bypass deleteAccount → hit the FK directly
+
+    expect(await db.select().from(pushSubscriptions)).toEqual([]); // cascade removed the now-orphaned sub
   });
 
   it('walletOverview reports watchers + open/closed counts + last sync per wallet', async () => {

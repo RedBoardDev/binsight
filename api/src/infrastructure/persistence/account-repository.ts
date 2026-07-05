@@ -20,6 +20,7 @@ import {
   inviteCodes,
   positionLedger,
   positions as positionsTable,
+  pushSubscriptions,
   rugExitPendings,
   rugExits,
   users as usersTable,
@@ -215,6 +216,10 @@ export class PostgresAccountRepository implements AccountRepository {
       await tx.delete(positionLedger).where(eq(positionLedger.userId, id));
       await tx.delete(feeLedger).where(eq(feeLedger.userId, id));
       await tx.delete(copybotActivation).where(eq(copybotActivation.userId, id));
+      // User-scoped notification state (NOT copy-bot state, NOT shared): drop this account's push
+      // subscriptions so a removed user stops receiving web-push (finding #102). The FK cascade backs
+      // this up at the DB level; the explicit delete keeps teardown complete even if the FK is absent.
+      await tx.delete(pushSubscriptions).where(eq(pushSubscriptions.userId, id));
       await tx.delete(usersTable).where(eq(usersTable.id, id));
       return orphans;
     });
