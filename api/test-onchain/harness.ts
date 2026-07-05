@@ -16,7 +16,12 @@ import { type Connection, PublicKey } from '@solana/web3.js';
 import Redis from 'ioredis';
 import type { UserPosition } from '@/infrastructure/solana/dlmm/leader-position-reader';
 import type { FidelityResult } from '@/infrastructure/solana/dlmm/shape-fidelity';
-import { LOG_MARKER_EVENT_ROUTED, LOG_MARKER_SUBMITTED } from '@/copybot/log-markers';
+import {
+  LOG_MARKER_EVENT_ROUTED,
+  LOG_MARKER_RESHAPE_PUBLISHED,
+  LOG_MARKER_SIGN_LANDED_CODE,
+  LOG_MARKER_SUBMITTED,
+} from '@/copybot/log-markers';
 import { readAllOwnerTokenBalances } from '@/infrastructure/solana/token-balance-reader';
 import { COPIER_TEST, LEADER_TEST } from './env';
 
@@ -207,7 +212,7 @@ export class Harness {
   brainMirroredReshape(leaderPosition: string, dir: 'grow' | 'shrink'): boolean {
     try {
       for (const line of readFileSync('/tmp/bench-brain.log', 'utf8').split('\n')) {
-        if (!line.includes('reshape published') || !line.includes(leaderPosition)) continue;
+        if (!line.includes(LOG_MARKER_RESHAPE_PUBLISHED) || !line.includes(leaderPosition)) continue;
         const r = JSON.parse(line) as { position?: string; adds?: number; removes?: number };
         if (r.position !== leaderPosition) continue;
         if (dir === 'grow' && (r.adds ?? 0) > 0) return true;
@@ -220,14 +225,19 @@ export class Harness {
   }
   /** How many `add`/`remove` reshape txs the coffre has LANDED on a pool (the on-chain truth, vs the brain merely
    *  PUBLISHING). Captured before/after a leader change → a strictly higher count proves OUR copy actually grew/shrank
-   *  on-chain (one-at-a-time soak ⇒ the only position on the pool is ours). Matches the coffre's tee'd "🚀 SIGN landed
-   *  · <kind> · … pool=<first4>…<last4>" line. */
+   *  on-chain (one-at-a-time soak ⇒ the only position on the pool is ours). Matches the coffre's confirmed-landed
+   *  CopyEvent — `CopyEvents.emit('sign.landed', { kind, pool, … })` (ConfirmWorker), logged as flat pino admin JSON —
+   *  on its structured `"code"` / `"kind"` / `"pool"` fields (single-sourced via LOG_MARKER_SIGN_LANDED_CODE). */
   coffreLandedCount(kind: 'add' | 'remove', pool: string): number {
     try {
-      const lo = pool.slice(0, 4);
       return readFileSync('/tmp/bench-coffre.log', 'utf8')
         .split('\n')
-        .filter((l) => l.includes('SIGN landed') && l.includes(`· ${kind} ·`) && l.includes(`pool=${lo}`)).length;
+        .filter(
+          (l) =>
+            l.includes(`"code":"${LOG_MARKER_SIGN_LANDED_CODE}"`) &&
+            l.includes(`"kind":"${kind}"`) &&
+            l.includes(`"pool":"${pool}"`),
+        ).length;
     } catch {
       return 0;
     }
