@@ -5,7 +5,7 @@
  * (different MAC) is rejected (`payload: null`) without being parsed.
  */
 import Redis from 'ioredis';
-import { encodeEnvelope, verifyEnvelope } from './envelope';
+import { encodeEnvelope, HMAC_HEX_LEN, verifyEnvelope } from './envelope';
 
 export interface ConsumedMessage {
   id: string;
@@ -39,6 +39,18 @@ const fieldsToRecord = (fields: string[] | null | undefined): Record<string, str
  */
 export const MAX_BUS_ENVELOPE_BYTES = 65_536;
 
+/**
+ * Approximate cap on the number of entries kept per bus stream (`cmd:sign`, `ev:executed`, and their `.DLQ`s),
+ * applied with `XADD ... MAXLEN ~` on every write. Bounds stream growth so a flood of frames (legitimate backlog or a
+ * forged flood) cannot grow Redis memory without limit; `~` trims in whole macro-nodes (cheap, amortized). Sized far
+ * above any real backlog — the coffre consumes + ACKs each cmd:sign within seconds, so thousands of unconfirmed
+ * entries never accumulate in normal operation — yet small enough to bound abuse. Trimming a still-unconfirmed PEL
+ * entry is safe: `parse` surfaces it as a TOMBSTONE the consumer ACK-and-skips. NOTE: this caps entry COUNT and only
+ * trims on OUR writes — the real backstop against an oversized single field (a forged 512MB `hmac`/`body`) is the
+ * Redis-server `proto-max-bulk-len` config, which cannot be set from application code (ops follow-up).
+ */
+export const MAX_BUS_STREAM_LEN = 10_000;
+
 export class RedisBus {
   constructor(private readonly redis: Redis) {}
 
@@ -49,7 +61,18 @@ export class RedisBus {
   /** Publishes a signed payload (HMAC, bound to the hop) onto a stream. Returns the message id. */
   async publish(stream: string, hop: string, key: string, payload: unknown): Promise<string> {
     const env = encodeEnvelope(hop, key, payload);
-    const id = await this.redis.xadd(stream, '*', 'body', env.body, 'hmac', env.hmac);
+    // MAXLEN ~ bounds the stream so a flood can never grow it unboundedly (see MAX_BUS_STREAM_LEN).
+    const id = await this.redis.xadd(
+      stream,
+      'MAXLEN',
+      '~',
+      MAX_BUS_STREAM_LEN,
+      '*',
+      'body',
+      env.body,
+      'hmac',
+      env.hmac,
+    );
     return id as string;
   }
 
@@ -58,8 +81,11 @@ export class RedisBus {
    *  dedup (coffre = executions table INSERT-before-sign; brain = idempotent ev:executed handlers), and `'0'` is the
    *  no-miss anchor — it catches messages published BEFORE the group existed (startup race) AND everything after a
    *  Redis flush/eviction when a group is later re-created; `'$'` would silently drop both. Keep the BUSYGROUP swallow.
-   *  OPS FOLLOW-UP (separate change, not here): because a group re-creation now replays the whole backlog, the streams
-   *  (`cmd:sign`, `ev:executed`) must be bounded in deployment via `XADD ... MAXLEN ~N` and/or a scheduled `XTRIM`. */
+   *  A group re-creation replays the whole backlog, so the streams (`cmd:sign`, `ev:executed`) are bounded on every
+   *  write via `XADD ... MAXLEN ~` (see MAX_BUS_STREAM_LEN, applied in `publish`/`deadLetter`). OPS FOLLOW-UP (cannot
+   *  be set from application code): cap the per-field size with the Redis-server `proto-max-bulk-len` config so a
+   *  single forged `hmac`/`body` field cannot be allocated at read time — the length guard in `parse` only stops the
+   *  decode-side amplification, not ioredis reading the oversized field off the socket. */
   async ensureGroup(stream: string, group: string): Promise<void> {
     try {
       await this.redis.xgroup('CREATE', stream, group, '0', 'MKSTREAM');
@@ -151,6 +177,15 @@ export class RedisBus {
       // silent drop) — the "size" half of the coffre's documented bus checks 1-4. NOT a tombstone: the bytes exist.
       if (f.body !== undefined && Buffer.byteLength(f.body, 'utf8') > MAX_BUS_ENVELOPE_BYTES)
         return { id, payload: null, raw: f };
+      // #166 — reject a MALFORMED-length `hmac` BEFORE verifyEnvelope's `Buffer.from(hmac,'hex')` (an allocation the
+      // size of the field). Threat model (bus-key-guard): anyone who can reach Redis can XADD a forged frame. A small
+      // (<cap) body passes the check above, but the `hmac` field can be up to Redis's 512MB proto-max-bulk-len; decoded
+      // per message across a COUNT-sized batch (10 live / 100 boot PEL drain) and retained via `raw` until the batch
+      // finishes → tens of GB → the SOLE coffre OOMs and no leader close is signed. A genuine MAC is exactly
+      // HMAC_HEX_LEN hex chars; any other length is forged → REJECT (payload null, raw KEPT → caller dead-letters it,
+      // loud not silent), exactly like an over-cap body. NOT a tombstone: the bytes exist.
+      if (f.hmac !== undefined && f.hmac.length !== HMAC_HEX_LEN)
+        return { id, payload: null, raw: f };
       const payload =
         f.body !== undefined && f.hmac !== undefined
           ? verifyEnvelope(hop, key, { body: f.body, hmac: f.hmac })
@@ -171,7 +206,9 @@ export class RedisBus {
     raw: Record<string, string>,
   ): Promise<void> {
     const flat = Object.entries(raw).flat();
-    await this.redis.xadd(`${stream}.DLQ`, '*', ...flat);
+    // MAXLEN ~ bounds the DLQ too: a flood of rejected/forged frames each gets dead-lettered, so the DLQ must be
+    // capped like the primary streams or an attacker could grow it unboundedly (see MAX_BUS_STREAM_LEN).
+    await this.redis.xadd(`${stream}.DLQ`, 'MAXLEN', '~', MAX_BUS_STREAM_LEN, '*', ...flat);
     await this.redis.xack(stream, group, id);
   }
 

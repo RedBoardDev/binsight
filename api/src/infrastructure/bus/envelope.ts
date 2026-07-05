@@ -16,6 +16,15 @@ export interface Envelope {
 const mac = (hop: string, key: string, body: string): string =>
   createHmac('sha256', key).update(`${hop}\n${body}`).digest('hex');
 
+/**
+ * Exact character length of a well-formed `hmac` field: a sha256 MAC is 32 bytes → 64 lowercase hex chars once
+ * `.digest('hex')`-encoded. The bus consumer (`RedisBus.parse`) rejects any `hmac` of a different length BEFORE
+ * decoding it with `Buffer.from(hmac,'hex')`, so a forged frame carrying an oversized `hmac` can never force a giant
+ * allocation on the vault's consume path (DoS guard, finding #166). Co-located with `mac`: if the MAC algorithm ever
+ * changes, this length must change with it.
+ */
+export const HMAC_HEX_LEN = 64;
+
 /** Serialize + sign a payload for a given hop. */
 export function encodeEnvelope(hop: string, key: string, payload: unknown): Envelope {
   const body = JSON.stringify(payload);

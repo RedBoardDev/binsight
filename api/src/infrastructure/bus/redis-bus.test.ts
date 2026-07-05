@@ -1,7 +1,7 @@
 import Redis from 'ioredis';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { encodeEnvelope } from './envelope';
-import { MAX_BUS_ENVELOPE_BYTES, RedisBus } from './redis-bus';
+import { encodeEnvelope, HMAC_HEX_LEN } from './envelope';
+import { MAX_BUS_ENVELOPE_BYTES, MAX_BUS_STREAM_LEN, RedisBus } from './redis-bus';
 
 // Integration test: requires the local Redis container (docker compose up -d redis → :6385).
 const URL = process.env.REDIS_URL ?? 'redis://localhost:6385';
@@ -103,13 +103,35 @@ describe('RedisBus — ensureGroup idempotency + deadLetter (fake redis)', () =>
     await expect(bus.ensureGroup('cmd:sign', 'coffre')).rejects.toThrow('NOAUTH');
   });
 
-  it('deadLetter copies the EXACT raw fields onto <stream>.DLQ, then ACKs the original', async () => {
+  it('deadLetter copies the EXACT raw fields onto <stream>.DLQ (MAXLEN-bounded), then ACKs the original', async () => {
     const xadd = vi.fn(async () => '1-0');
     const xack = vi.fn(async () => 1);
     const bus = new RedisBus({ xadd, xack } as never);
     await bus.deadLetter('cmd:sign', 'coffre', '42-0', { body: 'RAW_BODY', hmac: 'RAW_HMAC' });
-    expect(xadd).toHaveBeenCalledWith('cmd:sign.DLQ', '*', 'body', 'RAW_BODY', 'hmac', 'RAW_HMAC');
+    // #166 — the DLQ is capped like the primary streams (a forged-frame flood each gets dead-lettered): the raw fields
+    // still land verbatim, but behind a MAXLEN ~ bound so the DLQ cannot grow unboundedly.
+    expect(xadd).toHaveBeenCalledWith(
+      'cmd:sign.DLQ',
+      'MAXLEN',
+      '~',
+      MAX_BUS_STREAM_LEN,
+      '*',
+      'body',
+      'RAW_BODY',
+      'hmac',
+      'RAW_HMAC',
+    );
     expect(xack).toHaveBeenCalledWith('cmd:sign', 'coffre', '42-0'); // original ACKed → never redelivered
+  });
+
+  it('publish bounds the stream with XADD MAXLEN ~ (a flood cannot grow cmd:sign/ev:executed unboundedly)', async () => {
+    // WHY: an unbounded stream is a memory-DoS surface; every write trims to ~MAX_BUS_STREAM_LEN. Assert the trim
+    // directive precedes the id/fields — the payload itself is signed by the real encodeEnvelope (not mocked here).
+    const xadd = vi.fn(async () => '1-0');
+    const bus = new RedisBus({ xadd } as never);
+    await bus.publish('cmd:sign', 'cmd:sign', 'k', { commandId: 'c', kind: 'open' });
+    const prefix = (xadd.mock.calls[0] ?? []).slice(0, 5);
+    expect(prefix).toEqual(['cmd:sign', 'MAXLEN', '~', MAX_BUS_STREAM_LEN, '*']);
   });
 });
 
@@ -251,6 +273,60 @@ describe('RedisBus — oversized envelope rejected before HMAC/parse (fake redis
     const bus = new RedisBus({ xreadgroup } as never);
     const [msg] = await bus.consumePending('cmd:sign', 'coffre', 'c1', 'cmd:sign', KEY);
     expect(msg?.payload).toEqual(ok); // authenticated + parsed
+  });
+});
+
+// #166 — a malformed-length `hmac` is rejected in parse BEFORE verifyEnvelope's `Buffer.from(hmac,'hex')`. #24 caps
+// only the body; an adversary who can XADD (threat model: anyone reaching Redis, bus-key-guard) can send a small
+// (<cap) body that passes the size guard AND an `hmac` field up to Redis's 512MB proto-max-bulk-len. FAIL-AGAINST-OLD:
+// the old parse handed that field to verifyEnvelope, which does Buffer.from over the WHOLE field, per message, across
+// a COUNT-sized batch, retained via `raw` until the batch ends → tens of GB → the SOLE coffre OOMs → no leader close
+// gets signed during the attack. A genuine sha256 MAC is exactly HMAC_HEX_LEN hex chars; any other length is forged.
+describe('RedisBus — malformed hmac rejected before Buffer.from (fake redis, #166 DoS)', () => {
+  const KEY = 'k_sign_test';
+
+  it('★ a small body + a GIANT hmac → REJECT before verifyEnvelope, NO Buffer.from of the giant field, no throw', async () => {
+    const giantHmac = 'a'.repeat(600_000); // far beyond 64 — decoding it is exactly the allocation we must NOT do
+    const fromSpy = vi.spyOn(Buffer, 'from');
+    const xreadgroup = vi.fn(async () => [
+      ['cmd:sign', [['166-0', ['body', '{"commandId":"x"}', 'hmac', giantHmac]]]],
+    ]);
+    const bus = new RedisBus({ xreadgroup } as never);
+    const [msg] = await bus.consumePending('cmd:sign', 'coffre', 'c1', 'cmd:sign', KEY);
+    expect(msg?.payload).toBeNull(); // rejected: the giant hmac never reached verifyEnvelope / JSON.parse
+    expect(msg?.tombstone).toBeUndefined(); // NOT a tombstone — the bytes are present
+    expect(msg?.raw).toEqual({ body: '{"commandId":"x"}', hmac: giantHmac }); // kept verbatim → dead-lettered (loud)
+    // The load-bearing assertion: the old code called Buffer.from(giantHmac,'hex'); the guard must short-circuit first.
+    expect(fromSpy.mock.calls.some(([arg]) => arg === giantHmac)).toBe(false);
+    fromSpy.mockRestore();
+  });
+
+  it('a valid 64-hex hmac still verifies (the guard rejects ONLY a wrong-length MAC, never real traffic)', async () => {
+    const payload = { commandId: 'ok166', kind: 'open' };
+    const env = encodeEnvelope('cmd:sign', KEY, payload);
+    expect(env.hmac).toHaveLength(HMAC_HEX_LEN); // a genuine sha256 MAC is exactly 64 hex chars
+    const xreadgroup = vi.fn(async () => [
+      ['cmd:sign', [['166-1', ['body', env.body, 'hmac', env.hmac]]]],
+    ]);
+    const bus = new RedisBus({ xreadgroup } as never);
+    const [msg] = await bus.consumePending('cmd:sign', 'coffre', 'c1', 'cmd:sign', KEY);
+    expect(msg?.payload).toEqual(payload); // authenticated + parsed as before
+  });
+
+  it('an hmac off by even ONE char (63 or 65) → REJECT (exact-length guard, not a range)', async () => {
+    const xreadgroup = vi.fn(async () => [
+      [
+        'cmd:sign',
+        [
+          ['166-2', ['body', '{"a":1}', 'hmac', 'a'.repeat(HMAC_HEX_LEN - 1)]],
+          ['166-3', ['body', '{"a":1}', 'hmac', 'a'.repeat(HMAC_HEX_LEN + 1)]],
+        ],
+      ],
+    ]);
+    const bus = new RedisBus({ xreadgroup } as never);
+    const msgs = await bus.consumePending('cmd:sign', 'coffre', 'c1', 'cmd:sign', KEY);
+    expect(msgs.map((m) => m.payload)).toEqual([null, null]); // both rejected
+    expect(msgs.every((m) => m.tombstone === undefined)).toBe(true); // rejects, not tombstones (bytes present)
   });
 });
 
