@@ -307,7 +307,7 @@ function makeRugRt(
   mirrors: Mirror[],
   config: CopybotConfig,
   checkResult: (ourPosition: string) => boolean,
-  opts: { publishThrows?: boolean } = {},
+  opts: { publishThrows?: boolean; order?: string[] } = {},
 ) {
   const calls = {
     recorded: [] as Array<{ key: string; price: number }>,
@@ -327,12 +327,19 @@ function makeRugRt(
     rugExitPending: new Set<string>(),
     rugExitStore: {
       addPending: async (our) => {
+        // When an `order` recorder is supplied, model the async DB INSERT commit with a real await gap: the durable
+        // row lands only AFTER the write resolves. #153 requires this to be AWAITED before the close is published —
+        // a fire-and-forget (void) would let the publish (and a crash) race ahead of the commit, reordering it after
+        // 'publish'. Without `order`, addPending stays a synchronous push (existing tests unaffected).
+        if (opts.order) await Promise.resolve();
         calls.pendingPersisted.push(our);
+        opts.order?.push('addPending');
       },
       addExited: async () => {},
     },
     rugExited: new Set<string>(),
     publishSafetyClose: async (m) => {
+      opts.order?.push('publish'); // record the publish ATTEMPT (even when it then throws) for the ordering assertion
       if (opts.publishThrows) throw new Error('publish down');
       calls.safetyCloses.push(m.ourPosition);
     },
@@ -474,6 +481,26 @@ describe('runRugSlSweep — pool-grouped across runtimes (Inc.3b S6)', () => {
     expect(calls.pendingPersisted).toContain('OUR_RUG'); // ...and persisted so the retry survives a brain restart
     expect(rt.rugExited.has(LP)).toBe(true); // and the leader is suppressed from re-opening a rugged position
     expect(calls.forgotten).toContain('OUR_RUG'); // price-window forgotten → grace + reconcile own the retry
+  });
+
+  it('#153: the durable pending row is AWAITED (committed) BEFORE the safety close is published (a crash between publish and the INSERT can never lose the re-close channel)', async () => {
+    // WHY: rugExitPending's durable row is the ONLY cross-restart re-close channel for a rug-SL close — the leader
+    // keeps holding, so `leaderClosed` never retries. If addPending fired un-awaited (void), a SIGKILL AFTER the
+    // close is published but BEFORE the INSERT commits would lose that row → the rugging position is never re-closed
+    // after restart. So the durable arm MUST complete before the publish. `order` models the async DB commit; a
+    // fire-and-forget would let the publish race ahead ⇒ ['publish','addPending'] (this test would then fail).
+    const order: string[] = [];
+    const { rt, calls } = makeRugRt(
+      'user-a',
+      [mirror({ ourPosition: 'OUR_RUG' })],
+      configWithRugSl(true),
+      () => true,
+      { order, publishThrows: true }, // worst case: the publish then FAILS — the row must already be committed
+    );
+    const { deps } = rugDeps([rt], 0.1);
+    await runRugSlSweep(deps);
+    expect(order).toEqual(['addPending', 'publish']); // durable row committed BEFORE publish (fails with a void)
+    expect(calls.pendingPersisted).toContain('OUR_RUG'); // ...and it is armed even though the publish threw
   });
 
   it('a null price read records NOTHING (a transient RPC blip can never fabricate a crash)', async () => {
@@ -824,5 +851,30 @@ describe('runResidualSweep — per-distinct-wallet residual safety sweep (Inc.4c
     const { deps } = makeResidualDeps([rt], { [WALLET_A]: [bal('MINT_A', 100n)] });
     await expect(runResidualSweep(deps)).resolves.toBeUndefined();
     expect(calls.swapFailed).toEqual(['MINT_A']); // the residual is surfaced, not silently dropped
+  });
+
+  it('#156: one wallet’s balance-read rejection does NOT abort the sweep for the remaining wallets (per-wallet isolation)', async () => {
+    // WHY: readWalletBalances was unwrapped — a single wallet’s persistent read rejection propagated out and
+    // aborted runResidualSweep for EVERY wallet after it, silently killing the no-dormant-non-SOL-balance backstop
+    // for all of them (unlike the reconcile’s per-user isolation). Each wallet’s read+sweep must be isolated:
+    // WALLET_A throws, yet WALLET_B (iterated after it) must still be read and swept, and the sweep must not throw.
+    const { rt: rtA, calls: a } = makeResidualRt('user-a', WALLET_A);
+    const { rt: rtB, calls: b } = makeResidualRt('user-b', WALLET_B);
+    const walletReads: string[] = [];
+    const { deps } = makeResidualDeps(
+      [rtA, rtB],
+      {},
+      {
+        readWalletBalances: async (wallet) => {
+          walletReads.push(wallet);
+          if (wallet === WALLET_A) throw new Error('balance read down for A');
+          return [bal('MINT_B', 200n)];
+        },
+      },
+    );
+    await expect(runResidualSweep(deps)).resolves.toBeUndefined(); // A’s rejection is isolated, not propagated
+    expect(walletReads).toEqual([WALLET_A, WALLET_B]); // B was still reached despite A failing first
+    expect(a.sold).toEqual([]); // A produced nothing (its read failed)
+    expect(b.sold).toEqual([{ mint: 'MINT_B', amountRaw: 200n, pool: WALLET_B }]); // B swept regardless
   });
 });

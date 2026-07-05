@@ -395,7 +395,10 @@ export async function runRugSlSweep(deps: RugSlSweepDeps): Promise<void> {
         // TRACKED (do NOT registry.close): the reconcile clears the pending flag + registry.close + DB markClosed once
         // the close lands.
         rt.rugExitPending.add(m.ourPosition);
-        void rt.rugExitStore.addPending(m.ourPosition); // persist so the retry survives a brain restart
+        // AWAIT the durable persist BEFORE publishing (#153): a SIGKILL between the publish and this INSERT would
+        // lose the ONLY cross-restart re-close channel. addPending is fail-safe (logs a write error, never throws)
+        // → awaiting it can never hinder the close.
+        await rt.rugExitStore.addPending(m.ourPosition); // persist so the retry survives a brain restart
         rt.rugSlTracker.forget(m.ourPosition); // stop price re-triggering (grace + reconcile now own the retry)
         rt.rugExited.add(m.leaderPosition); // suppress re-opening this leader position on its next add
         void rt.rugExitStore.addExited(m.leaderPosition); // persist so the suppression survives a brain restart
@@ -465,35 +468,46 @@ export async function runResidualSweep(deps: ResidualSweepDeps): Promise<void> {
   for (const rt of deps.runtimes()) if (!byWallet.has(rt.wallet)) byWallet.set(rt.wallet, rt);
 
   for (const [wallet, rt] of byWallet) {
-    const balances = await deps.readWalletBalances(wallet);
-    // Sweep ANY non-SOL (minSellOutLamports gates economics post-quote) EXCEPT a token still in-flight for a
-    // two-sided open (bought, awaiting deposit). Past the grace, a still-present in-flight token means the open
-    // failed → it IS a stranded residual → swept.
-    const toSweep = planWalletSweep(balances, deps.wsolMint, deps.dustRaw).filter(
-      (b) => now - (deps.inFlightBuyMints.get(b.mint) ?? 0) >= deps.inflightGraceMs,
-    );
-    if (toSweep.length === 0) continue;
-    // `eventKey` is the per-cycle correlation (now): each periodic sweep that finds a residual is its own row.
-    rt.events.emit('swap.sweep_detected', {
-      stage: 'sweep',
-      outcome: 'detected',
-      leader: deps.leaderLabel,
-      eventKey: `${deps.leaderLabel}:sweep:${now}`,
-      adminDetail: { count: toSweep.length, mints: toSweep.map((b) => b.mint) },
-    });
-    for (const b of toSweep) {
-      // The wallet is passed as the sell's `pool` label (a residual has no position/pool of its own).
-      await rt.publishSell(b.mint, b.amountRaw, wallet, 'sweep').catch((e) => {
-        // A sweep sell that fails to build/publish is the swap-failed path → pinned, feed-visible (SPEC §2.1 swap).
-        rt.events.swapFailed({
-          stage: 'sweep',
-          outcome: 'failed',
-          reason: 'failed_after_retries',
-          leader: deps.leaderLabel,
-          eventKey: `${deps.leaderLabel}:sweep:${now}:${b.mint}`,
-          adminDetail: { mint: b.mint, error: (e as Error).message },
-        });
+    // Per-wallet isolation (#156) — matches the reconcile Phase 2 per-user try/catch: one wallet's balance-read
+    // (or sweep) rejection must NOT propagate out and abort the sweep for every REMAINING wallet, or the
+    // no-dormant-non-SOL-balance backstop goes silently dead for all wallets after the failing one. Log LOUD and
+    // continue to the next wallet.
+    try {
+      const balances = await deps.readWalletBalances(wallet);
+      // Sweep ANY non-SOL (minSellOutLamports gates economics post-quote) EXCEPT a token still in-flight for a
+      // two-sided open (bought, awaiting deposit). Past the grace, a still-present in-flight token means the open
+      // failed → it IS a stranded residual → swept.
+      const toSweep = planWalletSweep(balances, deps.wsolMint, deps.dustRaw).filter(
+        (b) => now - (deps.inFlightBuyMints.get(b.mint) ?? 0) >= deps.inflightGraceMs,
+      );
+      if (toSweep.length === 0) continue;
+      // `eventKey` is the per-cycle correlation (now): each periodic sweep that finds a residual is its own row.
+      rt.events.emit('swap.sweep_detected', {
+        stage: 'sweep',
+        outcome: 'detected',
+        leader: deps.leaderLabel,
+        eventKey: `${deps.leaderLabel}:sweep:${now}`,
+        adminDetail: { count: toSweep.length, mints: toSweep.map((b) => b.mint) },
       });
+      for (const b of toSweep) {
+        // The wallet is passed as the sell's `pool` label (a residual has no position/pool of its own).
+        await rt.publishSell(b.mint, b.amountRaw, wallet, 'sweep').catch((e) => {
+          // A sweep sell that fails to build/publish is the swap-failed path → pinned, feed-visible (SPEC §2.1 swap).
+          rt.events.swapFailed({
+            stage: 'sweep',
+            outcome: 'failed',
+            reason: 'failed_after_retries',
+            leader: deps.leaderLabel,
+            eventKey: `${deps.leaderLabel}:sweep:${now}:${b.mint}`,
+            adminDetail: { mint: b.mint, error: (e as Error).message },
+          });
+        });
+      }
+    } catch (e) {
+      deps.log.error(
+        { e: (e as Error).message, wallet },
+        'residual sweep: wallet read/sweep failed → this wallet skipped this tick (other wallets swept)',
+      );
     }
   }
 }
