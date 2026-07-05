@@ -341,6 +341,12 @@ describe('config · execution group', () => {
     expect(cfg.user.execution.minSellOutLamports).toBe(1);
     expect(cfg.user.execution.slippageBps).toBe(CONFIG_DEFAULTS.user.execution.slippageBps);
   });
+
+  it('the canonical default slippage is 5% (500 bps) — DECISIONS Round-4 supersession (was 1% code / 10% locked)', () => {
+    // WHY: the slippage default is a product decision (deposit/swap price-move tolerance). Locking the value
+    // here prevents an accidental drift back to the pre-supersession 1% or the stale-locked 10%.
+    expect(CONFIG_DEFAULTS.user.execution.slippageBps).toBe(500);
+  });
 });
 
 describe('config · rugSl windowSeconds bound (finding #154)', () => {

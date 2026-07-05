@@ -33,7 +33,7 @@ export const USER_DEFAULTS: UserSettings = {
   twoSidedMode: 'off',
   filters: { ...FILTERS_ALL_OFF }, // all entry filters OFF by default; an enabled filter ENFORCES (no shadow mode)
   execution: {
-    slippageBps: 100, // 1% — permissive enough to land
+    slippageBps: 500, // 5% — canonical default (DECISIONS Round-4 supersession: was 1% in code / 10% locked → 5%)
     dustTokenRaw: 0, // sell any residual by default
     minSellOutLamports: 50_000, // ~0.00005 SOL floor: below it a residual sell isn't worth the fees
     reshapeBinDeadbandSol: 0.0002, // LOW: reshapes are event-driven (not arb), so a low threshold maximizes fidelity
