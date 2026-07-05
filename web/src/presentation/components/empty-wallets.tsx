@@ -2,14 +2,31 @@
 
 import { useUi } from '@/application/stores/ui-store';
 import { useWallets } from '@/application/stores/wallets-store';
-import { Button, Card } from '@/presentation/ui';
+import { Button, Card, EmptyState } from '@/presentation/ui';
 
 /** First-run state: no wallets watched yet → guide the user to add their first one (opens settings). */
 export function EmptyWallets() {
   const loaded = useWallets((s) => s.loaded);
   const count = useWallets((s) => s.wallets.length);
+  const error = useWallets((s) => s.error);
+  const refresh = useWallets((s) => s.refresh);
   const setSettingsOpen = useUi((s) => s.setSettingsOpen);
   if (!loaded || count > 0) return null;
+
+  // A failed first /wallets fetch also lands here (loaded + zero wallets) — show retry, not the
+  // onboarding, so a transient error never masquerades as a brand-new, empty account.
+  if (error) {
+    return (
+      <Card className="px-6 py-14">
+        <EmptyState
+          variant="error"
+          title="Couldn't load your wallets"
+          hint="Check your connection and try again."
+          onRetry={() => void refresh()}
+        />
+      </Card>
+    );
+  }
 
   return (
     <Card className="flex flex-col items-center gap-4 px-6 py-14 text-center">

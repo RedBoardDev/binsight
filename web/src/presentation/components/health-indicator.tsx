@@ -1,9 +1,10 @@
 'use client';
 
 import type { Health, SourceStatus } from '@binsight/shared';
+import { useEffect, useRef, useState } from 'react';
 import { usePortfolio } from '@/application/stores/portfolio-store';
 import { fmtRelative } from '@/domain/format';
-import { StatusDot, Tooltip } from '@/presentation/ui';
+import { cn, StatusDot, Tooltip } from '@/presentation/ui';
 
 function overall(health: Health | null, connected: boolean): SourceStatus {
   if (!health || !connected) return 'down';
@@ -15,24 +16,58 @@ function overall(health: Health | null, connected: boolean): SourceStatus {
 
 const LABEL: Record<SourceStatus, string> = { ok: 'Live', lagging: 'Degraded', down: 'Offline' };
 const SOURCE_LABEL: Record<SourceStatus, string> = { ok: 'OK', lagging: 'Lagging', down: 'Down' };
+const POPOVER_ID = 'health-popover';
 
 export function HealthIndicator() {
   const health = usePortfolio((s) => s.health);
   const connected = usePortfolio((s) => s.connected);
   const status = overall(health, connected);
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
 
-  // Hover-only: the detail panel reveals while the pointer is over the indicator (or the panel
-  // itself, bridged by top-full + pt-1.5), and hides on leave. No click/pin.
+  // The detail reveals on hover (pure CSS, below) OR when toggled open by click / keyboard — so it is
+  // reachable on touch and by keyboard, not hover-only. While toggled open, close it on Escape or an
+  // outside pointer; the hover path needs no JS.
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  const hasDetail = health !== null;
+
   return (
-    <div className="group relative">
-      <div className="inline-flex items-center gap-2 rounded-md px-2.5 py-1.5 text-muted text-sm transition-colors group-hover:bg-hover group-hover:text-text">
+    <div ref={rootRef} className="group relative">
+      <button
+        type="button"
+        aria-expanded={hasDetail ? open : undefined}
+        aria-controls={hasDetail ? POPOVER_ID : undefined}
+        onClick={hasDetail ? () => setOpen((v) => !v) : undefined}
+        className="inline-flex items-center gap-2 rounded-md px-2.5 py-1.5 text-muted text-sm transition-colors group-hover:bg-hover group-hover:text-text focus-visible:bg-hover focus-visible:text-text"
+      >
         <StatusDot status={status} />
         <span>{LABEL[status]}</span>
-      </div>
+      </button>
       {health && (
         <div
-          id="health-popover"
-          className="invisible absolute top-full right-0 z-30 w-64 translate-y-1 pt-1.5 opacity-0 transition duration-150 ease-spring group-hover:visible group-hover:translate-y-0 group-hover:opacity-100"
+          id={POPOVER_ID}
+          className={cn(
+            'absolute top-full right-0 z-30 w-64 pt-1.5 transition duration-150 ease-spring',
+            // Click / keyboard path (JS-controlled):
+            open ? 'visible translate-y-0 opacity-100' : 'invisible translate-y-1 opacity-0',
+            // Hover path (pure CSS) — either one reveals it:
+            'group-hover:visible group-hover:translate-y-0 group-hover:opacity-100',
+          )}
         >
           <SourcePopover health={health} />
         </div>

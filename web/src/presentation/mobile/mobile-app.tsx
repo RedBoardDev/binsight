@@ -5,6 +5,7 @@ import { useUi } from '@/application/stores/ui-store';
 import { useWallets } from '@/application/stores/wallets-store';
 import { EmptyWallets } from '@/presentation/components/empty-wallets';
 import { useOpenAccess } from '@/presentation/components/open-access-context';
+import { PortfolioError } from '@/presentation/components/portfolio-error';
 import { PositionDrawer } from '@/presentation/components/position-drawer';
 import { SettingsDrawer } from '@/presentation/components/settings-drawer';
 import { StatsPanel } from '@/presentation/components/stats-panel';
@@ -29,6 +30,8 @@ export function MobileApp() {
   const wallets = useWallets((s) => s.wallets);
   const refreshWallets = useWallets((s) => s.refresh);
   const noWallets = useWallets((s) => s.loaded && s.wallets.length === 0);
+  // Broken portfolio feed (state fetch failed AND no socket payload yet): retry, not endless skeletons.
+  const portfolioBroken = usePortfolio((s) => s.error && s.portfolio === null);
   const openAccess = useOpenAccess();
 
   function onWalletsChanged(removed?: string) {
@@ -45,6 +48,8 @@ export function MobileApp() {
       <main className="flex-1 px-4 pt-1 pb-[calc(5rem+env(safe-area-inset-bottom))]">
         {noWallets ? (
           <EmptyWallets />
+        ) : portfolioBroken ? (
+          <PortfolioError />
         ) : (
           <div className="flex flex-col gap-4">
             {/* Global portfolio header — same on every tab, mirroring the desktop layout. */}
