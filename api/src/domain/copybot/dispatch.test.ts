@@ -119,6 +119,28 @@ describe('classifyEventAction — close routing keys off `e.closed`, not the log
   });
 });
 
+describe('classifyEventAction — an untracked position opened AND closed in ONE tx is NOT copied (#30)', () => {
+  it('★ first deposit on an untracked position that is ALSO closed (closed:true) → ignore, never open', () => {
+    // The leader opened AND exited atomically (e.g. a bundled snipe-and-dump): depositSol>0 but closed:true. Routing
+    // to 'open' before the close-check would enter a position the leader is already out of — a guaranteed instant
+    // loss. The close is checked FIRST (via `isCloseEvent`), so it routes to 'ignore'.
+    expect(route({ instruction: 'InitializePosition', depositSol: 0.1, closed: true }, false)).toBe(
+      'ignore',
+    );
+  });
+
+  it('★ same, with a truncated/unclassifiable label — closed:true is the only close signal → still ignore', () => {
+    // Under 10KB log truncation the label degrades to '(DLMM)'; `isCloseEvent` still sees closed:true → ignore.
+    expect(route({ instruction: '(DLMM)', depositSol: 0.1, closed: true }, false)).toBe('ignore');
+  });
+
+  it('an untracked first deposit that is NOT closed still opens (no regression)', () => {
+    expect(
+      route({ instruction: 'InitializePosition', depositSol: 0.1, closed: false }, false),
+    ).toBe('open');
+  });
+});
+
 describe('classifyEventAction — infinite-add gate (default OFF: only the first deposit, removes always followed)', () => {
   const add = { instruction: 'AddLiquidityByStrategy2', depositSol: 0.04 };
 

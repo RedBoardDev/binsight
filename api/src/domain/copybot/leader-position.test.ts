@@ -14,6 +14,7 @@ function ev(p: {
   mint?: string | null;
   symbol?: string | null;
   blockTime?: number;
+  closed?: boolean;
 }): DetectedEvent {
   return {
     signature: p.sig,
@@ -22,7 +23,7 @@ function ev(p: {
     depositSol: p.deposit ?? 0,
     withdrawSol: p.withdraw ?? 0,
     claimSol: p.claim ?? 0,
-    closed: false,
+    closed: p.closed ?? false,
     pool: p.pool ?? 'POOL',
     position: p.position ?? 'POS',
     nonSolMint: p.mint === undefined ? 'MINT' : p.mint,
@@ -165,5 +166,62 @@ describe('LeaderPositionTracker — per-position lifecycle aggregation', () => {
     const t = new LeaderPositionTracker();
     expect(t.apply(ev({ sig: '1', instr: 'InitializePositionPda', position: '' }))).toBeUndefined();
     expect(t.all()).toHaveLength(0);
+  });
+});
+
+describe('LeaderPositionTracker — close keys off the per-position `closed` flag, not the per-tx label (#29)', () => {
+  it('★ a close signaled ONLY by `closed:true` (truncated/unclassifiable label) still marks the position closed', () => {
+    // NO-MISS PILLAR: under 10KB log truncation the instruction label degrades to '(DLMM)' → classifyInstruction
+    // yields null. The OLD label-only tracker left the position OPEN (missing the close). The decoded PositionClose
+    // leg sets `closed:true`, and — via the shared `isCloseEvent`, exactly like dispatch.ts — the tracker honors it.
+    const t = new LeaderPositionTracker();
+    t.apply(ev({ sig: '1', instr: 'AddLiquidityByStrategy2', deposit: 5 }));
+    const p = t.apply(
+      ev({ sig: '2', instr: '(DLMM)', closed: true, withdraw: 4, blockTime: 2000 }),
+    );
+    expect(p?.status).toBe('closed');
+    expect(p?.closedAt).toBe(2000);
+    expect(t.openPositions()).toHaveLength(0);
+  });
+
+  it('★ close A + open B in ONE tx: A closes via its OWN `closed` flag even though the tx label is an ADD', () => {
+    // The per-tx label is ONE value for BOTH legs (finding #37). If the tx is labeled by B's add, a label-only
+    // tracker FAILS to close A. Each leg carries its own `closed`, so A (closed:true) closes while B (closed:false)
+    // opens — the tracker and the router now agree on which position a close belongs to.
+    const t = new LeaderPositionTracker();
+    t.apply(ev({ sig: '0', instr: 'AddLiquidityByStrategy2', deposit: 5, position: 'A' }));
+    const a = t.apply(
+      ev({ sig: 's', instr: 'AddLiquidityByStrategy2', closed: true, withdraw: 5, position: 'A' }),
+    );
+    const b = t.apply(
+      ev({ sig: 's', instr: 'AddLiquidityByStrategy2', closed: false, deposit: 4, position: 'B' }),
+    );
+    expect(a?.status).toBe('closed'); // A closed via its own leg, despite the add-labeled tx
+    expect(b?.status).toBe('open'); // B opened, not spuriously closed
+  });
+
+  it('a partial withdraw (closed:false, unclassifiable label) still keeps the position OPEN — no false close', () => {
+    // The mirror of the above: `closed:false` must NOT close on a truncated label; a partial is not a close.
+    const t = new LeaderPositionTracker();
+    t.apply(ev({ sig: '1', instr: 'AddLiquidityByStrategy2', deposit: 5 }));
+    const p = t.apply(ev({ sig: '2', instr: '(DLMM)', closed: false, withdraw: 2 }));
+    expect(p?.status).toBe('open');
+  });
+});
+
+describe('LeaderPositionTracker — bounded appliedEvents dedup guard (#34)', () => {
+  it('evicts the OLDEST applied key past the cap (bounds long-uptime growth; a recent key stays deduped)', () => {
+    // WHY: the per-(sig,position) guard must not grow forever. Eviction is oldest-first, so only a re-observation of
+    // an event so old it can no longer arrive (the WS/poll overlap is seconds) could re-apply — a bounded
+    // double-count, never a MISS. The `positions` Map (the real state) is never evicted.
+    const t = new LeaderPositionTracker(2); // cap = 2 applied keys
+    t.apply(ev({ sig: '1', instr: 'AddLiquidityByStrategy2', deposit: 5, position: 'A' }));
+    t.apply(ev({ sig: '2', instr: 'AddLiquidityByStrategy2', deposit: 7, position: 'B' }));
+    t.apply(ev({ sig: '2', instr: 'AddLiquidityByStrategy2', deposit: 7, position: 'B' })); // recent → still deduped
+    expect(t.get('B')).toMatchObject({ depositedSol: 7, eventCount: 1 });
+    // A 3rd distinct key evicts the OLDEST (sig1|A); re-observing it is no longer idempotent → it re-applies.
+    t.apply(ev({ sig: '3', instr: 'AddLiquidityByStrategy2', deposit: 9, position: 'C' }));
+    t.apply(ev({ sig: '1', instr: 'AddLiquidityByStrategy2', deposit: 5, position: 'A' }));
+    expect(t.get('A')).toMatchObject({ depositedSol: 10, eventCount: 2 }); // evicted key re-applied → proves the bound
   });
 });

@@ -32,6 +32,7 @@ import {
   shouldAlertDetectionStale,
 } from '@/domain/copybot/status';
 import { classifyInstruction } from '@/domain/dlmm';
+import { hasDlmmEvents } from '@/infrastructure/solana/dlmm/dlmm-event-decoder';
 
 /** The detector surface the hub drives (structural — `LeaderDetector` satisfies it; tests stub it). */
 export interface HubDetector {
@@ -205,12 +206,16 @@ export class LeaderHub {
 
   private watch(entry: LeaderEntry): void {
     this.deps.watcher?.watch(entry.leader, (sig, logs, tx) => {
-      const hasDlmm = logs.some((l) => l.includes(DLMM_PROGRAM_ID));
+      // Gate on the DECODED tx when the WS delivered it (#32): its innerInstructions carry the DLMM CPI events
+      // classify reads (#117) and NEVER truncate, so a big-bundle close whose 10KB `logMessages` dropped the DLMM
+      // marker still fast-tracks (it was silently losing the low-latency path before). Only when the payload is
+      // incomplete (`tx === null`) do we fall back to the (truncatable) log marker. Either way the completeness poll
+      // stays the backstop — the WS is only a best-effort trigger, so a false negative costs latency, never a miss.
+      const hasDlmm = tx ? hasDlmmEvents(tx) : logs.some((l) => l.includes(DLMM_PROGRAM_ID));
       this.deps.log.debug({ sig, hasDlmm, nLogs: logs.length, wsTx: tx !== null }, '📡 ws notif');
       if (hasDlmm)
         // Pass the delivered tx (finding #32): when the payload is complete the detector classifies from it,
-        // skipping the RPC re-fetch; `null` (incomplete) → it falls back to the fetch. Log-gate unchanged — a
-        // truncated-log DLMM tx is still caught by the completeness poll (WS stays a best-effort trigger).
+        // skipping the RPC re-fetch; `null` (incomplete) → it falls back to the fetch.
         entry.detector
           .onWsSignature(sig, tx)
           .catch((e) => this.deps.log.error({ e: (e as Error).message }, 'ws'));

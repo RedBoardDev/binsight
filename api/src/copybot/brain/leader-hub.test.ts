@@ -1,3 +1,6 @@
+import { DLMM_PROGRAM_ID } from '@binsight/shared';
+import { utils } from '@coral-xyz/anchor';
+import type { ParsedTransactionWithMeta } from '@solana/web3.js';
 import { pino } from 'pino';
 import { describe, expect, it } from 'vitest';
 import type { CopyEvents } from '@/copybot/observability/copy-events';
@@ -344,5 +347,95 @@ describe('LeaderHub — pruneDrained + leaderHealth (Inc.3b S6/S8)', () => {
     expect(health.get(L1)?.lastPollAt).not.toBeNull();
     expect(health.get(L2)?.pollFailures).toBe(1);
     expect(health.get(L2)?.lastPollAt).toBeNull(); // never succeeded
+  });
+});
+
+describe('LeaderHub — WS fast-path gate keys off the decoded tx, not the truncatable logs (#31)', () => {
+  const b58 = utils.bytes.bs58;
+  // A real DLMM Event-CPI: [8-byte self-CPI tag][8-byte PositionClose disc][64-byte body] — same layout classify
+  // decodes (#117). Its innerInstructions never truncate, unlike the 10KB `logMessages`.
+  const cpiClose = (): string =>
+    b58.encode(
+      Buffer.concat([
+        Buffer.alloc(8),
+        Buffer.from([255, 196, 16, 107, 28, 202, 53, 128]),
+        Buffer.alloc(64, 3),
+      ]),
+    );
+  const dlmmTx = (): ParsedTransactionWithMeta =>
+    ({
+      blockTime: null,
+      transaction: { signatures: ['sigWs'] },
+      meta: {
+        innerInstructions: [
+          { index: 0, instructions: [{ programId: DLMM_PROGRAM_ID, data: cpiClose() }] },
+        ],
+      },
+    }) as unknown as ParsedTransactionWithMeta;
+  const nonDlmmTx = (): ParsedTransactionWithMeta =>
+    ({
+      blockTime: null,
+      transaction: { signatures: ['sigWs'] },
+      meta: { innerInstructions: [] },
+    }) as unknown as ParsedTransactionWithMeta;
+  const DLMM_LOG = `Program ${DLMM_PROGRAM_ID} invoke [1]`;
+  const TRUNCATED_LOGS = ['Program Vote111111111111111111111111111111111111 invoke [1]']; // DLMM marker dropped
+
+  async function mkWsHarness() {
+    const wsCalls: Array<{ sig: string; tx: ParsedTransactionWithMeta | null }> = [];
+    let captured:
+      | ((sig: string, logs: string[], tx: ParsedTransactionWithMeta | null) => void)
+      | undefined;
+    const watcher: TxWatcher = {
+      watch: (_wallet, cb) => {
+        captured = cb;
+      },
+      unwatch: () => {},
+      onReconnect: () => {},
+    };
+    const hub = new LeaderHub({
+      log,
+      events: { emit: () => {} } as unknown as CopyEvents,
+      makeDetector: (): HubDetector => ({
+        poll: async () => {},
+        onWsSignature: async (sig, tx) => {
+          wsCalls.push({ sig, tx: tx ?? null });
+        },
+      }),
+      getConfigs: () => new Map(),
+      getRuntimes: () => new Map(),
+      retainLeader: () => false,
+      watcher,
+    });
+    await hub.applyLeaderSet(new Set([L1]));
+    if (!captured) throw new Error('watch callback not captured');
+    return { invoke: captured, wsCalls };
+  }
+
+  it('★ a DLMM tx whose logs are TRUNCATED (no DLMM marker) still fast-tracks — the whole point of #31', async () => {
+    // Before: the gate read the 10KB-truncatable logs → a big-bundle close lost the low-latency path. Now it reads
+    // the tx's innerInstructions (which never truncate), so the close still fast-tracks; the poll only backstops.
+    const { invoke, wsCalls } = await mkWsHarness();
+    invoke('sigWs', TRUNCATED_LOGS, dlmmTx());
+    expect(wsCalls).toHaveLength(1);
+    expect(wsCalls[0]?.sig).toBe('sigWs');
+  });
+
+  it('a delivered NON-DLMM tx is NOT fast-tracked (the decoded tx shows no DLMM events, even with DLMM-ish logs)', async () => {
+    const { invoke, wsCalls } = await mkWsHarness();
+    invoke('sigWs', [DLMM_LOG], nonDlmmTx());
+    expect(wsCalls).toHaveLength(0);
+  });
+
+  it('tx null (incomplete payload) falls back to the log marker → fast-tracks (WS best-effort trigger preserved)', async () => {
+    const { invoke, wsCalls } = await mkWsHarness();
+    invoke('sigWs', [DLMM_LOG], null);
+    expect(wsCalls).toHaveLength(1);
+  });
+
+  it('tx null AND non-DLMM logs → not fast-tracked (nothing to trigger on; the completeness poll still covers it)', async () => {
+    const { invoke, wsCalls } = await mkWsHarness();
+    invoke('sigWs', TRUNCATED_LOGS, null);
+    expect(wsCalls).toHaveLength(0);
   });
 });

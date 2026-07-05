@@ -212,6 +212,24 @@ describe('makeDetectionDeps.classify — getParsedTransactions is batched (bound
   });
 });
 
+describe('makeDetectionDeps.classify — a misaligned provider array fails loud (index alignment is the no-miss backbone, #32)', () => {
+  it('★ getParsedTransactions returning FEWER txs than signatures → classify rejects (never a silent skip)', async () => {
+    // WHY (no-miss): the classify array is keyed by INDEX to the input signatures. A provider that drops a slot
+    // shifts every later tx onto the wrong sig — committing the wrong tx for one sig AND missing its real event. It
+    // MUST throw (→ ingest rollback → retry next poll), never advance the cursor over a mis-fetched sig.
+    const getParsedTransactions = vi.fn(async (sigs: string[]) => sigs.slice(1).map(() => null)); // one short
+    const conn = { getParsedTransactions } as unknown as Connection;
+    const deps = makeDetectionDeps({
+      conn,
+      pk: PK,
+      poolReader: {} as never,
+      tokenMeta: { resolve: async () => new Map() } as never,
+      onEvent: () => undefined,
+    });
+    await expect(deps.classify(['s1', 's2'])).rejects.toThrow(/misaligned/i);
+  });
+});
+
 // --- WS fast-path (#32): the WS delivers the full tx; classify must decode from THOSE bytes and skip the RPC
 // re-fetch. Real Event-CPI byte layout ([8 self-CPI tag][8 disc][borsh]), same technique as classify-dlmm-tx.test. ---
 const b58 = utils.bytes.bs58;

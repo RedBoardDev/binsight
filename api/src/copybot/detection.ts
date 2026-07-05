@@ -51,6 +51,15 @@ async function getParsedTransactionsBatched(
   const out: Awaited<ReturnType<Connection['getParsedTransactions']>> = [];
   for (const batch of chunk(signatures, CLASSIFY_TX_BATCH)) {
     const res = await conn.getParsedTransactions(batch, opts);
+    // NO-MISS: getParsedTransactions returns exactly one slot per input sig (null when not-found). A provider that
+    // returns a SHORT/misaligned array would silently shift every later slot onto the wrong signature — a middle
+    // drop attributes tx[n+1] to sig[n], committing the wrong tx for sig[n] AND missing sig[n]'s real event. Fail
+    // loud so the detector rolls back and the next poll retries, never advancing the cursor over a mis-fetched sig.
+    if (res.length !== batch.length) {
+      throw new Error(
+        `getParsedTransactions returned ${res.length} txs for ${batch.length} signatures — misaligned, retrying.`,
+      );
+    }
     for (const tx of res) out.push(tx);
   }
   return out;
@@ -64,6 +73,7 @@ export function makeDetectionDeps(args: {
   onEvent: DetectorDeps['onEvent'];
   persist?: DetectorDeps['persist'];
   onGap?: DetectorDeps['onGap'];
+  onEmitError?: DetectorDeps['onEmitError'];
   /** Optional SHARED pool-meta cache (Inc.3b: one deps object per watched leader — leaders sharing a pool must
    *  not each pay the meta read). Defaults to a per-deps private cache (the single-leader behavior). Holds only
    *  RESOLVED (non-null) metas — a null read is tracked separately under a short TTL (never cached permanently). */
@@ -74,7 +84,7 @@ export function makeDetectionDeps(args: {
   /** Injectable clock (the null-meta TTL). Defaults to `Date.now`; overridden in tests for deterministic expiry. */
   now?: () => number;
 }): DetectorDeps {
-  const { conn, pk, poolReader, tokenMeta, onEvent, persist, onGap } = args;
+  const { conn, pk, poolReader, tokenMeta, onEvent, persist, onGap, onEmitError } = args;
   const now = args.now ?? Date.now;
   const poolMetaCache = args.poolMetaCache ?? new Map<string, LoadedPoolMeta | null>();
   const nullMetaAt = new Map<string, number>(); // lbPair → ms of the last null read (short-TTL negative cache, per-deps)
@@ -183,6 +193,7 @@ export function makeDetectionDeps(args: {
     onEvent,
     persist,
     onGap,
+    onEmitError,
   };
 }
 

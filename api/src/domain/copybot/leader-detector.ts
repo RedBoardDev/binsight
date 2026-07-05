@@ -51,10 +51,20 @@ export interface DetectorDeps {
   /** (optional) A sig was force-past after exhausting `UNRESOLVED_MAX_RETRIES` — the caller emits a LOUD/pinned
    *  observability event ("a leader signature was never resolved — possible missed event; reconcile covers closes"). */
   onGap?(signature: string, attempts: number): void;
+  /** (optional) An `onEvent` consumer threw while emitting a fresh event. The pure core CONTINUES to the next event
+   *  — one throwing consumer must never drop the REST of a batch on the no-miss path (a dropped close is the
+   *  cardinal sin) — and hands the failure here so an impure caller (with a logger) can surface it. */
+  onEmitError?(event: DetectedEvent, err: unknown): void;
 }
 
 /** How many polls we re-list an unresolved (null-tx) sig before accepting a LOUD gap (~2 min at a 15s poll). */
 const UNRESOLVED_MAX_RETRIES = 8;
+/** Cap on the in-flight unresolved-retry map. Normal operation holds only a few unresolved sigs at once; this bounds
+ *  a pathological growth (a sustained RPC read outage returning everything null) without ever evicting a legitimately
+ *  pending sig under normal load. Eviction is safe for no-miss: the evicted sig stays un-reserved in `seen`, so if it
+ *  is re-listed it simply RESTARTS its retry count (more tries before the LOUD gap, never fewer), and a sig that is
+ *  NEVER re-listed was already a dead entry — exactly the leak we are pruning. */
+const PENDING_UNRESOLVED_MAX = 2000;
 
 export class LeaderDetector {
   private readonly seen = new Set<string>();
@@ -76,11 +86,17 @@ export class LeaderDetector {
   constructor(
     private readonly deps: DetectorDeps,
     private readonly seenMax = 5000,
+    private readonly pendingUnresolvedMax = PENDING_UNRESOLVED_MAX,
   ) {}
 
   /** The poll cursor (newest contiguously covered signature). Exposed for tests/diagnostics. */
   get cursorSignature(): string | undefined {
     return this.cursor;
+  }
+
+  /** Count of sigs in the unresolved-retry map. Exposed for tests/diagnostics (bounded by `pendingUnresolvedMax`). */
+  get pendingUnresolvedSize(): number {
+    return this.pendingUnresolved.size;
   }
 
   /**
@@ -162,7 +178,7 @@ export class LeaderDetector {
       if (unresolved.has(sig)) {
         const attempts = (this.pendingUnresolved.get(sig) ?? 0) + 1;
         if (attempts < UNRESOLVED_MAX_RETRIES) {
-          this.pendingUnresolved.set(sig, attempts);
+          this.trackPending(sig, attempts);
           this.seen.delete(sig); // un-reserve → the next poll re-lists and retries
           this.unreserveEpoch++; // same as rollback: a concurrent sweep's snapshot is now stale → it must hold
           retriedThisPass = true;
@@ -176,7 +192,17 @@ export class LeaderDetector {
     }
 
     this.maybeAdvanceCursor(advanceCursor, newest, retriedThisPass, unreserveEpochAtEntry);
-    for (const event of detected) this.deps.onEvent(event, source);
+    // Defense-in-depth on the no-miss path: emit each event under its own guard so one throwing `onEvent` consumer
+    // cannot drop the REST of the batch (a dropped close = the cardinal sin). Events are already persisted before
+    // the cursor commit above, so the audit log is safe regardless; the hub consumer is throw-hardened today — this
+    // makes the guarantee structural, not dependent on the consumer staying that way.
+    for (const event of detected) {
+      try {
+        this.deps.onEvent(event, source);
+      } catch (err) {
+        this.deps.onEmitError?.(event, err);
+      }
+    }
   }
 
   /**
@@ -232,6 +258,17 @@ export class LeaderDetector {
     if (this.seen.size > this.seenMax) {
       const oldest = this.seen.values().next().value; // Set keeps insertion order
       if (oldest !== undefined) this.seen.delete(oldest);
+    }
+  }
+
+  /** Record an unresolved sig's retry count, bounding the map: evict the OLDEST (longest-pending) entry past the
+   *  cap. See PENDING_UNRESOLVED_MAX for why eviction never risks a miss. Re-setting an existing key keeps its
+   *  position (Map insertion order), so the oldest is always the longest-stuck straggler, never the just-set sig. */
+  private trackPending(sig: string, attempts: number): void {
+    this.pendingUnresolved.set(sig, attempts);
+    if (this.pendingUnresolved.size > this.pendingUnresolvedMax) {
+      const oldest = this.pendingUnresolved.keys().next().value; // Map keeps insertion order
+      if (oldest !== undefined && oldest !== sig) this.pendingUnresolved.delete(oldest);
     }
   }
 }

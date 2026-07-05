@@ -39,7 +39,11 @@ export function classifyEventAction(
   // re-opening it on the leader's next add — we deliberately left; a genuinely new copy only starts on a NEW
   // leader position pubkey (a different key, not in the rug-exited set). Without this, the leader's next
   // AddLiquidity (depositSol>0 on the same, now-untracked, position) would route to 'open' and re-enter the rug.
-  if (e.depositSol > 0 && !tracked) return rugExited ? 'ignore' : 'open'; // first capital event on an untracked position → open
+  // A first capital event on an untracked position opens a copy — UNLESS the SAME tx already closed it (`closed`
+  // true: the leader opened AND exited atomically, e.g. a bundled snipe-and-dump), in which case there is nothing
+  // to mirror and copying would enter a position the leader is already out of. Check the close BEFORE routing to
+  // 'open'. Also suppressed on a rug-SL-exited key (we deliberately left; never re-buy the rug).
+  if (e.depositSol > 0 && !tracked) return isCloseEvent(e) || rugExited ? 'ignore' : 'open';
   if (!tracked) return 'ignore'; // event on a position we don't mirror → ignore (reconcile/orphan handles it)
   // full close — checked BEFORE withdraw (a close also withdraws). `e.closed` (a decoded PositionClose leg) is
   // the robust signal: under log truncation `instruction` degrades to '(DLMM)' → `kind` is null, so a close

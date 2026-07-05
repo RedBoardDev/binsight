@@ -738,3 +738,68 @@ describe('LeaderDetector — WS fast-path plumbs the delivered tx into classify 
     expect(seenPrefetch[1]).toBeUndefined();
   });
 });
+
+describe('LeaderDetector — a throwing onEvent consumer never drops the rest of the batch (#33)', () => {
+  it('★ onEvent throwing on ONE event still emits the others; the failure is handed to onEmitError', async () => {
+    // NO-MISS defense-in-depth: the emit loop runs AFTER the cursor commit, so an un-guarded consumer throw could
+    // drop every LATER event in the batch (a dropped close = the cardinal sin). Each emit is now individually
+    // guarded — the hub consumer is throw-hardened today, but the guarantee must be structural.
+    const chrono = ['a', 'b', 'c'];
+    const emitted: string[] = [];
+    const errors: Array<{ sig: string; msg: string }> = [];
+    const deps: DetectorDeps = {
+      async listSignaturesSince(until): Promise<SigInfo[]> {
+        const start = until === undefined ? 0 : chrono.indexOf(until) + 1;
+        return chrono
+          .slice(start)
+          .reverse()
+          .map((signature) => ({ signature }));
+      },
+      async classify(signatures): Promise<ClassifyResult> {
+        const m = new Map<string, DetectedEvent[]>();
+        for (const s of signatures) m.set(s, [fakeEvent(s)]);
+        return { events: m, unresolved: new Set() };
+      },
+      onEvent(event) {
+        if (event.signature === 'b') throw new Error('consumer boom on b');
+        emitted.push(event.signature);
+      },
+      onEmitError(event, err) {
+        errors.push({ sig: event.signature, msg: (err as Error).message });
+      },
+    };
+    const det = new LeaderDetector(deps);
+
+    await det.poll();
+    expect(emitted).toEqual(['a', 'c']); // b threw, yet a AND c (after b) still emitted — not dropped
+    expect(errors).toEqual([{ sig: 'b', msg: 'consumer boom on b' }]); // the throw surfaced, not swallowed silently
+    expect(det.cursorSignature).toBe('c'); // cursor still committed (events persist BEFORE the emit loop)
+  });
+});
+
+describe('LeaderDetector — bounded pendingUnresolved retry map (#34)', () => {
+  it('★ a sustained null-tx outage cannot grow the retry map past its cap (dead-entry / unbounded-growth guard)', async () => {
+    // WHY: over a long RPC read outage EVERY sig can come back unresolved. The retry map must stay bounded. Eviction
+    // is oldest-first and safe — an evicted sig stays un-reserved in `seen`, so it is re-listed and simply restarts
+    // its retry count (never skipped). Here a cap of 2 holds ≤ 2 entries no matter how many sigs are unresolved.
+    const chrono = ['a', 'b', 'c', 'd', 'e'];
+    const deps: DetectorDeps = {
+      async listSignaturesSince(until): Promise<SigInfo[]> {
+        const start = until === undefined ? 0 : chrono.indexOf(until) + 1;
+        return chrono
+          .slice(start)
+          .reverse()
+          .map((signature) => ({ signature }));
+      },
+      async classify(signatures): Promise<ClassifyResult> {
+        return { events: new Map(), unresolved: new Set(signatures) }; // every tx null → every sig unresolved
+      },
+      onEvent() {},
+    };
+    const det = new LeaderDetector(deps, 5000, 2); // pendingUnresolvedMax = 2
+
+    await det.poll();
+    expect(det.pendingUnresolvedSize).toBeLessThanOrEqual(2); // bounded despite 5 concurrently-unresolved sigs
+    expect(det.cursorSignature).toBeUndefined(); // nothing resolved → cursor HELD (no false advance over a null sig)
+  });
+});

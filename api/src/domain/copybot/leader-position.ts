@@ -14,7 +14,7 @@
  * Robust on cold start: an add/remove/claim/close for a position whose open was never seen
  * still creates the position (`openSizeKnown = false`) — we never lose an event, especially a close.
  */
-import { classifyInstruction } from '../dlmm';
+import { isCloseEvent } from './dispatch';
 import type { DetectedEvent } from './events';
 
 export interface LeaderPosition {
@@ -42,12 +42,20 @@ export interface LeaderPosition {
   eventCount: number;
 }
 
+/** Cap on the per-(sig,position) idempotency guard, bounding it like the detector's `seen`. The `positions` Map is
+ *  the real state and is never evicted; this Set only prevents a re-observation (WS+poll overlap, seconds apart)
+ *  from double-applying an event. Evicting the OLDEST key past the cap can therefore only re-admit an event so old
+ *  it can no longer be re-observed — a bounded double-count at worst, NEVER a missed event. */
+const APPLIED_EVENTS_MAX = 10_000; // ≈ 2× the detector's 5000-sig `seen` window (a tx yields up to 2 legs, #37)
+
 export class LeaderPositionTracker {
   private readonly positions = new Map<string, LeaderPosition>();
   /** Keyed by `signature|position`, NOT by signature alone: one tx can carry TWO position-events (finding #37 —
    *  close A + open B), and each must apply exactly once. A per-signature guard would drop the 2nd position's
    *  event (missing its close/remove); a per-(sig,position) guard still collapses WS+poll re-observations. */
   private readonly appliedEvents = new Set<string>();
+
+  constructor(private readonly appliedEventsMax = APPLIED_EVENTS_MAX) {}
 
   /**
    * Applies a detected event. Returns the updated position, or `undefined` if the event carries no
@@ -80,15 +88,19 @@ export class LeaderPositionTracker {
       pos.openedAt = event.blockTime;
     }
 
-    // Status: only a close (re)sets to 'closed'; a partial withdrawal keeps 'open'; 'closed' is terminal.
-    if (classifyInstruction(event.instruction) === 'close' && pos.status === 'open') {
+    // Status: only a close (re)sets to 'closed'; a partial withdrawal keeps 'open'; 'closed' is terminal. The close
+    // signal is the per-position `event.closed` flag (a decoded PositionClose leg), via the shared `isCloseEvent`
+    // — NOT the per-tx `instruction` LABEL. One tx carries ONE label but can close A while opening B (finding #37):
+    // the label can't say WHICH position closed, and 10KB log truncation degrades it to '(DLMM)' (kind null).
+    // Keying off `closed` makes the tracker and the router (dispatch.ts) agree on what a close is.
+    if (isCloseEvent(event) && pos.status === 'open') {
       pos.status = 'closed';
       pos.closedAt = event.blockTime;
     }
 
     pos.lastSignature = event.signature;
     pos.eventCount += 1;
-    this.appliedEvents.add(applyKey);
+    this.markApplied(applyKey);
     return pos;
   }
 
@@ -105,6 +117,17 @@ export class LeaderPositionTracker {
   /** All known positions (open + closed). */
   all(): LeaderPosition[] {
     return [...this.positions.values()];
+  }
+
+  /** Records a (sig, position) as applied, bounding the guard (evict the OLDEST key past the cap — see
+   *  APPLIED_EVENTS_MAX for why that can never drop an event). Mirrors the detector's `markSeen`. Only ever called
+   *  for a NEW key (`apply` early-returns on a re-observation), so the just-added key is never the one evicted. */
+  private markApplied(applyKey: string): void {
+    this.appliedEvents.add(applyKey);
+    if (this.appliedEvents.size > this.appliedEventsMax) {
+      const oldest = this.appliedEvents.values().next().value; // Set preserves insertion order
+      if (oldest !== undefined) this.appliedEvents.delete(oldest);
+    }
   }
 
   private create(position: string): LeaderPosition {
