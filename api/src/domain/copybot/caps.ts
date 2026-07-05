@@ -14,7 +14,7 @@ export interface CapsConfig {
   killSwitchGlobal: boolean;
   killSwitchLeader: boolean; // pause the current leader (CLI = a single leader)
   maxOpenPositions: number | null;
-  maxConcurrentPerToken: number | null; // global; null = unlimited (default)
+  maxConcurrentPerToken: number | null; // per token mint; default 1 (#161 fee-attribution safety, see CAPS_DEFAULTS); null = unlimited
   maxOpensPerWindow: number | null;
   windowMinutes: number | null;
   maxTotalExposureSol: number | null; // optional; null = OFF (default)
@@ -51,7 +51,12 @@ export const CAPS_DEFAULTS: CapsConfig = {
   killSwitchGlobal: false,
   killSwitchLeader: false,
   maxOpenPositions: 8,
-  maxConcurrentPerToken: null,
+  // Default 1 (finding #161): the close-path residual sell reads the WHOLE wallet balance of the mint and books ALL
+  // proceeds to the closing position, so two concurrent same-mint positions would commingle — the first to close is
+  // over-charged the performance fee (up to 2x) while the second's base floors at 0, and the two do NOT net. Capping
+  // concurrency at 1 makes the whole-balance read == that position's OWN token leg, so each fee base counts only its
+  // own realized proceeds. `null` (explicit) restores unlimited for a user who accepts the shared-wallet imprecision.
+  maxConcurrentPerToken: 1,
   maxOpensPerWindow: 10,
   windowMinutes: 10,
   maxTotalExposureSol: null,

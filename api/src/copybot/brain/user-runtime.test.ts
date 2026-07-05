@@ -808,14 +808,19 @@ describe('UserRuntime — per-user, per-token concurrency cap (ULTRACODE #9)', (
     );
   });
 
-  it('the DEFAULT (maxConcurrentPerToken null) never blocks, even with the token fully seeded', () => {
-    // WHY: the count is now computed on every open, but the cap must stay INERT unless configured — the SOL-only
-    // fast path's behavior is unchanged for the default config (no new block, no behavior drift).
-    rtA.registry.open(mk(1, MINT_PT));
-    rtA.registry.open(mk(2, MINT_PT));
-    expect(CONFIG_DEFAULTS.user.caps.maxConcurrentPerToken).toBeNull();
+  it('the DEFAULT (maxConcurrentPerToken 1, finding #161) blocks a SECOND same-mint open; a different token is still allowed', () => {
+    // WHY (#161): the close-path residual sell reads the WHOLE wallet balance of the mint, so two concurrent same-mint
+    // positions commingle proceeds and the 5% performance fee over-charges (up to 2x). The default cap of 1 REJECTS
+    // the second same-mint open before it exists, so each closing position's whole-balance read is its OWN token leg.
+    expect(CONFIG_DEFAULTS.user.caps.maxConcurrentPerToken).toBe(1);
+    rtA.registry.open(mk(1, MINT_PT)); // one same-mint position already open → a further same-mint candidate is rejected
     expect(
-      checkCaps(CONFIG_DEFAULTS.user.caps, rtA.capsState(LEADER, MINT_PT), 0.1, Date.now()).action,
+      checkCaps(CONFIG_DEFAULTS.user.caps, rtA.capsState(LEADER, MINT_PT), 0.1, Date.now()),
+    ).toMatchObject({ action: 'block', reason: 'max_concurrent_per_token' });
+    // A candidate in a DIFFERENT token (0 open) is unaffected — the cap is per token, not global.
+    expect(
+      checkCaps(CONFIG_DEFAULTS.user.caps, rtA.capsState(LEADER, OTHER_MINT), 0.1, Date.now())
+        .action,
     ).toBe('allow');
   });
 
@@ -1269,11 +1274,13 @@ describe('UserRuntime — #140 two-sided fee completeness (buy + sell ledger row
     expect(anyRow).toHaveLength(0); // no ledger row anywhere for a sweep sell
   });
 
-  it('SHARED-WALLET over-attribution: the first same-mint position to close is credited the JOINT proceeds; the second gets none (counted once)', async () => {
-    // WHY (#140 risk): publishSell sells the WHOLE wallet balance of the mint, so with two concurrent same-mint
-    // positions the FIRST close-sell's owner delta is the JOINT proceeds. Attributing it to that one position
-    // over-credits it and under-credits the second — but the joint proceeds are counted EXACTLY ONCE across the pair
-    // (never double). Bounded by maxConcurrentPerToken. This test documents + locks that boundedness.
+  it('SHARED-WALLET over-attribution (finding #161): WITHOUT the cap the first same-mint close is over-charged and the second under-charged — why the default is now 1', async () => {
+    // WHY (#161): publishSell sells the WHOLE wallet balance of the mint. This test FORCES two same-mint positions
+    // through onSellConfirmed directly (bypassing the cap) to lock the exact mis-attribution the cap exists to
+    // prevent: the FIRST close-sell's owner delta is the JOINT proceeds → its base is over-stated (over-charged),
+    // while the second closes on ~0 residual → its base floors at 0 (under-charged). These do NOT net (the per-
+    // position floor eats the second's negative), so the pair is OVER-charged. maxConcurrentPerToken now defaults to
+    // 1 (see CAPS_DEFAULTS) so this overlap cannot arise in production; the assertions below lock the raw mechanism.
     const U = 'fee140-shared';
     const POS1 = 'OUR_SHARE_1';
     const POS2 = 'OUR_SHARE_2';
@@ -1308,6 +1315,49 @@ describe('UserRuntime — #140 two-sided fee completeness (buy + sell ledger row
     // POS2 under-credited: base = 0.4 − (0.5 + 0.5) + 0 = −0.6 SOL → a loser → NO fee row (the joint 1.2 is NOT
     // double-counted here — it was already booked to POS1).
     expect(await feeRows(POS2)).toHaveLength(0);
+  });
+
+  it('finding #161: two same-mint winners the cap SERIALIZES each pay the fee on their OWN proceeds (total == sum, never 2x)', async () => {
+    // WHY (#161 — the fix): maxConcurrentPerToken defaults to 1, so two same-mint positions can never be open at
+    // once — the second opens only AFTER the first has closed and its residual has been swept. Each close-sell then
+    // reads a wallet holding ONLY that position's own token leg, so each fee base counts only its own proceeds. The
+    // pair pays fee_A + fee_B (each on its own base), NOT the ~2x over-charge a concurrent overlap would produce.
+    const U = 'fee161-serialized';
+    const POS1 = 'OUR_161_1';
+    const POS2 = 'OUR_161_2';
+    for (const p of [POS1, POS2])
+      await seed(U, p, [
+        { kind: 'open', out: 500_000_000 },
+        { kind: 'buy', out: 500_000_000 },
+        { kind: 'close', in: 400_000_000 },
+      ]);
+    const { rt, setSellDelta } = await mkRuntime(U);
+    // POS1 closes; the wallet holds ONLY POS1's leg (POS2 is not open yet) → its own proceeds = 0.9 SOL.
+    setSellDelta(900_000_000);
+    shared.pendingSellMints.set('s1', {
+      tokenMint: WSOL,
+      nonSolSymbol: null,
+      pool: 'P',
+      ourPosition: POS1,
+    });
+    await rt.onSellConfirmed({ commandId: 's1', sig: 'S161_1', pool: 'P' });
+    // POS2 opens + closes LATER (serialized by the cap); again the wallet holds ONLY POS2's leg → 0.9 SOL.
+    setSellDelta(900_000_000);
+    shared.pendingSellMints.set('s2', {
+      tokenMint: WSOL,
+      nonSolSymbol: null,
+      pool: 'P',
+      ourPosition: POS2,
+    });
+    await rt.onSellConfirmed({ commandId: 's2', sig: 'S161_2', pool: 'P' });
+    // Each base = (0.4 + 0.9) − (0.5 + 0.5) = +0.3 SOL → fee 0.015 SOL. BOTH charged, on their OWN proceeds.
+    const [fee1] = await feeRows(POS1);
+    const [fee2] = await feeRows(POS2);
+    expect(fee1).toMatchObject({ basePnlLamports: 300_000_000, feeLamports: 15_000_000 });
+    expect(fee2).toMatchObject({ basePnlLamports: 300_000_000, feeLamports: 15_000_000 });
+    // The total is the SUM of the two correct per-position fees — never the joint-proceeds over-charge that a
+    // concurrent same-mint overlap (booking 1.8 SOL to POS1 alone → base 0.8 → fee 0.04) would have produced.
+    expect((fee1?.feeLamports ?? 0) + (fee2?.feeLamports ?? 0)).toBe(30_000_000);
   });
 
   it('finalizeToken2022Open attributes the BUY row to the persisted position (wide/Token-2022 open path)', async () => {

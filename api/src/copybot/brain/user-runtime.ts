@@ -2971,9 +2971,12 @@ export async function createUserRuntime(
    * append is keyed `(userId, sellSig, ourPosition)` and `assessFee` is keyed `(userId, ourPosition)`, so a PEL re-run
    * — and the periodic backstop — can never double-count nor double-charge. Best-effort: a getTransaction/DB blip is
    * swallowed + logged and the backstop re-assesses; the sell-confirm ack is never blocked.
-   * SHARED-WALLET note: `publishSell` sells the WHOLE wallet balance of the mint, so with two concurrent same-mint
-   * positions the FIRST to close is credited the joint proceeds and the second gets none — bounded by
-   * maxConcurrentPerToken (net-neutral across the pair; the total proceeds are counted exactly once).
+   * SHARED-WALLET note (finding #161): `publishSell` sells the WHOLE wallet balance of the mint, so if two same-mint
+   * positions were ever open at once the FIRST to close would be booked BOTH positions' proceeds (its base over-stated)
+   * while the second closes on ~0 residual and its base floors at 0 — the per-position floor (computeFee returns 0 for
+   * base <= 0) means these do NOT net, so the pair would be OVER-charged (up to 2x). This is NOT net-neutral.
+   * `maxConcurrentPerToken` defaults to 1 (see CAPS_DEFAULTS) precisely to forbid that overlap: the whole-balance read
+   * then equals THIS position's own token leg and its base counts only its own proceeds.
    */
   async function appendSellRowAndAssess(ourPosition: string, sig: string): Promise<void> {
     try {
