@@ -11,7 +11,13 @@
  */
 import { pino } from 'pino';
 import { describe, expect, it, vi } from 'vitest';
-import { type FeeSweepDeps, runFeeSweep, type SweepableFee } from './fee-sweep';
+import {
+  type ClosedFeeBackstopDeps,
+  type FeeSweepDeps,
+  runClosedFeeBackstop,
+  runFeeSweep,
+  type SweepableFee,
+} from './fee-sweep';
 
 const log = pino({ level: 'silent' });
 
@@ -106,5 +112,87 @@ describe('runFeeSweep', () => {
     expect(publishFee).toHaveBeenCalledWith('NEW', 7_000_000); // the live fee is published…
     expect(bump).toHaveBeenCalledWith('LIVE', 'NEW'); // …and its attempt counted
     expect(bump).toHaveBeenCalledTimes(1); // the un-bootable OLD row never entered the batch
+  });
+});
+
+/**
+ * Copy-bot · #140 — the no-miss fee backstop. These encode the WHY:
+ *  - the moved fee trigger (sell-confirm) introduced a "never assessed" tail (a close-sell that failed/never
+ *    confirmed) — the backstop assesses any CLOSED-and-unfeed position via its owning runtime, so no closed
+ *    position is ever left permanently unassessed;
+ *  - it queries with `closedBeforeMs = now − grace`, so a normal close-sell's EXACT assess wins first (a fee that
+ *    lands a few minutes late is fine — racing the sell would assess prematurely, missing its proceeds row);
+ *  - an assess failure is swallowed (a fee must never block a close) and the pass continues to the next position;
+ *  - a position whose runtime is torn down is skipped (TOCTOU) and left for the next pass — never lost.
+ */
+describe('runClosedFeeBackstop', () => {
+  function bdepsOf(
+    over: Partial<ClosedFeeBackstopDeps> & {
+      closed?: Array<{ userId: string; ourPosition: string }>;
+    } = {},
+  ): { deps: ClosedFeeBackstopDeps; assessFee: ReturnType<typeof vi.fn> } {
+    const assessFee = vi.fn(async () => {});
+    const rt = { assessFee };
+    const deps: ClosedFeeBackstopDeps = {
+      log,
+      listClosedWithoutFee: async () => over.closed ?? [],
+      batchLimit: 25,
+      graceMs: 300_000,
+      bootedUserIds: () => ['U'],
+      runtimeFor: over.runtimeFor ?? (() => rt),
+      nowMs: () => 1_000_000_000,
+      ...over,
+    };
+    return { deps, assessFee };
+  }
+
+  it('assesses each CLOSED-without-fee position via its OWNING runtime', async () => {
+    const { deps, assessFee } = bdepsOf({
+      closed: [
+        { userId: 'U', ourPosition: 'P1' },
+        { userId: 'U', ourPosition: 'P2' },
+      ],
+    });
+    await runClosedFeeBackstop(deps);
+    expect(assessFee).toHaveBeenCalledWith('P1');
+    expect(assessFee).toHaveBeenCalledWith('P2');
+  });
+
+  it('queries with closedBeforeMs = now − grace (a position closed WITHIN the grace is not re-assessed early)', async () => {
+    const listClosedWithoutFee = vi.fn(
+      async () => [] as Array<{ userId: string; ourPosition: string }>,
+    );
+    const { deps } = bdepsOf({
+      listClosedWithoutFee,
+      bootedUserIds: () => ['A'],
+      graceMs: 300_000,
+      nowMs: () => 1_000_000_000,
+    });
+    await runClosedFeeBackstop(deps);
+    expect(listClosedWithoutFee).toHaveBeenCalledWith(['A'], 25, 1_000_000_000 - 300_000);
+  });
+
+  it('a failing assess is SWALLOWED (never blocks a close) and the pass continues to the next position', async () => {
+    const assessFee = vi.fn(async () => {
+      throw new Error('db blip');
+    });
+    const { deps } = bdepsOf({
+      closed: [
+        { userId: 'U', ourPosition: 'P1' },
+        { userId: 'U', ourPosition: 'P2' },
+      ],
+      runtimeFor: () => ({ assessFee }),
+    });
+    await expect(runClosedFeeBackstop(deps)).resolves.toBeUndefined();
+    expect(assessFee).toHaveBeenCalledTimes(2); // continued past the first failure — no row strands the batch
+  });
+
+  it("a position whose runtime isn't booted is skipped (TOCTOU) — left for the next pass, never lost", async () => {
+    const { deps, assessFee } = bdepsOf({
+      closed: [{ userId: 'GONE', ourPosition: 'P' }],
+      runtimeFor: () => undefined,
+    });
+    await runClosedFeeBackstop(deps);
+    expect(assessFee).not.toHaveBeenCalled();
   });
 });

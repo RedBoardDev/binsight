@@ -16,7 +16,7 @@
  * Crash/restart: nothing to replay — `loadPending()` re-reads the durable 'submitted' rows (signature + expiry +
  * publish context persisted by `markSubmitted` BEFORE the broadcast) and resumes watching them.
  */
-import type { Connection, PublicKey } from '@solana/web3.js';
+import type { Connection } from '@solana/web3.js';
 import { and, eq, isNotNull } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import {
@@ -27,7 +27,11 @@ import {
   type TrackedSubmission,
 } from '@/copybot/coffre/process-command';
 import type { CopyEvents } from '@/copybot/observability/copy-events';
-import { isLedgerKind, ledgerRowFromMeta } from '@/domain/copybot/fee/position-ledger';
+import {
+  accountKeysOf,
+  isLedgerKind,
+  ledgerRowFromMeta,
+} from '@/domain/copybot/fee/position-ledger';
 import type { RedisBus } from '@/infrastructure/bus/redis-bus';
 import type { openDatabase } from '@/infrastructure/persistence/database';
 import type { PositionLedgerRepository } from '@/infrastructure/persistence/position-ledger-repository';
@@ -58,22 +62,6 @@ export interface ConfirmWorkerDeps {
   ledger: PositionLedgerRepository;
   hmacKey: string;
   log: Logger;
-}
-
-/** A tx message exposing its ordered account keys — legacy (`accountKeys`) or v0 (`staticAccountKeys`). */
-interface AccountKeyedMessage {
-  staticAccountKeys?: ReadonlyArray<PublicKey>;
-  accountKeys?: ReadonlyArray<PublicKey>;
-}
-
-/**
- * The ordered account keys of a confirmed tx as base58, layout-robust across a legacy and a v0 message (Inc.4d).
- * The owner (fee-payer) is always among the STATIC keys and aligns by index with `pre/postBalances`, so the static
- * keys suffice to locate the owner's lamport delta — the loaded (ALT) addresses of a v0 tx are irrelevant here. Pure.
- */
-export function accountKeysOf(message: AccountKeyedMessage): string[] {
-  const keys = message.staticAccountKeys ?? message.accountKeys ?? [];
-  return keys.map((k) => k.toBase58());
 }
 
 export class ConfirmWorker {

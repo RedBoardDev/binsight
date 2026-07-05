@@ -43,8 +43,9 @@ export interface DispatchExecutedDeps {
     userId?: string;
   }) => Promise<void>;
   hasPendingReshapeAdd: (commandId: string) => boolean;
-  publishReshapeAddAfterBuy: (commandId: string) => Promise<void>;
-  publishTwoSidedOpenAfterBuy: (commandId: string) => Promise<void>;
+  /** `buySig` (#140) = the landed buy's tx signature → the BUY ledger row's idempotent sig at the open persist. */
+  publishReshapeAddAfterBuy: (commandId: string, buySig?: string) => Promise<void>;
+  publishTwoSidedOpenAfterBuy: (commandId: string, buySig?: string) => Promise<void>;
   hasPendingToken2022Deposit: (commandId: string) => boolean;
   publishDepositAfterPositionCreated: (commandId: string) => Promise<void>;
   onOpenConfirmed: (ourPosition: string) => void;
@@ -52,7 +53,10 @@ export interface DispatchExecutedDeps {
   finalizeToken2022Open: (commandId: string) => Promise<void>;
   onAddConfirmed: (ourPosition: string, commandId: string) => void;
   onClaimConfirmed: (ourPosition: string, commandId: string) => void;
-  onSellConfirmed: (ev: ExecutedEvent) => void;
+  /** #140 — a landed residual SELL: writes the position's SELL ledger row + assesses the DEFERRED fee (SPEC §9),
+   *  plus the observability feed. Async (best-effort inside): a transient failure is swallowed and re-covered by
+   *  the periodic fee backstop, so it never un-ACKs the sell message. */
+  onSellConfirmed: (ev: ExecutedEvent) => Promise<void>;
   /** ev:executed(fee) → the 5% performance-fee transfer landed → mark the fee 'landed' + emit the transparency row
    *  (Inc.4d). Async (a bounded DB write): a transient failure rejects → the message is retried (markLanded is
    *  idempotent). A fee is decoupled from the close — this never affects any close. */
@@ -76,9 +80,11 @@ export async function dispatchExecuted(
       userId: ev.userId,
     });
   } else if (ev?.kind === 'buy' && ev.commandId) {
-    // a token BUY just landed → build+publish the OPEN (open buy) or the RESHAPE ADD (reshape buy).
-    if (deps.hasPendingReshapeAdd(ev.commandId)) await deps.publishReshapeAddAfterBuy(ev.commandId);
-    else await deps.publishTwoSidedOpenAfterBuy(ev.commandId);
+    // a token BUY just landed → build+publish the OPEN (open buy) or the RESHAPE ADD (reshape buy). `ev.sig` (#140)
+    // is the buy's tx signature → the deferred publisher attributes the BUY ledger row to the position it funds.
+    if (deps.hasPendingReshapeAdd(ev.commandId))
+      await deps.publishReshapeAddAfterBuy(ev.commandId, ev.sig);
+    else await deps.publishTwoSidedOpenAfterBuy(ev.commandId, ev.sig);
   } else if (ev?.kind === 'open' && ev.commandId && deps.hasPendingToken2022Deposit(ev.commandId)) {
     // a Token-2022 / split open's empty position (TX1) CONFIRMED → build+publish the deposit (TX2).
     await deps.publishDepositAfterPositionCreated(ev.commandId);
@@ -99,8 +105,9 @@ export async function dispatchExecuted(
     // a fees CLAIM LANDED → FEED `lifecycle.claim_confirmed`. Observability-only.
     deps.onClaimConfirmed(ev.positionPubkey, ev.commandId);
   } else if (ev?.kind === 'sell') {
-    // a residual token→SOL SELL LANDED → FEED `swap.executed`. Observability-only.
-    deps.onSellConfirmed(ev);
+    // a residual token→SOL SELL LANDED → write its position SELL ledger row + assess the DEFERRED fee (#140) AND
+    // FEED `swap.executed`. Best-effort inside; the periodic backstop covers a sell that never confirms.
+    await deps.onSellConfirmed(ev);
   } else if (ev?.kind === 'fee') {
     // the 5% performance-fee transfer LANDED → mark the fee 'landed' + FEED `fee.landed` (Inc.4d, SPEC §9).
     await deps.onFeeConfirmed(ev);

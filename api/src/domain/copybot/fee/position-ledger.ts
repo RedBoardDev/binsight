@@ -16,6 +16,15 @@
 export const LEDGER_KINDS = ['open', 'add', 'remove', 'close', 'claim'] as const;
 export type LedgerKind = (typeof LEDGER_KINDS)[number];
 
+/**
+ * Every kind that CONTRIBUTES to a position's fee base (#140). The 5 position legs (LEDGER_KINDS) PLUS the two
+ * wallet-level SOL ops the brain now attributes to a position: the token `buy` funding a two-sided open/reshape, and
+ * the residual `sell` at close. `buy`/`sell` are deliberately NOT in LEDGER_KINDS / `isLedgerKind` — the coffre's
+ * confirm worker must still SKIP them (a swap is not a position leg it writes on land); the brain appends those two
+ * rows itself at open/sell-confirm. `sumLedgerBase` is kind-agnostic, so all seven fold into the base identically.
+ */
+export type LedgerRowKind = LedgerKind | 'buy' | 'sell';
+
 /** Whether a sign kind moves position SOL and therefore contributes to the fee base. Pure. */
 export function isLedgerKind(kind: string): kind is LedgerKind {
   return (LEDGER_KINDS as readonly string[]).includes(kind);
@@ -29,10 +38,33 @@ export interface LedgerMeta {
 
 /** One derived ledger movement: `lamportsIn` = SOL returned to the owner, `lamportsOut` = SOL the owner deposited. */
 export interface LedgerRow {
-  kind: LedgerKind;
+  kind: LedgerRowKind; // a position leg, OR a buy/sell the brain attributes to the position (#140)
   lamportsIn: number;
   lamportsOut: number;
   sig: string;
+}
+
+/** A minimal account-key shape: anything exposing `toBase58()` (a web3.js `PublicKey`, or a test double). Structural
+ *  so this module stays SDK-free — the caller passes real `PublicKey`s; we only ever read `.toBase58()`. */
+export interface AccountKeyLike {
+  toBase58(): string;
+}
+
+/** A tx message exposing its ordered account keys — legacy (`accountKeys`) or v0 (`staticAccountKeys`). */
+export interface AccountKeyedMessage {
+  staticAccountKeys?: ReadonlyArray<AccountKeyLike>;
+  accountKeys?: ReadonlyArray<AccountKeyLike>;
+}
+
+/**
+ * The ordered account keys of a confirmed tx as base58, layout-robust across a legacy and a v0 message. The owner
+ * (fee-payer) is always among the STATIC keys and aligns by index with `pre/postBalances`, so the static keys
+ * suffice to locate the owner's lamport delta — the loaded (ALT) addresses of a v0 tx are irrelevant here. Pure.
+ * Shared by the coffre (confirm worker: open/add/remove/close/claim rows) AND the brain (sell-confirm row).
+ */
+export function accountKeysOf(message: AccountKeyedMessage): string[] {
+  const keys = message.staticAccountKeys ?? message.accountKeys ?? [];
+  return keys.map((k) => k.toBase58());
 }
 
 /**
@@ -43,7 +75,7 @@ export interface LedgerRow {
  */
 export function ledgerRowFromMeta(
   ownerPk: string,
-  kind: LedgerKind,
+  kind: LedgerRowKind,
   meta: LedgerMeta,
   accountKeys: ReadonlyArray<string>,
   sig: string,

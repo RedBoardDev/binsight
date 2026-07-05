@@ -71,7 +71,7 @@ import {
   settleContinuationFailure,
 } from './dispatch-executed';
 import { resolveExecutedTarget } from './executed-router';
-import { runFeeSweep } from './fee-sweep';
+import { runClosedFeeBackstop, runFeeSweep } from './fee-sweep';
 import { LeaderHub } from './leader-hub';
 import { resolveUserWallet } from './spawn-wallet';
 import { reloadAllUsers } from './user-reload';
@@ -92,6 +92,9 @@ const RECONCILE_OPEN_GRACE_MS = Number(process.env.RECONCILE_OPEN_GRACE_MS ?? '3
 const SWEEP_MS = Number(process.env.SWEEP_MS ?? '60000'); // wallet token→SOL safety-sweep cadence (SYSTEM): the no-miss backstop behind the close-triggered sell (catches any dormant non-SOL left by downtime/a missed close)
 const FEE_SWEEP_MS = Number(process.env.FEE_SWEEP_MS ?? '60000'); // performance-fee sweep cadence (Inc.4d): retry each pending fee transfer until it lands — decoupled from the close, so a generous cadence is fine
 const FEE_SWEEP_BATCH = Number(process.env.FEE_SWEEP_BATCH ?? '25'); // max pending fees published per sweep tick (bounds the per-tick publish burst)
+// #140 — a CLOSED position is only re-assessed by the backstop once it has been closed this long, so a normal
+// close-sell's EXACT assess (onSellConfirmed, ~seconds) wins first; a fee that lands a few minutes late is fine.
+const FEE_BACKSTOP_GRACE_MS = Number(process.env.FEE_BACKSTOP_GRACE_MS ?? '300000'); // 5 min
 const EV_EXECUTED_STREAM = 'copybot:ev:executed';
 const RUG_SL_POLL_MS = 15_000; // rug-SL price-poll cadence: ~4 samples per a 60s window — fast enough to catch a crash, one lbPair read per open pool (economical)
 const CONFIG_POLL_MS = 5_000; // re-read the DB-backed runtime config (sizing/caps/two-sided) so web edits apply live
@@ -130,7 +133,7 @@ const inFlightBuyMints = new Map<string, number>(); // tokenMint → ms the two-
 // ("Swapped X → SOL") WITHOUT an extra RPC. Mirrors the inFlightBuyMints / pendingReshapeAdds stash pattern.
 const pendingSellMints = new Map<
   string,
-  { tokenMint: string; nonSolSymbol: string | null; pool: string }
+  { tokenMint: string; nonSolSymbol: string | null; pool: string; ourPosition: string | null }
 >();
 // The in-flight-buy grace (INFLIGHT_BUY_GRACE_MS) lives in user-runtime.ts since 3b step 6: the close-triggered
 // sell applies the SAME grace as the sweep below (a shared-wallet hazard — see onCloseExecuted).
@@ -471,8 +474,20 @@ async function main(): Promise<void> {
   // Inc.4d (SPEC §9) — publish a transfer for each PENDING performance fee, via the OWNING user's runtime (its
   // wallet + signer). Fully decoupled from the close: a fee failure NEVER blocks/delays a close, and each fee is
   // retried every tick until its transfer lands. No-op when no operator sink is set (nothing is ever 'pending').
-  const feeSweep = (): Promise<void> =>
-    runFeeSweep({
+  const feeSweep = async (): Promise<void> => {
+    // #140 no-miss backstop — FIRST assess any CLOSED position still lacking a fee row (the deferred-sell tail: a
+    // close-sell that failed/never confirmed → onSellConfirmed never assessed). Runs before the pending publish so a
+    // freshly-assessed 'pending' fee is picked up the SAME tick. Idempotent with the sell-confirm assess.
+    await runClosedFeeBackstop({
+      log,
+      listClosedWithoutFee: (bootedUserIds, limit, closedBeforeMs) =>
+        copybotPositionsRepo.listClosedWithoutFee(bootedUserIds, limit, closedBeforeMs),
+      batchLimit: FEE_SWEEP_BATCH,
+      graceMs: FEE_BACKSTOP_GRACE_MS,
+      bootedUserIds: () => [...runtimes.keys()],
+      runtimeFor: (userId) => runtimes.get(userId),
+    });
+    await runFeeSweep({
       log,
       listPending: (bootedUserIds, limit) => feeLedgerRepo.listPending(bootedUserIds, limit),
       batchLimit: FEE_SWEEP_BATCH,
@@ -480,6 +495,7 @@ async function main(): Promise<void> {
       runtimeFor: (userId) => runtimes.get(userId),
       bumpAttempts: (userId, ourPosition) => feeLedgerRepo.bumpAttempts(userId, ourPosition),
     });
+  };
 
   await blockhashCache.start(); // prime + background-refresh so serializeUnsigned never pays a getLatestBlockhash RTT
   // Live priority-fee oracle: started once ANY booted runtime opts in (INC3B-PLAN §3) — env override or the
@@ -669,10 +685,10 @@ async function main(): Promise<void> {
     // is exact); the matching publish handler then routes to the owner and no-ops when none (idempotent replay).
     hasPendingReshapeAdd: (commandId) =>
       [...runtimes.values()].some((r) => r.hasPendingReshapeAdd(commandId)),
-    publishReshapeAddAfterBuy: async (commandId) => {
+    publishReshapeAddAfterBuy: async (commandId, buySig) => {
       const owner = ownerOfCommand(commandId);
       if (!owner) return;
-      await owner.publishReshapeAddAfterBuy(commandId).catch((e) =>
+      await owner.publishReshapeAddAfterBuy(commandId, buySig).catch((e) =>
         settleContinuationFailure(e, () =>
           owner.events.emit('reshape.add_failed', {
             stage: 'reshape',
@@ -685,10 +701,10 @@ async function main(): Promise<void> {
         ),
       );
     },
-    publishTwoSidedOpenAfterBuy: async (commandId) => {
+    publishTwoSidedOpenAfterBuy: async (commandId, buySig) => {
       const owner = ownerOfCommand(commandId);
       if (!owner) return;
-      await owner.publishTwoSidedOpenAfterBuy(commandId).catch((e) =>
+      await owner.publishTwoSidedOpenAfterBuy(commandId, buySig).catch((e) =>
         settleContinuationFailure(e, () =>
           owner.events.emit('lifecycle.open_failed', {
             stage: 'open',
@@ -754,8 +770,11 @@ async function main(): Promise<void> {
       ),
     // Sells are wallet-residual actions: route by the publisher's userId, else fall back to the WALLET context
     // (the SYSTEM runtime) — the stash lives in the shared pendingSellMints either way.
-    onSellConfirmed: (ev) =>
-      (resolveExecutedTarget(runtimes, { userId: ev.userId }) ?? systemRt).onSellConfirmed(ev),
+    onSellConfirmed: async (ev) => {
+      await (resolveExecutedTarget(runtimes, { userId: ev.userId }) ?? systemRt).onSellConfirmed(
+        ev,
+      );
+    },
     // A landed fee transfer → the OWNING user's runtime flips its fee_ledger row 'landed' + emits the feed row.
     // Route by userId, then by the position it was levied on (the ev carries positionPubkey = our_position).
     onFeeConfirmed: async (ev) => {

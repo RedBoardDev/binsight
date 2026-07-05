@@ -25,7 +25,7 @@ function makeDeps(over: Partial<ExecutedBatchDeps> = {}): ExecutedBatchDeps {
     finalizeToken2022Open: vi.fn(async () => {}),
     onAddConfirmed: vi.fn(() => {}),
     onClaimConfirmed: vi.fn(() => {}),
-    onSellConfirmed: vi.fn(() => {}),
+    onSellConfirmed: vi.fn(async () => {}),
     onFeeConfirmed: vi.fn(async () => {}),
     ack: vi.fn(async () => {}),
     onLoopError: vi.fn(() => {}),
@@ -70,15 +70,15 @@ describe('dispatchExecuted — routes each ev:executed kind to its handler', () 
 
   it('buy with a pending reshape add → publishReshapeAddAfterBuy (not the open path)', async () => {
     const deps = makeDeps({ hasPendingReshapeAdd: vi.fn(() => true) });
-    await dispatchExecuted({ kind: 'buy', commandId: 'C' }, deps);
-    expect(deps.publishReshapeAddAfterBuy).toHaveBeenCalledWith('C');
+    await dispatchExecuted({ kind: 'buy', commandId: 'C', sig: 'BUYSIG' }, deps);
+    expect(deps.publishReshapeAddAfterBuy).toHaveBeenCalledWith('C', 'BUYSIG'); // #140 — the buy sig reaches the publisher (BUY ledger row)
     expect(deps.publishTwoSidedOpenAfterBuy).not.toHaveBeenCalled();
   });
 
   it('buy with NO pending reshape add → publishTwoSidedOpenAfterBuy', async () => {
     const deps = makeDeps();
-    await dispatchExecuted({ kind: 'buy', commandId: 'C' }, deps);
-    expect(deps.publishTwoSidedOpenAfterBuy).toHaveBeenCalledWith('C');
+    await dispatchExecuted({ kind: 'buy', commandId: 'C', sig: 'BUYSIG' }, deps);
+    expect(deps.publishTwoSidedOpenAfterBuy).toHaveBeenCalledWith('C', 'BUYSIG'); // #140 — the buy sig reaches the publisher (BUY ledger row)
     expect(deps.publishReshapeAddAfterBuy).not.toHaveBeenCalled();
   });
 
@@ -132,9 +132,9 @@ describe('dispatchExecuted — routes each ev:executed kind to its handler', () 
     const publishTwoSidedOpenAfterBuy = vi.fn(async () => {}); // real handler no-ops when the map entry is absent
     const deps = makeDeps({ publishTwoSidedOpenAfterBuy });
     await expect(
-      dispatchExecuted({ kind: 'buy', commandId: 'ALREADY-DONE' }, deps),
+      dispatchExecuted({ kind: 'buy', commandId: 'ALREADY-DONE', sig: 'BUYSIG' }, deps),
     ).resolves.toBeUndefined();
-    expect(publishTwoSidedOpenAfterBuy).toHaveBeenCalledWith('ALREADY-DONE');
+    expect(publishTwoSidedOpenAfterBuy).toHaveBeenCalledWith('ALREADY-DONE', 'BUYSIG');
   });
 
   it('a throwing handler makes dispatch REJECT (so the batch guard can isolate it)', async () => {
@@ -197,8 +197,8 @@ describe('processExecutedBatch — per-message isolation + non-ack-on-throw (no-
     // WHY: the PEL drain re-delivers a message that already succeeded; its handler no-ops and the batch acks it so
     // it leaves the PEL for good (no infinite redelivery).
     const deps = makeDeps(); // publishTwoSidedOpenAfterBuy is a no-op stub (map entry already consumed)
-    await processExecutedBatch([msg('9', { kind: 'buy', commandId: 'DONE' })], deps);
-    expect(deps.publishTwoSidedOpenAfterBuy).toHaveBeenCalledWith('DONE');
+    await processExecutedBatch([msg('9', { kind: 'buy', commandId: 'DONE', sig: 'BUYSIG' })], deps);
+    expect(deps.publishTwoSidedOpenAfterBuy).toHaveBeenCalledWith('DONE', 'BUYSIG');
     expect(deps.ack).toHaveBeenCalledWith('9');
     expect(deps.onLoopError).not.toHaveBeenCalled();
   });

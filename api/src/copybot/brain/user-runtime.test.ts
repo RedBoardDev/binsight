@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Connection, Keypair, Transaction } from '@solana/web3.js';
-import { inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { pino } from 'pino';
@@ -14,6 +14,7 @@ import { TtlCache } from '@/domain/copybot/ttl-cache';
 import type { LoadedPoolMeta } from '@/domain/dlmm';
 import type { ControlChannel } from '@/infrastructure/bus/control-channel';
 import type { RedisBus } from '@/infrastructure/bus/redis-bus';
+import { CopybotPositionsRepository } from '@/infrastructure/persistence/copybot-positions-repository';
 import type { Database } from '@/infrastructure/persistence/database';
 import { FeeLedgerRepository } from '@/infrastructure/persistence/fee-ledger-repository';
 import { PositionLedgerRepository } from '@/infrastructure/persistence/position-ledger-repository';
@@ -49,6 +50,7 @@ vi.mock('@/infrastructure/solana/dlmm/leader-position-reader', async (orig) => {
 
 import { createDlmmPair } from '@/infrastructure/solana/dlmm/dlmm-tx-builder';
 import { readLeaderPositionShape } from '@/infrastructure/solana/dlmm/leader-position-reader';
+import { runClosedFeeBackstop } from './fee-sweep';
 import { createUserRuntime, INFLIGHT_BUY_GRACE_MS, type SharedBrainDeps } from './user-runtime';
 
 // Fresh in-memory Postgres (PGlite) with the real Drizzle migrations applied — MirrorStore/RugExitStore/EventStore
@@ -496,9 +498,12 @@ describe('UserRuntime — Inc.4d performance-fee collection (SPEC §9)', () => {
     return { rt, published };
   }
 
-  it('close-confirm on a WINNING position assesses 5% → one pending fee_ledger row + a fee.assessed feed event', async () => {
+  it('#140: close-CONFIRM no longer assesses; close-EXECUTED on a no-sell winner assesses 5% → one pending row + fee.assessed', async () => {
     // WHY: the fee is real revenue levied at close from the bot's OWN ledger; a winner owes exactly floor(5%),
-    // recorded once (idempotent) and shown transparently in the feed (SPEC §9).
+    // recorded once (idempotent) + shown transparently (SPEC §9). #140 MOVED the trigger OFF onCloseConfirmed:
+    // markClosed runs BEFORE the residual sell, so assessing there undercounts a two-sided winner still missing its
+    // SELL row. A non-SOL (no-sell) pool — loadPoolMeta → null here — is ledger-complete at onCloseExecuted → THAT is
+    // where it assesses now. This test locks BOTH halves of the move (confirm = silent, executed = assesses).
     const OUR = 'OUR_FEE_WIN';
     // deposit 1.0, close 1.5 → base 0.5 SOL → fee 0.025 SOL.
     await seedLedger(OUR, [
@@ -518,7 +523,16 @@ describe('UserRuntime — Inc.4d performance-fee collection (SPEC §9)', () => {
       upperBin: 1,
       openedAt: Date.now(),
     });
+    // (a) onCloseConfirmed markCloses but does NOT assess (#140) — the ledger may still lack the sell row.
     await rt.onCloseConfirmed(OUR);
+    expect(
+      await db
+        .select()
+        .from(schema.feeLedger)
+        .where(inArray(schema.feeLedger.ourPosition, [OUR])),
+    ).toHaveLength(0);
+    // (b) onCloseExecuted on a non-SOL (no-sell) pool → the ledger is complete → assess NOW.
+    await rt.onCloseExecuted({ pool: 'POOL', positionPubkey: OUR });
     const rows = await db
       .select()
       .from(schema.feeLedger)
@@ -559,7 +573,7 @@ describe('UserRuntime — Inc.4d performance-fee collection (SPEC §9)', () => {
       upperBin: 1,
       openedAt: Date.now(),
     });
-    await rt.onCloseConfirmed(OUR);
+    await rt.onCloseExecuted({ pool: 'POOL', positionPubkey: OUR }); // #140 — no-sell pool → assess trigger
     const rows = await db
       .select()
       .from(schema.feeLedger)
@@ -567,29 +581,18 @@ describe('UserRuntime — Inc.4d performance-fee collection (SPEC §9)', () => {
     expect(rows).toHaveLength(0);
   });
 
-  it('a second close-confirm is idempotent — still exactly ONE fee row (no double-charge)', async () => {
+  it('a second close-EXECUTED (PEL re-delivery) is idempotent — still exactly ONE fee row (no double-charge)', async () => {
+    // WHY: the ev:executed(close) can be re-delivered (transient throw / restart), so onCloseExecuted's assess must
+    // never double-charge — feeLedger.assess is idempotent on (userId, ourPosition). This is the SAME guarantee the
+    // sell-confirm path and the periodic backstop lean on to co-exist without ever charging a position twice.
     const OUR = 'OUR_FEE_IDEM';
     await seedLedger(OUR, [
       { kind: 'open', lamportsOut: 1_000_000_000 },
       { kind: 'close', lamportsIn: 2_000_000_000 },
     ]);
     const { rt } = await feeRuntime();
-    const mirror = {
-      leaderPosition: 'LP_FEE_IDEM',
-      leaderAddress: LEADER,
-      ourPosition: OUR,
-      pool: 'POOL',
-      nonSolSymbol: null,
-      nonSolMint: 'MINT',
-      sizeSol: 1,
-      lowerBin: -1,
-      upperBin: 1,
-      openedAt: Date.now(),
-    };
-    rt.registry.open(mirror);
-    await rt.onCloseConfirmed(OUR);
-    rt.registry.open(mirror); // re-register (as a reconcile re-drive might) and confirm again
-    await rt.onCloseConfirmed(OUR);
+    await rt.onCloseExecuted({ pool: 'POOL', positionPubkey: OUR });
+    await rt.onCloseExecuted({ pool: 'POOL', positionPubkey: OUR }); // re-delivered close → assess again
     const rows = await db
       .select()
       .from(schema.feeLedger)
@@ -1064,5 +1067,353 @@ describe('UserRuntime — a multi-tx open RE-ARMS the duplicate-open reservation
     deposits.delete(CMD); // isolate the reservation from the stash (see above)
     expect(rt.ownsLeaderPosition(LP)).toBe(true); // re-armed at the create→deposit hop
     expect(rt.ownsLeaderPosition('LP_136_UNTOUCHED')).toBe(false);
+  });
+});
+
+describe('UserRuntime — #140 two-sided fee completeness (buy + sell ledger rows, deferred assess, backstop)', () => {
+  const WSOL = 'So11111111111111111111111111111111111111112';
+  const positionLedgerRepo = new PositionLedgerRepository(db);
+  const positionsRepo = new CopybotPositionsRepository(db);
+
+  /** Seed a per-position ledger under `userId` (as the confirm worker / open path would). */
+  async function seed(
+    userId: string,
+    ourPosition: string,
+    legs: Array<{ kind: string; in?: number; out?: number; sig?: string }>,
+  ): Promise<void> {
+    let i = 0;
+    for (const l of legs)
+      await positionLedgerRepo.append({
+        userId,
+        ourPosition,
+        kind: l.kind,
+        lamportsIn: l.in ?? 0,
+        lamportsOut: l.out ?? 0,
+        sig: l.sig ?? `${ourPosition}-seed-${i++}`,
+        confirmedAt: Date.now(),
+      });
+  }
+
+  /** A runtime whose conn.getTransaction returns a sell tx crediting the owner `deltaRef.v` lamports (the sell
+   *  proceeds). `setSellDelta` mutates that delta between onSellConfirmed calls (models the shared-wallet drain). */
+  async function mkRuntime(userId: string) {
+    const deltaRef = { v: 0 };
+    const conn = {
+      getSlot: async () => 0,
+      getTransaction: async () => ({
+        meta: { preBalances: [1_000_000_000], postBalances: [1_000_000_000 + deltaRef.v] },
+        transaction: { message: { staticAccountKeys: [{ toBase58: () => OWNER.toBase58() }] } },
+      }),
+    } as unknown as Connection;
+    const rt = await createUserRuntime(
+      { ...shared, conn, operatorFeeAddress: OPERATOR_FEE },
+      userId,
+      opts,
+    );
+    return {
+      rt,
+      setSellDelta: (v: number) => {
+        deltaRef.v = v;
+      },
+    };
+  }
+
+  const ledgerRows = (userId: string, ourPosition: string) =>
+    db
+      .select()
+      .from(schema.positionLedger)
+      .where(
+        and(
+          eq(schema.positionLedger.userId, userId),
+          eq(schema.positionLedger.ourPosition, ourPosition),
+        ),
+      );
+  const feeRows = (ourPosition: string) =>
+    db
+      .select()
+      .from(schema.feeLedger)
+      .where(inArray(schema.feeLedger.ourPosition, [ourPosition]));
+
+  it('WORKED EXAMPLE: 0.5 SOL leg + 0.5 buy, token pumps, close-sell 0.6 → SELL row appended + fee base = +0.07 SOL', async () => {
+    // WHY (#140 end-to-end): the sell-confirm completes the ledger and assesses the DEFERRED fee. The base is
+    // (close 0.47 + sell 0.6) − (open 0.5 + buy 0.5) = +0.07 SOL → fee = floor(5% · 0.07) = 0.0035 SOL. NOT +0.57
+    // (missing the buy → over-charge) and NOT −0.53 (assessed before the sell → false loser, fee 0).
+    const U = 'fee140-worked';
+    const OUR = 'OUR_WORKED';
+    await seed(U, OUR, [
+      { kind: 'open', out: 500_000_000 }, // SOL leg deposited
+      { kind: 'buy', out: 500_000_000 }, // token leg bought (attributed at open, #140)
+      { kind: 'close', in: 470_000_000 }, // SOL returned at close (written by the confirm worker)
+    ]);
+    const { rt, setSellDelta } = await mkRuntime(U);
+    setSellDelta(600_000_000); // the residual sell credits the owner +0.6 SOL
+    const CMD = 'sell-cmd-worked';
+    shared.pendingSellMints.set(CMD, {
+      tokenMint: WSOL,
+      nonSolSymbol: 'TKN',
+      pool: 'POOL',
+      ourPosition: OUR, // a CLOSE-path sell → attributed to this position
+    });
+    await rt.onSellConfirmed({ commandId: CMD, sig: 'SELLSIG', pool: 'POOL' });
+    // (a) the SELL row landed: lamports_in = the owner's +0.6 delta, attributed to OUR.
+    const rows = await ledgerRows(U, OUR);
+    expect(rows.find((r) => r.kind === 'sell')).toMatchObject({
+      lamportsIn: 600_000_000,
+      lamportsOut: 0,
+      sig: 'SELLSIG',
+    });
+    // (b) the DEFERRED fee is now assessed on the TRUE base +0.07 SOL.
+    const [fee] = await feeRows(OUR);
+    expect(fee).toMatchObject({
+      basePnlLamports: 70_000_000,
+      feeLamports: 3_500_000,
+      state: 'pending',
+    });
+  });
+
+  it('a WALLET-SWEEP sell (ourPosition null) writes NO ledger row and assesses NO fee (it is not a position leg)', async () => {
+    // WHY (#140): only a CLOSE-path sell is attributed to a position; a wallet-residual sweep sell must never write
+    // a row (it would fabricate proceeds for some position). The stash's null ourPosition is the discriminator.
+    const U = 'fee140-sweepsell';
+    const { rt, setSellDelta } = await mkRuntime(U);
+    setSellDelta(999_000_000);
+    const CMD = 'sell-cmd-sweep';
+    shared.pendingSellMints.set(CMD, {
+      tokenMint: WSOL,
+      nonSolSymbol: null,
+      pool: 'POOL',
+      ourPosition: null, // wallet-sweep sell
+    });
+    await rt.onSellConfirmed({ commandId: CMD, sig: 'SWEEPSIG', pool: 'POOL' });
+    const anyRow = await db
+      .select()
+      .from(schema.positionLedger)
+      .where(eq(schema.positionLedger.sig, 'SWEEPSIG'));
+    expect(anyRow).toHaveLength(0); // no ledger row anywhere for a sweep sell
+  });
+
+  it('SHARED-WALLET over-attribution: the first same-mint position to close is credited the JOINT proceeds; the second gets none (counted once)', async () => {
+    // WHY (#140 risk): publishSell sells the WHOLE wallet balance of the mint, so with two concurrent same-mint
+    // positions the FIRST close-sell's owner delta is the JOINT proceeds. Attributing it to that one position
+    // over-credits it and under-credits the second — but the joint proceeds are counted EXACTLY ONCE across the pair
+    // (never double). Bounded by maxConcurrentPerToken. This test documents + locks that boundedness.
+    const U = 'fee140-shared';
+    const POS1 = 'OUR_SHARE_1';
+    const POS2 = 'OUR_SHARE_2';
+    for (const p of [POS1, POS2])
+      await seed(U, p, [
+        { kind: 'open', out: 500_000_000 },
+        { kind: 'buy', out: 500_000_000 },
+        { kind: 'close', in: 400_000_000 },
+      ]);
+    const { rt, setSellDelta } = await mkRuntime(U);
+    // POS1 closes first: its sell drains the whole mint balance (both legs) → owner delta = 1.2 SOL (JOINT).
+    setSellDelta(1_200_000_000);
+    shared.pendingSellMints.set('c1', {
+      tokenMint: WSOL,
+      nonSolSymbol: null,
+      pool: 'P',
+      ourPosition: POS1,
+    });
+    await rt.onSellConfirmed({ commandId: 'c1', sig: 'SELL1', pool: 'P' });
+    // POS2 closes next: nothing left to sell → a 0-delta sell confirm.
+    setSellDelta(0);
+    shared.pendingSellMints.set('c2', {
+      tokenMint: WSOL,
+      nonSolSymbol: null,
+      pool: 'P',
+      ourPosition: POS2,
+    });
+    await rt.onSellConfirmed({ commandId: 'c2', sig: 'SELL2', pool: 'P' });
+    // POS1 over-credited: base = (0.4 + 1.2) − (0.5 + 0.5) = +0.6 SOL → fee 0.03.
+    const [fee1] = await feeRows(POS1);
+    expect(fee1).toMatchObject({ basePnlLamports: 600_000_000, feeLamports: 30_000_000 });
+    // POS2 under-credited: base = 0.4 − (0.5 + 0.5) + 0 = −0.6 SOL → a loser → NO fee row (the joint 1.2 is NOT
+    // double-counted here — it was already booked to POS1).
+    expect(await feeRows(POS2)).toHaveLength(0);
+  });
+
+  it('finalizeToken2022Open attributes the BUY row to the persisted position (wide/Token-2022 open path)', async () => {
+    // WHY (#140): a two-sided open buys the token leg in a SEPARATE tx; that SOL spend must be attributed to the
+    // opened position or the fee at close over-charges. For the Token-2022/wide-classic path the attribution lands
+    // at the mirror finalize (the persist point), keyed by the buy sig threaded create → deposit → mirror.
+    const U = 'fee140-t2022buy';
+    const OUR = Keypair.generate().publicKey.toBase58();
+    const { rt } = await mkRuntime(U);
+    const CMD = 'deposit-cmd-t2022';
+    const mirrors = rt.pendingOpenMapsView().token2022Mirrors as unknown as Map<string, unknown>;
+    mirrors.set(CMD, {
+      leaderPosition: 'LP_T2022_BUY',
+      leader: LEADER,
+      ourPosition: OUR,
+      pool: 'POOL',
+      nonSolSymbol: 'TKN',
+      nonSolMint: WSOL,
+      sizeSol: 1,
+      recordedSizeSol: 1,
+      lower: -5,
+      upper: 5,
+      leaderSizeSol: 1,
+      buyInLamports: 500_000_000,
+      buySig: 'T2022_BUYSIG',
+    });
+    await rt.finalizeToken2022Open(CMD);
+    const rows = await ledgerRows(U, OUR);
+    expect(rows.find((r) => r.kind === 'buy')).toMatchObject({
+      lamportsIn: 0,
+      lamportsOut: 500_000_000,
+      sig: 'T2022_BUYSIG',
+    });
+  });
+
+  it('finalizeToken2022Open writes NO buy row for a ONE-SIDED wide open (no buy funds it)', async () => {
+    // WHY: a one-sided wide open flows through the SAME create→deposit→finalize path but funds no token buy; the
+    // helper must no-op when buyInLamports/buySig are absent — never a fabricated buy cost.
+    const U = 'fee140-onesided';
+    const OUR = Keypair.generate().publicKey.toBase58();
+    const { rt } = await mkRuntime(U);
+    const CMD = 'deposit-cmd-onesided';
+    const mirrors = rt.pendingOpenMapsView().token2022Mirrors as unknown as Map<string, unknown>;
+    mirrors.set(CMD, {
+      leaderPosition: 'LP_ONESIDED',
+      leader: LEADER,
+      ourPosition: OUR,
+      pool: 'POOL',
+      nonSolSymbol: null,
+      nonSolMint: WSOL,
+      sizeSol: 1,
+      recordedSizeSol: 1,
+      lower: -5,
+      upper: 5,
+      leaderSizeSol: 1,
+      // no buyInLamports / buySig — a one-sided open
+    });
+    await rt.finalizeToken2022Open(CMD);
+    expect((await ledgerRows(U, OUR)).some((r) => r.kind === 'buy')).toBe(false);
+  });
+
+  it('publishDepositAfterPositionCreated threads the buy cost + sig deposit → mirror (so the finalize can attribute the BUY row)', async () => {
+    // WHY (#140): the wide/Token-2022 buy is attributed at the finalize, which reads buyInLamports/buySig off the
+    // mirror stash — so the create→deposit hop MUST carry them forward. slots() (getSlot) succeeds here so the flow
+    // reaches the mirror set (which precedes the publish); the publish then rejects (offline bus) and we assert the
+    // mirror stash already carries the buy fields.
+    const { rt } = await mkRuntime('fee140-thread'); // getSlot succeeds → reaches the mirror set; bus rejects after
+    const CMD = 'create-cmd-thread';
+    const deposits = rt.pendingOpenMapsView().token2022Deposits as unknown as Map<string, unknown>;
+    deposits.set(CMD, {
+      e: {
+        signature: 'sig-thread',
+        blockTime: 1,
+        instruction: 'AddLiquidityByStrategy2',
+        depositSol: 1,
+        depositTokenRaw: 0,
+        withdrawSol: 0,
+        claimSol: 0,
+        closed: false,
+        pool: Keypair.generate().publicKey.toBase58(),
+        position: 'LP_THREAD',
+        nonSolMint: WSOL,
+        nonSolSymbol: 'TKN',
+      },
+      leader: LEADER,
+      lower: -5,
+      upper: 5,
+      sizeSol: 1,
+      recordedSizeSol: 1,
+      prebuiltDeposit: new Transaction(), // SPLIT path → no createDlmmPair/buildAddByWeight
+      buyInLamports: 500_000_000,
+      buySig: 'THREAD_BUYSIG',
+    });
+    await rt.publishDepositAfterPositionCreated(CMD).catch(() => {}); // reaches the mirror set, then the bus/serialize rejects
+    const mirrors = rt.pendingOpenMapsView().token2022Mirrors as unknown as Map<
+      string,
+      { buyInLamports?: number; buySig?: string }
+    >;
+    const [m] = [...mirrors.values()];
+    expect(m).toMatchObject({ buyInLamports: 500_000_000, buySig: 'THREAD_BUYSIG' });
+  });
+
+  it('a getTransaction failure on the sell-confirm still ASSESSES the fee (best-effort row) — never leaves it unassessed', async () => {
+    // WHY (#140 robustness): the SELL row is best-effort. If the sell tx meta cannot be read, we still assess on the
+    // ledger as it stands (open + close) — the SAME base the backstop would compute — rather than silently skip.
+    const U = 'fee140-selltxfail';
+    const OUR = 'OUR_SELLTXFAIL';
+    await seed(U, OUR, [
+      { kind: 'open', out: 1_000_000_000 },
+      { kind: 'close', in: 1_400_000_000 }, // base +0.4 SOL without a sell row
+    ]);
+    const conn = {
+      getSlot: async () => 0,
+      getTransaction: async () => {
+        throw new Error('rpc 429');
+      },
+    } as unknown as Connection;
+    const rt = await createUserRuntime(
+      { ...shared, conn, operatorFeeAddress: OPERATOR_FEE },
+      U,
+      opts,
+    );
+    shared.pendingSellMints.set('cx', {
+      tokenMint: WSOL,
+      nonSolSymbol: null,
+      pool: 'P',
+      ourPosition: OUR,
+    });
+    await rt.onSellConfirmed({ commandId: 'cx', sig: 'SIGX', pool: 'P' });
+    expect(
+      await db.select().from(schema.positionLedger).where(eq(schema.positionLedger.sig, 'SIGX')),
+    ).toHaveLength(0); // no sell row (getTransaction threw)…
+    const [fee] = await feeRows(OUR);
+    expect(fee).toMatchObject({ basePnlLamports: 400_000_000, feeLamports: 20_000_000 }); // …but the fee IS assessed
+  });
+
+  it('DEFERRED-then-FAILED sell → the periodic backstop still assesses (no permanently-unassessed tail), idempotently', async () => {
+    // WHY (#140 no-miss): moving the trigger to the sell-confirm created a "never assessed" path — a close-sell that
+    // FAILS to land means onSellConfirmed never runs. FAILURE INJECTED: we drive markClosed + a WINNING ledger but
+    // NEVER call onSellConfirmed (the sell failed) → the ONLY thing that can assess this position is the backstop.
+    // And a second backstop pass must not double-charge (idempotent via the anti-join + feeLedger.assess).
+    const U = 'fee140-backstop';
+    const LP = 'LP_BACKSTOP';
+    const OUR = 'OUR_BACKSTOP';
+    const { rt } = await mkRuntime(U);
+    await seed(U, OUR, [
+      { kind: 'open', out: 1_000_000_000 },
+      { kind: 'buy', out: 500_000_000 },
+      { kind: 'close', in: 2_000_000_000 }, // base = 2.0 − (1.0 + 0.5) = +0.5 SOL → fee 0.025
+    ]);
+    await rt.store.saveOpen({
+      leaderPosition: LP,
+      leaderAddress: LEADER,
+      ourPosition: OUR,
+      pool: 'POOL',
+      nonSolSymbol: 'TKN',
+      nonSolMint: WSOL,
+      sizeSol: 1,
+      lowerBin: -1,
+      upperBin: 1,
+      openedAt: Date.now(),
+      status: 'open' as const,
+    });
+    await rt.store.markClosed(LP); // CLOSED on-chain, but the sell failed → NEVER assessed
+    expect(await feeRows(OUR)).toHaveLength(0); // precondition: unassessed
+    const backstop = () =>
+      runClosedFeeBackstop({
+        log,
+        listClosedWithoutFee: (b, l, c) => positionsRepo.listClosedWithoutFee(b, l, c),
+        batchLimit: 25,
+        graceMs: 0,
+        nowMs: () => Date.now() + 3_600_000, // clock past the grace so this just-closed position is actionable
+        bootedUserIds: () => [U],
+        runtimeFor: (uid) => (uid === U ? rt : undefined),
+      });
+    await backstop();
+    const [fee] = await feeRows(OUR);
+    expect(fee).toMatchObject({
+      basePnlLamports: 500_000_000,
+      feeLamports: 25_000_000,
+      state: 'pending',
+    });
+    await backstop(); // second pass → the anti-join now excludes OUR (it has a fee row) → no double-charge
+    expect(await feeRows(OUR)).toHaveLength(1);
   });
 });

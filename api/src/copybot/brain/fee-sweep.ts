@@ -59,3 +59,53 @@ export async function runFeeSweep(deps: FeeSweepDeps): Promise<void> {
       );
   }
 }
+
+/** The minimal runtime surface the backstop drives — the OWNING user re-assesses one of ITS closed positions. */
+export interface ClosedFeeBackstopRuntime {
+  assessFee(ourPosition: string): Promise<void>;
+}
+
+export interface ClosedFeeBackstopDeps {
+  log: Logger;
+  /** CLOSED-and-unfeed positions (owned by a booted runtime) closed before `closedBeforeMs` — the anti-join query. */
+  listClosedWithoutFee(
+    bootedUserIds: string[],
+    limit: number,
+    closedBeforeMs: number,
+  ): Promise<Array<{ userId: string; ourPosition: string }>>;
+  batchLimit: number;
+  /** Skip positions closed within this grace so a normal close-sell's EXACT assess (onSellConfirmed) wins first. */
+  graceMs: number;
+  bootedUserIds(): string[];
+  runtimeFor(userId: string): ClosedFeeBackstopRuntime | undefined;
+  /** Injected clock (tests). */
+  nowMs?: () => number;
+}
+
+/**
+ * ONE backstop pass (#140): assess any CLOSED position that STILL lacks a fee_ledger row (past the grace) via its
+ * owning runtime. The no-miss net for the DEFERRED-sell tail — a residual sell that FAILED or never confirmed means
+ * onSellConfirmed never assessed, so this catches the position and assesses it on the ledger as it stands. Idempotent
+ * with the sell-confirm path (feeLedger.assess keys on (userId, ourPosition)) → the two can never double-charge. A
+ * failure is swallowed per row (never blocks a close, never aborts the batch); the row is retried next pass.
+ */
+export async function runClosedFeeBackstop(deps: ClosedFeeBackstopDeps): Promise<void> {
+  const closedBeforeMs = (deps.nowMs ?? Date.now)() - deps.graceMs;
+  const rows = await deps.listClosedWithoutFee(
+    deps.bootedUserIds(),
+    deps.batchLimit,
+    closedBeforeMs,
+  );
+  for (const r of rows) {
+    const rt = deps.runtimeFor(r.userId);
+    if (!rt) continue; // runtime torn down between the query and here (TOCTOU) → retry next pass
+    await rt
+      .assessFee(r.ourPosition)
+      .catch((e) =>
+        deps.log.warn(
+          { userId: r.userId, ourPosition: r.ourPosition, err: (e as Error).message },
+          'fee backstop assess failed — retried next pass (never blocks a close)',
+        ),
+      );
+  }
+}
