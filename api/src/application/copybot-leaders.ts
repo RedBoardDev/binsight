@@ -48,16 +48,23 @@ export class CopybotLeadersService {
   }
 
   /**
-   * Add a wizard-configured leader (STOPPED). Re-runs the DETERMINISTIC validation (guards a duplicate/own-wallet
-   * race between validate and submit) before persisting; the on-chain activity check is trusted from `validate`
-   * (it isn't repeated on write — the wizard already gated on it). Returns the same validation shape on rejection.
+   * Add a wizard-configured leader (STOPPED). The FIRST write for a brand-new user bases on `seedIfAbsent`, NOT
+   * `load` (finding #159): `load` returns the ARMED `CONFIG_DEFAULTS` for a missing row (`user.enabled:true` + the
+   * operator's default leader ENABLED), so persisting on top of it would silently arm a fresh non-SYSTEM user onto a
+   * leader they never chose. `seedIfAbsent` instead seeds a non-SYSTEM user STOPPED (`user.enabled:false` + the
+   * default leader STOPPED) on first write, returns an EXISTING row unchanged (`load` semantics), and still arms
+   * SYSTEM (idx24). The appended leader is always STOPPED, so a fresh user ends up fully inert until they explicitly
+   * arm. Re-runs the DETERMINISTIC validation (guards a duplicate/own-wallet race between validate and submit)
+   * before persisting; the on-chain activity check is trusted from `validate` (it isn't repeated on write — the
+   * wizard already gated on it). Returns the same validation shape on rejection.
    */
   async create(
     userId: string,
     input: NewLeaderInput,
     ownAddress: string | null,
   ): Promise<LeaderValidation> {
-    const cfg = await this.deps.configStore.load(userId);
+    // FIRST write bases on the tenant seed (non-SYSTEM ⇒ STOPPED), never the armed load-defaults for a missing row (finding #159).
+    const cfg = await this.deps.configStore.seedIfAbsent(userId);
     const reason = leaderRejectReason({
       address: input.address,
       ownAddress,
