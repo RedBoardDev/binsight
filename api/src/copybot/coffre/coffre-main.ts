@@ -97,6 +97,36 @@ export function routeVerdict(verdict: {
   return { action: 'deadLetter', code: deadLetterCode(verdict.reason) };
 }
 
+/** A single lease-renew tick's outcome: the CAS renew either RESOLVED (ok true = still ours / false = lost or taken)
+ *  or THREW (`error` — Redis unreachable, e.g. an outage). */
+export type LeaseRenewOutcome = { ok: boolean } | { error: string };
+
+/** What a lease-renew tick must do next. */
+export type LeaseRenewAction =
+  | { action: 'renewed' } // the lease is still ours → refresh the last-success clock, keep signing
+  | { action: 'exit'; reason: 'lost' | 'expired' } // exclusivity provably gone → exit (split-brain guard, #150)
+  | { action: 'retry' }; // a TRANSIENT renew error, still within the TTL → log and retry next tick
+
+/**
+ * PURE (#150): decide a lease-renew tick. The split-brain guard must fire not only when Redis EXPLICITLY reports the
+ * lease lost (`ok=false`) but ALSO when a renew merely keeps ERRORING: once `nowMs - lastSuccessMs > ttlMs`, a renew
+ * has not SUCCEEDED within the TTL, so the lease has provably EXPIRED at Redis — a second coffre can now acquire it
+ * and DOUBLE-SIGN — regardless of WHY the renews failed. Only a transient error still inside the TTL is safe to
+ * retry; without this an outage longer than the TTL silently loses exclusivity forever (the old `.catch` just logged).
+ */
+export function planLeaseRenew(
+  outcome: LeaseRenewOutcome,
+  nowMs: number,
+  lastSuccessMs: number,
+  ttlMs: number,
+): LeaseRenewAction {
+  if ('error' in outcome)
+    return nowMs - lastSuccessMs > ttlMs
+      ? { action: 'exit', reason: 'expired' }
+      : { action: 'retry' };
+  return outcome.ok ? { action: 'renewed' } : { action: 'exit', reason: 'lost' };
+}
+
 /** A real user's Privy wallet identity (the activation table lands in wave 4b; 4a resolves null for every user). */
 export interface UserWallet {
   walletId: string; // Privy wallet id — signTransaction needs the id, not the address
@@ -238,17 +268,69 @@ export function createMessageHandler(
   };
 }
 
+// Fail-closed numeric-env bounds (#151). A bare Number() lets a typo (e.g. `MAX_TRADE_SOL=0,5`, comma) become NaN,
+// which then silently corrupts the sign path: Wall B's BigInt(lamports) THROWS for every command → infinite redrive,
+// `sizeSol > NaN` is false → the re-clamp never fires, and a NaN SIGN_RETRY_MAX makes `attempt <= NaN` false → the
+// sign loop never runs. So every numeric env is validated at boot and the vault REFUSES to start on a bad value,
+// exactly like the SOLANA_HTTP_URL / bus-key boot guards.
+const MIN_MAX_TRADE_SOL = 0; // a trade-size ceiling (SOL) must be strictly > this; a 0/negative one clamps every trade to nothing
+const MIN_SIGN_RETRY_MAX = 0; // 0 = exactly one sign+land attempt (no retry); negative/NaN would disable the sign loop
+const MIN_SIGN_RETRY_DELAY_MS = 0; // a non-negative backoff (ms) between sign/land retries
+const DEFAULT_SIGN_RETRY_MAX = 2; // sign+land attempts when land THROWS (no signature produced)
+const DEFAULT_SIGN_RETRY_DELAY_MS = 1500; // backoff (ms) between those retries
+
+/** The coffre's validated numeric runtime tunables (#151). */
+export type CoffreNumericConfig = {
+  maxTradeSol?: number; // MAX_TRADE_SOL re-clamp ceiling (SOL); undefined ⇒ each user's DB maxTradeSizeSol wins
+  retryMax: number; // SIGN_RETRY_MAX
+  retryDelayMs: number; // SIGN_RETRY_DELAY_MS
+};
+
+/**
+ * PURE (#151): parse + validate the coffre's numeric envs, FAIL-CLOSED. A bare Number() would let a typo like
+ * `MAX_TRADE_SOL=0,5` become NaN and silently corrupt the sign path (BigInt(NaN) throws in Wall B for every command
+ * → infinite redrive; a NaN SIGN_RETRY_MAX makes the sign loop never run). Returns the validated numbers, or a single
+ * `{ error }` the boot caller logs + exits(1) on — exactly like the SOLANA_HTTP_URL / bus-key guards.
+ */
+export function parseCoffreNumericConfig(env: {
+  MAX_TRADE_SOL?: string;
+  SIGN_RETRY_MAX?: string;
+  SIGN_RETRY_DELAY_MS?: string;
+}): CoffreNumericConfig | { error: string } {
+  // MAX_TRADE_SOL is OPTIONAL (unset ⇒ each user's DB maxTradeSizeSol wins). When set it must be a finite SOL amount
+  // strictly > 0 (fractional allowed — 0.5 is valid); a 0/negative/NaN ceiling would break the Wall B re-clamp.
+  let maxTradeSol: number | undefined;
+  if (env.MAX_TRADE_SOL !== undefined) {
+    const n = Number(env.MAX_TRADE_SOL);
+    if (!Number.isFinite(n) || n <= MIN_MAX_TRADE_SOL)
+      return {
+        error: `MAX_TRADE_SOL must be a finite number > ${MIN_MAX_TRADE_SOL} (got "${env.MAX_TRADE_SOL}")`,
+      };
+    maxTradeSol = n;
+  }
+  // SIGN_RETRY_MAX: a non-negative INTEGER attempt count (0 ⇒ exactly one attempt). NaN/negative/fractional would
+  // break the `attempt <= retryMax` loop bound → nothing (or the wrong count) signed.
+  const retryMax = Number(env.SIGN_RETRY_MAX ?? String(DEFAULT_SIGN_RETRY_MAX));
+  if (!Number.isInteger(retryMax) || retryMax < MIN_SIGN_RETRY_MAX)
+    return {
+      error: `SIGN_RETRY_MAX must be an integer >= ${MIN_SIGN_RETRY_MAX} (got "${env.SIGN_RETRY_MAX}")`,
+    };
+  // SIGN_RETRY_DELAY_MS: a non-negative INTEGER backoff (ms) between sign/land retries.
+  const retryDelayMs = Number(env.SIGN_RETRY_DELAY_MS ?? String(DEFAULT_SIGN_RETRY_DELAY_MS));
+  if (!Number.isInteger(retryDelayMs) || retryDelayMs < MIN_SIGN_RETRY_DELAY_MS)
+    return {
+      error: `SIGN_RETRY_DELAY_MS must be an integer >= ${MIN_SIGN_RETRY_DELAY_MS} (got "${env.SIGN_RETRY_DELAY_MS}")`,
+    };
+  return { maxTradeSol, retryMax, retryDelayMs };
+}
+
 const cfg = {
   httpUrl: process.env.SOLANA_HTTP_URL ?? '',
   redisUrl: process.env.REDIS_URL ?? 'redis://localhost:6385',
   dbUrl: process.env.DATABASE_URL ?? 'postgres://meteora:meteora@localhost:5435/meteora',
   keypairPath: process.env.COPIER_KEYPAIR_PATH ?? '.wallets/copier-test.json',
   owner: process.env.COPIER_OWNER ?? 'Ybbt2Td4TjxwpzvuicbP9ANizBwAJzqjuRmRrvDh9zz',
-  maxTradeSolEnv:
-    process.env.MAX_TRADE_SOL !== undefined ? Number(process.env.MAX_TRADE_SOL) : undefined, // env override; else the DB config's maxTradeSizeSol
   signingEnabled: process.env.SIGNING_ENABLED === 'true', // Inc.4 ; false = dry-run
-  retryMax: Number(process.env.SIGN_RETRY_MAX ?? '2'), // sign+land attempts when land THROWS (no sig produced); a returned-but-unconfirmed sig is NOT retried in place (double-apply risk)
-  retryDelayMs: Number(process.env.SIGN_RETRY_DELAY_MS ?? '1500'),
   jitoBundleUrl: process.env.COPYBOT_JITO_BUNDLE_URL, // block-engine URL; absent ⇒ never bundle (plain RPC land)
   jitoEnabledEnv:
     process.env.COPYBOT_JITO !== undefined ? process.env.COPYBOT_JITO === 'true' : undefined, // env override of the DB jitoEnabled
@@ -323,6 +405,13 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   const hmacKey = busKey.key;
+  // Fail-closed on the numeric envs (#151): a bare Number() would turn a typo like `MAX_TRADE_SOL=0,5` into NaN and
+  // silently corrupt the sign path (BigInt(NaN) throws for every command; a NaN retryMax disables the sign loop).
+  const numeric = parseCoffreNumericConfig(process.env);
+  if ('error' in numeric) {
+    log.error(numeric.error);
+    process.exit(1);
+  }
   // THE-TRAP: the loaded key MUST be the expected copier wallet (fail-closed otherwise).
   const copier = loadCopierKeypair(cfg.keypairPath, cfg.owner);
   const conn = new Connection(cfg.httpUrl, 'confirmed');
@@ -360,7 +449,7 @@ async function main(): Promise<void> {
   const policyFor = async (userId: string): Promise<UserSignPolicy> => {
     const c = await configFor(userId);
     return {
-      maxTradeSol: cfg.maxTradeSolEnv ?? c.user.sizing.maxTradeSizeSol,
+      maxTradeSol: numeric.maxTradeSol ?? c.user.sizing.maxTradeSizeSol,
       jitoBundleUrl: (cfg.jitoEnabledEnv ?? c.user.jitoEnabled) ? cfg.jitoBundleUrl : undefined,
     };
   };
@@ -384,24 +473,36 @@ async function main(): Promise<void> {
     );
     process.exit(1);
   }
-  // Renew on a ttl/2 timer so a live holder never loses the lease. If a renew ever fails (our lease expired and was
-  // taken by another instance, e.g. after a long Redis outage), we lost exclusivity → exit to avoid a split-brain
-  // double-sign. A transient renew error is logged and retried on the next tick (ioredis retries the connection).
+  // Renew on a ttl/2 timer so a live holder never loses the lease. The split-brain guard (#150): a renew that
+  // RESOLVES !ok (our lease expired and was taken/gone) OR one that keeps ERRORING until `now - lastSuccessfulRenew`
+  // exceeds the TTL (a Redis outage longer than the lease — the lease has provably expired at Redis, so a second
+  // coffre can acquire it) BOTH mean exclusivity is lost → exit to avoid a double-sign. Only a transient error still
+  // within the TTL is logged and retried on the next tick (ioredis retries the connection under us).
+  let lastSuccessfulRenewMs = Date.now(); // the lease is ours as of the acquire above; renews must keep it fresh
   const leaseTimer = setInterval(() => {
+    const decide = (outcome: LeaseRenewOutcome): void => {
+      const step = planLeaseRenew(outcome, Date.now(), lastSuccessfulRenewMs, LEASE_TTL_MS);
+      if (step.action === 'renewed') {
+        lastSuccessfulRenewMs = Date.now();
+        return;
+      }
+      if (step.action === 'retry') {
+        log.error(
+          { err: (outcome as { error: string }).error },
+          'lease renew failed (transient, still within TTL — will retry next tick)',
+        );
+        return;
+      }
+      log.error(
+        { key: LEASE_KEY, instanceId, reason: step.reason },
+        '🔒 lost the singleton lease — exiting to avoid a split-brain double-sign',
+      );
+      process.exit(1);
+    };
     void bus
       .renewLease(LEASE_KEY, instanceId, LEASE_TTL_MS)
-      .then((ok) => {
-        if (!ok) {
-          log.error(
-            { key: LEASE_KEY, instanceId },
-            '🔒 lost the singleton lease (expired/taken) — exiting to avoid a split-brain double-sign',
-          );
-          process.exit(1);
-        }
-      })
-      .catch((e) =>
-        log.error({ err: (e as Error).message }, 'lease renew failed (will retry next tick)'),
-      );
+      .then((ok) => decide({ ok }))
+      .catch((e) => decide({ error: (e as Error).message }));
   }, LEASE_RENEW_MS);
   const blockhashCache = new BlockhashCache(async () => {
     const b = await conn.getLatestBlockhash();
@@ -489,8 +590,8 @@ async function main(): Promise<void> {
     signingEnabled: cfg.signingEnabled,
     operatorFeeAddress: cfg.operatorFeeAddress, // Inc.4d Wall B fee-sink allowlist (coffre-trusted, not the request)
     hmacKey,
-    retryMax: cfg.retryMax,
-    retryDelayMs: cfg.retryDelayMs,
+    retryMax: numeric.retryMax,
+    retryDelayMs: numeric.retryDelayMs,
     onSubmitted: (t) => confirmWorker.track(t), // lane → worker hand-off at the broadcast (3c)
     // Inc.4e — per-user Privy CUSTODY sign-failure side effects (outage #20 / revoked #21), isolated per user:
     //  - outage:  flip the heartbeat `signingAvailable` flag + beat NOW so the web banner appears fast. NO automatism.

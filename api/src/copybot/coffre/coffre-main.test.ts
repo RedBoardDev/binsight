@@ -8,7 +8,10 @@ import {
   createMessageHandler,
   createSignerResolver,
   deadLetterCode,
+  type LeaseRenewOutcome,
   type MessageHandlerDeps,
+  parseCoffreNumericConfig,
+  planLeaseRenew,
   reloadUserConfigs,
   routeVerdict,
   type SignerResolverDeps,
@@ -385,5 +388,115 @@ describe('coffre reloadUserConfigs — a DB blip KEEPS the previous config, neve
     });
     expect(userConfigs.get('A')).toEqual({ v: 1 }); // A kept its previous
     expect(userConfigs.get('B')).toBe(good); // B still refreshed despite A's failure
+  });
+});
+
+// #150 — planLeaseRenew is the split-brain guard for the singleton coffre lease. The coffre is the SOLE signer; if a
+// second instance ever acquires the (expired) lease, both sign in-flight commands = a DOUBLE-SIGN of real money. The
+// guard must fire not only when Redis EXPLICITLY reports the lease lost, but ALSO when a renew merely keeps ERRORING
+// (a Redis outage) for longer than the TTL — at that point the lease has provably expired at Redis and can be taken.
+describe('coffre planLeaseRenew — split-brain exit on renew errors past the TTL (#150)', () => {
+  const TTL = 30_000;
+  const LAST = 1_000_000; // the moment of the last SUCCESSFUL renew (the "clock" is anchored here)
+
+  it('a healthy renew (ok=true) → renewed (refresh the last-success clock, keep signing)', () => {
+    expect(planLeaseRenew({ ok: true }, LAST + 1, LAST, TTL)).toEqual({ action: 'renewed' });
+  });
+
+  it('Redis EXPLICITLY reports the lease gone/taken (ok=false) → exit "lost", as before', () => {
+    expect(planLeaseRenew({ ok: false }, LAST + 1, LAST, TTL)).toEqual({
+      action: 'exit',
+      reason: 'lost',
+    });
+  });
+
+  it('a TRANSIENT renew error still within the TTL → retry (a brief blip must NOT kill the sole signer)', () => {
+    const err: LeaseRenewOutcome = { error: 'ECONNREFUSED' };
+    expect(planLeaseRenew(err, LAST + TTL - 1, LAST, TTL)).toEqual({ action: 'retry' });
+    expect(planLeaseRenew(err, LAST + TTL, LAST, TTL)).toEqual({ action: 'retry' }); // exactly at TTL: still valid (strict >)
+  });
+
+  it('★ a renew that keeps ERRORING PAST the TTL → exit "expired" — NOT the old silent infinite retry (#150)', () => {
+    // WHY (the bug): the previous `.catch` only logged "will retry next tick", so a Redis outage longer than the
+    // lease TTL silently lost exclusivity forever — a second coffre could then acquire the expired lease and
+    // double-sign. Once `now - lastSuccess > TTL`, a renew has NOT succeeded within the TTL, so the lease has
+    // provably expired at Redis and this instance MUST exit — regardless of WHY the renews failed.
+    expect(planLeaseRenew({ error: 'down' }, LAST + TTL + 1, LAST, TTL)).toEqual({
+      action: 'exit',
+      reason: 'expired',
+    });
+  });
+
+  it('★ driving the ttl/2 renew loop through a SUSTAINED outage REACHES exit (bounded, never infinite) (#150)', () => {
+    // Model the actual timer: renews fire every ttl/2 and all THROW (Redis down), so lastSuccess never advances.
+    // The decision must transition retry → … → exit within a bounded number of ticks (the loop's process.exit(1)),
+    // proving the guard terminates instead of retrying forever.
+    const renewEveryMs = TTL / 2;
+    let lastSuccess = 0;
+    let now = 0;
+    const actions: string[] = [];
+    for (let tick = 0; tick < 100; tick++) {
+      now += renewEveryMs;
+      const step = planLeaseRenew({ error: 'down' }, now, lastSuccess, TTL);
+      actions.push(step.action);
+      if (step.action === 'renewed') lastSuccess = now; // never taken here (every renew throws)
+      if (step.action === 'exit') break; // the real loop would process.exit(1) at this tick
+    }
+    expect(actions.at(-1)).toBe('exit'); // it DOES exit — a sustained outage is not retried forever
+    expect(actions.filter((a) => a === 'retry').length).toBeGreaterThan(0); // …after tolerating the outage within the TTL
+    expect(actions.filter((a) => a === 'retry').length).toBeLessThan(actions.length); // …but only finitely
+  });
+});
+
+// #151 — parseCoffreNumericConfig fails closed on a bad numeric env. A bare Number() turned a typo like
+// MAX_TRADE_SOL=0,5 into NaN, which then made Wall B's BigInt(lamports) THROW for every command (infinite redrive)
+// and a NaN SIGN_RETRY_MAX made `attempt <= NaN` false → the sign loop never ran. The vault must instead refuse to
+// boot on a bad value, like the SOLANA_HTTP_URL / bus-key guards.
+describe('coffre parseCoffreNumericConfig — fail-closed numeric env validation (#151)', () => {
+  it('★ a comma-typo MAX_TRADE_SOL=0,5 FAILS CLOSED (never NaN → BigInt(NaN) throw / infinite redrive)', () => {
+    expect(parseCoffreNumericConfig({ MAX_TRADE_SOL: '0,5' })).toHaveProperty('error');
+    // the dot form is the one the operator meant and MUST still parse (fractional SOL is legal)
+    expect(parseCoffreNumericConfig({ MAX_TRADE_SOL: '0.5' })).toMatchObject({ maxTradeSol: 0.5 });
+  });
+
+  it('a valid, fully-set env parses to the exact numbers (the boot happy path)', () => {
+    expect(
+      parseCoffreNumericConfig({
+        MAX_TRADE_SOL: '2',
+        SIGN_RETRY_MAX: '3',
+        SIGN_RETRY_DELAY_MS: '2000',
+      }),
+    ).toEqual({ maxTradeSol: 2, retryMax: 3, retryDelayMs: 2000 });
+  });
+
+  it('an unset env uses the documented defaults (maxTradeSol undefined ⇒ each user DB config wins)', () => {
+    expect(parseCoffreNumericConfig({})).toEqual({
+      maxTradeSol: undefined,
+      retryMax: 2,
+      retryDelayMs: 1500,
+    });
+  });
+
+  it('MAX_TRADE_SOL ≤ 0 / empty / non-finite → error (a 0/negative/NaN ceiling breaks the re-clamp)', () => {
+    for (const v of ['0', '-1', 'abc', 'Infinity', '']) {
+      expect(parseCoffreNumericConfig({ MAX_TRADE_SOL: v }), v).toHaveProperty('error');
+    }
+  });
+
+  it('★ a non-integer / NaN SIGN_RETRY_MAX → error (else `attempt <= retryMax` is broken and nothing is signed)', () => {
+    for (const v of ['abc', '2,5', '2.5', '-1', 'NaN']) {
+      expect(parseCoffreNumericConfig({ SIGN_RETRY_MAX: v }), v).toHaveProperty('error');
+    }
+    // 0 is valid: exactly one sign+land attempt (no retry).
+    expect(parseCoffreNumericConfig({ SIGN_RETRY_MAX: '0' })).toMatchObject({ retryMax: 0 });
+  });
+
+  it('a non-integer / NaN SIGN_RETRY_DELAY_MS → error (0 is a valid no-backoff)', () => {
+    for (const v of ['abc', '1.5', '1,5', '-1']) {
+      expect(parseCoffreNumericConfig({ SIGN_RETRY_DELAY_MS: v }), v).toHaveProperty('error');
+    }
+    expect(parseCoffreNumericConfig({ SIGN_RETRY_DELAY_MS: '0' })).toMatchObject({
+      retryDelayMs: 0,
+    });
   });
 });
