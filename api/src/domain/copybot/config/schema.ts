@@ -52,6 +52,7 @@ const TwoSidedSchema = z.enum(TWO_SIDED_MODES);
 const FilterConfigSchema = z.object({
   ignoredTokens: z.array(z.string()),
   singlePoolPerToken: z.boolean(),
+  skipTransferFeeTokens: z.boolean(),
   minPriceRangePercent: z.number().nullable(),
   minTokenAgeHours: z.number().nullable(),
   minMarketCapUsd: z.number().nullable(),

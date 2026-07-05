@@ -22,6 +22,7 @@ import { minMarketCapUsd } from './min-market-cap/min-market-cap';
 import { minPriceRangePercent } from './min-price-range/min-price-range';
 import { minTokenAgeHours } from './min-token-age/min-token-age';
 import { singlePoolPerToken } from './single-pool-per-token/single-pool-per-token';
+import { skipTransferFeeTokens } from './skip-transfer-fee-tokens/skip-transfer-fee-tokens';
 
 export * from './filter';
 export { rangeCoveragePercent } from './sources/leader-shape';
@@ -29,11 +30,13 @@ export { type ResolveDeps, resolveFilterContext } from './sources/resolve';
 export { snapshotToContext } from './sources/snapshot';
 export * from './sources/source';
 
-/** Run order: instant/local first (free, short-circuiting), then cached/external Jupiter-backed filters. */
+/** Run order: instant/local first (free, short-circuiting), then cached/external data filters (on-chain mint
+ * extensions, then Jupiter-backed). */
 export const REGISTRY: readonly FilterBrick[] = [
   ignoredTokens,
   singlePoolPerToken,
   minPriceRangePercent,
+  skipTransferFeeTokens,
   minTokenAgeHours,
   minMarketCapUsd,
   min24hVolumeUsd,

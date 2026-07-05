@@ -52,10 +52,19 @@ describe('runFilters — registry orchestration (first skip wins, instant-first 
     });
   });
 
+  it('skipTransferFeeTokens on + fee-carrying mint → skip transfer_fee_token (registry wires mint-extensions)', () => {
+    const cfg = { ...FILTERS_ALL_OFF, skipTransferFeeTokens: true };
+    expect(runFilters(candidate, ctx({ hasTransferFee: true }), cfg)).toEqual({
+      action: 'skip',
+      reason: 'transfer_fee_token',
+    });
+  });
+
   it('ALL filters enabled and satisfied → pass (exercises every activation branch)', () => {
     const cfg: FilterConfig = {
       ignoredTokens: ['OTHER'],
       singlePoolPerToken: true,
+      skipTransferFeeTokens: true,
       minPriceRangePercent: 3,
       minTokenAgeHours: 2,
       minMarketCapUsd: 1_000_000,
@@ -66,6 +75,7 @@ describe('runFilters — registry orchestration (first skip wins, instant-first 
     };
     const fullCtx = ctx({
       openTokenMints: new Set(['OTHER_TOKEN']),
+      hasTransferFee: false,
       tokenAgeHours: 10,
       marketCapUsd: 5_000_000,
       organicScore: 80,
@@ -130,6 +140,11 @@ describe('neededSources — only ENABLED bricks contribute, one shared source (n
       minHolders: 100,
     };
     expect([...neededSources(cfg)]).toEqual(['jupiter-token']);
+  });
+
+  it('skipTransferFeeTokens on → needs the mint-extensions source (a cacheable getMint, not Jupiter)', () => {
+    const cfg = { ...FILTERS_ALL_OFF, skipTransferFeeTokens: true };
+    expect([...neededSources(cfg)]).toEqual(['mint-extensions']);
   });
 });
 

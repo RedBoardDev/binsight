@@ -25,17 +25,20 @@ export interface FilterContext {
   holders?: number;
   priceRangePercent?: number;
   priceChangePercent?: number;
+  /** true = the non-SOL mint carries a Token-2022 `TransferFeeConfig`; undefined = unknown ⇒ enabled brick skips. */
+  hasTransferFee?: boolean;
   /** non-SOL mints of positions we already hold OPEN (single-pool-per-token). */
   openTokenMints: Set<string>;
 }
 
 /** Where a brick's data comes from — the resolver groups bricks by source to fetch each source ONCE. */
-export type DataSource = 'local' | 'leader-shape' | 'jupiter-token';
+export type DataSource = 'local' | 'leader-shape' | 'jupiter-token' | 'mint-extensions';
 
 /** Filter settings; `null`/`false`/`[]` = OFF (default). One key per brick. */
 export interface FilterConfig {
   ignoredTokens: string[];
   singlePoolPerToken: boolean;
+  skipTransferFeeTokens: boolean;
   minPriceRangePercent: number | null;
   minTokenAgeHours: number | null;
   minMarketCapUsd: number | null;
@@ -49,6 +52,7 @@ export interface FilterConfig {
 export const FILTERS_ALL_OFF: FilterConfig = {
   ignoredTokens: [],
   singlePoolPerToken: false,
+  skipTransferFeeTokens: false,
   minPriceRangePercent: null,
   minTokenAgeHours: null,
   minMarketCapUsd: null,

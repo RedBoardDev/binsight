@@ -42,6 +42,7 @@ describe('FILTERS_ALL_OFF — every filter ships OFF (opt-in default)', () => {
   it('lists empty, toggles false, thresholds null', () => {
     expect(FILTERS_ALL_OFF.ignoredTokens).toEqual([]);
     expect(FILTERS_ALL_OFF.singlePoolPerToken).toBe(false);
+    expect(FILTERS_ALL_OFF.skipTransferFeeTokens).toBe(false);
     expect(FILTERS_ALL_OFF.minPriceRangePercent).toBeNull();
     expect(FILTERS_ALL_OFF.minTokenAgeHours).toBeNull();
     expect(FILTERS_ALL_OFF.minMarketCapUsd).toBeNull();
