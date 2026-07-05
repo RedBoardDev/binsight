@@ -187,6 +187,7 @@ async function main(): Promise<void> {
   const control = ControlChannel.connect(cfg.redisUrl); // instant config-reload pings (kill-switch applies in <100ms)
   const heartbeat = new HeartbeatStore(db, log, 'brain'); // process status the web reads (online + positions/exposure/latency)
   const recentlyPublishedClose = new Map<string, number>(); // ourPosition → ms a close was last published (reClose grace)
+  const rugPriceReadStaleness = new Map<string, number>(); // pool → consecutive null price reads (rug-SL staleness alert)
   const blockhashCache = new BlockhashCache(async () => {
     const b = await conn.getLatestBlockhash();
     return { blockhash: b.blockhash, lastValidBlockHeight: b.lastValidBlockHeight };
@@ -460,6 +461,7 @@ async function main(): Promise<void> {
       readPoolTokenPrice: (pool) => readActiveTokenPrice(conn, new PublicKey(pool)),
       recentlyPublishedClose,
       recloseGraceMs: RECLOSE_GRACE_MS,
+      priceReadStaleness: rugPriceReadStaleness,
     });
 
   // No-miss safety net (Inc.4c: PER DISTINCT WALLET) — enumerate every non-SOL token (classic SPL + Token-2022)

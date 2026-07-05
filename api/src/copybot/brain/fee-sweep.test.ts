@@ -7,12 +7,15 @@
  *  - a publish failure is swallowed — a fee failure must NEVER throw out of the sweep (it must never block a close);
  *  - a fee whose user runtime is not booted is skipped (left pending, retried later) — never lost, never mis-signed;
  *  - the sweep passes the CURRENTLY-BOOTED userIds to listPending, so un-bootable fees are excluded at the query
- *    level and can never head-of-line-block a live user's fee out of the bounded batch (finding #155).
+ *    level and can never head-of-line-block a live user's fee out of the bounded batch (finding #155);
+ *  - a doomed transfer is CAPPED: past FEE_SWEEP_MAX_ATTEMPTS published attempts the sweep stops re-signing it and
+ *    escalates LOUD, so it can never re-sign every tick forever (idx44).
  */
 import { pino } from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 import {
   type ClosedFeeBackstopDeps,
+  FEE_SWEEP_MAX_ATTEMPTS,
   type FeeSweepDeps,
   runClosedFeeBackstop,
   runFeeSweep,
@@ -45,6 +48,7 @@ const fee = (over: Partial<SweepableFee> = {}): SweepableFee => ({
   userId: 'U',
   ourPosition: 'POS',
   feeLamports: 50_000_000,
+  attempts: 0,
   ...over,
 });
 
@@ -112,6 +116,32 @@ describe('runFeeSweep', () => {
     expect(publishFee).toHaveBeenCalledWith('NEW', 7_000_000); // the live fee is published…
     expect(bump).toHaveBeenCalledWith('LIVE', 'NEW'); // …and its attempt counted
     expect(bump).toHaveBeenCalledTimes(1); // the un-bootable OLD row never entered the batch
+  });
+
+  it('idx44: a fee AT the retry cap is NOT re-signed and is escalated LOUD (a doomed transfer stops re-signing every tick forever)', async () => {
+    // WHY: the attempts counter was written but never read to cap — a doomed transfer (bad sink, persistent balance
+    // failure) re-signed forever, burning a signer slot each tick with no escalation. At the cap we skip + alert.
+    const errSpy = vi.spyOn(log, 'error');
+    const { deps, publishFee, bump } = depsOf({
+      pending: [fee({ attempts: FEE_SWEEP_MAX_ATTEMPTS })],
+    });
+    try {
+      await runFeeSweep(deps);
+      expect(publishFee).not.toHaveBeenCalled(); // re-signing STOPPED — no more doomed transfers
+      expect(bump).not.toHaveBeenCalled(); // no further attempt counted (the row is frozen at the cap, not churned)
+      expect(errSpy).toHaveBeenCalledTimes(1); // escalated LOUD so a stuck fee is observable
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  it('idx44: a fee ONE attempt below the cap is still published (the cap is a ceiling, never an early abandonment of a retryable fee)', async () => {
+    const { deps, publishFee, bump } = depsOf({
+      pending: [fee({ attempts: FEE_SWEEP_MAX_ATTEMPTS - 1, feeLamports: 9_000_000 })],
+    });
+    await runFeeSweep(deps);
+    expect(publishFee).toHaveBeenCalledWith('POS', 9_000_000); // still retried
+    expect(bump).toHaveBeenCalledWith('U', 'POS'); // and the attempt counted (reaching the cap on THIS tick)
   });
 });
 

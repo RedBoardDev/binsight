@@ -10,10 +10,21 @@
 import type { Logger } from 'pino';
 
 /** A fee owed on a closed position that the sweep should publish a transfer for. */
+/**
+ * Max transfer attempts for one pending fee before we STOP re-signing it and escalate (idx44). A performance-fee
+ * transfer is a trivial send; this many CONSECUTIVE published attempts that never land means it is DOOMED (a
+ * bad/edited operator sink, a persistent balance/permission failure), not a transient blip. Re-signing it every
+ * tick forever burns RPC + a signer slot for nothing, so past the cap we escalate LOUD and skip it. The row stays
+ * 'pending' — a fee is never silently written off; it is left for manual review rather than re-signed in a loop.
+ */
+export const FEE_SWEEP_MAX_ATTEMPTS = 10;
+
 export interface SweepableFee {
   userId: string;
   ourPosition: string;
   feeLamports: number;
+  /** Transfer attempts already journaled (FeeLedgerRepository.attempts) — read to CAP retries at FEE_SWEEP_MAX_ATTEMPTS. */
+  attempts: number;
 }
 
 /** The minimal runtime surface the sweep needs — the OWNING user builds + publishes the fee with its own signer. */
@@ -47,6 +58,22 @@ export async function runFeeSweep(deps: FeeSweepDeps): Promise<void> {
   for (const f of pending) {
     const rt = deps.runtimeFor(f.userId);
     if (!rt) continue; // runtime torn down between the query and here (TOCTOU) → leave pending, retry next sweep
+    if (f.attempts >= FEE_SWEEP_MAX_ATTEMPTS) {
+      // Doomed transfer (idx44): this many published attempts have never landed. STOP re-signing (skip the bump +
+      // publish so it no longer burns a signer slot every tick) and escalate LOUD. The row stays 'pending' for
+      // manual review — never silently dropped. (A durable park would need a new fee-ledger state; deliberately out
+      // of scope for this pure sweep — the loud escalation is the observable signal.)
+      deps.log.error(
+        {
+          userId: f.userId,
+          ourPosition: f.ourPosition,
+          attempts: f.attempts,
+          cap: FEE_SWEEP_MAX_ATTEMPTS,
+        },
+        'fee transfer exhausted its retry cap → re-signing STOPPED, escalated for manual review (still pending)',
+      );
+      continue;
+    }
     // Count the attempt BEFORE the publish so a failed publish still records the try (the row stays retryable).
     await deps.bumpAttempts(f.userId, f.ourPosition);
     await rt

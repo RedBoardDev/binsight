@@ -348,6 +348,15 @@ export interface RugSweepRuntime {
   ): Promise<void>;
 }
 
+/**
+ * Consecutive per-pool NULL price reads after which rug-SL price-staleness is alerted LOUD. A single null is a
+ * transient RPC blip (never recorded → no false crash trigger); but this many BACK-TO-BACK failed reads means the
+ * tracker's window gets no fresh sample, so the crash exit is effectively DISARMED for every mirror on that pool — a
+ * SILENT safety regression while heartbeats stay green. We alert at the threshold so the disarm is OBSERVABLE (idx52).
+ * Sized so a couple of blips pass quietly but a sustained outage does not.
+ */
+export const RUG_SL_STALE_PRICE_READS = 5;
+
 export interface RugSlSweepDeps {
   log: Logger;
   runtimes(): Iterable<RugSweepRuntime>;
@@ -356,6 +365,10 @@ export interface RugSlSweepDeps {
   readPoolTokenPrice(pool: string): Promise<number | null>;
   recentlyPublishedClose: Map<string, number>;
   recloseGraceMs: number;
+  /** Per-pool consecutive null-price-read counter, OWNED BY THE CALLER so it persists across ticks (like
+   *  `recentlyPublishedClose`). Incremented on a null read, cleared on a good one; at RUG_SL_STALE_PRICE_READS the
+   *  sweep alerts LOUD — a persistently unreadable price silently DISARMS the crash exit for that pool's mirrors. */
+  priceReadStaleness: Map<string, number>;
   nowMs?: () => number;
 }
 
@@ -375,7 +388,21 @@ export async function runRugSlSweep(deps: RugSlSweepDeps): Promise<void> {
   }
   for (const [pool, entries] of byPool) {
     const price = await deps.readPoolTokenPrice(pool);
-    if (price === null) continue; // never record a garbage price → no false trigger
+    if (price === null) {
+      // A single null is a transient blip (never recorded → no false trigger). But a PERSISTENT null means the
+      // tracker's window gets no fresh sample → the crash exit is silently DISARMED for every mirror on this pool
+      // while heartbeats stay green. Count the streak and alert LOUD once it crosses the threshold so the disarm is
+      // OBSERVABLE (idx52). Still never record the missing price → still no false trigger.
+      const stale = (deps.priceReadStaleness.get(pool) ?? 0) + 1;
+      deps.priceReadStaleness.set(pool, stale);
+      if (stale >= RUG_SL_STALE_PRICE_READS)
+        deps.log.error(
+          { pool, consecutiveFailures: stale, threshold: RUG_SL_STALE_PRICE_READS },
+          'rug-sl: pool price unreadable for consecutive ticks → crash exit DISARMED for its mirrors (stale window); investigate RPC/pool',
+        );
+      continue;
+    }
+    deps.priceReadStaleness.set(pool, 0); // a good read clears the staleness streak (a fresh sample is recorded below)
     for (const { rt, m } of entries) {
       try {
         // Per-(user, leader) config (3b): the trigger reads THE USER's settings for the leader THIS mirror
@@ -401,7 +428,11 @@ export async function runRugSlSweep(deps: RugSlSweepDeps): Promise<void> {
         await rt.rugExitStore.addPending(m.ourPosition); // persist so the retry survives a brain restart
         rt.rugSlTracker.forget(m.ourPosition); // stop price re-triggering (grace + reconcile now own the retry)
         rt.rugExited.add(m.leaderPosition); // suppress re-opening this leader position on its next add
-        void rt.rugExitStore.addExited(m.leaderPosition); // persist so the suppression survives a brain restart
+        // AWAIT this durable persist BEFORE publishing too (same #153 arm-before-publish ordering as addPending): a
+        // crash between the publish and this INSERT would lose the ONLY cross-restart RE-OPEN-suppression channel →
+        // the leader's next add could spuriously re-open this position. addExited is fail-safe (never throws), so
+        // awaiting it can never hinder the close.
+        await rt.rugExitStore.addExited(m.leaderPosition); // persist so the suppression survives a brain restart
         // `now` stamp → each retry tick is a distinct audit row (#64).
         await rt.publishSafetyClose(m, 'rugsl', 'rug_sl', now).catch((err) =>
           // Retry state already armed above → the reconcile re-closes even on a failed publish (never a silent dormant
@@ -481,12 +512,14 @@ export async function runResidualSweep(deps: ResidualSweepDeps): Promise<void> {
         (b) => now - (deps.inFlightBuyMints.get(b.mint) ?? 0) >= deps.inflightGraceMs,
       );
       if (toSweep.length === 0) continue;
-      // `eventKey` is the per-cycle correlation (now): each periodic sweep that finds a residual is its own row.
+      // `eventKey` is the per-(wallet, cycle) correlation: the WALLET disambiguates it so two wallets' residual
+      // sweeps in the SAME tick don't collide on `now` and get deduped to a single row (idx42 — correlationId =
+      // eventKey; SPEC §6 dedup would otherwise drop a real sweep from the feed).
       rt.events.emit('swap.sweep_detected', {
         stage: 'sweep',
         outcome: 'detected',
         leader: deps.leaderLabel,
-        eventKey: `${deps.leaderLabel}:sweep:${now}`,
+        eventKey: `${deps.leaderLabel}:sweep:${wallet}:${now}`,
         adminDetail: { count: toSweep.length, mints: toSweep.map((b) => b.mint) },
       });
       for (const b of toSweep) {
@@ -498,7 +531,7 @@ export async function runResidualSweep(deps: ResidualSweepDeps): Promise<void> {
             outcome: 'failed',
             reason: 'failed_after_retries',
             leader: deps.leaderLabel,
-            eventKey: `${deps.leaderLabel}:sweep:${now}:${b.mint}`,
+            eventKey: `${deps.leaderLabel}:sweep:${wallet}:${now}:${b.mint}`,
             adminDetail: { mint: b.mint, error: (e as Error).message },
           });
         });

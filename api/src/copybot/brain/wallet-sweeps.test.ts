@@ -1,5 +1,5 @@
 import { pino } from 'pino';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { CONFIG_DEFAULTS, type CopybotConfig } from '@/domain/copybot/config';
 import type { OwnerTokenBalance } from '@/domain/copybot/residual-sell';
 import type { UserPosition } from '@/infrastructure/solana/dlmm/leader-position-reader';
@@ -9,6 +9,7 @@ import {
   type ReconcileSweepDeps,
   type ResidualSweepDeps,
   type ResidualSweepRuntime,
+  RUG_SL_STALE_PRICE_READS,
   type RugSlSweepDeps,
   type RugSweepRuntime,
   runReconcileSweep,
@@ -307,7 +308,7 @@ function makeRugRt(
   mirrors: Mirror[],
   config: CopybotConfig,
   checkResult: (ourPosition: string) => boolean,
-  opts: { publishThrows?: boolean; order?: string[] } = {},
+  opts: { publishThrows?: boolean; order?: string[]; trackExited?: boolean } = {},
 ) {
   const calls = {
     recorded: [] as Array<{ key: string; price: number }>,
@@ -335,7 +336,15 @@ function makeRugRt(
         calls.pendingPersisted.push(our);
         opts.order?.push('addPending');
       },
-      addExited: async () => {},
+      addExited: async () => {
+        // Mirror addPending's async-commit gap so the ordering test can prove addExited is AWAITED before the
+        // publish (the RE-OPEN-suppression channel, distinct from #153's re-close channel). Gated on `trackExited`
+        // so the addPending-only #153 ordering test keeps its `order` == ['addPending','publish'].
+        if (opts.order && opts.trackExited) {
+          await Promise.resolve();
+          opts.order.push('addExited');
+        }
+      },
     },
     rugExited: new Set<string>(),
     publishSafetyClose: async (m) => {
@@ -353,17 +362,18 @@ const configWithRugSl = (enabled: boolean): CopybotConfig => ({
 });
 
 describe('runRugSlSweep — pool-grouped across runtimes (Inc.3b S6)', () => {
-  const rugDeps = (runtimes: RugSweepRuntime[], price: number | null) => {
+  const rugDeps = (runtimes: RugSweepRuntime[], price: number | null | (() => number | null)) => {
     const priceReads: string[] = [];
     const deps: RugSlSweepDeps = {
       log,
       runtimes: () => runtimes,
       readPoolTokenPrice: async (pool) => {
         priceReads.push(pool);
-        return price;
+        return typeof price === 'function' ? price() : price; // a fn scripts a per-tick price for staleness tests
       },
       recentlyPublishedClose: new Map(),
       recloseGraceMs: RECLOSE_GRACE_MS,
+      priceReadStaleness: new Map(),
       nowMs: () => NOW,
     };
     return { deps, priceReads };
@@ -527,6 +537,69 @@ describe('runRugSlSweep — pool-grouped across runtimes (Inc.3b S6)', () => {
     deps.recentlyPublishedClose.set('OUR_A', NOW - 1);
     await runRugSlSweep(deps);
     expect(calls.safetyCloses).toEqual([]);
+  });
+
+  it(`idx52: ${RUG_SL_STALE_PRICE_READS} consecutive null reads alert LOUD — a silently DISARMED crash exit (no fresh sample) becomes observable`, async () => {
+    // WHY: a null read just `continue`d with no counter — a PERSISTENT read failure empties the tracker window, so the
+    // rug-SL crash exit disarms with ZERO signal (heartbeats stay green). Count the streak and alert at the threshold.
+    const errSpy = vi.spyOn(log, 'error');
+    const { rt } = makeRugRt(
+      'user-a',
+      [mirror({ ourPosition: 'OUR_A' })],
+      configWithRugSl(true),
+      () => false,
+    );
+    const { deps } = rugDeps([rt], null);
+    try {
+      for (let i = 1; i < RUG_SL_STALE_PRICE_READS; i++) {
+        await runRugSlSweep(deps);
+        expect(errSpy).not.toHaveBeenCalled(); // below the threshold a few blips stay quiet (no false alarm)
+      }
+      await runRugSlSweep(deps); // the RUG_SL_STALE_PRICE_READS-th consecutive null read
+      expect(errSpy).toHaveBeenCalledTimes(1); // crossing the threshold alerts LOUD
+      expect(deps.priceReadStaleness.get('POOL')).toBe(RUG_SL_STALE_PRICE_READS);
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  it('idx52: a GOOD read CLEARS the staleness streak (a recovered pool never carries a stale count into a new streak → no false alert)', async () => {
+    const errSpy = vi.spyOn(log, 'error');
+    const { rt } = makeRugRt(
+      'user-a',
+      [mirror({ ourPosition: 'OUR_A' })],
+      configWithRugSl(false),
+      () => false,
+    );
+    // Script (threshold-1) nulls, then ONE good read (must reset), then one trailing null: the reset keeps every
+    // window below the threshold, so no alert ever fires and the trailing null counts from 1 again.
+    let call = 0;
+    const price = () => (call++ === RUG_SL_STALE_PRICE_READS - 1 ? 1.5 : null);
+    const { deps } = rugDeps([rt], price);
+    try {
+      for (let i = 0; i < RUG_SL_STALE_PRICE_READS + 1; i++) await runRugSlSweep(deps);
+      expect(errSpy).not.toHaveBeenCalled(); // the good read reset the streak → threshold never reached
+      expect(deps.priceReadStaleness.get('POOL')).toBe(1); // only the single trailing null is counted
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  it('addExited: the durable RE-OPEN-suppression row is AWAITED (committed) BEFORE the safety close is published (a crash between publish and INSERT could otherwise spuriously RE-OPEN — the channel distinct from #153)', async () => {
+    // WHY: rugExited's durable row is the ONLY cross-restart channel that SUPPRESSES re-opening this leader position on
+    // its next add. Fired un-awaited (void), a crash after the publish but before the INSERT would lose it → a spurious
+    // re-open. It must commit before the publish, exactly like addPending (#153). `order` models the async DB commit.
+    const order: string[] = [];
+    const { rt } = makeRugRt(
+      'user-a',
+      [mirror({ ourPosition: 'OUR_RUG' })],
+      configWithRugSl(true),
+      () => true,
+      { order, trackExited: true },
+    );
+    const { deps } = rugDeps([rt], 0.1);
+    await runRugSlSweep(deps);
+    expect(order).toEqual(['addPending', 'addExited', 'publish']); // both durable rows commit BEFORE the publish (fails with a void addExited)
   });
 });
 
@@ -701,17 +774,23 @@ function makeResidualRt(userId: string, wallet: string, opts: { publishThrows?: 
   const calls = {
     sold: [] as Array<{ mint: string; amountRaw: bigint; pool: string }>,
     sweepDetected: 0,
+    sweepEventKeys: [] as string[],
     swapFailed: [] as string[],
+    swapFailedKeys: [] as string[],
   };
   const rt: ResidualSweepRuntime = {
     userId,
     wallet,
     events: {
-      emit: (code) => {
-        if (code === 'swap.sweep_detected') calls.sweepDetected += 1;
+      emit: (code, fields) => {
+        if (code === 'swap.sweep_detected') {
+          calls.sweepDetected += 1;
+          calls.sweepEventKeys.push((fields as { eventKey: string }).eventKey);
+        }
       },
       swapFailed: (fields) => {
         calls.swapFailed.push((fields.adminDetail as { mint: string }).mint);
+        calls.swapFailedKeys.push((fields as { eventKey: string }).eventKey);
       },
     } as ResidualSweepRuntime['events'],
     publishSell: async (mint, amountRaw, pool) => {
@@ -876,5 +955,34 @@ describe('runResidualSweep — per-distinct-wallet residual safety sweep (Inc.4c
     expect(walletReads).toEqual([WALLET_A, WALLET_B]); // B was still reached despite A failing first
     expect(a.sold).toEqual([]); // A produced nothing (its read failed)
     expect(b.sold).toEqual([{ mint: 'MINT_B', amountRaw: 200n, pool: WALLET_B }]); // B swept regardless
+  });
+
+  it('idx42: two wallets with residuals in the SAME tick emit DISTINCT sweep-detected eventKeys (the wallet disambiguates so the correlationId=eventKey dedup never drops a real sweep row)', async () => {
+    // WHY: `now` is computed ONCE per tick — without the wallet in the key, wallet A and wallet B both emit
+    // `LEADER:sweep:NOW`, so the CopyEvents dedup (correlationId = eventKey) collapses them to ONE row, silently
+    // dropping a real sweep from the feed. The wallet must make each per-wallet sweep row unique.
+    const { rt: rtA, calls: a } = makeResidualRt('user-a', WALLET_A);
+    const { rt: rtB, calls: b } = makeResidualRt('user-b', WALLET_B);
+    const { deps } = makeResidualDeps([rtA, rtB], {
+      [WALLET_A]: [bal('MINT_A', 100n)],
+      [WALLET_B]: [bal('MINT_B', 200n)],
+    });
+    await runResidualSweep(deps);
+    expect(a.sweepEventKeys).toEqual([`${LEADER}:sweep:${WALLET_A}:${NOW}`]);
+    expect(b.sweepEventKeys).toEqual([`${LEADER}:sweep:${WALLET_B}:${NOW}`]);
+    expect(a.sweepEventKeys[0]).not.toBe(b.sweepEventKeys[0]); // distinct ⇒ the dedup keeps BOTH sweep rows
+  });
+
+  it('idx42: two wallets failing to sell the SAME residual mint emit DISTINCT swap-failed eventKeys (a real per-wallet failure is never deduped away)', async () => {
+    const { rt: rtA, calls: a } = makeResidualRt('user-a', WALLET_A, { publishThrows: true });
+    const { rt: rtB, calls: b } = makeResidualRt('user-b', WALLET_B, { publishThrows: true });
+    const { deps } = makeResidualDeps([rtA, rtB], {
+      [WALLET_A]: [bal('SAME_MINT', 100n)],
+      [WALLET_B]: [bal('SAME_MINT', 100n)],
+    });
+    await runResidualSweep(deps);
+    expect(a.swapFailedKeys).toEqual([`${LEADER}:sweep:${WALLET_A}:${NOW}:SAME_MINT`]);
+    expect(b.swapFailedKeys).toEqual([`${LEADER}:sweep:${WALLET_B}:${NOW}:SAME_MINT`]);
+    expect(a.swapFailedKeys[0]).not.toBe(b.swapFailedKeys[0]); // same mint on two wallets ⇒ still distinct rows
   });
 });
