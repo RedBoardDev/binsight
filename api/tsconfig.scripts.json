@@ -1,0 +1,34 @@
+{
+  // Type-checks api/scripts/** — NOT covered by tsconfig.json (src-only) or tsconfig.onchain.json.
+  // Wired into `yarn typecheck` so script type errors can no longer ship silently.
+  // The scripts under "exclude" are QUARANTINED: they import refactored-away modules or call drifted
+  // APIs, so they need rewriting (not mechanical fixes). Remove each from "exclude" once it is rewritten
+  // against the current codebase and passes. Tracked for triage; see the extend-typecheck task notes.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true
+  },
+  "include": ["scripts/**/*"],
+  "exclude": [
+    // Dead imports — reference modules that were removed/moved in refactors:
+    "scripts/agent-verify.ts", // ../src/application/dlmm-pnl (gone; now src/domain/dlmm-pnl)
+    "scripts/continuous-verify.ts", // dlmm-pnl + pool-meta loadPoolMeta/LoadedPoolMeta (no longer exported)
+    "scripts/cutover-verify.ts", // dlmm-pnl + dlmm/totals (gone) + Connection not a LegRepository
+    "scripts/dlmm-daydiff.ts", // dlmm-pnl + pool-meta loadPoolMeta
+    "scripts/dlmm-forensic.ts", // dlmm-pnl + pool-meta loadPoolMeta
+    "scripts/dlmm-realcash-daydiff.ts", // dlmm-pnl + pool-meta loadPoolMeta/LoadedPoolMeta
+    "scripts/dlmm-verify-all.ts", // dlmm-pnl + pool-meta loadPoolMeta
+    "scripts/pool-cache-warm.ts", // dlmm-pnl + pool-meta loadPoolMeta
+    "scripts/validate-binprice.ts", // ../src/application/dlmm-pnl (gone)
+    "scripts/watch-leader.ts", // paper-engine/paper-position removed; reconciliation.failsafeRow gone
+    // Drifted APIs — signatures/shapes changed; need a real port, not a cast:
+    "scripts/diag-pos.ts", // dlmm-position-pnl now 5 args (was 6) + implicit-any param
+    "scripts/dlmm-engine-run.ts", // Connection not assignable to LegRepository
+    "scripts/regen-canonical.ts", // engine 5-vs-6 args + ResidualBackfill.run removed
+    "scripts/regen-realized-pnl.ts", // engine 5-vs-6 args + possibly-null + implicit-any
+    "scripts/regen-realized-pnl-seeded.ts", // engine 5-vs-6 args + implicit-any
+    "scripts/verify-realized-pnl.ts", // engine 5-vs-6 args + possibly-null + implicit-any
+    "scripts/wallet-curve.ts" // HeliusEnhancedGateway not a WalletFlowRepository + string vs string[]
+  ]
+}
