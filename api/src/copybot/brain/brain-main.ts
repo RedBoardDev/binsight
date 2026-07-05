@@ -397,6 +397,14 @@ async function main(): Promise<void> {
   // throw forever the bot is silently BLIND to leader events while the heartbeat stays GREEN. Poll health is now
   // PER LEADER inside the hub (its own counters + stale alerts); the wallet-level reconcile keeps its own
   // process-level counter + alert here. wsConnected is mirrored from the WS connection-change callback (below).
+  // ── OPERATOR RUNBOOK · `system.detection_stale` (RPC/WS outage) — v1 mitigation for the single-endpoint SPOF ──
+  // The brain runs BOTH never-miss detection AND the exec path on ONE Helius endpoint (cfg.httpUrl/wsUrl =
+  // SOLANA_HTTP_URL / SOLANA_WS_URL) — a single point of failure (#167; the secondary-RPC failover #50 is deferred).
+  // On a revoked/outaged key the poll AND reconcile loops throw repeatedly → after DETECTION_STALE_FAILURES in a row
+  // the PINNED `system.detection_stale` event fans out to the Discord operator sink ("check RPC/key"), not just a log.
+  // ACTION on that page: point SOLANA_HTTP_URL/SOLANA_WS_URL at a BACKUP Helius/RPC key and restart the brain — on
+  // boot the reconcile sweep re-reads on-chain state and force-closes any position the leader exited while blind (the
+  // never-miss-close backstop), so held positions recover. (Opens missed during the outage are forward-only.)
   let wsConnected = false; // last-known WS trigger connectivity
   let lastReconcileAt: number | null = null; // ms of the last SUCCESSFUL reconcile sweep
   let reconcileFailures = 0; // CONSECUTIVE reconcile failures (reset on a success)

@@ -8,6 +8,7 @@
  */
 import type { Logger } from 'pino';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { CODE_REGISTRY } from '@/domain/copybot/observability/codes';
 import type { CopyEvent } from '@/domain/copybot/observability/event';
 import {
   createDiscordAlertSink,
@@ -60,6 +61,19 @@ describe('shouldAlertOperator — the delivery policy', () => {
   });
   it('does NOT page a routine non-pinned event (an open/close feed row is not operator business)', () => {
     expect(shouldAlertOperator({ pinned: false, code: 'lifecycle.open_confirmed' })).toBe(false);
+  });
+  it('pages the RPC/WS-outage alert (`system.detection_stale`) as configured in the registry — never merely logs it (#167)', () => {
+    // WHY: the brain runs BOTH never-miss detection AND execution on ONE Helius endpoint (a SPOF). If that key
+    // outages, the poll + reconcile loops go blind while the heartbeat stays green — the ONLY v1 mitigation is this
+    // out-of-band page so the operator swaps the key. `CopyEvents.emit` fires the alert sink for PINNED events only,
+    // so if a future edit un-pins `system.detection_stale` the page silently degrades to a log line. Assert the
+    // registry's ACTUAL pinned flag still carries the code through the delivery policy — this fails loudly on that
+    // regression instead of going quietly un-paged.
+    const meta = CODE_REGISTRY['system.detection_stale'];
+    expect(meta.pinned).toBe(true);
+    expect(
+      shouldAlertOperator({ pinned: meta.pinned ?? false, code: 'system.detection_stale' }),
+    ).toBe(true);
   });
 });
 
