@@ -89,6 +89,7 @@ import {
 } from '@/domain/copybot/stop-closes';
 import {
   inRangeTokenAdds,
+  isTwoSidedLeader,
   planTwoSided,
   planTwoSidedReshape,
   reshapeCapFactor,
@@ -991,19 +992,47 @@ export async function createUserRuntime(
       return;
     }
 
-    // TWO-SIDED (flag-gated): if the leader's position holds a TOKEN leg, replicate BOTH sides (buy the token,
-    // deposit two-sided). 'shadow' logs the plan but still opens SOL-only; 'off' (default) = SOL-side-only.
+    // TWO-SIDED classification. `legs` = the leader's per-bin SOL + token RAW amounts from the settled shape.
+    const legs = shape.perBin.map((b) => ({
+      binId: b.binId,
+      solRaw: meta.solSide === 'Y' ? b.y : b.x,
+      tokenRaw: meta.solSide === 'Y' ? b.x : b.y,
+    }));
+    const dustTokenRaw = BigInt(ec.execution.dustTokenRaw);
+
+    // 'off' (default): a TWO-SIDED leader is SKIPPED entirely — copying only its SOL leg would be a forbidden HALF
+    // copy (Spec 04; the 'on' path likewise treats a half copy as forbidden), NOT the correct SOL-only copy of a
+    // genuinely one-sided leader (finding #39). Two conditions, both required: `expectTwoSided` (the tx decode says
+    // the leader DELIBERATELY deposited a token leg > dust — the authoritative intent signal; it is what made
+    // readStableShape wait for both legs) AND `isTwoSidedLeader` (the settled shape confirms BOTH a SOL leg and a
+    // token leg > dust). Gating on the DEPOSIT intent — not the raw shape alone — keeps a genuinely SOL-only leader
+    // whose position merely spans the always-mixed active bin (a token SLIVER, but depositTokenRaw = 0) on the
+    // correct SOL-only path. Classified on the leader's RAW legs, so the skip fires REGARDLESS of dust — #144's
+    // on-mode our-leg-dust SOL-only fallthrough is a DIFFERENT case (mode='on', our SCALED leg ≤ dust), untouched below.
+    if (ec.twoSidedMode === 'off' && expectTwoSided && isTwoSidedLeader(legs, dustTokenRaw)) {
+      events.emit('eligibility.two_sided_disabled', {
+        stage: 'open',
+        outcome: 'skipped',
+        reason: 'two_sided_disabled',
+        leader,
+        pool: e.pool,
+        leaderPosition: e.position,
+        eventKey: openSkipKey(e, leader),
+        leaderSizeSol: e.depositSol,
+        adminDetail: { mint: e.nonSolMint, nonSolSymbol: e.nonSolSymbol },
+      });
+      return; // no funds deployed — nothing built/published
+    }
+
+    // 'on'/'shadow': replicate BOTH sides (buy the token, deposit two-sided). 'shadow' logs the plan but still opens
+    // SOL-only. planTwoSided gates `twoSided` on OUR SCALED token target (#144), so a dust-scaled token FALLS THROUGH
+    // to the legitimate SOL-only copy below (mode='on' + our-leg-dust) — a copy that must NOT be missed.
     if (ec.twoSidedMode !== 'off') {
-      const legs = shape.perBin.map((b) => ({
-        binId: b.binId,
-        solRaw: meta.solSide === 'Y' ? b.y : b.x,
-        tokenRaw: meta.solSide === 'Y' ? b.x : b.y,
-      }));
       const plan = planTwoSided(
         legs,
         shape.activeBinId,
         shape.activeBinId,
-        BigInt(ec.execution.dustTokenRaw),
+        dustTokenRaw,
         ec.sizing.tradeRatioPct ?? 100, // gate two-sided on OUR scaled token target (the ratio openTwoSided buys at) — #144
       );
       if (plan.twoSided && plan.leaderSolRaw > 0n && e.nonSolMint) {

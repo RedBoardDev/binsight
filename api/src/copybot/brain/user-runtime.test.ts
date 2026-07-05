@@ -51,6 +51,9 @@ vi.mock('@/infrastructure/solana/dlmm/dlmm-tx-builder', async (orig) => {
     buildCloseTx: vi.fn(actual.buildCloseTx),
     buildRemovePartial: vi.fn(actual.buildRemovePartial),
     buildAddByWeight: vi.fn(actual.buildAddByWeight),
+    // Passthrough spy: the #39 twoSidedMode=off tests assert buildOpenByWeight WAS reached (the SOL-only open path),
+    // proving a one-sided/#144-fallthrough leader was copied SOL-only rather than skipped. Real behavior otherwise.
+    buildOpenByWeight: vi.fn(actual.buildOpenByWeight),
   };
 });
 vi.mock('@/infrastructure/solana/dlmm/leader-position-reader', async (orig) => {

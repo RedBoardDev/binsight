@@ -398,6 +398,16 @@ const RAW_CODE_REGISTRY = {
     render: 'skipped-eligibility',
     coalesceMs: FEED_COALESCE_MS,
   },
+  // Two-sided copying is OFF (`twoSidedMode='off'`, the default) and the LEADER opened a two-sided position (a real
+  // SOL leg AND a meaningful token leg) → SKIP entirely, never a forbidden SOL-only HALF copy (Spec 04, finding #39).
+  'eligibility.two_sided_disabled': {
+    category: 'ELIGIBILITY',
+    severity: 'info',
+    audience: 'feed',
+    title: 'Skipped — Two-Sided Copying Off',
+    render: 'skipped-eligibility',
+    coalesceMs: FEED_COALESCE_MS,
+  },
 
   // ── reshape (RESHAPE) — noop internal; the rest reach the user ─────────────────────────────────────────────
   'reshape.token_unbuyable': {

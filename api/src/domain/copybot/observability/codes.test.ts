@@ -91,6 +91,7 @@ describe('codes · legacy reason migration (SPEC §2.2 test 2)', () => {
     'non_sol_pool',
     'twosided_unbuyable',
     'twosided_token2022_too_wide',
+    'two_sided_disabled',
     'reshape_token_unbuyable',
     'partial_range',
     // swap

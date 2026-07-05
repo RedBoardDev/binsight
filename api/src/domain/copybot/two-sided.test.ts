@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { BinSol } from './position-adjust';
 import {
   inRangeTokenAdds,
+  isTwoSidedLeader,
   type LeaderBinLegs,
   planTwoSided,
   planTwoSidedReshape,
@@ -112,6 +113,51 @@ describe('planTwoSided — gate two-sided on OUR SCALED token target (finding #1
     ];
     expect(planTwoSided(solOnly, 101, 101, DUST, 2).twoSided).toBe(false); // 0 × any ratio = 0 ≤ dust
     expect(planTwoSided(solOnly, 101, 101, DUST, 100).twoSided).toBe(false);
+  });
+});
+
+describe('isTwoSidedLeader — classify the LEADER two-sided on its RAW legs (finding #39)', () => {
+  const DUST = 100n;
+
+  it('a SOL leg + a meaningful (non-dust) token leg → true (the mode=off skip fires — never a SOL-only half copy)', () => {
+    const legs: LeaderBinLegs[] = [
+      { binId: 100, solRaw: 500n, tokenRaw: 300n },
+      { binId: 101, solRaw: 0n, tokenRaw: 900n },
+    ];
+    expect(isTwoSidedLeader(legs, DUST)).toBe(true);
+  });
+
+  it('a genuinely one-sided SOL leader (token leg all zero) → false (still a correct SOL-only copy, not a half)', () => {
+    const legs: LeaderBinLegs[] = [
+      { binId: 100, solRaw: 500n, tokenRaw: 0n },
+      { binId: 101, solRaw: 500n, tokenRaw: 0n },
+    ];
+    expect(isTwoSidedLeader(legs, DUST)).toBe(false);
+  });
+
+  it('a token sliver ≤ dust (the always-mixed active bin) → false — a dust token leg is NOT a two-sided leader', () => {
+    const legs: LeaderBinLegs[] = [
+      { binId: 100, solRaw: 500n, tokenRaw: 60n },
+      { binId: 101, solRaw: 500n, tokenRaw: 40n },
+    ];
+    expect(isTwoSidedLeader(legs, DUST)).toBe(false); // 100 token == dust, not > dust
+  });
+
+  it('a token-only leader (no SOL leg) → false — two-sided REQUIRES both a SOL leg AND a token leg', () => {
+    const legs: LeaderBinLegs[] = [{ binId: 100, solRaw: 0n, tokenRaw: 5_000n }];
+    expect(isTwoSidedLeader(legs, DUST)).toBe(false);
+  });
+
+  it('a REAL two-sided leader is two-sided regardless of OUR copy ratio (the #39 skip is dust-independent)', () => {
+    // WHY (#39 × #144): the mode='off' skip classifies the LEADER's RAW leg, so it fires even where a small ratio
+    // scales OUR token target to dust and planTwoSided (the mode='on' path) would fall through to SOL-only. Same
+    // leader as the #144 case: raw token 2_000_000 ≫ 100_000 dust, but at 2% our scaled target (40_000) is dust.
+    const legs: LeaderBinLegs[] = [
+      { binId: 100, solRaw: 500_000_000n, tokenRaw: 0n },
+      { binId: 101, solRaw: 10_000_000n, tokenRaw: 2_000_000n },
+    ];
+    expect(planTwoSided(legs, 101, 101, 100_000n, 2).twoSided).toBe(false); // mode='on' #144 SOL-only fallthrough
+    expect(isTwoSidedLeader(legs, 100_000n)).toBe(true); // mode='off' skip STILL fires — the leader is two-sided
   });
 });
 

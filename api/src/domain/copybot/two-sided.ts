@@ -218,6 +218,19 @@ function reanchorLeg(
 }
 
 /**
+ * Is the LEADER's position two-sided? True iff it carries BOTH a real SOL leg AND a meaningful (non-dust) RAW token
+ * leg. This inspects the leader's RAW legs — unlike `TwoSidedPlan.twoSided`, which gates on OUR SCALED token target
+ * (ratio × leaderTokenRaw, finding #144) — so it answers "did the LEADER open two-sided?" independent of how small a
+ * ratio we would copy at. The caller uses it to SKIP a two-sided leader when two-sided copying is disabled
+ * (`twoSidedMode='off'`): copying only the SOL leg would be a forbidden HALF copy (Spec 04). Pure, bigint-exact.
+ */
+export function isTwoSidedLeader(legs: LeaderBinLegs[], dustTokenRaw: bigint): boolean {
+  const solRaw = legs.reduce((s, b) => s + b.solRaw, 0n);
+  const tokenRaw = legs.reduce((s, b) => s + b.tokenRaw, 0n);
+  return solRaw > 0n && tokenRaw > dustTokenRaw;
+}
+
+/**
  * Plan a two-sided re-anchored copy. Pure. Handles all cases: plain SOL-only (token ≤ dust → twoSided=false),
  * genuine two-sided (both legs), and fully-crossed token-only (no SOL leg). Throws only on an empty position.
  */
