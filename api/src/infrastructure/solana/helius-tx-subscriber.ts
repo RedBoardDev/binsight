@@ -14,10 +14,12 @@ import type { ParsedTransactionWithMeta } from '@solana/web3.js';
 import type { Logger } from 'pino';
 import { WebSocket } from 'undici';
 import { isWsDead, WS_PING_INTERVAL_MS } from './ws-keepalive';
-
-const BACKOFF_BASE_MS = 1000;
-const BACKOFF_MAX_MS = 30_000;
-const SILENCE_TIMEOUT_MS = 300_000; // backstop only — the unanswered-keepalive check (below) trips far sooner
+import {
+  BACKOFF_BASE_MS,
+  isSilentTooLong,
+  nextBackoffMs,
+  reconnectDelayMs,
+} from './ws-reconnect-policy';
 
 /** Called per tx of the watched wallet: the signature, the logs (DLMM pre-filter on the consumer side), and the
  *  full parsed tx reconstructed from the delivered payload — the fast-path classifies from it, skipping an RPC
@@ -184,11 +186,10 @@ export class HeliusTxSubscriber {
     this.reqToWallet.clear();
     if (this.heartbeat) clearInterval(this.heartbeat);
     if (this.stopped) return;
-    const jitter = Math.floor(this.backoffMs * 0.25 * ((this.nextReqId % 7) / 7));
-    const delay = Math.min(this.backoffMs, BACKOFF_MAX_MS) + jitter;
+    const delay = reconnectDelayMs(this.backoffMs, this.nextReqId);
     this.logger.debug({ delay }, 'tx WS disconnected — reconnecting');
     setTimeout(() => this.connect(), delay);
-    this.backoffMs = Math.min(this.backoffMs * 2, BACKOFF_MAX_MS);
+    this.backoffMs = nextBackoffMs(this.backoffMs);
   }
 
   private startHeartbeat(): void {
@@ -197,7 +198,7 @@ export class HeliusTxSubscriber {
       if (this.watched.size === 0) return;
       // Death by UNANSWERED keepalives (fast) or by a long silence backstop. A healthy idle connection replies to
       // the keepalive, so unansweredPings resets and neither trips — no more churning healthy connections (#52).
-      if (isWsDead(this.unansweredPings) || Date.now() - this.lastMessageAt > SILENCE_TIMEOUT_MS) {
+      if (isWsDead(this.unansweredPings) || isSilentTooLong(this.lastMessageAt, Date.now())) {
         this.logger.warn('tx WS keepalive unanswered / silent too long — forcing reconnect');
         this.ws?.close();
         return;
