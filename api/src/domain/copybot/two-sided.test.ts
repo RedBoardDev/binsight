@@ -320,7 +320,17 @@ describe('planTwoSidedReshape — proportional removes (both legs) + per-leg tok
     const ourSol: BinSol[] = [{ offset: 0, sol: 0.2 }]; // target 0.5 → add 0.3
     const leaderToken: BinSol[] = [{ offset: 0, sol: 100 }]; // token "amount" (UI)
     const ourToken: BinSol[] = [{ offset: 0, sol: 20 }]; // target 50 → add 30
-    const r = planTwoSidedReshape(leaderSol, ourSol, leaderToken, ourToken, ratio, NO_CAP, DEAD, 1);
+    const r = planTwoSidedReshape(
+      leaderSol,
+      ourSol,
+      leaderToken,
+      ourToken,
+      ratio,
+      NO_CAP,
+      0,
+      DEAD,
+      1,
+    );
     expect(r.ops.some((o) => o.action === 'add')).toBe(true);
     expect(r.tokenAddOps.length).toBe(1);
     expect(r.tokenAddOps[0]?.addSol).toBeCloseTo(30, 6); // 0.5×100 − 20
@@ -331,7 +341,17 @@ describe('planTwoSidedReshape — proportional removes (both legs) + per-leg tok
     const ourSol: BinSol[] = [{ offset: 0, sol: 0.4 }]; // target 0.1 → remove
     const leaderToken: BinSol[] = [{ offset: 0, sol: 20 }];
     const ourToken: BinSol[] = [{ offset: 0, sol: 40 }]; // token also above target → but removes are proportional
-    const r = planTwoSidedReshape(leaderSol, ourSol, leaderToken, ourToken, ratio, NO_CAP, DEAD, 1);
+    const r = planTwoSidedReshape(
+      leaderSol,
+      ourSol,
+      leaderToken,
+      ourToken,
+      ratio,
+      NO_CAP,
+      0,
+      DEAD,
+      1,
+    );
     expect(r.ops.some((o) => o.action === 'remove')).toBe(true);
     expect(r.tokenAddOps.length).toBe(0); // no token ADD on a shrink
   });
@@ -346,27 +366,49 @@ describe('planTwoSidedReshape — proportional removes (both legs) + per-leg tok
       [{ offset: 0, sol: 0 }],
       ratio,
       NO_CAP,
+      0,
       DEAD,
       1,
     );
     expect(r.tokenAddOps.length).toBe(0);
   });
 
-  // FIX #119: when the SOL cap binds, BOTH legs must scale by the SAME factor (mirror the OPEN's sizeTwoSided).
-  // The old code capped only the SOL leg and left the token leg at `ratio × leaderToken` → the copy bought token
-  // toward an UNCAPPED target and ratcheted past maxTradeSizeSol, re-detecting a deficit every event.
-  it('capped: SOL cap binds → token leg scaled by the SAME shared factor, NOT the uncapped ratio', () => {
-    // ratio 1, leaderSol total 1.0, cap 0.5 → shared factor = min(1, 0.5/1.0) = 0.5.
-    const leaderSol: BinSol[] = [{ offset: 0, sol: 1.0 }];
+  // FIX #158 (incomplete #94): the shared reshape factor must bound the COMBINED deployment (SOL leg + the token leg
+  // valued in SOL), exactly like the OPEN's sizeTwoSided. Capping the SOL leg ALONE (min(ratio, maxSol/leaderSol))
+  // let the FIRST resync of a two-sided position deploy ~2× maxTradeSizeSol — the open factor and the SOL-only resync
+  // factor differ by construction, so the copy bought token toward an UNCAPPED target that ratcheted past the cap.
+  it('capped: the COMBINED deployment (SOL leg + token leg valued in SOL) is bounded by the cap, NOT the SOL leg alone', () => {
+    // The audit scenario: leader 4-SOL leg + token worth 6 SOL (combined 10), cap 5, ratio 100%. SOL-leg-only cap =
+    // min(1, 5/4) = 1.0 → deploys 4 + 6 = 10 SOL (2× the cap). COMBINED cap = min(1, 5/(4+6)) = 0.5 → 2 SOL leg +
+    // 3 SOL of token = EXACTLY the 5 SOL cap.
+    const leaderSol: BinSol[] = [{ offset: 0, sol: 4.0 }]; // 4 SOL leg
     const ourSol: BinSol[] = [{ offset: 0, sol: 0 }];
-    const leaderToken: BinSol[] = [{ offset: 0, sol: 100 }];
+    const LEADER_TOKEN_AMOUNT = 100; // raw/UI token units; its full SOL value is the new cap arg below
+    const leaderToken: BinSol[] = [{ offset: 0, sol: LEADER_TOKEN_AMOUNT }];
     const ourToken: BinSol[] = [{ offset: 0, sol: 0 }];
-    const CAP = 0.5;
-    const r = planTwoSidedReshape(leaderSol, ourSol, leaderToken, ourToken, 1, CAP, DEAD, DEAD);
+    const TOKEN_LEG_VALUE_SOL = 6; // the leader's full token leg is worth 6 SOL
+    const CAP = 5;
+    const r = planTwoSidedReshape(
+      leaderSol,
+      ourSol,
+      leaderToken,
+      ourToken,
+      1,
+      CAP,
+      TOKEN_LEG_VALUE_SOL,
+      DEAD,
+      DEAD,
+    );
     const solAdd = r.ops.find((o) => o.offset === 0 && o.action === 'add');
-    expect(solAdd?.action === 'add' && solAdd.addSol).toBeCloseTo(0.5, 6); // SOL leg capped at factor × 1.0
-    // Token target = factor × 100 = 50 (SAME factor). The old POSITIVE_INFINITY/ratio code targeted ratio × 100 = 100.
-    expect(r.tokenAddOps[0]?.addSol).toBeCloseTo(50, 6);
+    const solDeployed = solAdd?.action === 'add' ? solAdd.addSol : 0;
+    const tokenAmountDeployed = r.tokenAddOps[0]?.addSol ?? 0;
+    // Value the deployed token amount in SOL at the leader leg's rate (the full 100 units == 6 SOL).
+    const tokenSolDeployed = (tokenAmountDeployed / LEADER_TOKEN_AMOUNT) * TOKEN_LEG_VALUE_SOL;
+    expect(solDeployed).toBeCloseTo(2, 6); // factor 0.5 × 4 SOL leg (was 4.0 under the SOL-only cap)
+    expect(tokenSolDeployed).toBeCloseTo(3, 6); // factor 0.5 × 6 SOL token value (was 6.0 — the uncapped full leg)
+    // THE money invariant: SOL leg + the token buy ≤ the per-trade cap — pre-fix this was 4 + 6 = 10 SOL (2× over).
+    expect(solDeployed + tokenSolDeployed).toBeLessThanOrEqual(CAP);
+    expect(solDeployed + tokenSolDeployed).toBeCloseTo(CAP, 6); // exactly the cap: factor 0.5 × combined 10
   });
 
   it('uncapped: cap does not bind → shared factor == ratio (token leg unchanged)', () => {
@@ -381,6 +423,7 @@ describe('planTwoSidedReshape — proportional removes (both legs) + per-leg tok
       ourToken,
       0.5,
       NO_CAP,
+      0,
       DEAD,
       DEAD,
     );
@@ -410,7 +453,17 @@ describe('planTwoSidedReshape — proportional removes (both legs) + per-leg tok
       { offset: 0, sol: 40 },
       { offset: 2, sol: 20 },
     ]; // both over target after the shrink
-    const r = planTwoSidedReshape(leaderSol, ourSol, leaderToken, ourToken, ratio, NO_CAP, DEAD, 1);
+    const r = planTwoSidedReshape(
+      leaderSol,
+      ourSol,
+      leaderToken,
+      ourToken,
+      ratio,
+      NO_CAP,
+      0,
+      DEAD,
+      1,
+    );
 
     const removes = r.ops.filter((o) => o.action === 'remove');
     // The pure-token bin (offset 2) is now removed — WITHOUT the fix it would be missing and the copy stays token-heavy.
@@ -449,6 +502,7 @@ describe('planTwoSidedReshape — proportional removes (both legs) + per-leg tok
       noToken,
       FIXED_SIZE_RATIO,
       FIXED_SIZE,
+      0,
       DEAD,
       DEAD,
     );
@@ -462,6 +516,7 @@ describe('planTwoSidedReshape — proportional removes (both legs) + per-leg tok
       noToken,
       0,
       FIXED_SIZE,
+      0,
       DEAD,
       DEAD,
     );

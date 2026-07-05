@@ -106,13 +106,25 @@ export function sizeTwoSided(
 }
 
 /**
- * The shared cap factor `planTwoSidedReshape` applies to BOTH legs: `min(ratio, maxSol / leaderSolTotal)`, or plain
- * `ratio` when the leader holds no SOL (`leaderSolTotal === 0`). Extracted so a caller that must reproduce the
- * reshape TARGET — the per-offset `factor × leaderBin` the plan builds toward, e.g. the in-flight self-state a rapid
- * follow-up resync nets against (finding #121) — uses the EXACT same factor and can never drift from the plan. Pure.
+ * The shared cap factor `planTwoSidedReshape` applies to BOTH legs. It bounds the COMBINED deployment — the SOL leg
+ * PLUS the token leg valued in SOL (`tokenLegValueInSol`) — at `maxSol`, mirroring `sizeTwoSided`'s combined cap at
+ * OPEN (finding #94): the factor scales both legs, so the deployed total is `factor × (leaderSolTotal +
+ * tokenLegValueInSol)`. Capping the SOL leg ALONE (the old `min(ratio, maxSol / leaderSolTotal)`) let the token buy
+ * run the combined deployment to ~2× the per-trade cap on the FIRST resync of a two-sided position (finding #158).
+ * `= min(ratio, maxSol / (leaderSolTotal + tokenLegValueInSol))`, or plain `ratio` when the combined basis is 0.
+ * ONE-SIDED (`tokenLegValueInSol === 0`) ⇒ the basis collapses to `leaderSolTotal` ⇒ IDENTICAL to the prior SOL-leg
+ * cap. Extracted so a caller reproducing the reshape TARGET — the per-offset `factor × leaderBin` the plan builds
+ * toward, e.g. the in-flight self-state a rapid follow-up resync nets against (finding #121) — uses the EXACT same
+ * factor and can never drift from the plan. Pure.
  */
-export function reshapeCapFactor(leaderSolTotal: number, ratio: number, maxSol: number): number {
-  return leaderSolTotal > 0 ? Math.min(ratio, maxSol / leaderSolTotal) : ratio;
+export function reshapeCapFactor(
+  leaderSolTotal: number,
+  tokenLegValueInSol: number,
+  ratio: number,
+  maxSol: number,
+): number {
+  const combinedBasis = leaderSolTotal + tokenLegValueInSol;
+  return combinedBasis > 0 ? Math.min(ratio, maxSol / combinedBasis) : ratio;
 }
 
 /**
@@ -131,15 +143,17 @@ export function planTwoSidedReshape(
   ourToken: BinSol[],
   ratio: number,
   maxSol: number,
+  tokenLegValueInSol: number,
   solDeadband: number,
   tokenDeadband: number,
 ): { ops: ReshapeOp[]; tokenAddOps: Extract<ReshapeOp, { action: 'add' }>[] } {
-  // ONE shared cap factor for BOTH legs (mirrors sizeTwoSided's same-factor semantics): when the SOL cap
-  // binds, the token leg must scale by the SAME factor — else the copy buys token toward an UNCAPPED
-  // `ratio × leaderToken`, ratchets past maxTradeSizeSol, and re-detects a deficit on every event. The cap is
+  // ONE shared cap factor for BOTH legs (mirrors sizeTwoSided's COMBINED-cap semantics at OPEN — finding #94): the
+  // factor bounds the COMBINED deployment (SOL leg + the token leg valued in SOL, `tokenLegValueInSol`), so the token
+  // buy can't run the total to ~2× maxTradeSizeSol on the first resync (finding #158). Capping the SOL leg alone also
+  // left the token leg chasing an UNCAPPED `ratio × leaderToken` → a deficit re-detected on every event. The cap is
   // folded into `factor` here, so both planReshape calls take `factor` as ratio with maxSol = ∞.
   const leaderSolTotal = leaderSol.reduce((s, b) => s + b.sol, 0);
-  const factor = reshapeCapFactor(leaderSolTotal, ratio, maxSol);
+  const factor = reshapeCapFactor(leaderSolTotal, tokenLegValueInSol, ratio, maxSol);
   const solOps = planReshape(leaderSol, ourSol, factor, Number.POSITIVE_INFINITY, solDeadband);
   const tokenOps = planReshape(
     leaderToken,

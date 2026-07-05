@@ -1964,6 +1964,70 @@ describe('UserRuntime — a RESYNC records the tracked size from PUBLISHED ops o
     expect(codes.some((r) => r.code === 'cap.max_total_exposure')).toBe(true);
     vi.mocked(buildAddByWeight).mockReset();
   });
+
+  it('a two-sided GROW whose COMBINED value exceeds the cap deploys ≤ the cap and records the true combined (finding #158)', async () => {
+    // WHY (#158, money — incomplete #94): the resync factor capped only the SOL leg (min(ratio, maxSol/leaderSol))
+    // while #94 caps the COMBINED at OPEN. Leader worth 4 SOL leg + token worth 6 SOL (combined 10), cap 5, ratio
+    // 100% → the buggy resync deployed factor 1.0 on BOTH legs = a 4 SOL leg add + a ~6 SOL token BUY = ~10 SOL (2×
+    // the per-trade cap), while the mirror size clamped to 5 → the per-trade AND aggregate exposure caps were breached
+    // with the recorded size UNDER-counting the deploy 2×. The fix folds the token leg's SOL value into the factor
+    // (min(1, 5/(4+6)) = 0.5): the SOL add + the token buy == EXACTLY the 5 SOL cap, and the recorded size == that
+    // true combined deployment (SOL leg + buy spend), consistent with the OPEN path. Drives the REAL two-sided path.
+    const PRICE_LAMPORTS_PER_RAW = 1_500_000n; // full leg 4000 raw → 6 SOL; the deficit is priced at the SAME rate
+    vi.mocked(getJupiterQuote).mockImplementation(async (_url, _mint, amountRaw) => ({
+      inputMint: R_MINT,
+      outputMint: WSOL,
+      inAmount: String(amountRaw),
+      outAmount: String(BigInt(amountRaw) * PRICE_LAMPORTS_PER_RAW), // value quote (full leg) AND buy-price quote (deficit)
+      raw: {},
+    }));
+    vi.mocked(getJupiterBuyQuoteExactIn).mockImplementation(async (_url, _mint, solToSpend) => ({
+      inputMint: WSOL,
+      outputMint: R_MINT,
+      inAmount: String(solToSpend), // the SOL the buy spends == the priced deficit (echoed)
+      outAmount: '1000', // expected token out (raw) — the wallet settles to this
+      raw: {},
+    }));
+    vi.mocked(buildJupiterSwapTx).mockResolvedValue('buytx-b64');
+    vi.mocked(readOwnerTokenBalance).mockReset();
+    vi.mocked(readOwnerTokenBalance).mockResolvedValueOnce(0n).mockResolvedValue(1_000n);
+    vi.mocked(buildAddByWeight).mockImplementation(async () => new Transaction());
+
+    const { rt, published, recorded } = await driveResync({
+      userId: 'resync-158-combined-cap',
+      twoSidedMode: 'on',
+      startSizeSol: 2, // prior recorded exposure (undersized → the resync grows)
+      leader: { x: 2_000n, y: 2_000_000_000n }, // SOL leg 2.0/bin × 2 = 4.0; token 2000/bin × 2 = 4000 raw (worth 6 SOL)
+      ours: { x: 0n, y: 0n }, // empty → the resync builds BOTH legs from scratch (deploy == SOL add + token buy)
+      depositSol: 2,
+      withdrawSol: 0,
+      instruction: 'AddLiquidityByStrategy2',
+    });
+
+    const buy = published.find((c) => c.kind === 'buy');
+    const buySpendSol = buy?.sizeSol as number;
+    // CORE #158 assertion: the token buy is priced off the CAPPED factor (0.5 × 6 SOL = 3), NOT the uncapped full leg
+    // (6 SOL). Pre-fix the SOL-only factor 1.0 made this buy spend ~6 SOL and the SOL add ~4 SOL → ~10 SOL deployed.
+    expect(buySpendSol).toBeCloseTo(3);
+    expect(recorded).toBeCloseTo(2); // DEFER: clamped to the current size until the add lands (no inflation)
+
+    await rt.publishReshapeAddAfterBuy(buy?.commandId as string, 'buysig');
+    const add = published.find((c) => c.kind === 'add');
+    const addSol = add?.sizeSol as number;
+    const finalSize = rt.registry.get(R_LEADER_POS)?.sizeSol as number;
+    // The COMBINED deployment (SOL leg add + the token buy) is bounded by the per-trade cap — NOT ~2× it.
+    expect(addSol + buySpendSol).toBeLessThanOrEqual(5);
+    expect(addSol + buySpendSol).toBeCloseTo(5); // factor 0.5 × combined 10 == exactly the 5 SOL cap
+    // The recorded size == the TRUE combined deployment (SOL leg + buy spend), like the OPEN path — no 2× under-count.
+    expect(finalSize).toBeCloseTo(addSol + buySpendSol);
+    expect(finalSize).toBeCloseTo(5);
+
+    vi.mocked(getJupiterQuote).mockReset();
+    vi.mocked(getJupiterBuyQuoteExactIn).mockReset();
+    vi.mocked(buildJupiterSwapTx).mockReset();
+    vi.mocked(readOwnerTokenBalance).mockReset();
+    vi.mocked(buildAddByWeight).mockReset();
+  });
 });
 
 describe('UserRuntime — a RESYNC is PREEMPTED by a pending leader CLOSE (finding #146)', () => {

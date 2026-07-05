@@ -2123,6 +2123,7 @@ export async function createUserRuntime(
       return;
     }
     const solSide = meta.solSide;
+    const tokenMint = solSide === 'Y' ? meta.mintX : meta.mintY; // hoisted: the token-leg SOL valuation (below) runs INSIDE the read loop, before the plan
     const pair = await createDlmmPair(conn, poolPk);
     // Stable read: a leader ADD/REMOVE we just saw may not be indexed yet → a premature read shows no change → we'd
     // skip the reshape (the copy wouldn't grow/shrink). readStableShape waits for the leader's liquidity to settle.
@@ -2138,6 +2139,8 @@ export async function createUserRuntime(
     let leaderBins: Array<{ offset: number; sol: number }> = []; // hoisted: also used post-loop for the new-size calc
     let leaderTokenBins: Array<{ offset: number; sol: number }> = []; // hoisted: also used post-loop for the #121 target
     let leaderTokenRawTotal = 0; // hoisted: leader's full token-leg raw units → valued in SOL for the new-size calc
+    let tokenLegValueSol = 0; // leader token leg valued in SOL: caps the COMBINED reshape deploy factor (#94/#158) AND the recorded size — ONE quote, reused
+    let tokenLegValued = false; // memo: value the token leg AT MOST once across the RESYNC_READ_RETRIES reads (never a per-retry hot-path quote)
     for (let r = 0; r <= (changeExpected ? RESYNC_READ_RETRIES : 0); r++) {
       // #146 — PREEMPT: a leader CLOSE for this position has been observed (it is queued behind us on the position's
       // serial chain). ABORT the resync NOW — before the sleep and the ~seconds-long readStableShape — so the close
@@ -2194,6 +2197,25 @@ export async function createUserRuntime(
         inflightFresh && ec.twoSidedMode === 'on'
           ? [...inflight.token.entries()].map(([offset, sol]) => ({ offset, sol }))
           : ourTokenBins;
+      // Value the leader's token leg in SOL ONCE (memoized across the read retries), BEFORE the plan: the shared
+      // reshape factor must bound the COMBINED deployment (SOL leg + the token buy) like the OPEN's sizeTwoSided
+      // (#94) — else the FIRST resync of a two-sided position deploys ~2× maxTradeSizeSol (#158). Guarded to
+      // two-sided copies that actually hold token; a quote failure falls back to the SOL-leg-only basis (never an
+      // overcount, same as pre-fix). Reused verbatim for the recorded size below — no second, per-command quote.
+      if (!tokenLegValued && ec.twoSidedMode === 'on' && leaderTokenRawTotal > 0) {
+        try {
+          const valueQuote = await getJupiterQuote(
+            jupiterBaseUrl,
+            tokenMint,
+            BigInt(Math.round(leaderTokenRawTotal)),
+            ec.execution.slippageBps,
+          );
+          tokenLegValueSol = Number(valueQuote.outAmount) / LAMPORTS_PER_SOL;
+        } catch {
+          tokenLegValueSol = 0; // SOL-leg basis fallback — never an overcount
+        }
+        tokenLegValued = true;
+      }
       // SOL-leg ops (removes are proportional → cover both legs); token-leg ADD deficit handled two-sided when enabled.
       plan = planTwoSidedReshape(
         leaderBins,
@@ -2202,6 +2224,7 @@ export async function createUserRuntime(
         ourTokenBinsEff,
         copyRatio,
         ec.sizing.maxTradeSizeSol,
+        tokenLegValueSol,
         ec.execution.reshapeBinDeadbandSol,
         ec.execution.reshapeBinDeadbandToken,
       );
@@ -2221,7 +2244,6 @@ export async function createUserRuntime(
     // op count. A reshape whose token adds all fall outside our range or round to 0 has NO token leg to grow → it must
     // fall through to the one-sided SOL add path below so the SOL leg STILL grows this cycle (else it would enter the
     // buy branch, price a 0-token leg, throw, and drop the SOL-leg adds — leaving the copy undersized its whole life).
-    const tokenMint = solSide === 'Y' ? meta.mintX : meta.mintY;
     const tokenAdds =
       ec.twoSidedMode === 'on'
         ? inRangeTokenAdds(tokenAddOps, ourShape.lowerBinId, ourShape.upperBinId)
@@ -2294,13 +2316,19 @@ export async function createUserRuntime(
     // Exposure cap re-check on a GROW (idx15): checkCaps runs only at OPEN, but a reshape/resync ADD grows the position
     // → post-open growth could breach maxTotalExposureSol / the per-leader ceiling. Gate the grow on the SAME caps
     // function, but ONLY the exposure ceilings apply to growing an already-open position — the open-count / per-token /
-    // per-window / kill-switch ENTRY gates are neutralized (a grow is not a new entry). Basis = the SOL-leg growth
-    // target (== the one-sided recordedSize; a two-sided grow's extra token-leg value is separately bounded by
-    // maxTradeSizeSol per position and re-checked at the next event/reconcile). A shrink never breaches an exposure cap.
-    const leaderSolSizeSol = leaderBins.reduce((s, b) => s + b.sol, 0); // also the recorded-size basis below
-    const growTargetSol = Math.min(copyRatio * leaderSolSizeSol, ec.sizing.maxTradeSizeSol);
+    // per-window / kill-switch ENTRY gates are neutralized (a grow is not a new entry). Basis = the COMBINED growth
+    // target (SOL leg + the token leg valued in SOL), matching m.sizeSol and #94's combined exposure basis, so a
+    // two-sided grow's exposure delta is cap-checked in FULL — a SOL-leg-only basis undercounted the delta and could
+    // skip the ceiling check on a real grow when the token leg dominated (finding #158). A shrink never breaches a cap.
+    const leaderSolSizeSol = leaderBins.reduce((s, b) => s + b.sol, 0); // SOL leg total (one input to the combined basis)
+    // The COMBINED target — the single exposure basis for the grow-gate AND the recorded size (below), from the SAME
+    // `tokenLegValueSol` that bounded the deploy factor above → the record can never diverge from the deployment.
+    const newSize = Math.min(
+      copyRatio * (leaderSolSizeSol + tokenLegValueSol),
+      ec.sizing.maxTradeSizeSol,
+    );
     let growBlocked = false;
-    if (growTargetSol > m.sizeSol) {
+    if (newSize > m.sizeSol) {
       const growCap = checkCaps(
         {
           ...ec.caps,
@@ -2311,7 +2339,7 @@ export async function createUserRuntime(
           maxOpensPerWindow: null,
         },
         capsState(leader, tokenMint), // live totals already include m.sizeSol
-        growTargetSol - m.sizeSol, // the exposure DELTA this grow adds
+        newSize - m.sizeSol, // the COMBINED exposure DELTA this grow adds (SOL leg + token leg valued in SOL)
         Date.now(),
         ec.leaderMaxTotalExposureSol,
       );
@@ -2329,7 +2357,7 @@ export async function createUserRuntime(
           ourPosition: m.ourPosition,
           eventKey: reshapeSkipKey(e, m),
           leaderSizeSol: leaderSolSizeSol,
-          ourSizeSol: growTargetSol,
+          ourSizeSol: newSize,
           adminDetail: { mint: tokenMint, nonSolSymbol: m.nonSolSymbol, currentSizeSol: m.sizeSol },
         });
       }
@@ -2531,36 +2559,14 @@ export async function createUserRuntime(
       growPublished = true; // #145 — ≥1 one-sided add chunk published synchronously → the grow is REAL, record the target
     }
 
-    // Exposure basis (finding #94 §3): the recorded size must count BOTH legs, exactly like the two-sided OPEN —
-    // else the FIRST resync clobbers the open's combined size back to a SOL-leg-only figure and undercounts deployed
-    // capital by up to ~2×. Value the leader's full token leg in SOL via the fully-routed SELL quote, but ONLY when
-    // we actually copy the token leg (twoSidedMode 'on' AND the leader holds token). This runs AFTER every reshape
-    // command is already published (off the copy SLA path) and is guarded: a quote failure falls back to the SOL-leg
-    // basis (never worse than before the fix), and it feeds ONLY the recorded size — the deposits are unaffected.
-    // (`leaderSolSizeSol` is computed once above, for the grow-cap gate.)
-    let tokenLegValueSol = 0;
-    if (ec.twoSidedMode === 'on' && leaderTokenRawTotal > 0) {
-      try {
-        const valueQuote = await getJupiterQuote(
-          jupiterBaseUrl,
-          tokenMint,
-          BigInt(Math.round(leaderTokenRawTotal)),
-          ec.execution.slippageBps,
-        );
-        tokenLegValueSol = Number(valueQuote.outAmount) / LAMPORTS_PER_SOL;
-      } catch {
-        tokenLegValueSol = 0; // SOL-leg basis fallback — same as before the fix, never an overcount
-      }
-    }
-    const newSize = Math.min(
-      copyRatio * (leaderSolSizeSol + tokenLegValueSol),
-      ec.sizing.maxTradeSizeSol,
-    );
     // #145 — record ONLY what actually published. Removes land synchronously, so a SHRINK (or a one-sided grow whose
-    // adds published) records the full target now; a grow whose add was DEFERRED (two-sided) or SKIPPED
+    // adds published) records the full COMBINED target now; a grow whose add was DEFERRED (two-sided) or SKIPPED
     // (token_unbuyable / all adds out of range) must NOT inflate exposure → clamp to the current size so the caps and
-    // the feed track the copy's real deployed capital. A deferred two-sided grow records `newSize` later, when
-    // publishReshapeAddAfterBuy publishes its add (the target is stashed on the pending-add ctx just below).
+    // the feed track the copy's real deployed capital. `newSize` (the COMBINED exposure basis — SOL leg + the token
+    // leg valued in SOL, capped; finding #94 §3) was computed once at the grow-gate from the SAME `tokenLegValueSol`
+    // that bounded the deploy factor, so the recorded size can NEVER under-count the true combined deployment (#158):
+    // the open path records SOL leg + buy spend, and here `deploy == newSize` by construction. A deferred two-sided
+    // grow records `newSize` later, when publishReshapeAddAfterBuy publishes its add (stashed on the pending ctx below).
     const recordedSize = growPublished ? newSize : Math.min(newSize, m.sizeSol);
     registry.adjustSize(e.position, recordedSize);
     await store.updateSize(e.position, recordedSize);
@@ -2575,7 +2581,12 @@ export async function createUserRuntime(
     // the per-offset target (`capFactor × leaderBin`) matches what the plan built toward; offsets outside our FIXED
     // range are unreachable (partial-range limit) → dropped, exactly like the on-chain add filter does.
     if (calls.removes.length > 0 || growPublished || deferredGrowKey !== null) {
-      const capFactor = reshapeCapFactor(leaderSolSizeSol, copyRatio, ec.sizing.maxTradeSizeSol);
+      const capFactor = reshapeCapFactor(
+        leaderSolSizeSol,
+        tokenLegValueSol,
+        copyRatio,
+        ec.sizing.maxTradeSizeSol,
+      );
       const maxOffset = ourShape.upperBinId - ourShape.lowerBinId; // our range is fixed at open
       const leaderSolByOffset = new Map(leaderBins.map((b) => [b.offset, b.sol]));
       const leaderTokenByOffset = new Map(leaderTokenBins.map((b) => [b.offset, b.sol]));
