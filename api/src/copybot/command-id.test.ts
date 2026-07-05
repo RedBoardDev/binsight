@@ -67,4 +67,15 @@ describe('deriveCommandId v2 — per-user idempotency key (brain↔vault contrac
   it('always returns 64 lowercase hex chars (a valid sha256 digest)', () => {
     expect(deriveCommandId('system', 'anything')).toMatch(/^[0-9a-f]{64}$/);
   });
+
+  it('★ idx27: REJECTS a newline in either input — the injectivity invariant is ENFORCED, not just documented', () => {
+    // WHY: the `\n` join is one-pre-image ONLY while neither input contains `\n`. A newline in userId/eventKey would
+    // let two distinct (userId, eventKey) pairs collapse to one joined string → colliding commandIds → a copy
+    // rejected as another's `executions` duplicate (a MISSED copy). Real DIDs/eventKeys carry no newline, so this is
+    // a defensive fail-loud assertion: it must THROW rather than silently alias.
+    expect(() => deriveCommandId('u\n1', 'evt')).toThrow(/newline/);
+    expect(() => deriveCommandId('u1', 'ev\nt')).toThrow(/newline/);
+    // …and the ordinary newline-free case is entirely unaffected — no false positives on real inputs.
+    expect(() => deriveCommandId('system', 'LEADER:POOL:open:SIG123')).not.toThrow();
+  });
 });

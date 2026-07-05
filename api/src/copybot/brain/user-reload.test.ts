@@ -248,6 +248,39 @@ describe('reloadAllUsers — boot + live reload (Inc.3b S7)', () => {
     expect(h.perRt.get('u2')?.stopDiffs.at(-1)?.next.user.enabled).toBe(false); // u2's stop landed
   });
 
+  it('★ idx45: a throwing applyStopCloses KEEPS the committed config and logs the HONEST outcome — never "previous config stands"', async () => {
+    // WHY: phase 2 commits the fresh config (setConfig + userConfigs.set) BEFORE applyStopCloses. When the
+    // force-close throws, the new config is ALREADY the live fan-out view — logging "previous config stands" is a
+    // lie that also hides the lost stop transition. The honest report: the config committed; only the stop-close
+    // failed (reconcile / the next reload retries it). This test FAILS if the misleading message returns.
+    const rows = new Map([['u1', cfg(true, [LEADER_A])]]);
+    const errors: string[] = [];
+    const capture = {
+      error: (_o: unknown, m?: string) => errors.push(m ?? ''),
+      info() {},
+      warn() {},
+    };
+    const h = makeHarness(rows);
+    h.deps.log = capture as unknown as typeof log;
+    await reloadAllUsers(h.deps); // boot u1
+
+    const u1 = h.perRt.get('u1')!;
+    u1.rt.applyStopCloses = async () => {
+      throw new Error('force-close failed');
+    };
+    const stopped = cfg(false, [LEADER_A]);
+    rows.set('u1', stopped);
+    errors.length = 0; // ignore boot logs; assert only the refresh pass
+    await expect(reloadAllUsers(h.deps)).resolves.toBeUndefined(); // the reload loop never rejects
+
+    expect(h.runtimes.get('u1')?.getConfig()).toBe(stopped); // the NEW config IS committed (not rolled back)
+    expect(h.userConfigs.get('u1')).toBe(stopped); // and it IS the live fan-out view
+    const msg = errors.find((m) => m.includes('stop-close'));
+    expect(msg).toBeDefined(); // the failure was surfaced...
+    expect(msg).not.toContain('previous config stands'); // ...HONESTLY: not the old lie
+    expect(msg).toContain('committed'); // it states the fresh config was committed
+  });
+
   it('listActiveUserIds failure: no spawns, but EXISTING runtimes still refresh and the leader set still applies', async () => {
     const rows = new Map([['u1', cfg(true, [LEADER_A])]]);
     const h = makeHarness(rows);

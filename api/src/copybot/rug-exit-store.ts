@@ -160,15 +160,21 @@ export class RugExitStore {
 /**
  * Purge ONE position from the pending re-close set on a CONFIRMED close — shared by the brain's ev:executed
  * close-confirm handler AND the reconcile's markClosed pass. Without the ev:executed call, only the reconcile
- * purged the entry, leaving it inert (a stale forever-row once the mirror is unregistered). Returns whether an
- * entry was actually purged (memory + durable row together — the two must never diverge across a restart).
+ * purged the entry, leaving it inert (a stale forever-row once the mirror is unregistered). The durable delete is
+ * attempted UNCONDITIONALLY (idempotent), even on an in-memory miss: `removePending` is fail-safe, so a swallowed
+ * transient error on an earlier purge can clear memory yet leave the row — short-circuiting on the memory miss
+ * would then ORPHAN that row forever (re-seeded at every boot, re-closing an already-gone position). Memory +
+ * durable must never diverge. Returns whether the in-memory set held the entry.
  */
 export async function purgeRugExitPending(
   pending: Set<string>,
   store: Pick<RugExitStore, 'removePending'>, // structural: the multi-user sweep passes stub-able runtime surfaces
   ourPosition: string,
 ): Promise<boolean> {
-  if (!pending.delete(ourPosition)) return false;
+  const wasPending = pending.delete(ourPosition);
+  // Always delete the durable row — NOT gated on `wasPending`. A prior purge may have cleared memory while its
+  // fail-safe `removePending` swallowed a transient DB error, leaving the row; this unconditional (idempotent)
+  // delete is what finally reclaims it. A delete of an absent row is a harmless no-op.
   await store.removePending(ourPosition);
-  return true;
+  return wasPending;
 }

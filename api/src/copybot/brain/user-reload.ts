@@ -140,19 +140,34 @@ export async function reloadAllUsers<R extends ReloadableRuntime>(
 
   // 2. Refresh EVERY existing runtime (including deactivated ones — retention, see module doc). STOP =
   // FORCE-CLOSE (SPEC §4.3): diff the config we were RUNNING (prev, the last loaded value in memory — never a
-  // stale/boot snapshot, so a restart can't replay an old stop) against the fresh load.
+  // stale/boot snapshot, so a restart can't replay an old stop) against the fresh load. Two failure domains are
+  // kept DISTINCT so each logs the TRUTH: a failed LOAD leaves the previous config standing; a failure AFTER the
+  // fresh config is committed (setConfig) means the new config IS live — only the stop-close application failed.
   for (const rt of deps.runtimes.values()) {
     if (spawnedNow.has(rt.userId)) continue; // just spawned — its boot stop-closes ran in 1b, nothing to diff yet
+    const prev = rt.getConfig();
+    let next: CopybotConfig;
     try {
-      const prev = rt.getConfig();
-      const next = await deps.loadConfig(rt.userId);
-      rt.setConfig(next);
-      deps.userConfigs.set(rt.userId, next); // the fan-out targets from this live view
-      await rt.applyStopCloses(prev, next);
+      next = await deps.loadConfig(rt.userId);
     } catch (e) {
+      // The config READ failed → nothing was committed; the previous config genuinely stands.
       deps.log.error(
         { e: (e as Error).message, userId: rt.userId },
         'reload: user config refresh failed → previous config stands (retried next reload)',
+      );
+      continue;
+    }
+    try {
+      rt.setConfig(next);
+      deps.userConfigs.set(rt.userId, next); // the fan-out targets from this live view — NOW committed
+      await rt.applyStopCloses(prev, next);
+    } catch (e) {
+      // The fresh config was already committed above; only applying the stop-closes failed. Say so honestly — the
+      // old "previous config stands" was a lie that hid a lost stop transition. STOP = force-close is idempotent, so
+      // reconcile / the next reload re-applies it.
+      deps.log.error(
+        { e: (e as Error).message, userId: rt.userId },
+        'reload: stop-close apply failed → new config committed, stop-close retried by reconcile/next reload',
       );
     }
   }

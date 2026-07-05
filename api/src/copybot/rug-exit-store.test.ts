@@ -192,4 +192,20 @@ describe('purgeRugExitPending — close-confirm purge (ev:executed path + reconc
     expect(await purgeRugExitPending(pending, s, 'OUR_UNRELATED')).toBe(false);
     expect((await s.loadPending()).has('OUR_OTHER')).toBe(true);
   });
+
+  it('★ idx53: removes the durable row EVEN on an in-memory miss — a swallowed earlier delete must not orphan it', async () => {
+    // WHY: `removePending` is fail-safe (a transient DB error is swallowed), so an earlier purge can clear the
+    // in-memory set yet leave the durable row behind. If a later purge short-circuited on the memory miss, that row
+    // would be ORPHANED forever — re-seeded at every boot and re-closing a position that is already gone. So the
+    // durable delete must run UNCONDITIONALLY. Here the durable row exists with NO matching memory entry (the
+    // diverged state); the purge must still reclaim it. This test FAILS with the old `if (!delete) return false`.
+    const freshDb = await newDb();
+    const s = new RugExitStore(freshDb, log, USER);
+    await s.addPending('OUR_ORPHAN'); // durable row persisted...
+    const emptyMemory = new Set<string>(); // ...but memory does NOT have it (memory/durable already diverged)
+
+    expect(await purgeRugExitPending(emptyMemory, s, 'OUR_ORPHAN')).toBe(false); // memory miss ⇒ returns false
+    const rebooted = await new RugExitStore(freshDb, log, USER).loadPending();
+    expect(rebooted.has('OUR_ORPHAN')).toBe(false); // durable row RECLAIMED despite the miss — never orphaned
+  });
 });

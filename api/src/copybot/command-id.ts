@@ -14,5 +14,14 @@ import { createHash } from 'node:crypto';
 const DERIVATION_SEPARATOR = '\n';
 
 export function deriveCommandId(userId: string, eventKey: string): string {
+  // Enforce the injectivity invariant the `\n` join relies on (documented on DERIVATION_SEPARATOR): a newline inside
+  // either input would let two distinct (userId, eventKey) pairs collapse to ONE joined string — aliasing their
+  // commandIds and, downstream, their `executions` idempotency claim (a copy rejected as another's duplicate). DIDs
+  // and eventKeys carry no newline today, so this is a defensive fail-loud guard, not a hot-path reject.
+  if (userId.includes(DERIVATION_SEPARATOR) || eventKey.includes(DERIVATION_SEPARATOR)) {
+    throw new Error(
+      'deriveCommandId: userId/eventKey must not contain a newline (breaks idempotency-key injectivity)',
+    );
+  }
   return createHash('sha256').update(`${userId}${DERIVATION_SEPARATOR}${eventKey}`).digest('hex');
 }
