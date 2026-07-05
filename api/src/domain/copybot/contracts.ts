@@ -13,7 +13,7 @@ export const SignRequestSchema = z
     userId: z.string().min(1),
     /** = derive(userId, eventKey); the coffre's per-user idempotency key (executions (user_id, command_id)). */
     commandId: z.string().min(1),
-    /** leader:pool:event:slot:txSig — the originating leader event. */
+    /** leader:pool:action:position:signature — the originating leader event. */
     eventKey: z.string().min(1),
     kind: z.enum(['open', 'close', 'claim', 'sell', 'add', 'remove', 'buy', 'fee']),
     pool: z.string().min(1),

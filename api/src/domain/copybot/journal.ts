@@ -81,7 +81,7 @@ export interface JournalEntry {
   ourPosition?: string;
   /** Idempotency / bus correlation (executions.command_id). */
   commandId?: string;
-  /** Detection correlation (leader:pool:event:slot:txSig). */
+  /** Detection correlation (leader:pool:action:position:signature). */
   eventKey?: string;
   leaderSizeSol?: number;
   ourSizeSol?: number;
