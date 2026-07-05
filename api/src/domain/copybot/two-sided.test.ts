@@ -222,6 +222,48 @@ describe('sizeTwoSided — combined-deployment cap counts the token buy too (fin
   });
 });
 
+describe('sizeTwoSided — fixed-size mode deploys ~fixedSize, NOT 100% of the leader (#143)', () => {
+  const SOL = 1_000_000_000n;
+  const PRICE = 500n; // lamports of SOL value per raw token unit → buySpend = tokenTarget × PRICE
+  // Fixed-size mode has no % ratio, so the two-sided OPEN sizes at a FULL (100%) NOMINAL ratio and lets the #94
+  // COMBINED cap (`maxDeployLamports` = the pinned `maxTradeSizeSol`) bound the deployment. 100 here IS the
+  // fixed-size nominal ratio (user-runtime's FIXED_SIZE_MIRROR_RATIO_PCT); the leader is BIGGER than the fixed size.
+  const FIXED_SIZE_NOMINAL_PCT = 100;
+  const leaderSolLeg = 4n * SOL; // leader SOL leg
+  const leaderTokenRaw = 8_000_000n; // × PRICE = 4 SOL of token value
+  const leaderTokenValue = 4n * SOL;
+  const leaderCombined = leaderSolLeg + leaderTokenValue; // = 8 SOL (the leader's total value, both legs in SOL)
+  const fixedSize = 5n * SOL; // the user's pinned `maxTradeSizeSol` (= `maxDeployLamports` in fixed-size mode)
+
+  it('a leader worth MORE than the fixed size → both legs scaled so the combined deployment == the fixed size', () => {
+    // WHY (#143): before, the two-sided open was read as "100% OF THE LEADER" (8 SOL) — ignoring the pinned 5 SOL.
+    // The fixed-size nominal ratio + the #94 cap must instead deploy ~fixedSize: factor 0.625 on BOTH legs → 5 SOL.
+    const { solLamports, tokenTarget } = sizeTwoSided(
+      leaderSolLeg,
+      leaderTokenRaw,
+      leaderTokenValue,
+      FIXED_SIZE_NOMINAL_PCT,
+      fixedSize,
+    );
+    expect(solLamports + tokenTarget * PRICE).toBe(fixedSize); // combined = the fixed size, NOT 100% of the leader
+    expect(solLamports).toBe(2_500_000_000n); // 4 SOL × 0.625 (composition preserved: both legs share the factor)
+    expect(tokenTarget).toBe(5_000_000n); // 8_000_000 × 0.625
+  });
+
+  it('proof it is the CAP, not the ratio: the SAME 100% ratio with NO cap deploys the full leader (100% of 8 SOL)', () => {
+    // The bug the fix guards: at 100% and NO combined cap the open deploys the WHOLE leader — the very "100% of the
+    // leader" the fixed size must override. `maxDeploy = 0` disables the cap (the token-value-0 / no-cap sentinel).
+    const { solLamports, tokenTarget } = sizeTwoSided(
+      leaderSolLeg,
+      leaderTokenRaw,
+      leaderTokenValue,
+      FIXED_SIZE_NOMINAL_PCT,
+      0n,
+    );
+    expect(solLamports + tokenTarget * PRICE).toBe(leaderCombined); // 8 SOL — 100% of the leader (> the 5 SOL fixed size)
+  });
+});
+
 describe('planTwoSidedReshape — proportional removes (both legs) + per-leg token ADD deficit', () => {
   const ratio = 0.5;
   const NO_CAP = 1_000_000;
@@ -332,6 +374,52 @@ describe('planTwoSidedReshape — proportional removes (both legs) + per-leg tok
     // The mixed bin (offset 0) is trimmed by the SOL-leg remove only — exactly ONE op, no token-leg duplicate.
     expect(removes.filter((o) => o.offset === 0).length).toBe(1);
     expect(r.tokenAddOps.length).toBe(0); // a shrink has no token adds
+  });
+
+  // #143: fixed-size RESYNC. The mode carries no % ratio, so resync feeds a FULL (100% → 1.0) NOMINAL ratio bounded
+  // by `maxSol = maxTradeSizeSol` (⇒ factor = min(1, fixedSize/leaderSolTotal)). A leader de-risk must then SHRINK
+  // the mirror — the exact behaviour the old fixed-size ratio of 0 silently disabled (planReshape's `ratio > 0`
+  // guard returned []), leaving the copy fully deployed through the whole drawdown until the final close.
+  it('fixed-size (ratio 1.0, cap = fixedSize) MIRRORS a leader de-risk (removes) — where the old ratio 0 was a silent no-op', () => {
+    const leaderSol: BinSol[] = [
+      { offset: 0, sol: 0.5 },
+      { offset: 1, sol: 0.5 },
+    ]; // leader de-risked to 1.0 SOL total (was larger)
+    const ourSol: BinSol[] = [
+      { offset: 0, sol: 2.5 },
+      { offset: 1, sol: 2.5 },
+    ]; // we still hold 5.0 SOL (the fixed size) → must shrink toward the de-risked leader
+    const noToken: BinSol[] = [
+      { offset: 0, sol: 0 },
+      { offset: 1, sol: 0 },
+    ];
+    const FIXED_SIZE = 5; // maxTradeSizeSol (= maxSol); leaderSolTotal 1.0 < it ⇒ factor = min(1, 5/1) = 1.0
+    const FIXED_SIZE_RATIO = 1.0; // FIXED_SIZE_MIRROR_RATIO_PCT / 100 — the fixed-size nominal mirror
+
+    const fixed = planTwoSidedReshape(
+      leaderSol,
+      ourSol,
+      noToken,
+      noToken,
+      FIXED_SIZE_RATIO,
+      FIXED_SIZE,
+      DEAD,
+      DEAD,
+    );
+    expect(fixed.ops.some((o) => o.action === 'remove')).toBe(true); // the de-risk IS mirrored — the copy shrinks
+
+    // The BUG being fixed: the old fixed-size path fed ratio 0 → planReshape's `ratio > 0` guard → EMPTY plan (no-op).
+    const buggy = planTwoSidedReshape(
+      leaderSol,
+      ourSol,
+      noToken,
+      noToken,
+      0,
+      FIXED_SIZE,
+      DEAD,
+      DEAD,
+    );
+    expect(buggy.ops).toEqual([]); // silently disabled: the copy would ride the drawdown fully deployed (#143)
   });
 });
 

@@ -40,13 +40,16 @@ vi.mock('@meteora-ag/dlmm', () => ({
 // `createDlmmPair` (a discarded dummy — the guard returns before any build) and `readLeaderPositionShape` (driven
 // per-test to a wide one-sided shape). `buildCloseTx` is a passthrough spy (defaults to the REAL impl, so behavior
 // is unchanged) that the stop-close ordering test (#153) overrides ONCE to observe when publishSafetyClose enters
-// its close-publish path. No other test in this file calls any of these, so their behavior is unchanged.
+// its close-publish path. `buildRemovePartial` is a passthrough spy the fixed-size RESYNC test (#143) overrides to
+// observe that handleResync reaches the remove-build tail (i.e. planned a shrink). No other test in this file calls
+// any of these, so their behavior is unchanged.
 vi.mock('@/infrastructure/solana/dlmm/dlmm-tx-builder', async (orig) => {
   const actual = await orig<typeof import('@/infrastructure/solana/dlmm/dlmm-tx-builder')>();
   return {
     ...actual,
     createDlmmPair: vi.fn(async () => ({}) as never),
     buildCloseTx: vi.fn(actual.buildCloseTx),
+    buildRemovePartial: vi.fn(actual.buildRemovePartial),
   };
 });
 vi.mock('@/infrastructure/solana/dlmm/leader-position-reader', async (orig) => {
@@ -54,7 +57,11 @@ vi.mock('@/infrastructure/solana/dlmm/leader-position-reader', async (orig) => {
   return { ...actual, readLeaderPositionShape: vi.fn() };
 });
 
-import { buildCloseTx, createDlmmPair } from '@/infrastructure/solana/dlmm/dlmm-tx-builder';
+import {
+  buildCloseTx,
+  buildRemovePartial,
+  createDlmmPair,
+} from '@/infrastructure/solana/dlmm/dlmm-tx-builder';
 import { readLeaderPositionShape } from '@/infrastructure/solana/dlmm/leader-position-reader';
 import { runClosedFeeBackstop } from './fee-sweep';
 import { createUserRuntime, INFLIGHT_BUY_GRACE_MS, type SharedBrainDeps } from './user-runtime';
@@ -1493,5 +1500,118 @@ describe('UserRuntime — stop-close arms the durable re-close row BEFORE publis
         ),
       );
     expect(rows).toHaveLength(1);
+  });
+});
+
+describe('UserRuntime — fixed-size RESYNC mirrors a leader de-risk (finding #143)', () => {
+  const WSOL = 'So11111111111111111111111111111111111111112';
+  const DERISK_LEADER = Keypair.generate().publicKey.toBase58();
+  const LEADER_POS = Keypair.generate().publicKey.toBase58();
+  const OUR_POS = Keypair.generate().publicKey.toBase58();
+  const POOL = Keypair.generate().publicKey.toBase58();
+  const NONSOL_MINT = Keypair.generate().publicKey.toBase58();
+  const HALF_SOL = 500_000_000n; // leader SOL/Y leg per bin AFTER a de-risk: 0.5 SOL (leader total 1.0 over 2 bins)
+  const FULL_SOL = 2_500_000_000n; // our SOL/Y leg per bin, STILL full: 2.5 SOL (our total 5.0 = the fixed size)
+  const TOK = 1_000n; // a token/X leg on every bin so readStableShape accepts the leader shape on the first poll
+
+  // A DLMM position shape with BOTH legs on each bin over [0, 1] (both-legs ⇒ readStableShape returns immediately).
+  const shape = (ySol: bigint) => ({
+    positionPubkey: '__resync_143__',
+    activeBinId: 0,
+    lowerBinId: 0,
+    upperBinId: 1,
+    perBin: [
+      { binId: 0, x: TOK, y: ySol },
+      { binId: 1, x: TOK, y: ySol },
+    ],
+  });
+
+  const sharedResync: SharedBrainDeps = {
+    ...shared,
+    poolReader: {
+      loadPoolMeta: async (pool: string) =>
+        pool === POOL
+          ? ({ solSide: 'Y', binStep: 20, mintX: NONSOL_MINT, mintY: WSOL } as LoadedPoolMeta)
+          : null,
+    } as unknown as OnchainPoolMetaReader,
+  };
+
+  // twoSidedMode stays 'off' (from the defaults) ⇒ a pure SOL-leg reshape (no Jupiter). Only the sizing ratio varies.
+  const cfgFor = (tradeRatioPct: number | null) => ({
+    ...CONFIG_DEFAULTS,
+    user: {
+      ...CONFIG_DEFAULTS.user,
+      sizing: { ...CONFIG_DEFAULTS.user.sizing, tradeRatioPct, maxTradeSizeSol: 5 },
+    },
+    leaders: [{ address: DERISK_LEADER, enabled: true, maxTotalExposureSol: null, overrides: {} }],
+  });
+
+  /** Track a full-size mirror, feed a leader de-risk (withdraw) and let handleResync run to the remove-build tail. */
+  async function drive(userId: string, tradeRatioPct: number | null): Promise<void> {
+    const conn = new Connection('http://127.0.0.1:1');
+    vi.spyOn(conn, 'getSlot').mockResolvedValue(1_000); // slots() resolves so handleResync reaches buildRemovePartial
+    const rt = await createUserRuntime(
+      { ...sharedResync, conn, bus: { publish: async () => undefined } as unknown as RedisBus },
+      userId,
+      { ...opts, leader: DERISK_LEADER, initialConfig: cfgFor(tradeRatioPct) },
+    );
+    rt.registry.open({
+      leaderPosition: LEADER_POS,
+      leaderAddress: DERISK_LEADER,
+      ourPosition: OUR_POS,
+      pool: POOL,
+      nonSolSymbol: 'TKN',
+      nonSolMint: NONSOL_MINT,
+      sizeSol: 5, // we currently hold the full fixed size
+      lowerBin: 0,
+      upperBin: 1,
+      openedAt: Date.now(),
+    });
+    // readStableShape(leader) and readLeaderPositionShape(our) both hit this mock — split by the position pubkey.
+    vi.mocked(readLeaderPositionShape).mockImplementation(async (_c, _p, _o, position) =>
+      position === LEADER_POS ? shape(HALF_SOL) : shape(FULL_SOL),
+    );
+    // Reaching the remove build proves a shrink was planned; reject so the test never touches real RPC past this hop.
+    vi.mocked(buildRemovePartial).mockClear();
+    vi.mocked(buildRemovePartial).mockRejectedValue(new Error('resync-remove-stub'));
+
+    rt.onEvent(
+      {
+        signature: `sig-143-${userId}`,
+        blockTime: 1,
+        instruction: 'RemoveLiquidityByRange2',
+        depositSol: 0,
+        depositTokenRaw: 0,
+        withdrawSol: 2, // > RESYNC_MIN_CHANGE_SOL → a real shrink, routes a tracked position to resync
+        claimSol: 0,
+        closed: false,
+        pool: POOL,
+        position: LEADER_POS,
+        nonSolMint: NONSOL_MINT,
+        nonSolSymbol: 'TKN',
+      },
+      'ws',
+      DERISK_LEADER,
+      1,
+    );
+    await waitFor(
+      () => Promise.resolve(vi.mocked(buildRemovePartial).mock.calls.length),
+      (n) => n > 0,
+    );
+  }
+
+  it('fixed-size mode: a leader de-risk PLANS a shrink (reaches the remove build) — not the old `?? 0` no-op', async () => {
+    // WHY (#143, robustness): fixed-size mode must still follow a leader de-risk. Pre-fix the resync ratio was `?? 0`,
+    // which zeroed planReshape's factor → EMPTY plan → reshape.noop → the copy rode the whole drawdown FULLY deployed
+    // until the final close. This FAILS if the fixed-size resync ratio regresses to 0: buildRemovePartial is then
+    // never reached (the reshape is a silent no-op).
+    await drive('resync-fixed-143', null);
+    expect(buildRemovePartial).toHaveBeenCalled(); // the de-risk IS mirrored — a shrink (remove) was planned
+  });
+
+  it('ratio mode (pct set) is unchanged — the same de-risk still plans a shrink', async () => {
+    // Guard: the fix must not alter ratio mode (never broken). 50% × the de-risked leader still shrinks the copy.
+    await drive('resync-ratio-143', 50);
+    expect(buildRemovePartial).toHaveBeenCalled();
   });
 });

@@ -192,6 +192,15 @@ const TWO_SIDED_SHAPE_MAX_READS = 18;
 // appears (else a premature read = no deficit = the copy wouldn't grow/shrink). Only when the event carries a real change.
 const RESYNC_READ_RETRIES = 8;
 const RESYNC_MIN_CHANGE_SOL = 0.001;
+// Fixed-size mode (`sizing.tradeRatioPct == null`) carries no percentage ratio — the user pinned a SOL size
+// (`maxTradeSizeSol`) instead. Its ONE coherent meaning in every path = mirror the leader at a FULL (100%) NOMINAL
+// ratio, then let that path's existing cap bound the deployment to `maxTradeSizeSol` — i.e. an effective ratio of
+// `min(1, maxTradeSizeSol / leaderTotalValue)`. At OPEN the #94 combined cap (`maxDeployLamports`) does the bounding;
+// at RESYNC planTwoSidedReshape's `maxSol = maxTradeSizeSol` cap does it (⇒ factor = min(1, fixedSize/leaderSolTotal)),
+// so a leader de-risk shrinks the mirror (target = factor × leaderBins ↓) rather than the old resync `?? 0`, which
+// zeroed the factor and silently disabled EVERY fixed-size reshape — the copy rode a drawdown fully deployed until
+// the final close (finding #143).
+const FIXED_SIZE_MIRROR_RATIO_PCT = 100;
 // After a two-sided BUY confirms (on the coffre's connection), the brain reads the bought balance on ITS connection
 // ~300ms later → a read-after-write lag can show the token too low. Retry the balance read (reusing
 // OPEN_SHAPE_READ_DELAY_MS between reads) until the BOUGHT delta clears the quote-derived floor; if it never does
@@ -1120,7 +1129,7 @@ export async function createUserRuntime(
       plan.leaderSolRaw,
       plan.leaderTokenRaw,
       tokenLegValueLamports,
-      ec.sizing.tradeRatioPct ?? 100,
+      ec.sizing.tradeRatioPct ?? FIXED_SIZE_MIRROR_RATIO_PCT, // fixed-size: full nominal ratio, bounded to the fixed size by the #94 combined cap below — one fixed-size semantic (#143)
       maxDeployLamports,
     );
     const dist: WeightBin[] = fillContiguousWeights(
@@ -1987,7 +1996,7 @@ export async function createUserRuntime(
     const leader = leaderOf(m); // the MIRROR's leader (3b): a resync follows the position we own
     const leaderPk = new PublicKey(leader);
     const ec = effFor(leader);
-    const copyRatio = (ec.sizing.tradeRatioPct ?? 0) / 100; // re-sync target = ratio × leader current size (0/null = fixed-size → no resync)
+    const copyRatio = (ec.sizing.tradeRatioPct ?? FIXED_SIZE_MIRROR_RATIO_PCT) / 100; // re-sync target = ratio × leader current size; fixed-size (null) ⇒ full nominal mirror BOUNDED to maxTradeSizeSol by planTwoSidedReshape's cap → a leader de-risk IS mirrored (was `?? 0`: a silent no-op — #143)
     const poolPk = new PublicKey(m.pool);
     const meta = await poolReader.loadPoolMeta(m.pool);
     if (!meta?.solSide) {
