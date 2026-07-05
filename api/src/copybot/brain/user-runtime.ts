@@ -91,6 +91,7 @@ import {
   inRangeTokenAdds,
   planTwoSided,
   planTwoSidedReshape,
+  reshapeCapFactor,
   resolveTwoSidedTokenDeposit,
   sizeTwoSided,
   type TwoSidedPlan,
@@ -192,6 +193,14 @@ const TWO_SIDED_SHAPE_MAX_READS = 18;
 // appears (else a premature read = no deficit = the copy wouldn't grow/shrink). Only when the event carries a real change.
 const RESYNC_READ_RETRIES = 8;
 const RESYNC_MIN_CHANGE_SOL = 0.001;
+// #121 — how long a just-published reshape (remove/add) may still be in flight (published, not yet on-chain-readable).
+// A rapid follow-up resync on the SAME position runs BEFORE the prior reshape lands — and a reshape REMOVE never
+// confirms back to the brain (dispatch-executed has no 'remove' branch) — so our own on-chain read would still show
+// the PRE-reshape shape, mis-netting the copy into a persistent ~2×/~0.5× exposure. Within this grace the resync nets
+// against the reshape's TARGET (where the position is already being driven) instead; past it the reshape has landed →
+// the on-chain read is truth again (and a rare failed reshape self-heals: the next resync re-nets from the real read).
+// Sized to a Solana settlement ceiling — well under the 90s multi-tx OPEN windows (a reshape is a single tx, faster).
+const RESHAPE_INFLIGHT_GRACE_MS = 30_000;
 // Fixed-size mode (`sizing.tradeRatioPct == null`) carries no percentage ratio — the user pinned a SOL size
 // (`maxTradeSizeSol`) instead. Its ONE coherent meaning in every path = mirror the leader at a FULL (100%) NOMINAL
 // ratio, then let that path's existing cap bound the deployment to `maxTradeSizeSol` — i.e. an effective ratio of
@@ -602,6 +611,17 @@ export async function createUserRuntime(
   // publishing on-chain. KNOWN LIMIT (like the pending maps above): in-memory only — a FULL process crash loses it, but
   // the mirror was never registered so nothing is stuck, and the periodic sweep clears any token already bought.
   const cancelledOpens = new Set<string>();
+  // #121 — the shape the LAST published reshape drives each position toward (per OUR-offset target SOL + token =
+  // `capFactor × leaderBin`), stamped when handleResync publishes its ops. A rapid follow-up resync on the same
+  // position (leaderPosition key) nets the leader's NEW shape against THIS in-flight-adjusted self-state instead of
+  // the not-yet-updated on-chain read (removes never confirm back to the brain, so the read can stay stale), which
+  // otherwise mis-nets into a persistent ~2×/~0.5× exposure. Fresh only within RESHAPE_INFLIGHT_GRACE_MS; overwritten
+  // by each subsequent reshape and cleared on close. In-memory (like the pending maps above): a crash drops it →
+  // the resync falls back to the on-chain read, and the reconcile/next event backstops (never a missed close).
+  const inFlightReshapeTargets = new Map<
+    string,
+    { atMs: number; sol: Map<number, number>; token: Map<number, number> }
+  >();
 
   // Per-user opens-per-window ring (3b step 8): wall-clock ms of every mirror THIS user opened, feeding
   // caps.maxOpensPerWindow (checkCaps filters by the live window). PER USER by construction — user A's open burst
@@ -1963,6 +1983,7 @@ export async function createUserRuntime(
     );
     const { issuedAtSlot, deadlineSlot } = await slots();
     registry.close(e.position); // in-memory fast path (caps/dedup); the DB is marked closed by the reconcile once confirmed on-chain
+    inFlightReshapeTargets.delete(e.position); // #121 — the position is closing; drop any in-flight reshape target
     await publish(
       {
         commandId: commandIdFor(eventKey),
@@ -2047,6 +2068,7 @@ export async function createUserRuntime(
     let ourShape: Awaited<ReturnType<typeof readLeaderPositionShape>> = null;
     let plan: ReturnType<typeof planTwoSidedReshape> | null = null;
     let leaderBins: Array<{ offset: number; sol: number }> = []; // hoisted: also used post-loop for the new-size calc
+    let leaderTokenBins: Array<{ offset: number; sol: number }> = []; // hoisted: also used post-loop for the #121 target
     let leaderTokenRawTotal = 0; // hoisted: leader's full token-leg raw units → valued in SOL for the new-size calc
     for (let r = 0; r <= (changeExpected ? RESYNC_READ_RETRIES : 0); r++) {
       // #146 — PREEMPT: a leader CLOSE for this position has been observed (it is queued behind us on the position's
@@ -2080,7 +2102,7 @@ export async function createUserRuntime(
         sol: solOf(b),
       }));
       const ourBins = os.perBin.map((b) => ({ offset: b.binId - os.lowerBinId, sol: solOf(b) }));
-      const leaderTokenBins = leaderShape.perBin.map((b) => ({
+      leaderTokenBins = leaderShape.perBin.map((b) => ({
         offset: b.binId - leaderShape.lowerBinId,
         sol: tokenOf(b),
       }));
@@ -2089,12 +2111,27 @@ export async function createUserRuntime(
         offset: b.binId - os.lowerBinId,
         sol: tokenOf(b),
       }));
+      // #121 — net against the IN-FLIGHT-adjusted self-state, not the (possibly stale) on-chain read: while the prior
+      // reshape's target for this position is still fresh, our position is being driven toward it (its removes/adds
+      // may not have landed, and a remove never confirms back to the brain). Using the on-chain read here would let a
+      // rapid remove→add (or add→remove) mis-net into a persistent ~2×/~0.5× exposure. The token override is applied
+      // only in two-sided mode (a SOL-only copy holds no managed token leg, so its on-chain token read stays truth).
+      const inflight = inFlightReshapeTargets.get(e.position);
+      const inflightFresh =
+        inflight !== undefined && Date.now() - inflight.atMs < RESHAPE_INFLIGHT_GRACE_MS;
+      const ourBinsEff = inflightFresh
+        ? [...inflight.sol.entries()].map(([offset, sol]) => ({ offset, sol }))
+        : ourBins;
+      const ourTokenBinsEff =
+        inflightFresh && ec.twoSidedMode === 'on'
+          ? [...inflight.token.entries()].map(([offset, sol]) => ({ offset, sol }))
+          : ourTokenBins;
       // SOL-leg ops (removes are proportional → cover both legs); token-leg ADD deficit handled two-sided when enabled.
       plan = planTwoSidedReshape(
         leaderBins,
-        ourBins,
+        ourBinsEff,
         leaderTokenBins,
-        ourTokenBins,
+        ourTokenBinsEff,
         copyRatio,
         ec.sizing.maxTradeSizeSol,
         ec.execution.reshapeBinDeadbandSol,
@@ -2420,6 +2457,33 @@ export async function createUserRuntime(
       const pending = pendingReshapeAdds.get(deferredGrowKey);
       if (pending) pending.deferredSizeSol = newSize; // applied on the deferred add's publish (buy confirm)
     }
+    // #121 — record the target this reshape drives OUR position toward, so a rapid follow-up resync nets against it
+    // (the read override above) instead of the stale on-chain read. Only when we PUBLISHED something (removes / a
+    // one-sided add / a deferred two-sided buy): a pure noop returned earlier, and with nothing published the position
+    // is unchanged so the on-chain read stays truth. `capFactor` is the EXACT factor planTwoSidedReshape applied, so
+    // the per-offset target (`capFactor × leaderBin`) matches what the plan built toward; offsets outside our FIXED
+    // range are unreachable (partial-range limit) → dropped, exactly like the on-chain add filter does.
+    if (calls.removes.length > 0 || growPublished || deferredGrowKey !== null) {
+      const capFactor = reshapeCapFactor(leaderSolSizeSol, copyRatio, ec.sizing.maxTradeSizeSol);
+      const maxOffset = ourShape.upperBinId - ourShape.lowerBinId; // our range is fixed at open
+      const leaderSolByOffset = new Map(leaderBins.map((b) => [b.offset, b.sol]));
+      const leaderTokenByOffset = new Map(leaderTokenBins.map((b) => [b.offset, b.sol]));
+      const targetSol = new Map<number, number>();
+      const targetToken = new Map<number, number>();
+      for (const offset of new Set<number>([
+        ...ourShape.perBin.map((b) => b.binId - ourShape.lowerBinId),
+        ...leaderBins.map((b) => b.offset),
+      ])) {
+        if (offset < 0 || offset > maxOffset) continue;
+        targetSol.set(offset, capFactor * (leaderSolByOffset.get(offset) ?? 0));
+        targetToken.set(offset, capFactor * (leaderTokenByOffset.get(offset) ?? 0));
+      }
+      inFlightReshapeTargets.set(e.position, {
+        atMs: Date.now(),
+        sol: targetSol,
+        token: targetToken,
+      });
+    }
     log.info(
       {
         position: e.position,
@@ -2678,6 +2742,7 @@ export async function createUserRuntime(
     if (!m) return;
     await store.markClosed(m.leaderPosition);
     registry.close(m.leaderPosition);
+    inFlightReshapeTargets.delete(m.leaderPosition); // #121 — close confirmed; drop any in-flight reshape target
     recentlyPublishedClose.delete(ourPosition);
     rugSlTracker.forget(ourPosition);
     events.closed({

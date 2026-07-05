@@ -106,6 +106,16 @@ export function sizeTwoSided(
 }
 
 /**
+ * The shared cap factor `planTwoSidedReshape` applies to BOTH legs: `min(ratio, maxSol / leaderSolTotal)`, or plain
+ * `ratio` when the leader holds no SOL (`leaderSolTotal === 0`). Extracted so a caller that must reproduce the
+ * reshape TARGET — the per-offset `factor × leaderBin` the plan builds toward, e.g. the in-flight self-state a rapid
+ * follow-up resync nets against (finding #121) — uses the EXACT same factor and can never drift from the plan. Pure.
+ */
+export function reshapeCapFactor(leaderSolTotal: number, ratio: number, maxSol: number): number {
+  return leaderSolTotal > 0 ? Math.min(ratio, maxSol / leaderSolTotal) : ratio;
+}
+
+/**
  * Plan a TWO-SIDED re-shape of an existing position (PURE). `removeLiquidity(bps)` pulls BOTH legs of a bin at
  * once, so a SOL-leg remove already trims the token in any bin that ALSO carries SOL (the active bin + the SOL
  * range). But a position's PURE-TOKEN bins (above the active bin, no SOL leg) are invisible to the SOL-leg plan —
@@ -129,7 +139,7 @@ export function planTwoSidedReshape(
   // `ratio × leaderToken`, ratchets past maxTradeSizeSol, and re-detects a deficit on every event. The cap is
   // folded into `factor` here, so both planReshape calls take `factor` as ratio with maxSol = ∞.
   const leaderSolTotal = leaderSol.reduce((s, b) => s + b.sol, 0);
-  const factor = leaderSolTotal > 0 ? Math.min(ratio, maxSol / leaderSolTotal) : ratio;
+  const factor = reshapeCapFactor(leaderSolTotal, ratio, maxSol);
   const solOps = planReshape(leaderSol, ourSol, factor, Number.POSITIVE_INFINITY, solDeadband);
   const tokenOps = planReshape(
     leaderToken,

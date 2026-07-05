@@ -2085,3 +2085,209 @@ describe('UserRuntime — a RESYNC is PREEMPTED by a pending leader CLOSE (findi
     vi.mocked(readLeaderPositionShape).mockReset();
   });
 });
+
+describe('UserRuntime — a RESYNC nets against the IN-FLIGHT reshape, not the stale read (finding #121)', () => {
+  const WSOL = 'So11111111111111111111111111111111111111112';
+  const F_LEADER = Keypair.generate().publicKey.toBase58();
+  const F_LEADER_POS = Keypair.generate().publicKey.toBase58();
+  const F_OUR_POS = Keypair.generate().publicKey.toBase58();
+  const F_POOL = Keypair.generate().publicKey.toBase58();
+  const F_MINT = Keypair.generate().publicKey.toBase58();
+  const F_BLOCKHASH = Keypair.generate().publicKey.toBase58(); // a valid 32-byte base58 blockhash so a tx serializes
+
+  // Both legs on each bin over [0,1] ⇒ readStableShape settles on the FIRST poll (no inner retry).
+  const shape = (xRaw: bigint, ySol: bigint) => ({
+    positionPubkey: '__resync_121__',
+    activeBinId: 0,
+    lowerBinId: 0,
+    upperBinId: 1,
+    perBin: [
+      { binId: 0, x: xRaw, y: ySol },
+      { binId: 1, x: xRaw, y: ySol },
+    ],
+  });
+
+  const sharedF: SharedBrainDeps = {
+    ...shared,
+    poolReader: {
+      loadPoolMeta: async (pool: string) =>
+        pool === F_POOL
+          ? ({ solSide: 'Y', binStep: 20, mintX: F_MINT, mintY: WSOL } as LoadedPoolMeta)
+          : null,
+    } as unknown as OnchainPoolMetaReader,
+  };
+
+  // ratio 100% (copyRatio 1.0), twoSidedMode off (pure SOL-leg reshape, no Jupiter), infiniteAdd on so a leader ADD
+  // routes a tracked position to resync. maxTradeSizeSol 20 ⇒ the factor is never capped for the ≤10-SOL leaders here.
+  const cfg = () => ({
+    ...CONFIG_DEFAULTS,
+    user: {
+      ...CONFIG_DEFAULTS.user,
+      twoSidedMode: 'off' as const,
+      infiniteAdd: true,
+      sizing: { ...CONFIG_DEFAULTS.user.sizing, tradeRatioPct: 100, maxTradeSizeSol: 20 },
+    },
+    leaders: [{ address: F_LEADER, enabled: true, maxTotalExposureSol: null, overrides: {} }],
+  });
+
+  /** Boot a runtime whose bus CAPTURES published commands, with a valid blockhash cache, and open a full 5.0-SOL mirror. */
+  async function boot(userId: string) {
+    const published: Array<Record<string, unknown>> = [];
+    const conn = new Connection('http://127.0.0.1:1');
+    vi.spyOn(conn, 'getSlot').mockResolvedValue(1_000); // slots() resolves so handleResync reaches the build/publish tail
+    const blockhashCache = new BlockhashCache(async () => ({
+      blockhash: F_BLOCKHASH,
+      lastValidBlockHeight: 0,
+    }));
+    await blockhashCache.start();
+    const bus = {
+      publish: async (_s: string, _h: string, _k: string, payload: Record<string, unknown>) => {
+        published.push(payload);
+        return 'sid';
+      },
+    } as unknown as RedisBus;
+    const rt = await createUserRuntime({ ...sharedF, conn, bus, blockhashCache }, userId, {
+      ...opts,
+      leader: F_LEADER,
+      initialConfig: cfg(),
+    });
+    rt.registry.open({
+      leaderPosition: F_LEADER_POS,
+      leaderAddress: F_LEADER,
+      ourPosition: F_OUR_POS,
+      pool: F_POOL,
+      nonSolSymbol: 'TKN',
+      nonSolMint: F_MINT,
+      sizeSol: 5, // we hold the full size, in sync with the leader's original 5.0 SOL (2.5/bin over 2 bins)
+      lowerBin: 0,
+      upperBin: 1,
+      openedAt: Date.now(),
+    });
+    await rt.store.saveOpen(rt.registry.get(F_LEADER_POS)!);
+    return { rt, published };
+  }
+
+  const removeEvent = (userId: string, n: number) => ({
+    signature: `sig-121-rm-${userId}-${n}`,
+    blockTime: 1,
+    instruction: 'RemoveLiquidityByRange2',
+    depositSol: 0,
+    depositTokenRaw: 0,
+    withdrawSol: 2, // > RESYNC_MIN_CHANGE_SOL → a real shrink → resync
+    claimSol: 0,
+    closed: false,
+    pool: F_POOL,
+    position: F_LEADER_POS,
+    nonSolMint: F_MINT,
+    nonSolSymbol: 'TKN',
+  });
+
+  const addEvent = (userId: string, n: number) => ({
+    signature: `sig-121-add-${userId}-${n}`,
+    blockTime: 1,
+    instruction: 'AddLiquidityByStrategy2',
+    depositSol: 2, // a leader ADD → routes the tracked position to resync (infiniteAdd on)
+    depositTokenRaw: 0,
+    withdrawSol: 0,
+    claimSol: 0,
+    closed: false,
+    pool: F_POOL,
+    position: F_LEADER_POS,
+    nonSolMint: F_MINT,
+    nonSolSymbol: 'TKN',
+  });
+
+  it('a rapid leader remove→add does NOT strand the copy ~50% UNDER: the 2nd resync nets against the in-flight target', async () => {
+    // WHY (#121, money): the leader de-risks then re-adds within one settle window. The 1st resync publishes the remove
+    // (which NEVER confirms back to the brain — dispatch-executed has no 'remove' branch), so when the 2nd resync runs
+    // OUR on-chain read still shows the PRE-shrink shape. A naive resync sees leader==our → NO-OP; once the pending
+    // remove lands the copy sits ~50% UNDER the leader until some later event happens to re-net. Netting the 2nd resync
+    // against the 1st reshape's TARGET re-grows it NOW. FAILS if the in-flight netting regresses: the 2nd resync
+    // publishes no add and the size stays stranded at ~2.0.
+    const { rt, published } = await boot('resync-121-under');
+    vi.mocked(buildRemovePartial).mockImplementation(async () => [new Transaction()]);
+    vi.mocked(buildAddByWeight).mockImplementation(async () => new Transaction());
+    let leaderYsol = 1_000_000_000n; // event 1: leader de-risks to 1.0 SOL/bin (total 2.0)
+    // OUR on-chain read STAYS at the pre-shrink 2.5 SOL/bin for BOTH resyncs — the 1st reshape's remove has not landed.
+    vi.mocked(readLeaderPositionShape).mockImplementation(async (_c, _p, _o, position) =>
+      position === F_LEADER_POS ? shape(1_000n, leaderYsol) : shape(1_000n, 2_500_000_000n),
+    );
+
+    rt.onEvent(removeEvent('resync-121-under', 1), 'ws', F_LEADER, 1); // resync #1: shrink to 2.0 + stash the target
+    await waitFor(
+      () => Promise.resolve(rt.registry.get(F_LEADER_POS)?.sizeSol ?? 5),
+      (s) => s < 3, // resync #1 recorded the shrunk size (target 2.0) → it published and stashed
+    );
+    expect(published.some((c) => c.kind === 'remove')).toBe(true);
+
+    leaderYsol = 2_500_000_000n; // event 2: leader adds back to the ORIGINAL 2.5 SOL/bin (total 5.0)
+    rt.onEvent(addEvent('resync-121-under', 2), 'ws', F_LEADER, 2); // resync #2: must re-grow to 5.0
+    await waitFor(
+      () => Promise.resolve(published.filter((c) => c.kind === 'add').length),
+      (n) => n > 0,
+    );
+    expect(published.some((c) => c.kind === 'add')).toBe(true); // re-grew (vs a stale-read NO-OP)
+    expect(rt.registry.get(F_LEADER_POS)?.sizeSol).toBeCloseTo(5); // back in sync with the leader — not stranded at 2.0
+
+    vi.mocked(buildRemovePartial).mockReset();
+    vi.mocked(buildAddByWeight).mockReset();
+    vi.mocked(readLeaderPositionShape).mockReset();
+  });
+
+  it('a rapid leader add→remove does NOT leave the copy ~2× OVER: the 2nd resync nets against the in-flight target', async () => {
+    // WHY (#121, money — the dangerous inverse): the leader adds then de-risks within one window. The 1st resync
+    // publishes the add (in flight, not landed); the 2nd resync's stale on-chain read still shows the PRE-add shape ==
+    // the re-shrunk leader → NO-OP; once the add lands the copy sits ~2× OVER the leader (riding size the leader shed).
+    // Netting the 2nd resync against the 1st reshape's TARGET publishes the shrink NOW. FAILS if the netting regresses.
+    const { rt, published } = await boot('resync-121-over');
+    vi.mocked(buildAddByWeight).mockImplementation(async () => new Transaction());
+    vi.mocked(buildRemovePartial).mockImplementation(async () => [new Transaction()]);
+    let leaderYsol = 5_000_000_000n; // event 1: leader grows to 5.0 SOL/bin (total 10.0)
+    // OUR on-chain read STAYS at the pre-grow 2.5 SOL/bin for BOTH resyncs — the 1st reshape's add has not landed.
+    vi.mocked(readLeaderPositionShape).mockImplementation(async (_c, _p, _o, position) =>
+      position === F_LEADER_POS ? shape(1_000n, leaderYsol) : shape(1_000n, 2_500_000_000n),
+    );
+
+    rt.onEvent(addEvent('resync-121-over', 1), 'ws', F_LEADER, 1); // resync #1: grow to 10.0 + stash the target
+    await waitFor(
+      () => Promise.resolve(rt.registry.get(F_LEADER_POS)?.sizeSol ?? 5),
+      (s) => s > 8, // resync #1 recorded the grown size (target 10.0) → it published and stashed
+    );
+    expect(published.some((c) => c.kind === 'add')).toBe(true);
+
+    leaderYsol = 2_500_000_000n; // event 2: leader de-risks back to 2.5 SOL/bin (total 5.0)
+    rt.onEvent(removeEvent('resync-121-over', 2), 'ws', F_LEADER, 2); // resync #2: must shrink back to 5.0
+    await waitFor(
+      () => Promise.resolve(published.filter((c) => c.kind === 'remove').length),
+      (n) => n > 0,
+    );
+    expect(published.some((c) => c.kind === 'remove')).toBe(true); // shrank (vs a stale-read NO-OP)
+    expect(rt.registry.get(F_LEADER_POS)?.sizeSol).toBeCloseTo(5); // back in sync — not left ~2× over at 10.0
+
+    vi.mocked(buildAddByWeight).mockReset();
+    vi.mocked(buildRemovePartial).mockReset();
+    vi.mocked(readLeaderPositionShape).mockReset();
+  });
+
+  it('a resync with NO in-flight reshape is UNCHANGED — it nets against the on-chain read', async () => {
+    // Guard (no regression): the in-flight netting must be INERT when nothing is in flight. A single de-risk with no
+    // prior reshape nets against the REAL on-chain read (our 2.5/bin vs leader 1.0/bin → shrink to 2.0), exactly as
+    // before the fix. FAILS if the override fired spuriously (e.g. off a missing/empty target) and mis-planned.
+    const { rt, published } = await boot('resync-121-inert');
+    vi.mocked(buildRemovePartial).mockImplementation(async () => [new Transaction()]);
+    vi.mocked(readLeaderPositionShape).mockImplementation(async (_c, _p, _o, position) =>
+      position === F_LEADER_POS ? shape(1_000n, 1_000_000_000n) : shape(1_000n, 2_500_000_000n),
+    );
+
+    rt.onEvent(removeEvent('resync-121-inert', 1), 'ws', F_LEADER, 1);
+    await waitFor(
+      () => Promise.resolve(rt.registry.get(F_LEADER_POS)?.sizeSol ?? 5),
+      (s) => s < 3,
+    );
+    expect(published.some((c) => c.kind === 'remove')).toBe(true);
+    expect(rt.registry.get(F_LEADER_POS)?.sizeSol).toBeCloseTo(2); // copyRatio 1.0 × leader 2.0 SOL, on-chain-netted
+
+    vi.mocked(buildRemovePartial).mockReset();
+    vi.mocked(readLeaderPositionShape).mockReset();
+  });
+});
