@@ -39,7 +39,7 @@ import { type CapsState, checkCaps, exposureFor } from '@/domain/copybot/caps';
 import { type CopybotConfig, type EffectiveConfig, effectiveFor } from '@/domain/copybot/config';
 import { type SignRequest, SignRequestSchema } from '@/domain/copybot/contracts';
 import { decideEntry } from '@/domain/copybot/decision';
-import { routeWithPending } from '@/domain/copybot/dispatch';
+import { isCloseEvent, routeWithPending } from '@/domain/copybot/dispatch';
 import type { DetectedEvent } from '@/domain/copybot/events';
 import type { LeaderHoldings } from '@/domain/copybot/fan-out';
 import { computeFee } from '@/domain/copybot/fee/fee';
@@ -585,6 +585,14 @@ export async function createUserRuntime(
   // open-in-flight route to resync/ignore instead of a duplicate real-money open.
   const positionQueue = createPositionQueue();
   const pendingOpens = createPendingOpenReservations(OPEN_PENDING_TTL_MS);
+  // #146 — leader positions whose CLOSE has ALREADY been observed (an event queued on the position's serial chain)
+  // but not yet handled. Added SYNCHRONOUSLY the instant `onEvent` classifies a close, BEFORE it enqueues the task,
+  // and cleared when that close's task dequeues. Its sole consumer is `handleResync`: an in-flight resync serializes
+  // AHEAD of the queued close on the SAME position, so it polls this set and BAILS the moment a close appears — a
+  // leader CLOSE never waits out the resync's multi-retry read budget (RESYNC_READ_RETRIES × readStableShape ≈ tens
+  // of seconds of extra rug exposure). Latency-only: the close is never dropped (it stays queued) and the on-chain
+  // reconcile is still the completeness backstop.
+  const pendingCloses = new Set<string>();
   // A leader position whose IN-FLIGHT multi-tx open (two-sided buy→open, Token-2022 create→deposit, wide split) must
   // NOT complete because the leader CLOSED before the open landed. The open handler returned before `registry.open`
   // (which runs in a later ev:executed continuation), so `handleClose` finds no mirror — without this signal a queued
@@ -2041,6 +2049,14 @@ export async function createUserRuntime(
     let leaderBins: Array<{ offset: number; sol: number }> = []; // hoisted: also used post-loop for the new-size calc
     let leaderTokenRawTotal = 0; // hoisted: leader's full token-leg raw units → valued in SOL for the new-size calc
     for (let r = 0; r <= (changeExpected ? RESYNC_READ_RETRIES : 0); r++) {
+      // #146 — PREEMPT: a leader CLOSE for this position has been observed (it is queued behind us on the position's
+      // serial chain). ABORT the resync NOW — before the sleep and the ~seconds-long readStableShape — so the close
+      // runs next instead of waiting out the whole retry budget (~tens of seconds of extra rug exposure). Bail
+      // cleanly: no further read, no publish, no size write. The on-chain reconcile remains the completeness backstop.
+      if (pendingCloses.has(e.position)) {
+        log.info({ position: e.position }, '🛑 resync preempted by a pending leader close');
+        return;
+      }
       if (r > 0) await sleep(OPEN_SHAPE_READ_DELAY_MS);
       const leaderShape = await readStableShape(poolPk, leaderPk, e.position, pair);
       if (!leaderShape) return; // leader gone → the reconcile closes ours
@@ -2088,6 +2104,13 @@ export async function createUserRuntime(
       // noop this read — if a change was expected, the leader event likely isn't indexed yet → retry
     }
     if (!ourShape || !plan) return;
+    // #146 — a close may have arrived DURING the read that just found the deficit (the loop-top guard only covers the
+    // retry gap). Re-check before any build/publish/size write: never deploy a reshape into — nor record a size for —
+    // a position the leader is closing. The queued close proceeds next; the reconcile backstops.
+    if (pendingCloses.has(e.position)) {
+      log.info({ position: e.position }, '🛑 resync preempted by a pending leader close');
+      return;
+    }
     const { ops, tokenAddOps } = plan;
     // #48: gate the two-sided-BUY branch on the FILTERED token deficit (in OUR fixed range, positive raw), NOT the raw
     // op count. A reshape whose token adds all fall outside our range or round to 0 has NO token leg to grow → it must
@@ -3040,10 +3063,18 @@ export async function createUserRuntime(
     eventCount: number,
   ): void => {
     const t0 = Date.now();
+    // #146 — recognize (and MARK) a CLOSE SYNCHRONOUSLY, before enqueuing: an in-flight resync for this SAME position
+    // runs AHEAD of us on the serial chain and must observe the close IMMEDIATELY (routing below runs only at dequeue,
+    // i.e. AFTER that resync has drained). `isCloseEvent` is the exact predicate the router uses, so this pre-mark can
+    // never disagree with the eventual 'close' routing.
+    const closeObserved = isCloseEvent(e);
+    if (closeObserved) pendingCloses.add(e.position);
     // SERIALIZE per leader position: all handler work for ONE position runs strictly in order (no concurrent
     // handlers on the same position → no duplicate open). Route INSIDE the task (at dequeue time) so this event is
     // classified AFTER the prior same-position handler settled — its `registry.open`/pending reservation is visible.
     positionQueue.run(e.position, async () => {
+      // This queued close is now BEING handled (any resync ahead of us has already bailed) → drop the pending mark.
+      if (closeObserved) pendingCloses.delete(e.position);
       const kind = classifyInstruction(e.instruction);
       const ecRoute = effFor(leader);
       // tracked = already-open OR open-in-flight — a pending reservation (re-armed at each open-continuation hop) OR

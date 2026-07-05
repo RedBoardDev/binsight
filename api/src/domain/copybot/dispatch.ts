@@ -17,6 +17,17 @@ export interface RoutingConfig {
   claimFloorSol: number;
 }
 
+/**
+ * Robust "the leader FULLY EXITED this position" predicate (PURE, state-independent). A decoded `PositionClose`
+ * leg (`e.closed`, which survives the 10KB log truncation that can drop the instruction label) OR an explicit
+ * `closeposition` instruction. Kept here as the single source of truth so BOTH the router below AND the runtime —
+ * which uses it to PREEMPT an in-flight resync the instant a close for the same position is observed (#146) —
+ * agree on what a close is; it never depends on whether we currently track the position.
+ */
+export function isCloseEvent(e: DetectedEvent): boolean {
+  return e.closed || classifyInstruction(e.instruction) === 'close';
+}
+
 export function classifyEventAction(
   e: DetectedEvent,
   tracked: boolean,
@@ -33,7 +44,7 @@ export function classifyEventAction(
   // full close — checked BEFORE withdraw (a close also withdraws). `e.closed` (a decoded PositionClose leg) is
   // the robust signal: under log truncation `instruction` degrades to '(DLMM)' → `kind` is null, so a close
   // would mis-route to resync (Remove+Close) or ignore (standalone close) if we relied on the label alone.
-  if (kind === 'close' || e.closed) return 'close';
+  if (isCloseEvent(e)) return 'close';
   if (e.withdrawSol > 0) return 'resync'; // ANY withdrawal → re-sync (shrink): always followed (no-dormant safety)
   // A pure leader ADD (deposit, no withdrawal): grow with the leader only when infinite-add is on; else ignore it
   // (Valhalla "first deposit only"). Removes/closes above are unaffected, so the safety net is never gated.

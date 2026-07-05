@@ -1893,3 +1893,195 @@ describe('UserRuntime — a RESYNC records the tracked size from PUBLISHED ops o
     vi.mocked(buildAddByWeight).mockReset();
   });
 });
+
+describe('UserRuntime — a RESYNC is PREEMPTED by a pending leader CLOSE (finding #146)', () => {
+  const WSOL = 'So11111111111111111111111111111111111111112';
+  const P_LEADER = Keypair.generate().publicKey.toBase58();
+  const P_LEADER_POS = Keypair.generate().publicKey.toBase58();
+  const P_OUR_POS = Keypair.generate().publicKey.toBase58();
+  const P_POOL = Keypair.generate().publicKey.toBase58();
+  const P_MINT = Keypair.generate().publicKey.toBase58();
+  const P_BLOCKHASH = Keypair.generate().publicKey.toBase58(); // a valid 32-byte base58 blockhash so a tx serializes
+
+  // Both legs on each bin ⇒ readStableShape settles on the FIRST inner read (no inner retry): exactly one leader read
+  // per outer iteration, so the read counter cleanly measures how far the retry loop got before it was preempted.
+  const shape = (xRaw: bigint, ySol: bigint) => ({
+    positionPubkey: '__resync_146__',
+    activeBinId: 0,
+    lowerBinId: 0,
+    upperBinId: 1,
+    perBin: [
+      { binId: 0, x: xRaw, y: ySol },
+      { binId: 1, x: xRaw, y: ySol },
+    ],
+  });
+
+  const sharedP: SharedBrainDeps = {
+    ...shared,
+    poolReader: {
+      loadPoolMeta: async (pool: string) =>
+        pool === P_POOL
+          ? ({ solSide: 'Y', binStep: 20, mintX: P_MINT, mintY: WSOL } as LoadedPoolMeta)
+          : null,
+    } as unknown as OnchainPoolMetaReader,
+  };
+
+  // ratio 100%, twoSidedMode off (pure SOL-leg reshape, no Jupiter), infiniteAdd on so a leader ADD would resync too.
+  const cfg = () => ({
+    ...CONFIG_DEFAULTS,
+    user: {
+      ...CONFIG_DEFAULTS.user,
+      twoSidedMode: 'off' as const,
+      infiniteAdd: true,
+      sizing: { ...CONFIG_DEFAULTS.user.sizing, tradeRatioPct: 100, maxTradeSizeSol: 5 },
+    },
+    leaders: [{ address: P_LEADER, enabled: true, maxTotalExposureSol: null, overrides: {} }],
+  });
+
+  /** Boot a runtime whose bus CAPTURES published commands, with a valid blockhash cache, and open a full-size mirror. */
+  async function boot(userId: string) {
+    const published: Array<Record<string, unknown>> = [];
+    const conn = new Connection('http://127.0.0.1:1');
+    vi.spyOn(conn, 'getSlot').mockResolvedValue(1_000); // slots() resolves so handleClose reaches the publish
+    const blockhashCache = new BlockhashCache(async () => ({
+      blockhash: P_BLOCKHASH,
+      lastValidBlockHeight: 0,
+    }));
+    await blockhashCache.start();
+    const bus = {
+      publish: async (_s: string, _h: string, _k: string, payload: Record<string, unknown>) => {
+        published.push(payload);
+        return 'sid';
+      },
+    } as unknown as RedisBus;
+    const rt = await createUserRuntime({ ...sharedP, conn, bus, blockhashCache }, userId, {
+      ...opts,
+      leader: P_LEADER,
+      initialConfig: cfg(),
+    });
+    rt.registry.open({
+      leaderPosition: P_LEADER_POS,
+      leaderAddress: P_LEADER,
+      ourPosition: P_OUR_POS,
+      pool: P_POOL,
+      nonSolSymbol: 'TKN',
+      nonSolMint: P_MINT,
+      sizeSol: 5, // we currently hold the full fixed size
+      lowerBin: 0,
+      upperBin: 1,
+      openedAt: Date.now(),
+    });
+    await rt.store.saveOpen(rt.registry.get(P_LEADER_POS)!);
+    return { rt, published };
+  }
+
+  const resyncEvent = (userId: string) => ({
+    signature: `sig-146-resync-${userId}`,
+    blockTime: 1,
+    instruction: 'RemoveLiquidityByRange2',
+    depositSol: 0,
+    depositTokenRaw: 0,
+    withdrawSol: 2, // > RESYNC_MIN_CHANGE_SOL → changeExpected → the retry loop runs
+    claimSol: 0,
+    closed: false,
+    pool: P_POOL,
+    position: P_LEADER_POS,
+    nonSolMint: P_MINT,
+    nonSolSymbol: 'TKN',
+  });
+
+  const closeEvent = (userId: string) => ({
+    signature: `sig-146-close-${userId}`,
+    blockTime: 1,
+    instruction: 'ClosePosition',
+    depositSol: 0,
+    depositTokenRaw: 0,
+    withdrawSol: 0,
+    claimSol: 0,
+    closed: true, // decoded PositionClose leg — the robust close signal the router (and the preempt) key off
+    pool: P_POOL,
+    position: P_LEADER_POS,
+    nonSolMint: P_MINT,
+    nonSolSymbol: 'TKN',
+  });
+
+  it('a resync STUCK in its retry loop ABORTS the moment a close for the same position is queued — the close is handled without waiting the retry budget, and no size is written', async () => {
+    // WHY (#146, close-latency, the #1 pillar): the resync retry loop holds the per-position serial queue while it
+    // re-reads the leader shape (RESYNC_READ_RETRIES × readStableShape ≈ tens of seconds). A leader CLOSE queued
+    // behind it MUST NOT wait out that budget — every extra second on a rugging pool is real loss. The loop is now
+    // preempted: it bails (no publish, no size write) the instant a close for the same position is observed, so the
+    // close runs next. This FAILS if the preempt regresses — the close would publish only after the full retry
+    // budget (leaderReads would reach the budget) and a stale resync size would be written.
+    const { rt, published } = await boot('resync-146-preempt');
+    const updateSize = vi.spyOn(rt.store, 'updateSize');
+    // A gate that pauses the resync INSIDE its first leader read, so the close is injected while it is provably
+    // mid-loop (not merely before it started) — the faithful "stuck in the retry loop" scenario.
+    let readEntered!: () => void;
+    const enteredFirstRead = new Promise<void>((res) => {
+      readEntered = res;
+    });
+    let releaseRead!: () => void;
+    const readGate = new Promise<void>((res) => {
+      releaseRead = res;
+    });
+    let leaderReads = 0;
+    // Leader shape == our shape (both hold the full 5.0 SOL) ⇒ NO deficit ⇒ the loop keeps retrying: a genuinely
+    // stuck resync that would otherwise burn the whole retry budget.
+    vi.mocked(readLeaderPositionShape).mockImplementation(async (_c, _p, _o, position) => {
+      if (position === P_LEADER_POS) {
+        leaderReads++;
+        if (leaderReads === 1) {
+          readEntered();
+          await readGate; // hold the resync inside the first read until the close is queued
+        }
+      }
+      return shape(1_000n, 2_500_000_000n);
+    });
+    vi.mocked(buildCloseTx).mockResolvedValue([new Transaction()]);
+
+    rt.onEvent(resyncEvent('resync-146-preempt'), 'ws', P_LEADER, 1); // resync enters the loop, blocks in read #1
+    await enteredFirstRead; // the resync is now provably mid-loop
+    rt.onEvent(closeEvent('resync-146-preempt'), 'ws', P_LEADER, 2); // a close is queued BEHIND the in-flight resync
+    releaseRead(); // let read #1 return — the next loop-top check must see the pending close and bail
+
+    await waitFor(
+      () => Promise.resolve(published.filter((c) => c.kind === 'close').length),
+      (n) => n > 0,
+    );
+    // The close WAS handled (published) — promptly, not after the retry budget.
+    expect(published.some((c) => c.kind === 'close')).toBe(true);
+    // The preempted resync published NO reshape op and wrote NO size (it bailed before the build/publish/size block).
+    expect(published.some((c) => c.kind === 'remove' || c.kind === 'add' || c.kind === 'buy')).toBe(
+      false,
+    );
+    expect(updateSize).not.toHaveBeenCalled();
+    // It bailed EARLY: it never approached RESYNC_READ_RETRIES (=8, i.e. 9 leader reads) worth of reads.
+    expect(leaderReads).toBeLessThanOrEqual(2);
+    vi.mocked(buildCloseTx).mockReset();
+    vi.mocked(readLeaderPositionShape).mockReset();
+  });
+
+  it('a normal resync with NO pending close still runs its loop and records the shrunk size', async () => {
+    // Guard (no regression): the preempt gate must not alter the normal resync path. With no close queued, the loop
+    // finds the leader de-risk, publishes the shrink (removes land synchronously), and records the shrunk size. A
+    // fix that bailed unconditionally — or left the marker set — would fail here.
+    const { rt, published } = await boot('resync-146-normal');
+    const updateSize = vi.spyOn(rt.store, 'updateSize');
+    // Leader de-risked to 0.5 SOL/bin (total 1.0); we still hold 2.5 SOL/bin ⇒ a real deficit on the first read.
+    vi.mocked(readLeaderPositionShape).mockImplementation(async (_c, _p, _o, position) =>
+      position === P_LEADER_POS ? shape(1_000n, 500_000_000n) : shape(1_000n, 2_500_000_000n),
+    );
+    vi.mocked(buildRemovePartial).mockImplementation(async () => [new Transaction()]);
+
+    rt.onEvent(resyncEvent('resync-146-normal'), 'ws', P_LEADER, 1);
+    await waitFor(
+      () => Promise.resolve(updateSize.mock.calls.length),
+      (n) => n > 0,
+    );
+    expect(published.some((c) => c.kind === 'remove')).toBe(true); // the shrink published
+    const recorded = updateSize.mock.calls.find((c) => c[0] === P_LEADER_POS)?.[1];
+    expect(recorded).toBeCloseTo(1); // copyRatio 1.0 × leader 1.0 SOL, capped at 5
+    vi.mocked(buildRemovePartial).mockReset();
+    vi.mocked(readLeaderPositionShape).mockReset();
+  });
+});
