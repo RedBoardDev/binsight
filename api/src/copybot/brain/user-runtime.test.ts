@@ -36,19 +36,25 @@ vi.mock('@meteora-ag/dlmm', () => ({
 }));
 
 // The too-wide open test (below) drives handleOpen to the `dist.length > MAX_SINGLE_POSITION_BINS` guard, which
-// sits AFTER the leader-shape read. Override JUST the two RPC seams on that path (real for every other export):
+// sits AFTER the leader-shape read. Override JUST the RPC seams these tests touch (real for every other export):
 // `createDlmmPair` (a discarded dummy — the guard returns before any build) and `readLeaderPositionShape` (driven
-// per-test to a wide one-sided shape). No other test in this file calls either, so their behavior is unchanged.
+// per-test to a wide one-sided shape). `buildCloseTx` is a passthrough spy (defaults to the REAL impl, so behavior
+// is unchanged) that the stop-close ordering test (#153) overrides ONCE to observe when publishSafetyClose enters
+// its close-publish path. No other test in this file calls any of these, so their behavior is unchanged.
 vi.mock('@/infrastructure/solana/dlmm/dlmm-tx-builder', async (orig) => {
   const actual = await orig<typeof import('@/infrastructure/solana/dlmm/dlmm-tx-builder')>();
-  return { ...actual, createDlmmPair: vi.fn(async () => ({}) as never) };
+  return {
+    ...actual,
+    createDlmmPair: vi.fn(async () => ({}) as never),
+    buildCloseTx: vi.fn(actual.buildCloseTx),
+  };
 });
 vi.mock('@/infrastructure/solana/dlmm/leader-position-reader', async (orig) => {
   const actual = await orig<typeof import('@/infrastructure/solana/dlmm/leader-position-reader')>();
   return { ...actual, readLeaderPositionShape: vi.fn() };
 });
 
-import { createDlmmPair } from '@/infrastructure/solana/dlmm/dlmm-tx-builder';
+import { buildCloseTx, createDlmmPair } from '@/infrastructure/solana/dlmm/dlmm-tx-builder';
 import { readLeaderPositionShape } from '@/infrastructure/solana/dlmm/leader-position-reader';
 import { runClosedFeeBackstop } from './fee-sweep';
 import { createUserRuntime, INFLIGHT_BUY_GRACE_MS, type SharedBrainDeps } from './user-runtime';
@@ -1415,5 +1421,72 @@ describe('UserRuntime — #140 two-sided fee completeness (buy + sell ledger row
     });
     await backstop(); // second pass → the anti-join now excludes OUR (it has a fee row) → no double-charge
     expect(await feeRows(OUR)).toHaveLength(1);
+  });
+});
+
+describe('UserRuntime — stop-close arms the durable re-close row BEFORE publishing (#153)', () => {
+  // WHY: a STOP leaves the LEADER position OPEN, so the `leaderClosed` failsafe retry never fires for a stop close —
+  // the persisted rugExitPending row is the ONLY channel that re-closes it after a restart. If that INSERT runs
+  // AFTER the publish (the pre-fix fire-and-forget shape), a SIGKILL in the window between publish and INSERT loses
+  // the row → a stop close that failed to land is NEVER re-closed once the brain restarts (a silent dormant
+  // position — the #1 forbidden failure). The fix arms + AWAITS the durable persist BEFORE the publish; this test
+  // pins that call order so any regression back to persist-after-publish fails.
+  it('commits the durable addPending BEFORE publishSafetyClose is entered (a crash mid-publish still re-closes)', async () => {
+    const USER = 'stop-close-153-user';
+    const order: string[] = [];
+    const rt = await createUserRuntime(shared, USER, opts);
+
+    // publishSafetyClose evaluates `new PublicKey(m.pool | m.ourPosition)` as buildCloseTx arguments BEFORE the seam
+    // runs — real base58 keys are required or that constructor throws first and the publish marker never fires.
+    const pool = Keypair.generate().publicKey.toBase58();
+    const ourPosition = Keypair.generate().publicKey.toBase58();
+    rt.registry.open({
+      leaderPosition: '__stop_close_153_leader_pos__',
+      leaderAddress: LEADER,
+      ourPosition,
+      pool,
+      nonSolSymbol: 'TOK',
+      nonSolMint: 'MINT',
+      sizeSol: 0.2,
+      lowerBin: -5,
+      upperBin: 5,
+      openedAt: Date.now(),
+    });
+
+    // Marker A — the durable persist COMMITS: delegate to the REAL store, THEN record. A pre-fix fire-and-forget
+    // (void) write would resolve its record AFTER the publish marker — or not before applyStopCloses returns at all.
+    const realAddPending = rt.rugExitStore.addPending.bind(rt.rugExitStore);
+    vi.spyOn(rt.rugExitStore, 'addPending').mockImplementation(async (our: string) => {
+      await realAddPending(our);
+      order.push('addPending');
+    });
+
+    // Marker B — publishSafetyClose ENTERED: buildCloseTx is its first external step (before slots()/bus.publish).
+    // Throwing here embodies the "close publish fails" branch #153 guards; executeStopClosePlan's .catch swallows it.
+    vi.mocked(buildCloseTx).mockImplementationOnce(async () => {
+      order.push('publish');
+      throw new Error('stub: halt publishSafetyClose at the tx-build seam');
+    });
+
+    // A GLOBAL stop (user.enabled true→false) force-closes every open mirror (SPEC §4.3).
+    const startedCfg = { ...CONFIG_DEFAULTS, user: { ...CONFIG_DEFAULTS.user, enabled: true } };
+    const stoppedCfg = { ...CONFIG_DEFAULTS, user: { ...CONFIG_DEFAULTS.user, enabled: false } };
+    await rt.applyStopCloses(startedCfg, stoppedCfg);
+
+    // The re-close row is committed STRICTLY BEFORE the publish path is entered — pre-fix (void addPending AFTER
+    // publish) yields ['publish'] / ['publish', 'addPending'] and fails this exact-order assertion.
+    expect(order).toEqual(['addPending', 'publish']);
+
+    // And the persisted row is really there → the reconcile can re-close this stop even after a restart.
+    const rows = await db
+      .select({ ourPosition: schema.rugExitPendings.ourPosition })
+      .from(schema.rugExitPendings)
+      .where(
+        and(
+          eq(schema.rugExitPendings.userId, USER),
+          eq(schema.rugExitPendings.ourPosition, ourPosition),
+        ),
+      );
+    expect(rows).toHaveLength(1);
   });
 });

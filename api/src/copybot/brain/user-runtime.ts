@@ -2430,16 +2430,22 @@ export async function createUserRuntime(
         { our: m.ourPosition, leaderPosition: m.leaderPosition, reason: c.reason },
         '🛑 stop → force-close',
       );
+      // ARM the retry-until-confirmed-gone state BEFORE publishing (#153, matches the rug-SL path). A stop close
+      // that FAILS to publish must still be re-closed by the reconcile until the position is confirmed gone, so
+      // arming the retry must not hinge on the publish succeeding.
+      rugExitPending.add(m.ourPosition); // retry-until-confirmed-gone via the reconcile (SPEC §4.3 failure branch)
+      // AWAIT the durable persist BEFORE publishing (#153): a SIGKILL between the publish and this INSERT would
+      // lose the ONLY cross-restart re-close channel. addPending is fail-safe (logs a write error, never throws)
+      // → awaiting it can never hinder the close.
+      await rugExitStore.addPending(m.ourPosition); // persist so the retry survives a brain restart
       // The eventKey tag is keyed by OUR position (not the leader's, unlike failsafe/rugsl): a stop leaves the
       // LEADER position open, so the same leader position can be legitimately re-mirrored after a stop→start
       // cycle — a leaderPosition-keyed commandId would collide with the previous stop's already-executed close
       // and be rejected as a duplicate (the close would never land).
       await publishSafetyClose(m, `stop:${m.ourPosition}`, c.reason).catch((err) =>
-        // The reconcile retries via rugExitPending below — set even on a failed publish (never a silent orphan).
+        // Retry state is armed above → the reconcile re-closes even on a failed publish (never a silent orphan).
         log.error({ err: (err as Error).message, our: m.ourPosition }, 'stop close publish failed'),
       );
-      rugExitPending.add(m.ourPosition); // retry-until-confirmed-gone via the reconcile (SPEC §4.3 failure branch)
-      void rugExitStore.addPending(m.ourPosition); // persist so the retry survives a brain restart
     }
   }
 
