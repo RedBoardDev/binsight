@@ -37,15 +37,25 @@ const SizingSchema = z.object({
   onInsufficient: z.enum(['skip', 'reduceToFit']),
 }) satisfies z.ZodType<SizingConfig>;
 
-const CapsSchema = z.object({
-  killSwitchGlobal: z.boolean(),
-  killSwitchLeader: z.boolean(),
-  maxOpenPositions: z.number().int().nonnegative().nullable(),
-  maxConcurrentPerToken: z.number().int().nonnegative().nullable(),
-  maxOpensPerWindow: z.number().int().nonnegative().nullable(),
-  windowMinutes: z.number().nonnegative().nullable(),
-  maxTotalExposureSol: z.number().nonnegative().nullable(),
-}) satisfies z.ZodType<CapsConfig>;
+const CapsSchema = z
+  .object({
+    killSwitchGlobal: z.boolean(),
+    killSwitchLeader: z.boolean(),
+    maxOpenPositions: z.number().int().nonnegative().nullable(),
+    maxConcurrentPerToken: z.number().int().nonnegative().nullable(),
+    maxOpensPerWindow: z.number().int().nonnegative().nullable(),
+    windowMinutes: z.number().nonnegative().nullable(),
+    maxTotalExposureSol: z.number().nonnegative().nullable(),
+  })
+  // The sliding-window rate limit needs BOTH a count and a window: checkCaps only enforces it when both are set (its
+  // `&&` guard), so a half-configured pair (one set, one null) silently no-ops the cap — a safety guardrail failing
+  // OPEN (more opens than intended). Require both-or-neither so a half-set rate limit is rejected LOUDLY at write time
+  // instead of vanishing at runtime; the clean "off" state is both-null (finding idx18).
+  .refine((c) => (c.maxOpensPerWindow === null) === (c.windowMinutes === null), {
+    message:
+      'maxOpensPerWindow and windowMinutes must be set together or both be null — a half-set pair silently disables the rate limit',
+    path: ['maxOpensPerWindow'],
+  }) satisfies z.ZodType<CapsConfig>;
 
 const TwoSidedSchema = z.enum(TWO_SIDED_MODES);
 

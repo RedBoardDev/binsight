@@ -12,10 +12,23 @@ import {
 export const COMPUTE_BUDGET_PROGRAM = 'ComputeBudget111111111111111111111111111111';
 const CB_SET_UNIT_LIMIT = 2; // ComputeBudget instruction discriminator (SetComputeUnitLimit)
 const CB_SET_UNIT_PRICE = 3; // ComputeBudget instruction discriminator (SetComputeUnitPrice)
-const DEFAULT_CU_LIMIT_FOR_PRICE = 200_000; // fallback CU limit for capping the price when a tx carries no explicit limit ix
+// Fallback CU limit for capping the price when a tx carries NO explicit SetComputeUnitLimit ix. Set to Solana's
+// MAX_COMPUTE_UNIT_LIMIT (1.4M CU): without a limit ix the runtime lets the tx burn up to that per-tx ceiling, so
+// pricing the fee against it guarantees priorityFee = price × actualCU can never exceed maxCapSol. The old 200k
+// (the per-INSTRUCTION default) understated the worst case — a multi-ix tx consuming the full 1.4M could blow the
+// cap by up to ~7× (1.4M / 200k).
+const DEFAULT_CU_LIMIT_FOR_PRICE = 1_400_000;
 
-const firstTx = (t: Transaction | Transaction[]): Transaction =>
-  Array.isArray(t) ? (t[0] as Transaction) : t;
+const firstTx = (t: Transaction | Transaction[]): Transaction => {
+  if (!Array.isArray(t)) return t;
+  // Assert a single tx instead of silently truncating to [0]: an empty array would crash downstream on
+  // `.instructions`, and a multi-tx array would silently drop txs — both are caller bugs surfaced loudly here (the
+  // SDK builders this wraps yield exactly one tx per call).
+  if (t.length !== 1) {
+    throw new Error(`compute-budget: expected exactly one transaction, got ${t.length}`);
+  }
+  return t[0] as Transaction;
+};
 const isCbIx = (ix: { programId: { toBase58(): string }; data: Buffer }, disc: number): boolean =>
   ix.programId.toBase58() === COMPUTE_BUDGET_PROGRAM && ix.data[0] === disc;
 

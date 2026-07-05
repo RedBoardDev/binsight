@@ -44,13 +44,19 @@ export function buildBenchConfig(capsPatch: Partial<CapsConfig> = {}): CopybotCo
     ...base,
     twoSidedMode: 'on',
     infiniteAdd: true,
-    sizing: { ...base.sizing, tradeRatioPct: BENCH_TRADE_RATIO_PCT, minPositionSizeSol: BENCH_MIN_POSITION_SOL },
+    sizing: {
+      ...base.sizing,
+      tradeRatioPct: BENCH_TRADE_RATIO_PCT,
+      minPositionSizeSol: BENCH_MIN_POSITION_SOL,
+    },
     execution: { ...base.execution, dustTokenRaw: BENCH_DUST_TOKEN_RAW },
     // maxOpensPerWindow OFF for the bench: since 3b step 8 the per-user opens-window ring is LIVE, and the
     // soak/mega-soak intentionally burst more opens than the product's 10-per-10-min default — the rate cap is
     // covered by its unit tests (caps.test / user-runtime S8), not by the lifecycle bench. A test that WANTS the
     // window cap patches it back via `capsPatch` (same mechanism as the kill-switch/maxOpenPositions tests).
-    caps: { ...base.caps, maxOpensPerWindow: null, ...capsPatch },
+    // Both rate-window fields OFF together (schema enforces both-or-neither, #idx18): a partial pair would
+    // silently fail-open. A test that WANTS the window cap patches BOTH back via `capsPatch`.
+    caps: { ...base.caps, maxOpensPerWindow: null, windowMinutes: null, ...capsPatch },
   };
   // The bench leader is explicitly STARTED (enabled:true): the bot must copy it the moment the brain boots —
   // the product's stopped-by-default rule applies to user-added leaders, not the bench seed.
@@ -67,7 +73,11 @@ export function buildBenchConfig(capsPatch: Partial<CapsConfig> = {}): CopybotCo
  * the brain boots, so `seedIfAbsent()`/`load()` return it. `capsPatch` swaps caps for a specific test (default =
  * base bench).
  */
-export async function seedBenchConfig(db: Db, log: Logger, capsPatch: Partial<CapsConfig> = {}): Promise<CopybotConfig> {
+export async function seedBenchConfig(
+  db: Db,
+  log: Logger,
+  capsPatch: Partial<CapsConfig> = {},
+): Promise<CopybotConfig> {
   const cfg = buildBenchConfig(capsPatch);
   await new ConfigStore(db, log).save(SYSTEM_USER_ID, cfg); // the single-user runtime row the brain/coffre read
   return cfg;

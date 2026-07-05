@@ -380,3 +380,32 @@ describe('config · rugSl windowSeconds bound (finding #154)', () => {
     expect(CopybotConfigSchema.safeParse(cfg).success).toBe(false);
   });
 });
+
+describe('config · caps rate-limit pairing (idx18)', () => {
+  // WHY (idx18): checkCaps enforces the sliding-window rate limit only when BOTH the count and the window are set
+  // (its `&&` guard). A half-configured pair (one set, one null) silently disables the cap — a safety guardrail
+  // failing OPEN. The schema must reject a half-set pair at write time so a rate limit can never vanish at runtime.
+  const withRateLimit = (
+    maxOpensPerWindow: number | null,
+    windowMinutes: number | null,
+  ): CopybotConfig => ({
+    ...CONFIG_DEFAULTS,
+    user: {
+      ...CONFIG_DEFAULTS.user,
+      caps: { ...CONFIG_DEFAULTS.user.caps, maxOpensPerWindow, windowMinutes },
+    },
+  });
+
+  it('accepts both-set (a real rate limit) and both-null (rate limit off)', () => {
+    expect(CopybotConfigSchema.safeParse(withRateLimit(10, 10)).success).toBe(true);
+    expect(CopybotConfigSchema.safeParse(withRateLimit(null, null)).success).toBe(true);
+  });
+
+  it('rejects a count with no window (the fail-OPEN half-config the finding targets)', () => {
+    expect(CopybotConfigSchema.safeParse(withRateLimit(10, null)).success).toBe(false);
+  });
+
+  it('rejects a window with no count (the reverse half-config — also a silently-off limit)', () => {
+    expect(CopybotConfigSchema.safeParse(withRateLimit(null, 10)).success).toBe(false);
+  });
+});

@@ -9,6 +9,17 @@ import type { CopybotConfig, UserSettings } from './types';
 /** The single followed leader (was the `COPYBOT_LEADER` env default). */
 export const DEFAULT_LEADER_ADDRESS = '8ryctvNwpJTuuap3wuNTfcyEx4DjSuXvhGXSDHNaU8sQ';
 
+/**
+ * Per-bin token-leg reshape deadband, in RAW base units (two-sided reshape only). Unlike its SOL sibling
+ * `reshapeBinDeadbandSol`, which is decimals-STABLE (SOL is always 9 decimals), this threshold is decimals-DEPENDENT
+ * and no single raw value is correct for every mint: relative to typical per-bin token amounts, 100 raw units is
+ * negligible on a high-decimals mint (→ fires on near-zero deltas: dust-sized reshape buys / fee bleed) yet large on
+ * a low-decimals mint (→ suppresses real moves: reshape fidelity loss). It is left at 100 (calibrated for the common
+ * high-decimals SPL/LP mint); the complete fix scales the deadband by the position mint's decimals at the reshape
+ * site (the `planTwoSidedReshape` caller in the brain runtime), which lives outside this config module. See idx17.
+ */
+const RESHAPE_BIN_DEADBAND_TOKEN_RAW = 100;
+
 export const USER_DEFAULTS: UserSettings = {
   enabled: true,
   sizing: {
@@ -26,7 +37,7 @@ export const USER_DEFAULTS: UserSettings = {
     dustTokenRaw: 0, // sell any residual by default
     minSellOutLamports: 50_000, // ~0.00005 SOL floor: below it a residual sell isn't worth the fees
     reshapeBinDeadbandSol: 0.0002, // LOW: reshapes are event-driven (not arb), so a low threshold maximizes fidelity
-    reshapeBinDeadbandToken: 100, // LOW per-bin token-leg threshold (two-sided reshape), same rationale as the SOL one
+    reshapeBinDeadbandToken: RESHAPE_BIN_DEADBAND_TOKEN_RAW, // raw base-unit per-bin token-leg threshold (decimals-dependent — see the constant's rationale)
   },
   priorityFee: { tier: 'medium', maxCapSol: 0.005 }, // capped CU price on every tx (spec §5)
   rugSl: { enabled: true, dropPercent: 40, windowSeconds: 60 }, // crash safety exit on by default (spec §7)
