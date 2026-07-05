@@ -16,6 +16,7 @@
  */
 import { eq } from 'drizzle-orm';
 import type { Logger } from 'pino';
+import { SYSTEM_USER_ID } from '@/copybot/journal-store';
 import {
   CONFIG_DEFAULTS,
   type CopybotConfig,
@@ -23,6 +24,7 @@ import {
   InvalidConfigWriteError,
   isValidConfigBlob,
   parseConfig,
+  STOPPED_SEED_CONFIG,
   validateConfigWrite,
 } from '@/domain/copybot/config';
 import type { openDatabase } from '@/infrastructure/persistence/database';
@@ -37,6 +39,16 @@ type Db = ReturnType<typeof openDatabase>;
  */
 function withKillSwitchOn(cfg: CopybotConfig): CopybotConfig {
   return { ...cfg, user: { ...cfg.user, caps: { ...cfg.user.caps, killSwitchGlobal: true } } };
+}
+
+/**
+ * The first-run seed for a brand-new user row, split by tenant (idx24). SYSTEM (the bench / mono-user owner) seeds the
+ * ARMED `CONFIG_DEFAULTS` so its runtime auto-follows the default leader on boot — unchanged. Every OTHER tenant seeds
+ * `STOPPED_SEED_CONFIG`: a brand-new multi-user user must never be auto-armed onto the default leader they never chose
+ * (that would silently open REAL positions on first boot). Pure (no I/O) so both branches are unit-tested without a DB.
+ */
+export function seedConfigFor(userId: string): CopybotConfig {
+  return userId === SYSTEM_USER_ID ? CONFIG_DEFAULTS : STOPPED_SEED_CONFIG;
 }
 
 export class ConfigStore {
@@ -98,13 +110,15 @@ export class ConfigStore {
       .onConflictDoUpdate({ target: copybotConfigs.userId, set: { config, updatedAt } });
   }
 
-  /** First-boot seed: write the defaults if this user has no row, then return the effective config. */
+  /** First-boot seed: if this user has no row, write its tenant-appropriate seed (SYSTEM/bench ⇒ the ARMED
+   *  `CONFIG_DEFAULTS`; any other tenant ⇒ the STOPPED seed, never auto-armed — idx24), then return it. */
   async seedIfAbsent(userId: string): Promise<CopybotConfig> {
     const raw = await this.readRaw(userId);
     if (raw !== null) return this.load(userId); // existing row → the same fail-closed read path as any load
-    await this.save(userId, CONFIG_DEFAULTS);
-    this.log.info({ userId }, 'copybot config seeded with DEFAULTS');
-    return CONFIG_DEFAULTS;
+    const seed = seedConfigFor(userId); // SYSTEM ⇒ armed defaults; any other tenant ⇒ STOPPED (never auto-arm) — idx24
+    await this.save(userId, seed);
+    this.log.info({ userId, armed: userId === SYSTEM_USER_ID }, 'copybot config seeded');
+    return seed;
   }
 
   /** Users whose stored config is ACTIVE (`user.enabled === true`). The parse fails CLOSED, so a corrupt row can

@@ -6,6 +6,7 @@ export {
   CONFIG_DEFAULTS,
   DEFAULT_LEADER_ADDRESS,
   STOPPED_CONFIG_DEFAULTS,
+  STOPPED_SEED_CONFIG,
   USER_DEFAULTS,
 } from './defaults';
 export { addLeader, coerceValue, getAtPath, removeLeader, setAtPath } from './edit';

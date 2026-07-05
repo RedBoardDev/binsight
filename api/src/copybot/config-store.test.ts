@@ -1,16 +1,18 @@
 import { inArray } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SYSTEM_USER_ID } from '@/copybot/journal-store';
 import {
   CONFIG_DEFAULTS,
   type CopybotConfig,
   InvalidConfigWriteError,
   MAX_STARTED_LEADERS,
   STOPPED_CONFIG_DEFAULTS,
+  STOPPED_SEED_CONFIG,
 } from '@/domain/copybot/config';
 import { openDatabase } from '@/infrastructure/persistence/database';
 import { copybotConfigs } from '@/infrastructure/persistence/schema';
-import { ConfigStore } from './config-store';
+import { ConfigStore, seedConfigFor } from './config-store';
 
 // Integration: requires local Postgres (:5435).
 const URL = process.env.DATABASE_URL ?? 'postgres://meteora:meteora@localhost:5435/meteora';
@@ -45,11 +47,41 @@ afterAll(async () => {
   await clean();
 });
 
-describe('ConfigStore (integration, per-user rows)', () => {
-  it('seedIfAbsent writes defaults once for THAT user, then never overwrites its existing config', async () => {
-    const store = new ConfigStore(db, log);
-    expect(await store.seedIfAbsent(U1)).toEqual(CONFIG_DEFAULTS);
+// Pure (no DB): the seed-selection split. Kept DB-free so BOTH branches are covered without seeding the real SYSTEM
+// row (the integration suite deliberately never touches 'system' — it would clobber the live dev config).
+describe('seedConfigFor — SYSTEM auto-arms, every other tenant seeds STOPPED (idx24)', () => {
+  it('SYSTEM seeds the ARMED CONFIG_DEFAULTS so the bench/owner runtime auto-follows the default leader on boot', () => {
+    // WHY: the mono-user SYSTEM/bench runtime must keep opening on the env-fixed default leader at boot — unchanged.
+    expect(seedConfigFor(SYSTEM_USER_ID)).toBe(CONFIG_DEFAULTS);
+    expect(seedConfigFor(SYSTEM_USER_ID).user.enabled).toBe(true);
+    expect(seedConfigFor(SYSTEM_USER_ID).leaders.some((l) => l.enabled)).toBe(true); // a STARTED default leader
+  });
 
+  it('any NON-SYSTEM tenant seeds STOPPED_SEED_CONFIG — never auto-armed onto a leader it never chose', () => {
+    // WHY (idx24): seeding the armed defaults to a real user would silently open REAL positions on the default leader
+    // at first boot. A fresh tenant must be inert: master OFF, no started leader, kill switch at its normal OFF.
+    const seed = seedConfigFor('a-real-privy-user');
+    expect(seed).toBe(STOPPED_SEED_CONFIG);
+    expect(seed.user.enabled).toBe(false); // master switch OFF
+    expect(seed.leaders.every((l) => !l.enabled)).toBe(true); // no STARTED leader (validateConfigWrite counts enabled)
+    expect(seed.user.caps.killSwitchGlobal).toBe(false); // not the emergency-halt state — the user just hasn't armed
+  });
+});
+
+describe('ConfigStore (integration, per-user rows)', () => {
+  it('seedIfAbsent seeds a NON-SYSTEM user STOPPED (idx24) and never overwrites its existing config', async () => {
+    // WHY (idx24): a brand-new multi-user tenant must NOT be auto-armed onto the default leader. The seed persists
+    // enabled:false + a STOPPED leader, so the freshly-seeded user is not on the boot start-list — the user arms it.
+    const store = new ConfigStore(db, log);
+    expect(await store.seedIfAbsent(U1)).toEqual(STOPPED_SEED_CONFIG);
+    const seeded = await store.load(U1);
+    expect(seeded.user.enabled).toBe(false); // master switch OFF — no runtime opens for a never-armed user
+    expect(seeded.leaders.every((l) => !l.enabled)).toBe(true); // no STARTED leader
+    expect(seeded.user.caps.killSwitchGlobal).toBe(false); // NOT the corrupt-blob emergency halt — just not armed yet
+    const active = (await store.listActiveUserIds()).filter((u) => TEST_USERS.includes(u));
+    expect(active).not.toContain(U1); // a freshly-seeded user is never on the multi-user boot start-list
+
+    // Idempotent: once a row exists, seedIfAbsent returns the STORED config and never re-seeds over a user edit.
     const custom: CopybotConfig = {
       ...CONFIG_DEFAULTS,
       user: { ...CONFIG_DEFAULTS.user, twoSidedMode: 'on' },

@@ -67,3 +67,18 @@ export const STOPPED_CONFIG_DEFAULTS: CopybotConfig = {
     caps: { ...USER_DEFAULTS.caps, killSwitchGlobal: true },
   },
 };
+
+/**
+ * The brand-new NON-SYSTEM first-run seed (idx24: seeding a real user must never auto-arm them). `seedIfAbsent` gives
+ * the SYSTEM/bench (mono-user owner) tenant the armed `CONFIG_DEFAULTS` so its runtime auto-follows the default leader
+ * on boot; seeding those SAME armed defaults to a real multi-user tenant would silently open positions on a leader they
+ * never chose. So a fresh non-SYSTEM tenant boots INERT: master switch OFF (`user.enabled:false`) and the default leader
+ * STOPPED (`enabled:false`, so it is not a "started" leader — `validateConfigWrite` counts enabled leaders). The global
+ * kill switch stays at its normal OFF: a not-yet-armed user is NOT the operator emergency-halt that
+ * `STOPPED_CONFIG_DEFAULTS` (kill switch ON) encodes for a corrupt blob — the user simply arms the bot themselves.
+ */
+export const STOPPED_SEED_CONFIG: CopybotConfig = {
+  ...CONFIG_DEFAULTS,
+  user: { ...USER_DEFAULTS, enabled: false },
+  leaders: CONFIG_DEFAULTS.leaders.map((l) => ({ ...l, enabled: false })),
+};
