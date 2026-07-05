@@ -66,8 +66,10 @@ import { MintExtensionsGateway } from '@/infrastructure/solana/mint-extensions-g
 import { PriorityFeeOracle } from '@/infrastructure/solana/priority-fee-oracle';
 import { readAllOwnerTokenBalances } from '@/infrastructure/solana/token-balance-reader';
 import { HeliusTokenMetadataGateway } from '@/infrastructure/solana/token-metadata-gateway';
+import { parseBrainNumericConfig } from './brain-numeric-config';
 import {
   type ExecutedBatchDeps,
+  leaderOfClosingPosition,
   processExecutedBatch,
   settleContinuationFailure,
 } from './dispatch-executed';
@@ -89,13 +91,18 @@ import { runReconcileSweepByWallet, runResidualSweep, runRugSlSweep } from './wa
 
 const POLL_MS = 15_000;
 const RECON_MS = 30_000; // on-chain reconcile cadence (no-miss-close backstop)
-const RECONCILE_OPEN_GRACE_MS = Number(process.env.RECONCILE_OPEN_GRACE_MS ?? '30000'); // a just-opened copy may be unconfirmed for ~1-2s (direct getAccountInfo) → skip the 1st reconcile tick after open; 30s = generous margin, minimal backstop delay (anti false-close → no-dormant)
-const SWEEP_MS = Number(process.env.SWEEP_MS ?? '60000'); // wallet token→SOL safety-sweep cadence (SYSTEM): the no-miss backstop behind the close-triggered sell (catches any dormant non-SOL left by downtime/a missed close)
-const FEE_SWEEP_MS = Number(process.env.FEE_SWEEP_MS ?? '60000'); // performance-fee sweep cadence (Inc.4d): retry each pending fee transfer until it lands — decoupled from the close, so a generous cadence is fine
-const FEE_SWEEP_BATCH = Number(process.env.FEE_SWEEP_BATCH ?? '25'); // max pending fees published per sweep tick (bounds the per-tick publish burst)
-// #140 — a CLOSED position is only re-assessed by the backstop once it has been closed this long, so a normal
-// close-sell's EXACT assess (onSellConfirmed, ~seconds) wins first; a fee that lands a few minutes late is fine.
-const FEE_BACKSTOP_GRACE_MS = Number(process.env.FEE_BACKSTOP_GRACE_MS ?? '300000'); // 5 min
+// Numeric env tunables (grace/cadence/batch) VALIDATED in brain-numeric-config.ts (finding #58): a bare Number() lets
+// a typo become NaN, which silently busy-loops a setInterval(NaN) and disables the reconcile open-grace (`now -
+// openedAt < NaN` is always false). Bad values fall back to the documented default, logged LOUDLY at boot (via
+// brainNumericWarnings, in main); fail-SAFE so a mistyped tunable never kills the brain (a dead brain misses a close).
+const { config: brainNumericConfig, warnings: brainNumericWarnings } = parseBrainNumericConfig(
+  process.env,
+);
+const RECONCILE_OPEN_GRACE_MS = brainNumericConfig.reconcileOpenGraceMs;
+const SWEEP_MS = brainNumericConfig.sweepMs;
+const FEE_SWEEP_MS = brainNumericConfig.feeSweepMs;
+const FEE_SWEEP_BATCH = brainNumericConfig.feeSweepBatch;
+const FEE_BACKSTOP_GRACE_MS = brainNumericConfig.feeBackstopGraceMs;
 const EV_EXECUTED_STREAM = 'copybot:ev:executed';
 const RUG_SL_POLL_MS = 15_000; // rug-SL price-poll cadence: ~4 samples per a 60s window — fast enough to catch a crash, one lbPair read per open pool (economical)
 const CONFIG_POLL_MS = 5_000; // re-read the DB-backed runtime config (sizing/caps/two-sided) so web edits apply live
@@ -160,6 +167,14 @@ async function main(): Promise<void> {
       'brain uncaughtException — logged and kept alive (#138 backstop)',
     );
   });
+  // #58 — a mistyped numeric env tunable (NaN / out-of-range) already fell back to its default at module load; say so
+  // LOUDLY now (log exists) so an operator learns immediately — a silent NaN would busy-loop a timer or disable the
+  // reconcile open-grace. Logged, not fatal (fail-safe): the brain must stay up so it never misses a leader close.
+  for (const w of brainNumericWarnings)
+    log.error(
+      { tunable: w.name, got: w.raw, usingDefault: w.fallback },
+      'invalid numeric env tunable — using the documented default (a typo must not silently break grace/timers)',
+    );
   if (!cfg.httpUrl) {
     log.error('SOLANA_HTTP_URL missing');
     process.exit(1);
@@ -592,9 +607,11 @@ async function main(): Promise<void> {
     await reconcileSweep(); // close right away anything a leader closed during downtime (no grace at boot)
   }
   if (!cfg.wsUrl || !sub) {
-    log.warn('no SOLANA_WS_URL → live impossible');
-    await Promise.all([bus.quit(), control.quit()]);
-    return;
+    // WS is REQUIRED for detection (WS = the trigger). Without it the brain would restore mirrors + prime the sweeps,
+    // then fall through with NO consumer / timers / heartbeat — a silent supervising-nothing zombie (finding #59).
+    // Fail LOUD + exit(1) so the supervisor restarts us, matching the httpUrl / bus-key / SYSTEM boot guards above.
+    log.error('SOLANA_WS_URL missing — WS is required for detection; refusing to run blind');
+    process.exit(1);
   }
   // The hub already wired watch (per leader, DLMM-filtered) + the reconnect catch-up poll at applyLeaderSet time.
   wsConnected = sub.isConnected(); // seed; the callback keeps it live (observability — status only)
@@ -677,13 +694,22 @@ async function main(): Promise<void> {
         commandId: ev.commandId,
       });
       if (!owner) return;
+      // #60 — a swap-failed alert must carry the REAL leader of the CLOSING mirror (multi-leader), not the demoted
+      // default. The mirror row survives markClosed, so resolve it by OUR position (falls back to cfg.leader when the
+      // position is unknown — a deploy-window legacy close).
+      const leader = leaderOfClosingPosition(
+        owner.registry,
+        owner.leaderOf,
+        ev.positionPubkey,
+        cfg.leader,
+      );
       await owner.onCloseExecuted(ev).catch((e) =>
         // close-residual sell build/publish failed → the swap-failed path (pinned, feed "swap manually").
         owner.events.swapFailed({
           stage: 'sell',
           outcome: 'failed',
           reason: 'failed_after_retries',
-          leader: cfg.leader,
+          leader,
           pool: ev.pool,
           commandId: ev.commandId,
           adminDetail: { error: (e as Error).message, pool: ev.pool },
@@ -802,6 +828,21 @@ async function main(): Promise<void> {
         leader: cfg.leader,
         adminDetail: { loop: 'ev_executed', id },
       }),
+    // #25 — a message NO branch consumed (failed HMAC/hop → null payload, or an unknown kind) is recorded LOUDLY
+    // before it is acked out of the PEL, so it is never SILENTLY dropped (mirrors the coffre's dead-letter trace).
+    onUndispatched: (reason, id) => {
+      log.error(
+        { loop: 'ev_executed', reason, id },
+        'ev:executed message dropped — not routed (failed HMAC/hop or unknown kind)',
+      );
+      detectionEvents.system('system.loop_errored', undefined, {
+        stage: 'failsafe',
+        outcome: 'failed',
+        reason: 'loop_errored',
+        leader: cfg.leader,
+        adminDetail: { loop: 'ev_executed', dropped: reason, id },
+      });
+    },
   };
   const consumeExecuted = async (): Promise<void> => {
     let backoff = 1000;
@@ -932,7 +973,12 @@ async function onceValidate(
   logger.warn('--once: no live leader position found');
 }
 
-main().catch((e) => {
-  log.error({ err: (e as Error).message }, 'brain fatal');
-  process.exit(1);
-});
+// Auto-run as the process entrypoint. Guarded so importing this module in a unit test (vitest sets process.env.VITEST;
+// production never does) does NOT boot the brain — the pure helper (parseBrainNumericConfig) stays testable without
+// triggering env reads / Redis connections / process.exit.
+if (!process.env.VITEST) {
+  main().catch((e) => {
+    log.error({ err: (e as Error).message }, 'brain fatal');
+    process.exit(1);
+  });
+}

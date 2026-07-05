@@ -4,6 +4,7 @@ import {
   type ExecutedBatchDeps,
   type ExecutedMessage,
   isRetryableContinuationError,
+  leaderOfClosingPosition,
   processExecutedBatch,
   runContinuation,
   settleContinuationFailure,
@@ -29,6 +30,7 @@ function makeDeps(over: Partial<ExecutedBatchDeps> = {}): ExecutedBatchDeps {
     onFeeConfirmed: vi.fn(async () => {}),
     ack: vi.fn(async () => {}),
     onLoopError: vi.fn(() => {}),
+    onUndispatched: vi.fn(() => {}),
     ...over,
   };
 }
@@ -118,10 +120,12 @@ describe('dispatchExecuted — routes each ev:executed kind to its handler', () 
     expect(deps.onSellConfirmed).toHaveBeenCalledWith({ kind: 'sell', commandId: 'S', pool: 'P' });
   });
 
-  it('null / unknown-kind payload → no handler called (defensive no-op)', async () => {
+  it('null / unknown-kind payload → no handler called (defensive no-op), returns false (unrouted → reported #25)', async () => {
+    // WHY (#25): the boolean return is how the caller learns a message hit NO branch (a null HMAC-fail payload or an
+    // unknown kind) so it can record it loudly instead of silently acking it. This test fails if either stops being false.
     const deps = makeDeps();
-    await dispatchExecuted(null, deps);
-    await dispatchExecuted({ kind: 'mystery' }, deps);
+    expect(await dispatchExecuted(null, deps)).toBe(false);
+    expect(await dispatchExecuted({ kind: 'mystery' }, deps)).toBe(false);
     expect(deps.onCloseConfirmed).not.toHaveBeenCalled();
     expect(deps.onSellConfirmed).not.toHaveBeenCalled();
   });
@@ -133,7 +137,7 @@ describe('dispatchExecuted — routes each ev:executed kind to its handler', () 
     const deps = makeDeps({ publishTwoSidedOpenAfterBuy });
     await expect(
       dispatchExecuted({ kind: 'buy', commandId: 'ALREADY-DONE', sig: 'BUYSIG' }, deps),
-    ).resolves.toBeUndefined();
+    ).resolves.toBe(true); // still ROUTED (returns true) — the publish handler itself no-ops; only the return signal is new
     expect(publishTwoSidedOpenAfterBuy).toHaveBeenCalledWith('ALREADY-DONE', 'BUYSIG');
   });
 
@@ -201,6 +205,30 @@ describe('processExecutedBatch — per-message isolation + non-ack-on-throw (no-
     expect(deps.publishTwoSidedOpenAfterBuy).toHaveBeenCalledWith('DONE', 'BUYSIG');
     expect(deps.ack).toHaveBeenCalledWith('9');
     expect(deps.onLoopError).not.toHaveBeenCalled();
+  });
+
+  it('a null payload (failed HMAC/hop) is recorded LOUDLY as unauthenticated, THEN acked (never silently dropped)', async () => {
+    // WHY (finding #25): a MAC/hop mismatch yields a null payload no branch consumes. The old code just acked it
+    // away with no trace; now it is recorded (observable) BEFORE the ack removes it from the PEL — like the coffre.
+    const deps = makeDeps();
+    await processExecutedBatch([msg('7', null)], deps);
+    expect(deps.onUndispatched).toHaveBeenCalledWith('unauthenticated', '7');
+    expect(deps.ack).toHaveBeenCalledWith('7'); // acked AFTER the loud record — a poison message must not redeliver forever
+    expect(deps.onLoopError).not.toHaveBeenCalled();
+  });
+
+  it('an unknown-kind payload is recorded LOUDLY as unknown_kind, THEN acked', async () => {
+    const deps = makeDeps();
+    await processExecutedBatch([msg('8', { kind: 'mystery' })], deps);
+    expect(deps.onUndispatched).toHaveBeenCalledWith('unknown_kind', '8');
+    expect(deps.ack).toHaveBeenCalledWith('8');
+  });
+
+  it('a normally-routed message is NOT reported as undispatched', async () => {
+    const deps = makeDeps();
+    await processExecutedBatch([msg('9', { kind: 'sell', commandId: 'S' })], deps);
+    expect(deps.onUndispatched).not.toHaveBeenCalled();
+    expect(deps.ack).toHaveBeenCalledWith('9');
   });
 
   it('empty batch → nothing happens (no ack, no error)', async () => {
@@ -272,5 +300,33 @@ describe('deferred-continuation retry semantics (finding #137 — never drop an 
       settleContinuationFailure(new TerminalContinuationError('too wide'), onTerminal),
     ).not.toThrow();
     expect(onTerminal).toHaveBeenCalledTimes(1); // emit the feed row + let the message ACK (no infinite retry)
+  });
+});
+
+describe('leaderOfClosingPosition — the real leader of the closing mirror (finding #60, multi-leader alerts)', () => {
+  const leaderOf = (m: { leaderAddress: string }): string => m.leaderAddress || 'BOOT_LEADER';
+
+  it("returns the CLOSING mirror's leader (not the demoted default) so a multi-leader swap-failed alert is labeled right", () => {
+    // WHY (#60): once >1 leader is copied, hardcoding cfg.leader mislabels a failed close-residual-sell alert. The
+    // mirror row (which survives markClosed) carries the true leader; this test fails if the label reverts to the default.
+    const registry = {
+      getByOurPosition: (o: string) => (o === 'OUR' ? { leaderAddress: 'LEADER_B' } : undefined),
+    };
+    expect(leaderOfClosingPosition(registry, leaderOf, 'OUR', 'CFG_DEFAULT')).toBe('LEADER_B');
+  });
+
+  it('falls back to the default leader when the position is unknown or undefined (deploy-window legacy close)', () => {
+    const registry = { getByOurPosition: () => undefined };
+    expect(leaderOfClosingPosition(registry, leaderOf, 'MISSING', 'CFG_DEFAULT')).toBe(
+      'CFG_DEFAULT',
+    );
+    expect(leaderOfClosingPosition(registry, leaderOf, undefined, 'CFG_DEFAULT')).toBe(
+      'CFG_DEFAULT',
+    );
+  });
+
+  it('applies leaderOf, so a legacy blank leaderAddress resolves to the runtime boot-leader (never an empty label)', () => {
+    const registry = { getByOurPosition: () => ({ leaderAddress: '' }) };
+    expect(leaderOfClosingPosition(registry, leaderOf, 'OUR', 'CFG_DEFAULT')).toBe('BOOT_LEADER');
   });
 });

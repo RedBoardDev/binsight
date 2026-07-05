@@ -63,14 +63,16 @@ export interface DispatchExecutedDeps {
   onFeeConfirmed: (ev: ExecutedEvent) => Promise<void>;
 }
 
-/** Route ONE `ev:executed` payload to its handler. Rejects iff the routed handler rejects (the caller's
- *  per-message try/catch turns that into a non-ack + retry). Branch order/conditions are identical to the
- *  original inline loop — do NOT reorder (a Token-2022 create/deposit 'open'/'add' must be caught by its
- *  pending-map branch BEFORE the classic-confirm branch). */
+/** Route ONE `ev:executed` payload to its handler; returns whether a branch consumed it (`true`) or the message
+ *  could NOT be routed — a null payload (failed HMAC/hop) or an unknown kind (`false`) — so the caller records it
+ *  LOUDLY before acking (finding #25) instead of silently dropping it. Rejects iff the routed handler rejects (the
+ *  caller's per-message try/catch turns that into a non-ack + retry). Branch order/conditions are identical to the
+ *  original inline loop — do NOT reorder (a Token-2022 create/deposit 'open'/'add' must be caught by its pending-map
+ *  branch BEFORE the classic-confirm branch). */
 export async function dispatchExecuted(
   ev: ExecutedEvent | null,
   deps: DispatchExecutedDeps,
-): Promise<void> {
+): Promise<boolean> {
   if (ev?.kind === 'close' && ev.pool) {
     if (ev.positionPubkey) await deps.onCloseConfirmed(ev.positionPubkey, ev.userId); // prompt DB markClosed — no 30s wait
     await deps.onCloseExecuted({
@@ -79,39 +81,56 @@ export async function dispatchExecuted(
       commandId: ev.commandId,
       userId: ev.userId,
     });
-  } else if (ev?.kind === 'buy' && ev.commandId) {
+    return true;
+  }
+  if (ev?.kind === 'buy' && ev.commandId) {
     // a token BUY just landed → build+publish the OPEN (open buy) or the RESHAPE ADD (reshape buy). `ev.sig` (#140)
     // is the buy's tx signature → the deferred publisher attributes the BUY ledger row to the position it funds.
     if (deps.hasPendingReshapeAdd(ev.commandId))
       await deps.publishReshapeAddAfterBuy(ev.commandId, ev.sig);
     else await deps.publishTwoSidedOpenAfterBuy(ev.commandId, ev.sig);
-  } else if (ev?.kind === 'open' && ev.commandId && deps.hasPendingToken2022Deposit(ev.commandId)) {
+    return true;
+  }
+  if (ev?.kind === 'open' && ev.commandId && deps.hasPendingToken2022Deposit(ev.commandId)) {
     // a Token-2022 / split open's empty position (TX1) CONFIRMED → build+publish the deposit (TX2).
     await deps.publishDepositAfterPositionCreated(ev.commandId);
-  } else if (
-    ev?.kind === 'open' &&
-    ev.positionPubkey &&
-    !(ev.commandId !== undefined && deps.hasPendingToken2022Deposit(ev.commandId))
-  ) {
-    // a CLASSIC 1-tx open LANDED → FEED `lifecycle.open_confirmed`. Observability-only.
+    return true;
+  }
+  if (ev?.kind === 'open' && ev.positionPubkey) {
+    // a CLASSIC 1-tx open LANDED → FEED `lifecycle.open_confirmed`. Observability-only. A Token-2022 create/split
+    // open is ALWAYS consumed by the pending-deposit branch just above (its commandId is in that pending map), so
+    // reaching here means a classic single-tx open — no negated re-check of `hasPendingToken2022Deposit` needed (#61).
     deps.onOpenConfirmed(ev.positionPubkey);
-  } else if (ev?.kind === 'add' && ev.commandId && deps.hasPendingToken2022Mirror(ev.commandId)) {
+    return true;
+  }
+  if (ev?.kind === 'add' && ev.commandId && deps.hasPendingToken2022Mirror(ev.commandId)) {
     // a Token-2022 open's deposit (TX2) landed → persist the mirror.
     await deps.finalizeToken2022Open(ev.commandId);
-  } else if (ev?.kind === 'add' && ev.positionPubkey && ev.commandId) {
+    return true;
+  }
+  if (ev?.kind === 'add' && ev.positionPubkey && ev.commandId) {
     // a CLASSIC reshape ADD leg LANDED → FEED `lifecycle.add_confirmed`. Observability-only.
     deps.onAddConfirmed(ev.positionPubkey, ev.commandId);
-  } else if (ev?.kind === 'claim' && ev.positionPubkey && ev.commandId) {
+    return true;
+  }
+  if (ev?.kind === 'claim' && ev.positionPubkey && ev.commandId) {
     // a fees CLAIM LANDED → FEED `lifecycle.claim_confirmed`. Observability-only.
     deps.onClaimConfirmed(ev.positionPubkey, ev.commandId);
-  } else if (ev?.kind === 'sell') {
+    return true;
+  }
+  if (ev?.kind === 'sell') {
     // a residual token→SOL SELL LANDED → write its position SELL ledger row + assess the DEFERRED fee (#140) AND
     // FEED `swap.executed`. Best-effort inside; the periodic backstop covers a sell that never confirms.
     await deps.onSellConfirmed(ev);
-  } else if (ev?.kind === 'fee') {
+    return true;
+  }
+  if (ev?.kind === 'fee') {
     // the 5% performance-fee transfer LANDED → mark the fee 'landed' + FEED `fee.landed` (Inc.4d, SPEC §9).
     await deps.onFeeConfirmed(ev);
+    return true;
   }
+  // No branch consumed it: a null payload (failed HMAC/hop) or an unknown kind → the caller records it loudly (#25).
+  return false;
 }
 
 /** A consumed bus message (id + authenticated payload, or null if the MAC/hop mismatched). */
@@ -120,11 +139,18 @@ export interface ExecutedMessage {
   payload: unknown | null;
 }
 
+/** Why a message could NOT be routed to a handler: a null payload (failed HMAC/hop) or an unrecognized `kind`. */
+export type UndispatchedReason = 'unauthenticated' | 'unknown_kind';
+
 /** The batch deps = the dispatch handlers + the ack and loop-error sinks (I/O, injected). */
 export interface ExecutedBatchDeps extends DispatchExecutedDeps {
   ack: (id: string) => Promise<void>;
   /** Record a per-message loop error (system.loop_errored). The message is deliberately left UNACKED for retry. */
   onLoopError: (err: unknown, id: string) => void;
+  /** Record a message NO branch consumed — a null payload (failed HMAC/hop) or an unknown kind — LOUDLY (observable,
+   *  mirroring the coffre's dead-letter trace) BEFORE the ack removes it from the PEL, so it is never SILENTLY
+   *  dropped (finding #25). The message IS acked afterwards: a poison/garbage message must not redeliver forever. */
+  onUndispatched: (reason: UndispatchedReason, id: string) => void;
 }
 
 /** Process a batch of `ev:executed` messages with PER-MESSAGE error isolation (mirrors the coffre `processBatch`):
@@ -136,7 +162,11 @@ export async function processExecutedBatch(
 ): Promise<void> {
   for (const msg of msgs) {
     try {
-      await dispatchExecuted(msg.payload as ExecutedEvent | null, deps);
+      const routed = await dispatchExecuted(msg.payload as ExecutedEvent | null, deps);
+      // A message no branch consumed — a null payload (failed HMAC/hop) or an unknown kind — is NOT silently acked
+      // away (finding #25): record it LOUDLY before the ack removes it from the PEL, so it stays observable.
+      if (!routed)
+        deps.onUndispatched(msg.payload === null ? 'unauthenticated' : 'unknown_kind', msg.id);
       await deps.ack(msg.id);
     } catch (err) {
       // A handler (e.g. a DB blip in onCloseConfirmed) or the ack itself threw → do NOT ack, do NOT abort the
@@ -217,4 +247,30 @@ export async function runContinuation(
 export function settleContinuationFailure(err: unknown, onTerminal: () => void): void {
   if (isRetryableContinuationError(err)) throw err;
   onTerminal();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Leader attribution for a router failure (finding #60 — multi-leader alerts must not be mislabeled)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A minimal read-side of the mirror registry: look up OUR mirror by its position pubkey (open OR closed). */
+export interface MirrorLeaderLookup {
+  getByOurPosition(ourPosition: string): { leaderAddress: string } | undefined;
+}
+
+/**
+ * The REAL leader of the mirror being closed (finding #60), for the close-residual-sell `swap_failed` alert — NOT the
+ * demoted env/default leader (`cfg.leader`), which MISLABELS the alert once more than one leader is copied. The closing
+ * mirror row survives `markClosed`, so it is looked up by OUR position; `leaderOf` applies the runtime's boot-leader
+ * fallback for a legacy blank `leaderAddress`. Falls back to `fallbackLeader` only when the position is absent/unknown
+ * (a deploy-window legacy close with no matching mirror).
+ */
+export function leaderOfClosingPosition(
+  registry: MirrorLeaderLookup,
+  leaderOf: (m: { leaderAddress: string }) => string,
+  ourPosition: string | undefined,
+  fallbackLeader: string,
+): string {
+  const mirror = ourPosition ? registry.getByOurPosition(ourPosition) : undefined;
+  return mirror ? leaderOf(mirror) : fallbackLeader;
 }
