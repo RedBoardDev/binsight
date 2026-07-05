@@ -78,30 +78,47 @@ const rowOf = async (userId: string, commandId: string) =>
   )[0];
 
 type Status = { err?: unknown; confirmationStatus?: string } | null;
+/** The optional second arg of getSignatureStatus(es); its `searchTransactionHistory` selects the history mock. */
+type StatusConfig = { searchTransactionHistory?: boolean };
 /** A minimal getTransaction response the ledger writer reads (owner delta from static keys + pre/post balances). */
 type TxResponse = {
   meta: { preBalances: number[]; postBalances: number[] } | null;
   transaction: { message: { staticAccountKeys?: Array<{ toBase58: () => string }> } };
 } | null;
 /** A conn whose batch status read + block height are scripted; `getSignatureStatus` serves the recovery path.
+ *  `historyStatuses` is served instead of `statuses` when a caller passes `searchTransactionHistory: true` — this
+ *  lets a test model a tx that is invisible to the recent-status cache but present in full history (#148).
+ *  `onBlockHeight` fires inside `getBlockHeight` (called once at the START of a tick, before the status batch): the
+ *  deterministic seam a test uses to inject a concurrent re-track at that await boundary (#149).
  *  `getTransaction` (Inc.4d) is scripted per-sig for the position-ledger writer — defaults to null (no row). */
 function connOf(opts: {
   statuses: (sig: string) => Status;
+  historyStatuses?: (sig: string) => Status;
   blockHeight: number;
+  onBlockHeight?: () => void | Promise<void>;
   transactions?: (sig: string) => TxResponse;
 }): {
   conn: Connection;
   getStatuses: ReturnType<typeof vi.fn>;
   getTx: ReturnType<typeof vi.fn>;
 } {
-  const getStatuses = vi.fn(async (sigs: string[]) => ({
-    value: sigs.map((s) => opts.statuses(s)),
+  const statusOf = (sig: string, config?: StatusConfig): Status => {
+    if (config?.searchTransactionHistory) return (opts.historyStatuses ?? opts.statuses)(sig);
+    return opts.statuses(sig);
+  };
+  const getStatuses = vi.fn(async (sigs: string[], config?: StatusConfig) => ({
+    value: sigs.map((s) => statusOf(s, config)),
   }));
   const getTx = vi.fn(async (sig: string) => (opts.transactions ? opts.transactions(sig) : null));
   const conn = {
     getSignatureStatuses: getStatuses,
-    getSignatureStatus: async (s: string) => ({ value: opts.statuses(s) }),
-    getBlockHeight: async () => opts.blockHeight,
+    getSignatureStatus: async (s: string, config?: StatusConfig) => ({
+      value: statusOf(s, config),
+    }),
+    getBlockHeight: async () => {
+      await opts.onBlockHeight?.();
+      return opts.blockHeight;
+    },
     getTransaction: getTx,
   } as unknown as Connection;
   return { conn, getStatuses, getTx };
@@ -212,6 +229,34 @@ describe('ConfirmWorker — ONE batched status read confirms every in-flight bro
     expect(codes).toContain('lifecycle.close_failed'); // kind-precise pinned alert, from the persisted context
     // …and the failed row is re-claimable (the reconcile re-publish can retry the command):
     expect(await claimExecution(db, s.userId, s.commandId, 'ek', 999, Date.now())).toBe(true);
+  });
+
+  it('#148 — an aged LANDED tx invisible to the recent-cache batch is confirmed via HISTORY search, not failed', async () => {
+    // WHY: after a downtime the batched getSignatureStatuses reads only the recent-status cache (no
+    // searchTransactionHistory), so a tx that LANDED before the gap returns null; its blockhash is now expired, so
+    // the naive death path would finalize 'failed' and fire the pinned "close manually" alert for a position that
+    // is in fact OPEN. The death branch must re-check the signature against full history before declaring it dead.
+    const s = await seedSubmitted({ signature: 'SIG_AGED_LANDED' });
+    const { conn, getStatuses } = connOf({
+      statuses: () => null, // recent-status cache: invisible
+      historyStatuses: () => ({ confirmationStatus: 'finalized' }), // full history: it actually landed
+      blockHeight: LVBH + 1, // blockhash expired → the naive path would call it dead
+    });
+    const w = workerOf(conn);
+    track(w, s);
+    await w.tick();
+    expect((await rowOf(s.userId, s.commandId))?.state).toBe('landed'); // NOT 'failed'
+    expect(bus.publish).toHaveBeenCalledTimes(1); // the landed close still reaches the brain
+    const codes = vi.mocked(events.emit).mock.calls.map((c) => c[0]);
+    expect(codes).toContain('sign.landed');
+    expect(codes).not.toContain('sign.land_failed'); // no spurious failure
+    expect(codes).not.toContain('lifecycle.close_failed'); // no spurious pinned "close manually" alert
+    // The re-check is a targeted single-signature read WITH searchTransactionHistory, only on the death branch:
+    expect(getStatuses).toHaveBeenCalledTimes(2);
+    expect(getStatuses.mock.calls[0]?.[1]).toBeUndefined(); // the cheap batch pass: no history search
+    expect(getStatuses.mock.calls[1]?.[0]).toEqual(['SIG_AGED_LANDED']);
+    expect(getStatuses.mock.calls[1]?.[1]).toEqual({ searchTransactionHistory: true });
+    expect(w.inflightCount).toBe(0);
   });
 
   it('on-chain ERROR → failed (atomic revert — nothing applied), NO publish', async () => {
@@ -346,6 +391,69 @@ describe('ConfirmWorker ⇄ recovery — the exactly-once landing protocol under
     expect(row?.state).toBe('claimed'); // …and LOSES: the new attempt still owns the row
     expect(events.emit).not.toHaveBeenCalled(); // no spurious pinned failure for a command being re-signed
     expect(w.inflightCount).toBe(0); // the stale watch is dropped either way
+  });
+
+  it('#149 — a stale resolve of the OLD signature never evicts a concurrently re-tracked NEW attempt', async () => {
+    // WHY: tick() snapshots the inflight set, then awaits the RPC. If a recovery re-sign re-tracks the SAME command
+    // with a NEW signature at that await boundary, resolving the OLD signature must (a) LOSE the signature-pinned
+    // CAS and (b) NOT delete the map entry now holding the NEW attempt — otherwise the new tx lands but nothing
+    // finalizes/publishes it and the row wedges in 'submitted' until restart. The old delete-by-key-before-the-CAS
+    // evicted the NEW entry; the fix untracks only when the map still holds THIS exact signature.
+    const s = await seedSubmitted({ signature: 'SIG_OLD' });
+    const SIG_NEW = 'SIG_NEW';
+    let reTracked = false;
+    let worker: ConfirmWorker | undefined;
+    const { conn } = connOf({
+      statuses: (sig) => (sig === SIG_NEW ? { confirmationStatus: 'confirmed' } : null),
+      blockHeight: LVBH + 1, // OLD blockhash expired → the stale path would try to fail it
+      onBlockHeight: async () => {
+        // Fires after tick's snapshot, before the status batch: the recovery lane re-signs (the row now points to
+        // the NEW signature) and the worker re-tracks it (same key replaces SIG_OLD in the inflight map).
+        if (reTracked) return;
+        reTracked = true;
+        await db
+          .update(executions)
+          .set({ signature: SIG_NEW })
+          .where(and(eq(executions.userId, s.userId), eq(executions.commandId, s.commandId)));
+        worker?.track({
+          userId: s.userId,
+          commandId: s.commandId,
+          signature: SIG_NEW,
+          lastValidBlockHeight: LVBH,
+          publish: s.publish,
+        });
+      },
+    });
+    const w = workerOf(conn);
+    worker = w;
+    track(w, s); // the worker starts watching SIG_OLD
+    await w.tick(); // snapshot=[SIG_OLD]; re-track injects SIG_NEW; SIG_OLD resolves stale and LOSES the CAS
+    expect(w.inflightCount).toBe(1); // the NEW attempt is still watched (NOT evicted by the stale resolve)
+    expect((await rowOf(s.userId, s.commandId))?.state).toBe('submitted'); // SIG_NEW pending, never failed
+    expect(bus.publish).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled(); // no spurious pinned failure for the OLD sig
+    // …and because it stayed watched, the next tick confirms + publishes the NEW attempt:
+    await w.tick();
+    expect((await rowOf(s.userId, s.commandId))?.state).toBe('landed');
+    expect(bus.publish).toHaveBeenCalledTimes(1);
+    expect((vi.mocked(bus.publish).mock.calls[0]?.[3] as { sig?: string }).sig).toBe(SIG_NEW);
+  });
+
+  it('#148 — recovery pre-check confirms an aged LANDED tx via history search (never re-signs a landed move)', async () => {
+    // WHY: at boot a tx that LANDED before the downtime is gone from the recent-status cache; without
+    // searchTransactionHistory classifyPriorTx reads it as not-found → 'dead' → recoveryPreCheck would re-claim and
+    // RE-SIGN a money move that already executed. The pre-check must search full history and finalize 'landed'.
+    const s = await seedSubmitted({ signature: 'SIG_AGED_RECOVER' });
+    const { conn } = connOf({
+      statuses: () => null, // recent cache: invisible
+      historyStatuses: () => ({ confirmationStatus: 'finalized' }), // full history: landed
+      blockHeight: LVBH + 1, // blockhash expired → the naive path would call it 'dead' (→ re-sign)
+    });
+    const { ctx, sr } = recoveryFixture(s, conn);
+    const verdict = await recoveryPreCheck(ctx, sr);
+    expect(verdict).toEqual({ ok: true, kind: 'close' }); // acknowledged as terminal — NOT re-signed
+    expect((await rowOf(s.userId, s.commandId))?.state).toBe('landed');
+    expect(bus.publish).toHaveBeenCalledTimes(1); // the landed close is published once
   });
 });
 

@@ -289,7 +289,10 @@ export async function classifyPriorTx(
   signature: string,
   lastValidBlockHeight: number,
 ): Promise<PriorTxFate> {
-  const { value } = await conn.getSignatureStatus(signature);
+  // #148 — search full transaction history, not just the recent-status cache: recoveryPreCheck runs at boot, where
+  // a tx that LANDED before the downtime is no longer in the recent cache. Without this it reads as not-found and,
+  // its blockhash expired, is misclassified 'dead' → a needless RE-SIGN of an already-landed money move.
+  const { value } = await conn.getSignatureStatus(signature, { searchTransactionHistory: true });
   if (value) {
     if (value.err) return 'dead'; // atomically reverted → nothing applied
     if (value.confirmationStatus === 'confirmed' || value.confirmationStatus === 'finalized')

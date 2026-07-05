@@ -16,7 +16,7 @@
  * Crash/restart: nothing to replay — `loadPending()` re-reads the durable 'submitted' rows (signature + expiry +
  * publish context persisted by `markSubmitted` BEFORE the broadcast) and resumes watching them.
  */
-import type { Connection } from '@solana/web3.js';
+import type { Connection, SignatureStatus } from '@solana/web3.js';
 import { and, eq, isNotNull } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import {
@@ -150,27 +150,77 @@ export class ConfirmWorker {
       for (let i = 0; i < batch.length; i++) {
         const t = batch[i] as TrackedSubmission;
         const status = value[i];
-        if (status?.err) {
-          // Solana txs are atomic → an on-chain error means the tx fully reverted, nothing applied.
-          await this.resolveFailed(t, `tx_error: ${JSON.stringify(status.err)}`);
-        } else if (
-          status?.confirmationStatus === 'confirmed' ||
-          status?.confirmationStatus === 'finalized'
-        ) {
-          await this.resolveLanded(t);
-        } else if (!status && height > t.lastValidBlockHeight) {
-          await this.resolveFailed(t, `blockhash_expired (sig ${t.signature})`);
+        // on-chain error → 'failed' (atomic revert, nothing applied); confirmed/finalized → 'landed'.
+        if (await this.resolveByStatus(t, status)) continue;
+        if (!status && height > t.lastValidBlockHeight) {
+          // #148 — the batch read above omits searchTransactionHistory (recent-status cache only), so a tx that
+          // actually LANDED before a downtime reads as not-found here; with its blockhash now expired the naive
+          // path would misdeclare it 'failed' and fire a spurious "close manually" alert. Re-check against full
+          // transaction history before declaring it dead.
+          await this.resolveExpiredUnlessLanded(t);
         }
         // else: not found but blockhash alive, or only 'processed' — still in flight, keep polling.
       }
     }
   }
 
+  /**
+   * Route one signature's status to its terminal outcome — on-chain error → 'failed' (Solana txs are atomic, so a
+   * revert applied nothing), confirmed/finalized → 'landed'. Returns false for a non-terminal status (not found, or
+   * only 'processed') so the caller decides whether to keep polling or run the #148 expiry re-check. Shared by the
+   * batch pass and the history re-check so the classification (and its reason string) lives in exactly one place.
+   */
+  private async resolveByStatus(
+    t: TrackedSubmission,
+    status: SignatureStatus | null | undefined,
+  ): Promise<boolean> {
+    if (status?.err) {
+      await this.resolveFailed(t, `tx_error: ${JSON.stringify(status.err)}`);
+      return true;
+    }
+    if (status?.confirmationStatus === 'confirmed' || status?.confirmationStatus === 'finalized') {
+      await this.resolveLanded(t);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * #148 — the last guard before declaring a broadcast dead. The batched status read in `tick` omits
+   * searchTransactionHistory (recent-status cache only): after a downtime a tx that actually LANDED before the gap
+   * is absent from that cache, and with its blockhash now expired the naive path would finalize 'failed' + fire a
+   * spurious "close manually" alert for a position that is in fact OPEN. Re-check THIS one signature against full
+   * transaction history first; only a genuine absence is finalized 'failed'. Runs only on the rare
+   * not-found-and-expired branch, so the extra single-signature RPC is negligible.
+   */
+  private async resolveExpiredUnlessLanded(t: TrackedSubmission): Promise<void> {
+    const { value } = await this.deps.conn.getSignatureStatuses([t.signature], {
+      searchTransactionHistory: true,
+    });
+    if (await this.resolveByStatus(t, value[0])) return;
+    await this.resolveFailed(t, `blockhash_expired (sig ${t.signature})`);
+  }
+
+  /**
+   * #149 — untrack a broadcast ONLY if the map still holds THIS exact signature. A concurrent recovery re-sign
+   * replaces the (userId, commandId) entry with a NEW attempt; a stale resolve of the OLD signature must never evict
+   * that live entry (which would leave the new tx landing with nothing to finalize/publish — a wedged 'submitted'
+   * row until restart). Safe whether the CAS was won or lost: a lost CAS whose map entry is still this signature
+   * means the row already moved past this broadcast, so dropping the stale watch is correct.
+   */
+  private dropIfCurrent(t: TrackedSubmission): void {
+    const k = keyOf(t);
+    if (this.inflight.get(k)?.signature === t.signature) this.inflight.delete(k);
+  }
+
   /** Confirmed on-chain → finalize 'landed' and, as the exactly-once WINNER only, publish ev:executed + emit. */
   private async resolveLanded(t: TrackedSubmission): Promise<void> {
     const { db, bus, events, hmacKey, log } = this.deps;
-    this.inflight.delete(keyOf(t));
-    if (!(await finalizeSubmitted(db, t.userId, t.commandId, t.signature, 'landed'))) return; // recovery won — it publishes
+    // #149 — CAS BEFORE the untrack (a throw here leaves the entry so the next tick retries); the untrack is
+    // signature-pinned so it can never evict a concurrently re-tracked NEW attempt sharing this key.
+    const won = await finalizeSubmitted(db, t.userId, t.commandId, t.signature, 'landed');
+    this.dropIfCurrent(t);
+    if (!won) return; // recovery won — it publishes
     // Inc.4d — append the fee-base ledger row NOW, before publishing ev:executed: the brain's close-confirm fee
     // assessment (triggered by ev:executed) then reads a COMPLETE ledger, since a CLOSE's row is the position's
     // final movement. Post-confirm bookkeeping OFF the exactly-once path — the finalize above already committed, so
@@ -268,10 +318,13 @@ export class ConfirmWorker {
   /** Provably dead (on-chain error / blockhash expired) → finalize 'failed' (re-claimable) + the pinned alert pair. */
   private async resolveFailed(t: TrackedSubmission, reason: string): Promise<void> {
     const { db, events, log } = this.deps;
-    this.inflight.delete(keyOf(t));
     // The signature-pinned compare-and-set: a re-claimed row (recovery already re-signing this command) no longer
     // matches the OLD signature, so a stale expiry can never fail the NEW attempt nor emit a spurious pinned alert.
-    if (!(await finalizeSubmitted(db, t.userId, t.commandId, t.signature, 'failed'))) return;
+    // #149 — CAS BEFORE the untrack (a throw leaves the entry so the next tick retries); the untrack is
+    // signature-pinned so a stale resolve of the OLD signature can never evict a re-tracked NEW attempt.
+    const won = await finalizeSubmitted(db, t.userId, t.commandId, t.signature, 'failed');
+    this.dropIfCurrent(t);
+    if (!won) return;
     log.warn(
       { sig: t.signature, commandId: t.commandId, reason },
       '💀 broadcast never confirmed — failed (re-claimable)',
