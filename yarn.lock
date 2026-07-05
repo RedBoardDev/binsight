@@ -168,6 +168,7 @@ __metadata:
     "@meteora-ag/dlmm": "npm:1.9.10"
     "@napi-rs/canvas": "npm:^1.0.0"
     "@privy-io/node": "npm:0.24.0"
+    "@solana/spl-token": "npm:0.4.14"
     "@solana/web3.js": "npm:1.98.4"
     "@types/bn.js": "npm:5.2.0"
     "@types/node": "npm:^22.10.5"
@@ -5170,7 +5171,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@solana/spl-token@npm:^0.4.6":
+"@solana/spl-token@npm:0.4.14, @solana/spl-token@npm:^0.4.6":
   version: 0.4.14
   resolution: "@solana/spl-token@npm:0.4.14"
   dependencies:

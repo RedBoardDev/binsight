@@ -23,3 +23,13 @@ export interface TokenSnapshot {
 
 /** Port: fetch a token's snapshot. Returns null on miss/timeout/error (NEVER throws → enabled filters skip). */
 export type TokenSnapshotProvider = (mint: string) => Promise<TokenSnapshot | null>;
+
+/**
+ * Port: does this mint carry a Token-2022 `TransferFeeConfig` extension (source: `mint-extensions`)?
+ * `true` = fee'd (→ the enabled brick skips the open), `false` = CONFIRMED fee-free (classic SPL or a
+ * fee-free Token-2022 mint → open allowed), `null` = UNREADABLE (RPC miss/error/malformed/nonexistent) so the
+ * resolver leaves `hasTransferFee` unresolved and the brick fails CLOSED. NEVER throws. An unreadable mint must
+ * NOT resolve to `false`, or a fee'd mint could slip through the two-sided deposit haircut (finding #105).
+ * A mint's extension set is immutable after creation ⇒ the answer is cacheable with an effectively infinite TTL.
+ */
+export type MintExtensionsProvider = (mint: string) => Promise<boolean | null>;

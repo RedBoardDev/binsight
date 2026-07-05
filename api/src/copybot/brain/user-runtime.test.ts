@@ -103,7 +103,12 @@ const shared: SharedBrainDeps = {
   tokenMeta: {} as HeliusTokenMetadataGateway,
   blockhashCache: new BlockhashCache(async () => ({ blockhash: 'x', lastValidBlockHeight: 0 })),
   priorityFeeOracle: { get: () => null } as unknown as PriorityFeeOracle,
-  filterDeps: { jupiterToken: async () => null, snapshotCache: new TtlCache<TokenSnapshot>(1000) },
+  filterDeps: {
+    jupiterToken: async () => null,
+    snapshotCache: new TtlCache<TokenSnapshot>(1000),
+    mintExtensions: async () => null,
+    transferFeeCache: new TtlCache<boolean>(1000),
+  },
   control: {} as ControlChannel,
   heartbeat: {} as HeartbeatStore,
   recentlyPublishedClose: new Map(),

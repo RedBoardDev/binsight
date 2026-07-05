@@ -62,6 +62,7 @@ import {
   DEFAULT_JUPITER_BASE_URL,
   WSOL_MINT,
 } from '@/infrastructure/solana/jupiter/jupiter-swap-builder';
+import { MintExtensionsGateway } from '@/infrastructure/solana/mint-extensions-gateway';
 import { PriorityFeeOracle } from '@/infrastructure/solana/priority-fee-oracle';
 import { readAllOwnerTokenBalances } from '@/infrastructure/solana/token-balance-reader';
 import { HeliusTokenMetadataGateway } from '@/infrastructure/solana/token-metadata-gateway';
@@ -99,6 +100,7 @@ const EV_EXECUTED_STREAM = 'copybot:ev:executed';
 const RUG_SL_POLL_MS = 15_000; // rug-SL price-poll cadence: ~4 samples per a 60s window — fast enough to catch a crash, one lbPair read per open pool (economical)
 const CONFIG_POLL_MS = 5_000; // re-read the DB-backed runtime config (sizing/caps/two-sided) so web edits apply live
 const SNAPSHOT_TTL_MS = 30_000; // per-mint filter-snapshot cache TTL (short; pre-warm makes repeat opens free)
+const MINT_EXTENSIONS_TTL_MS = 86_400_000; // 24h: a mint's Token-2022 extension set is immutable post-creation → effectively-permanent per-mint cache (one getMint per mint)
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -198,7 +200,12 @@ async function main(): Promise<void> {
     onError: (err, mint) =>
       log.warn({ err, mint }, 'jupiter token snapshot failed (filter data unavailable)'),
   }).getSnapshot;
-  const filterDeps = { jupiterToken, snapshotCache };
+  const transferFeeCache = new TtlCache<boolean>(MINT_EXTENSIONS_TTL_MS);
+  const mintExtensions = new MintExtensionsGateway(conn, {
+    onError: (err, mint) =>
+      log.warn({ err, mint }, 'mint-extensions read failed (transfer-fee filter data unavailable)'),
+  }).hasTransferFee;
+  const filterDeps = { jupiterToken, snapshotCache, mintExtensions, transferFeeCache };
   let jitoTipSeed = 0; // rotates the tip across Jito's accounts (per-tip) to avoid contention
   // Inc.4c: a REAL user's spendable balance = a short-TTL getBalance cache minus their SOL reserve. Shared across
   // runtimes (SharedBrainDeps) so the getBalance cost is bounded + the cache is mockable. SYSTEM bypasses it.
