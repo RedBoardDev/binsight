@@ -20,11 +20,13 @@ import type { Connection, SignatureStatus } from '@solana/web3.js';
 import { and, eq, isNotNull } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import {
+  classifyByHeightThenStatus,
   emitLandFailure,
   finalizeSubmitted,
   publishExecuted,
   type SubmittedPublishCtx,
   type TrackedSubmission,
+  UNKNOWN_LVBH,
 } from '@/copybot/coffre/process-command';
 import type { CopyEvents } from '@/copybot/observability/copy-events';
 import {
@@ -44,11 +46,6 @@ type Db = ReturnType<typeof openDatabase>;
 export const CONFIRM_POLL_MS = 2_000;
 // getSignatureStatuses accepts at most 256 signatures per call (Solana RPC hard limit).
 const SIGNATURE_STATUS_BATCH_MAX = 256;
-// A legacy pre-#7 'submitted' row has a NULL lastValidBlockHeight (persisted only since #7); loadPending coerces it to
-// this sentinel. `height > 0` is trivially true and is NOT proof the tx can no longer land, so a row carrying it is
-// NEVER declared expired on height alone (no-miss) — it is resolved only by a REAL on-chain status.
-const UNKNOWN_LVBH = 0;
-
 const keyOf = (t: { userId: string; commandId: string }): string => `${t.userId}:${t.commandId}`;
 
 const chunk = <T>(items: T[], size: number): T[][] => {
@@ -156,9 +153,10 @@ export class ConfirmWorker {
         const status = value[i];
         // on-chain error → 'failed' (atomic revert, nothing applied); confirmed/finalized → 'landed'.
         if (await this.resolveByStatus(t, status)) continue;
-        // A known-expired blockhash (chain height past a REAL lastValidBlockHeight) is the death trigger; a legacy
-        // row carrying UNKNOWN_LVBH is exempt — `height > 0` is not proof, so it never dies on height alone.
-        if (!status && t.lastValidBlockHeight > UNKNOWN_LVBH && height > t.lastValidBlockHeight) {
+        // The SHARED classifier (identical ordering as the recovery pre-check, #157) decides death from the height
+        // read BEFORE this status batch: not-found AND past a REAL lastValidBlockHeight ⇒ 'dead'; a legacy
+        // UNKNOWN_LVBH row is exempt (never dies on height alone). resolveByStatus already consumed err/confirmed.
+        if (classifyByHeightThenStatus(height, status, t.lastValidBlockHeight) === 'dead') {
           // #148 — the batch read above omits searchTransactionHistory (recent-status cache only), so a tx that
           // actually LANDED before a downtime reads as not-found here; with its blockhash now expired the naive
           // path would misdeclare it 'failed' and fire a spurious "close manually" alert. Re-check against full

@@ -4,6 +4,7 @@ import {
   type Connection,
   Keypair,
   PublicKey,
+  type SignatureStatus,
   SystemProgram,
   Transaction,
   TransactionInstruction,
@@ -23,7 +24,7 @@ import * as schema from '@/infrastructure/persistence/schema';
 import { copyPositions, executions } from '@/infrastructure/persistence/schema';
 import type { BlockhashCache } from '@/infrastructure/solana/blockhash-cache';
 import { ConfirmWorker } from './confirm-worker';
-import { type Ctx, process1 } from './process-command';
+import { type Ctx, classifyByHeightThenStatus, classifyPriorTx, process1 } from './process-command';
 import { DryRunSigner, LocalKeypairSigner, PrivyOutageError, type Signer } from './signer';
 
 // Fresh in-memory Postgres (PGlite) with the real Drizzle migrations applied — exercises the multi-tenant
@@ -774,6 +775,102 @@ describe('process1 — #7: recovery pre-check re-signs ONLY a provably-dead tx (
     const verdict = await process1(sr, ctxFor(conn, bus), true);
     expect(land).toHaveBeenCalledTimes(1); // safe re-sign (nothing was broadcast)
     expect(verdict).toEqual({ ok: true, reason: 'submitted', kind: 'close' });
+  });
+});
+
+// --- #157: the exactly-once read ORDER (block height BEFORE the signature status) is now the SINGLE shared classifier
+// used by BOTH classifyPriorTx (recovery pre-check) and confirm-worker.tick, so the two can never drift.
+/** Build a minimal SignatureStatus fixture carrying only the fields the classifier reads. */
+const statusOf = (s: { err?: unknown; confirmationStatus?: string }): SignatureStatus =>
+  s as unknown as SignatureStatus;
+
+describe('classifyByHeightThenStatus — the shared exactly-once classifier (height read BEFORE status)', () => {
+  const LVBH = 1_000; // a REAL lastValidBlockHeight
+
+  it('an on-chain error → dead (atomic revert: nothing applied → re-signable)', () => {
+    expect(classifyByHeightThenStatus(500, statusOf({ err: 'InstructionError' }), LVBH)).toBe(
+      'dead',
+    );
+  });
+
+  it('confirmed / finalized → landed (the money moved; never re-sign), regardless of height', () => {
+    expect(
+      classifyByHeightThenStatus(9_999, statusOf({ confirmationStatus: 'confirmed' }), LVBH),
+    ).toBe('landed');
+    expect(
+      classifyByHeightThenStatus(9_999, statusOf({ confirmationStatus: 'finalized' }), LVBH),
+    ).toBe('landed');
+  });
+
+  it('only "processed" (not durable) → in-flight even past expiry (a status was seen → never dead on height)', () => {
+    expect(
+      classifyByHeightThenStatus(LVBH + 1, statusOf({ confirmationStatus: 'processed' }), LVBH),
+    ).toBe('in-flight');
+  });
+
+  it('not found AND height (read before status) > a REAL lvbh → dead (provably can never land)', () => {
+    expect(classifyByHeightThenStatus(LVBH + 1, null, LVBH)).toBe('dead');
+  });
+
+  it('★ not found but height == lvbh (the last valid block — not yet expired) → in-flight (may still land)', () => {
+    // WHY (#157 boundary): at height == lvbh the tx can STILL be included in block lvbh, so declaring it dead here is
+    // the double-execution bug. Only a height STRICTLY greater than lvbh is proof of death.
+    expect(classifyByHeightThenStatus(LVBH, null, LVBH)).toBe('in-flight');
+  });
+
+  it('not found + an UNKNOWN_LVBH (legacy) row → in-flight regardless of height (never dies on height alone)', () => {
+    // WHY (no-miss): a legacy row has no real expiry; `height > 0` is not proof, so height alone must never kill it.
+    expect(classifyByHeightThenStatus(9_999_999, null, 0)).toBe('in-flight');
+  });
+});
+
+describe('classifyPriorTx — #157: block height is read BEFORE the status (the exactly-once ordering)', () => {
+  const CLASSIFY_LVBH = 1_000; // the prior tx's lastValidBlockHeight under test
+
+  it('★ the race — height ≤ lvbh at the height read + not-found status → NOT dead, even as the chain ticks past lvbh between the reads', async () => {
+    // WHY (#157, the double-execution guard): classifyPriorTx must read block height BEFORE the signature status and
+    // declare 'dead' only when THAT height (taken before the status) already passed lvbh. A chain clock ticking on
+    // every read models the race: the height read observes exactly lvbh (still valid — the tx can land in block lvbh)
+    // while the later status read sees the chain at lvbh+2 with the tx not-yet-indexed. The reverse order (status→
+    // height) would read not-found then height>lvbh = 'dead' and RE-SIGN an in-flight move about to land → BOTH txs
+    // execute. Height-first keeps it 'in-flight' (no re-claim, no re-sign). The read-order assertion locks the fix so
+    // a regression to status-first FAILS this test (it would classify dead here).
+    const reads: string[] = [];
+    let clock = CLASSIFY_LVBH; // first read observes exactly lvbh → `height > lvbh` is false (not expired)
+    const conn = {
+      getBlockHeight: async () => {
+        reads.push('height');
+        const h = clock;
+        clock += 1; // a slot ticks between the two reads
+        return h;
+      },
+      getSignatureStatus: async () => {
+        reads.push('status');
+        clock += 1;
+        return { value: null }; // not-yet-indexed at the AFTER-read (the tx is about to land)
+      },
+    } as unknown as Connection;
+    const fate = await classifyPriorTx(conn, PRIOR_SIG, CLASSIFY_LVBH);
+    expect(fate).not.toBe('dead'); // ← the tx-lands-between-the-reads race can no longer double-execute
+    expect(fate).toBe('in-flight');
+    expect(reads).toEqual(['height', 'status']); // block height is read FIRST — the ordering that makes it safe
+  });
+
+  it('a genuinely-dead tx (height already past lvbh AND not-found even with history search) still returns "dead"', async () => {
+    // WHY: the fix must not weaken the death path — a tx the chain never saw past a REAL expired blockhash is still
+    // provably dead and MUST be re-driven (else the copy is silently missed). And the death read searches full history
+    // (#148), so an aged-but-landed tx is not mistaken for dead.
+    let searchedHistory = false;
+    const conn = {
+      getBlockHeight: async () => CLASSIFY_LVBH + 5, // read FIRST, already past expiry
+      getSignatureStatus: async (_s: string, opts?: { searchTransactionHistory?: boolean }) => {
+        searchedHistory = opts?.searchTransactionHistory === true;
+        return { value: null }; // not found even with full history search
+      },
+    } as unknown as Connection;
+    const fate = await classifyPriorTx(conn, PRIOR_SIG, CLASSIFY_LVBH);
+    expect(fate).toBe('dead');
+    expect(searchedHistory).toBe(true); // #148 co-exists with the ordering fix: the status read searches full history
   });
 });
 

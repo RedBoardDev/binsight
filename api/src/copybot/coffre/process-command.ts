@@ -10,7 +10,7 @@
  *  would strand it as a dormant position — only 'failed' is re-claimable, and a premature ev:executed makes the
  *  brain forget it). No lane ever waits for a confirmation (ULTRACODE #22/#31 head-of-line kill).
  */
-import { type Connection, type Keypair, Transaction } from '@solana/web3.js';
+import { type Connection, type Keypair, type SignatureStatus, Transaction } from '@solana/web3.js';
 import { and, eq, inArray } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import { claimExecution } from '@/copybot/coffre/idempotency';
@@ -276,32 +276,59 @@ export function emitLandFailure(
 /** The fate of a previously-broadcast tx, decided from the chain (exactly-once recovery pre-check). */
 type PriorTxFate = 'landed' | 'dead' | 'in-flight';
 
+// A 'submitted' row whose lastValidBlockHeight was never persisted (legacy pre-#7 rows; loadPending coerces the NULL
+// to this sentinel). `height > 0` is trivially true and is NOT proof a tx can no longer land, so a row carrying it is
+// NEVER declared dead on height alone (no-miss) — only a REAL on-chain status may resolve it.
+export const UNKNOWN_LVBH = 0;
+
 /**
- * Classify a previously-broadcast signature from the chain (exactly-once recovery):
- *  - a confirmed/finalized success → 'landed' (the money already moved; NEVER re-sign);
- *  - an on-chain error → 'dead' (Solana txs are atomic → the tx fully reverted, nothing applied → safe to re-sign);
- *  - not found (dropped or too-fresh-to-index) → 'dead' only once the blockhash is PROVABLY expired
- *    (`getBlockHeight > lastValidBlockHeight`), else 'in-flight' (it may still land → do NOT re-sign this pass);
- *  - found but only 'processed' (not yet durable) → 'in-flight'.
+ * Pure, SHARED classifier for a previously-broadcast signature — the single source of the read ordering that keeps the
+ * money path exactly-once, used by BOTH the async confirm worker (`confirm-worker.tick`) and the boot-recovery
+ * pre-check (`classifyPriorTx`), so the two can never drift (#157).
+ *
+ * The caller MUST read `heightBeforeStatus` (getBlockHeight) BEFORE reading `status` (getSignatureStatus). A not-found
+ * tx is declared 'dead' ONLY when that height — taken before the status read — has already passed a REAL
+ * lastValidBlockHeight: inclusion requires height ≤ lastValidBlockHeight, so a status read taken AFTER a height that is
+ * already past it is proof the tx can never land. The reverse order (status→height) would let a tx that lands BETWEEN
+ * the two reads be misdeclared 'dead' → a re-sign of an in-flight money move → a DOUBLE on-chain execution.
+ *  - on-chain error                    → 'dead' (Solana txs are atomic → fully reverted, nothing applied → re-signable);
+ *  - confirmed/finalized               → 'landed' (the money already moved; NEVER re-sign);
+ *  - not found AND provably expired (a REAL lvbh AND heightBeforeStatus > lvbh) → 'dead';
+ *  - anything else (not found but blockhash alive, only 'processed', or an UNKNOWN_LVBH row) → 'in-flight'.
+ */
+export function classifyByHeightThenStatus(
+  heightBeforeStatus: number,
+  status: SignatureStatus | null | undefined,
+  lastValidBlockHeight: number,
+): PriorTxFate {
+  if (status?.err) return 'dead'; // atomically reverted → nothing applied
+  if (status?.confirmationStatus === 'confirmed' || status?.confirmationStatus === 'finalized')
+    return 'landed';
+  // Not found AND the chain was already past a REAL expiry when the height was read → it can never land (dead). A
+  // legacy UNKNOWN_LVBH row is exempt (never dies on height alone).
+  if (!status && lastValidBlockHeight > UNKNOWN_LVBH && heightBeforeStatus > lastValidBlockHeight)
+    return 'dead';
+  return 'in-flight'; // may still land (blockhash alive / unknown lvbh) or only 'processed' → do NOT re-sign
+}
+
+/**
+ * Classify a previously-broadcast signature from the chain (exactly-once recovery). Reads block height BEFORE the
+ * status — the same ordering as `confirm-worker.tick`, via the shared `classifyByHeightThenStatus` — so a tx landing
+ * between the two reads is treated as in-flight, never dead (#157).
  */
 export async function classifyPriorTx(
   conn: Connection,
   signature: string,
   lastValidBlockHeight: number,
 ): Promise<PriorTxFate> {
-  // #148 — search full transaction history, not just the recent-status cache: recoveryPreCheck runs at boot, where
-  // a tx that LANDED before the downtime is no longer in the recent cache. Without this it reads as not-found and,
-  // its blockhash expired, is misclassified 'dead' → a needless RE-SIGN of an already-landed money move.
-  const { value } = await conn.getSignatureStatus(signature, { searchTransactionHistory: true });
-  if (value) {
-    if (value.err) return 'dead'; // atomically reverted → nothing applied
-    if (value.confirmationStatus === 'confirmed' || value.confirmationStatus === 'finalized')
-      return 'landed';
-    return 'in-flight'; // 'processed' only → not durable yet
-  }
-  // Not found: dropped (dead) vs. not-yet-indexed (in-flight) is disambiguated by the blockhash's expiry.
+  // Height FIRST (see classifyByHeightThenStatus): the reverse order would misdeclare a tx that lands between the two
+  // reads as 'dead' → a needless RE-SIGN of an in-flight money move (double execution).
   const height = await conn.getBlockHeight('confirmed');
-  return height > lastValidBlockHeight ? 'dead' : 'in-flight';
+  // #148 — search full transaction history, not just the recent-status cache: recoveryPreCheck runs at boot, where a
+  // tx that LANDED before the downtime is no longer in the recent cache. Without this it reads as not-found and, its
+  // blockhash expired, is misclassified 'dead' → a needless RE-SIGN of an already-landed money move.
+  const { value } = await conn.getSignatureStatus(signature, { searchTransactionHistory: true });
+  return classifyByHeightThenStatus(height, value, lastValidBlockHeight);
 }
 
 /**
