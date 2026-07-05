@@ -44,6 +44,31 @@ export function poolsOf(tx: ParsedTransactionWithMeta | null, codec: DlmmTxCodec
 }
 
 /**
+ * True iff `tx` has a value-bearing DEPOSIT (open/add) leg into a pool the caller marks UNRESOLVED — i.e. its
+ * LbPair meta could not be read (a null on-chain read: a brand-new pool, or the RPC replica lagging the account).
+ * Such a tx must be treated as UNRESOLVED by the detector (held + re-listed until the meta resolves), NOT committed:
+ * a deposit valued against a null meta is `depositSol = 0` → dispatch routes it to 'ignore' → the leader's position
+ * (and therefore its eventual CLOSE) is never mirrored — the cardinal sin (finding #162).
+ *
+ * ONLY deposit legs gate the hold. A close/withdraw needs NO meta to route (`closed` is decoded from the leg kind,
+ * value-independent), so a pure close with a null meta must still FAST-PATH — holding a leader's exit is a fund
+ * risk. `isPoolUnresolved` is supplied by the caller, which alone can tell a null READ (unresolved → retry) from a
+ * resolved non-SOL pool (`solSide === null` → a legitimate, permanent 'ignore' that retrying would never change).
+ * The empty-lbPair guard drops a decoder-degenerate pool-less deposit: it can never resolve, so holding it would
+ * stall the cursor until the LOUD-gap cap instead of failing over — a real deposit always carries its lbPair.
+ */
+export function hasUnresolvedDepositLeg(
+  tx: ParsedTransactionWithMeta | null,
+  isPoolUnresolved: (lbPair: string) => boolean,
+  codec: DlmmTxCodec,
+): boolean {
+  if (!tx || !codec.hasDlmmEvents(tx)) return false;
+  return codec
+    .decodeDlmmLegs(tx)
+    .some((leg) => leg.kind === 'deposit' && leg.lbPair !== '' && isPoolUnresolved(leg.lbPair));
+}
+
+/**
  * Builds the `DetectedEvent`s of ONE tx — ONE event PER leader position touched (finding #37). `[]` if it isn't
  * a DLMM tx (no tx, or no DLMM Event-CPI). A pool that is present but not valuable in SOL (`solSide === null` /
  * meta absent) keeps the action with amounts at 0 and `nonSolMint = null` — we never lose the event, only the amount.

@@ -9,6 +9,10 @@ import { describe, expect, it, vi } from 'vitest';
 // break detection.test.ts' non-DLMM cases, hence a dedicated file.)
 vi.mock('../domain/copybot/classify-dlmm-tx', () => ({
   poolsOf: (tx: unknown) => (tx ? ['POOL'] : []),
+  // This suite isolates the null-meta CACHE policy (#46): stub the open-hold off so a degraded event is still built
+  // and the TTL transition (null → re-read → valued) stays observable. The real hold (#162) is covered by the real
+  // codec path in detection.test.ts and classify-dlmm-tx.test.ts.
+  hasUnresolvedDepositLeg: () => false,
   buildDetectedEvents: (
     signature: string,
     tx: unknown,

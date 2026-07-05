@@ -247,6 +247,11 @@ const binBuf = (bin: number): Buffer => {
   b.writeInt32LE(bin, 0);
   return b;
 };
+const addLiquidity = (x: bigint, y: bigint, bin: number): string =>
+  cpi(
+    [31, 94, 125, 90, 227, 52, 61, 186],
+    Buffer.concat([PKB(1), PKB(2), PKB(3), amountsBuf(x, y), binBuf(bin)]),
+  );
 const removeLiquidity = (x: bigint, y: bigint, bin: number): string =>
   cpi(
     [116, 244, 97, 232, 103, 31, 152, 58],
@@ -320,5 +325,80 @@ describe('makeDetectionDeps.classify — WS fast-path (delivered tx skips the RP
     expect(getParsedTransactions.mock.calls[0]?.[0]).toEqual(['sigMiss']); // ONLY the un-delivered sig is fetched
     expect(events.get('sigWs')?.[0]?.closed).toBe(true); // prefetched close still detected
     expect(events.has('sigMiss')).toBe(false); // the fetched non-DLMM sig produced no event
+  });
+});
+
+// --- Finding #162 (never-miss): a leader OPEN whose LbPair meta reads null at classify time must be surfaced as
+// UNRESOLVED — so the detector holds the cursor and re-lists it — NOT committed as a depositSol=0 event that
+// dispatch routes to 'ignore' (its position, and its eventual CLOSE, would never be mirrored). A CLOSE needs no
+// meta to route and must still fast-path (never held). Real Event-CPI bytes + the real codec end-to-end. ---
+const POOL_META_NULL_TTL_MS = 15_000; // mirror the detection.ts constant (kept honest by the retry-after-TTL test)
+
+describe('makeDetectionDeps.classify — a null-meta OPEN is HELD unresolved, not a depositSol=0 commit (#162)', () => {
+  // Scripted pool reader: the first read returns null (brand-new pool / lagging replica), later reads return the
+  // real SOL_Y meta. A controllable clock lets us step past the null-meta TTL to force the re-read on retry.
+  function nullThenValuedDeps() {
+    const loadPoolMeta = vi.fn();
+    loadPoolMeta.mockResolvedValueOnce(null); // 1st read: LbPair not yet queryable → null
+    loadPoolMeta.mockResolvedValue(SOL_Y); // later: readable → valuable in SOL (SOL on side Y)
+    let clock = 1_000_000;
+    // getParsedTransactions must never be needed (the WS delivers the tx) — a call would be a fast-path regression.
+    const getParsedTransactions = vi.fn(async (sigs: string[]) => sigs.map(() => null));
+    const deps = makeDetectionDeps({
+      conn: { getParsedTransactions } as unknown as Connection,
+      pk: PK,
+      poolReader: { loadPoolMeta } as never,
+      tokenMeta: { resolve: async () => new Map() } as never,
+      onEvent: () => undefined,
+      now: () => clock,
+    });
+    const advanceClockPastTtl = (): void => {
+      clock += POOL_META_NULL_TTL_MS;
+    };
+    return { deps, loadPoolMeta, advanceClockPastTtl };
+  }
+
+  it('★ an OPEN read while its pool meta is null → sig is UNRESOLVED (cursor held), NOT an emitted depositSol=0 open', async () => {
+    const { deps } = nullThenValuedDeps();
+    const openTx = wsTx([addLiquidity(0n, 1_500_000_000n, 0)]); // one-sided SOL open worth 1.5 SOL
+    const { events, unresolved } = await deps.classify(['sigOpen'], new Map([['sigOpen', openTx]]));
+    // THE #162 MISS: the old code committed a depositSol=0 event here → dispatch 'ignore' → the open never mirrored.
+    expect(events.has('sigOpen')).toBe(false); // NOT committed as a degraded event
+    expect([...unresolved]).toEqual(['sigOpen']); // surfaced unresolved → the detector re-lists it (cursor not advanced)
+  });
+
+  it('★ once the pool meta resolves on retry, the SAME open is emitted with the CORRECT depositSol (not 0)', async () => {
+    const { deps, loadPoolMeta, advanceClockPastTtl } = nullThenValuedDeps();
+    const openTx = wsTx([addLiquidity(0n, 1_500_000_000n, 0)]);
+    await deps.classify(['sigOpen'], new Map([['sigOpen', openTx]])); // 1st pass: null meta → held
+    advanceClockPastTtl(); // the negative cache expires → the next read is allowed to re-resolve the pool
+    const { events, unresolved } = await deps.classify(['sigOpen'], new Map([['sigOpen', openTx]]));
+    expect(unresolved.size).toBe(0); // resolved → no longer held
+    const ev = events.get('sigOpen')?.[0];
+    expect(ev?.depositSol).toBeCloseTo(1.5, 9); // valued correctly — never the silent depositSol=0 that caused the miss
+    expect(ev?.closed).toBe(false);
+    expect(loadPoolMeta).toHaveBeenCalledTimes(2); // null (held) then valued (emitted) — exactly the retry we intend
+  });
+
+  it('a CLOSE read while its pool meta is null is NOT held: `closed` routes value-independently → the exit fast-paths', async () => {
+    // The close guarantee: a null meta must NOT delay a leader's exit. No deposit leg → the sig is never held; the
+    // event emits immediately with closed=true (withdrawSol degraded to 0, but the ROUTING signal survives).
+    const loadPoolMeta = vi.fn(async () => null); // pool meta unreadable throughout
+    const deps = makeDetectionDeps({
+      conn: {
+        getParsedTransactions: vi.fn(async (sigs: string[]) => sigs.map(() => null)),
+      } as unknown as Connection,
+      pk: PK,
+      poolReader: { loadPoolMeta } as never,
+      tokenMeta: { resolve: async () => new Map() } as never,
+      onEvent: () => undefined,
+    });
+    const closeTx = wsTx([removeLiquidity(0n, 2_000_000_000n, 0), closePosition()]);
+    const { events, unresolved } = await deps.classify(
+      ['sigClose'],
+      new Map([['sigClose', closeTx]]),
+    );
+    expect(unresolved.size).toBe(0); // NOT held — closes must fast-path even with a null meta
+    expect(events.get('sigClose')?.[0]?.closed).toBe(true); // emitted straight away, routable to 'close'
   });
 });

@@ -7,6 +7,7 @@ import { DLMM_PROGRAM_ID } from '@binsight/shared';
 import type { Connection, ParsedTransactionWithMeta, PublicKey } from '@solana/web3.js';
 import {
   buildDetectedEvents,
+  hasUnresolvedDepositLeg,
   type PoolMetaLookup,
   poolsOf,
 } from '../domain/copybot/classify-dlmm-tx';
@@ -24,9 +25,12 @@ const TX_FETCH_RETRIES = 3; // a WS notification can outrun tx availability at t
 const TX_FETCH_RETRY_MS = 350; // short backoff between null-tx refetches (fast-close path)
 // A null pool-meta read (the WS outran the LbPair account's availability at the RPC replica, or a brand-new pool the
 // leader opened seconds after creation) must NEVER be cached forever: a permanently-cached null blinds the bot to
-// EVERY subsequent event on that pool — each is built with amounts 0 / nonSolMint null → routed to 'ignore' → the
-// leader's open is silently never copied (the cardinal sin). Cache the null for only this SHORT TTL so a later
-// successful read values the pool; the on-chain reconcile backstop covers the specific event valued while degraded.
+// EVERY subsequent event on that pool — each is built with amounts 0 / nonSolMint null → routed to 'ignore'. Cache
+// the null for only this SHORT TTL so a later successful read values the pool. A value-bearing OPEN read while the
+// meta is null is NOT committed as a degraded (depositSol=0 → 'ignore') event: classify surfaces it as UNRESOLVED so
+// the detector holds the cursor and re-lists it until the meta resolves (finding #162). The on-chain reconcile is NOT
+// a backstop for that open — it only CLOSES positions, it can never re-open a missed open — so holding the open until
+// it can be valued is the only no-miss path (a close needs no meta and still fast-paths, so it is never held).
 const POOL_META_NULL_TTL_MS = 15_000;
 // getParsedTransactions is NOT gated by the per-call RPC limiter, and one oversized batched call over a large
 // signature backlog can itself trip a provider 429 (degrading every process that shares the Helius key). Cap each
@@ -167,6 +171,11 @@ export function makeDetectionDeps(args: {
       for (const tx of txs) for (const pl of poolsOf(tx, dlmmTxCodec)) pools.add(pl);
       await Promise.all([...pools].map((pl) => getPoolMeta(pl)));
       const poolMeta: PoolMetaLookup = (lbPair) => poolMetaCache.get(lbPair) ?? null;
+      // A pool whose lookup is null is UNRESOLVED, not "resolved non-SOL": `poolMetaCache` holds ONLY resolved metas
+      // (SOL and non-SOL alike), so a null means the on-chain read is not yet available. (#162)
+      const isPoolUnresolved = (lbPair: string): boolean => poolMeta(lbPair) === null;
+      // Happy-path fast-out: with every touched pool resolved, no sig can be held → skip the per-tx leg re-decode.
+      const anyPoolUnresolved = [...pools].some(isPoolUnresolved);
 
       // ONE entry per signature (the no-miss backbone stays keyed BY SIGNATURE); its payload is the 1..N
       // position-events the tx produced (finding #37: a multi-position tx no longer collapses to one event).
@@ -174,7 +183,18 @@ export function makeDetectionDeps(args: {
       for (let i = 0; i < signatures.length; i++) {
         const sig = signatures[i];
         if (!sig) continue;
-        const evs = buildDetectedEvents(sig, txs[i] ?? null, poolMeta, dlmmTxCodec);
+        const tx = txs[i] ?? null;
+        // #162: a tx that opens/adds into an UNRESOLVED pool is surfaced as UNRESOLVED (exactly like a null tx), NOT
+        // committed as a depositSol=0 event — so the detector holds the cursor and re-lists it until the pool meta
+        // resolves, then emits the correctly-valued open. Without this the open routes to 'ignore', its position is
+        // never tracked, and its eventual close is never mirrored (a forbidden missed open). A pure close carries no
+        // deposit leg → `hasUnresolvedDepositLeg` is false → it is never held: `closed` routes value-independently,
+        // so a leader's exit still fast-paths. The reconcile can only CLOSE, so it can never recover a missed open.
+        if (anyPoolUnresolved && hasUnresolvedDepositLeg(tx, isPoolUnresolved, dlmmTxCodec)) {
+          unresolved.add(sig);
+          continue;
+        }
+        const evs = buildDetectedEvents(sig, tx, poolMeta, dlmmTxCodec);
         if (evs.length > 0) map.set(sig, evs);
       }
       // Symbol resolution: one batched call over EVERY position-event across all signatures.

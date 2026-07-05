@@ -5,7 +5,12 @@ import { describe, expect, it } from 'vitest';
 import { dlmmTxCodec } from '../../infrastructure/solana/dlmm/dlmm-tx-codec';
 import type { LoadedPoolMeta } from '../dlmm';
 import { classifyInstruction } from '../dlmm';
-import { buildDetectedEvents, type PoolMetaLookup, poolsOf } from './classify-dlmm-tx';
+import {
+  buildDetectedEvents,
+  hasUnresolvedDepositLeg,
+  type PoolMetaLookup,
+  poolsOf,
+} from './classify-dlmm-tx';
 import type { DetectedEvent } from './events';
 
 // Single-position golden helper: a one-position tx must yield EXACTLY one event (finding #37 must not have
@@ -499,5 +504,84 @@ describe('buildDetectedEvents — ONE event PER position on a multi-position tx 
     expect(events[0]?.position).toBe(POSITION);
     expect(events[0]?.withdrawSol).toBeCloseTo(1, 9);
     expect(events[0]?.depositSol).toBeCloseTo(0.8, 9);
+  });
+});
+
+// --- Finding #162: a leader OPEN whose LbPair meta reads null at classify time must be HELD (treated as UNRESOLVED
+// so the detector re-lists it until the pool resolves), NOT committed as a depositSol=0 event that routes to
+// 'ignore' — its position, and therefore its eventual CLOSE, would never be mirrored (a forbidden missed open). The
+// hold keys ONLY off a value-bearing DEPOSIT leg: a close/withdraw needs no meta to route, so it must NEVER be held
+// (holding a leader's exit is a fund risk). `isPoolUnresolved` distinguishes a null READ (retry) from a resolved
+// non-SOL pool (permanent ignore) — that decision is the caller's; here we exercise both predicates. ---
+describe('hasUnresolvedDepositLeg — hold a null-meta OPEN, never a close (finding #162)', () => {
+  const unresolvedAll = (): boolean => true; // every touched pool's meta read returned null
+  const resolvedAll = (): boolean => false; // every touched pool resolved
+
+  it('an OPEN (deposit) into an UNRESOLVED pool → held (true): a depositSol=0 open must not be committed', () => {
+    const openTx = tx('InitializePositionPda', [addLiquidity(0n, 1_500_000_000n, 0)]);
+    expect(hasUnresolvedDepositLeg(openTx, unresolvedAll, dlmmTxCodec)).toBe(true);
+  });
+
+  it('the SAME open once its pool RESOLVES → not held (false): the retry stops and the open is emitted normally', () => {
+    const openTx = tx('InitializePositionPda', [addLiquidity(0n, 1_500_000_000n, 0)]);
+    expect(hasUnresolvedDepositLeg(openTx, resolvedAll, dlmmTxCodec)).toBe(false);
+  });
+
+  it('a NORMAL close (Remove + PositionClose) with an unresolved pool → NOT held (false): closes fast-path', () => {
+    // The close guarantee: `closed` is decoded from the leg (value-independent), so a close routes with NO meta.
+    // Holding it would delay the leader's exit (fund risk). No deposit leg → never held, even when the meta is null.
+    const closeTx = tx('ClosePosition2', [removeLiquidity(0n, 2_000_000_000n, 0), closePosition()]);
+    expect(hasUnresolvedDepositLeg(closeTx, unresolvedAll, dlmmTxCodec)).toBe(false);
+  });
+
+  it('a STANDALONE close (only PositionClose) with an unresolved pool → NOT held (false)', () => {
+    const closeTx = tx('ClosePosition2', [closePosition()]);
+    expect(hasUnresolvedDepositLeg(closeTx, unresolvedAll, dlmmTxCodec)).toBe(false);
+  });
+
+  it('a partial REMOVE (withdraw only) with an unresolved pool → NOT held (false): only deposit legs gate the hold', () => {
+    const removeTx = tx('RemoveLiquidityByRange2', [removeLiquidity(0n, 500_000_000n, 0)]);
+    expect(hasUnresolvedDepositLeg(removeTx, unresolvedAll, dlmmTxCodec)).toBe(false);
+  });
+
+  it('a CLAIM with an unresolved pool → NOT held (false): a fee claim is not a lifecycle open', () => {
+    const claimTx = tx('ClaimFee2', [claimFee2(0n, 250_000_000n, 0)]);
+    expect(hasUnresolvedDepositLeg(claimTx, unresolvedAll, dlmmTxCodec)).toBe(false);
+  });
+
+  it('close A + open B in ONE tx, both unresolved → held (true): the open is caught even though close A is co-delayed', () => {
+    // The rare mixed case: holding the sig delays close A by (up to) one poll, but MISSING open B is worse — it is
+    // permanent. The deposit leg into an unresolved pool forces the hold; on retry BOTH events are emitted correctly.
+    const mixed = tx('MultiPosition', [
+      removeLiquidityFor(0n, 2_000_000_000n, 0, 3, 1),
+      closePositionFor(3),
+      addLiquidityFor(0n, 1_500_000_000n, 0, 4, 5),
+    ]);
+    expect(hasUnresolvedDepositLeg(mixed, unresolvedAll, dlmmTxCodec)).toBe(true);
+  });
+
+  it("a deposit into a RESOLVED pool while a DIFFERENT pool is unresolved → NOT held (false): only the deposit's own pool matters", () => {
+    const openB = tx('MultiPosition', [addLiquidityFor(0n, 1_500_000_000n, 0, 4, 5)]); // deposit into pool B (LB_PAIR_B)
+    const onlyAUnresolved = (lbPair: string): boolean => lbPair === LB_PAIR; // only pool A is unresolved
+    expect(hasUnresolvedDepositLeg(openB, onlyAUnresolved, dlmmTxCodec)).toBe(false);
+  });
+
+  it('a deposit whose OWN pool is the unresolved one → held (true)', () => {
+    const openB = tx('MultiPosition', [addLiquidityFor(0n, 1_500_000_000n, 0, 4, 5)]);
+    const onlyBUnresolved = (lbPair: string): boolean => lbPair === LB_PAIR_B;
+    expect(hasUnresolvedDepositLeg(openB, onlyBUnresolved, dlmmTxCodec)).toBe(true);
+  });
+
+  it('a null tx and a non-DLMM tx → NOT held (false): nothing to value, nothing to hold', () => {
+    expect(hasUnresolvedDepositLeg(null, unresolvedAll, dlmmTxCodec)).toBe(false);
+    const nonDlmm = {
+      blockTime: 1,
+      transaction: { signatures: ['SIG1'] },
+      meta: {
+        logMessages: ['Program 11111111111111111111111111111111 invoke [1]'],
+        innerInstructions: [],
+      },
+    } as unknown as ParsedTransactionWithMeta;
+    expect(hasUnresolvedDepositLeg(nonDlmm, unresolvedAll, dlmmTxCodec)).toBe(false);
   });
 });
