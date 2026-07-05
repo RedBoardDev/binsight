@@ -163,6 +163,13 @@ const DEADLINE_SLOTS = 150; // ~60s
 // decides whether a leader TOKEN LEG is worth buying — a different concern). So selling uses 0 here. Exported for
 // brain-main's wallet sweep (the same floor gates the close-sell and the sweep).
 export const SELL_RESIDUAL_DUST_RAW = 0n;
+// Time-epoch that discriminates a recurring residual SELL's commandId. A sell never forceReclaims, so a residual
+// whose earlier sell FAILED — recurring with the SAME (pool, mint, amount) — would re-derive the SAME commandId and be
+// PERMANENTLY idempotency-rejected (stuck-forever token). Bucketing `Date.now()` by this window lets a genuine retry
+// land in a LATER epoch (fresh commandId) while two attempts within ONE epoch — a concurrent / still-in-flight
+// re-attempt — keep the SAME commandId so the vault still dedups them. Sized to exceed one sell's on-chain deadline
+// (DEADLINE_SLOTS ≈ 60s): by the time the epoch rolls, the prior sell has landed or expired, so a re-sell is correct.
+export const SELL_COMMAND_EPOCH_MS = 60_000;
 // A two-sided open's BOUGHT token sits on the wallet from the buy landing until the DEPOSIT lands — a MULTI-hop,
 // multi-tx window (buy → open/deposit; a Token-2022 open is create → deposit; a reshape is buy → add). Selling it in
 // that window (close-triggered sell OR safety sweep — both read the WHOLE shared-wallet balance) would empty the
@@ -609,9 +616,12 @@ export async function createUserRuntime(
   // continuation would deploy capital into the pool the leader just EXITED (a fast scalp / rug exit). The continuations
   // run from the ev:executed loop — a DIFFERENT execution path than the position-queue — so we need this cross-path
   // cancellation marker. `cancelPendingOpen` sets it; each continuation clears it via `consumeOpenCancellation` before
-  // publishing on-chain. KNOWN LIMIT (like the pending maps above): in-memory only — a FULL process crash loses it, but
-  // the mirror was never registered so nothing is stuck, and the periodic sweep clears any token already bought.
-  const cancelledOpens = new Set<string>();
+  // publishing on-chain. TTL-bounded via the SAME self-healing reservation abstraction (OPEN_PENDING_TTL_MS — the
+  // multi-tx open window a continuation lives within): the COMMON cancel path drops the stash and returns with NO
+  // continuation left to consume the marker, so an unbounded Set would leak this entry forever — the TTL evicts a
+  // never-consumed marker instead. KNOWN LIMIT (like the pending maps above): in-memory only — a FULL process crash
+  // loses it, but the mirror was never registered so nothing is stuck, and the periodic sweep clears any token bought.
+  const cancelledOpens = createPendingOpenReservations(OPEN_PENDING_TTL_MS);
   // #121 — the shape the LAST published reshape drives each position toward (per OUR-offset target SOL + token =
   // `capFactor × leaderBin`), stamped when handleResync publishes its ops. A rapid follow-up resync on the same
   // position (leaderPosition key) nets the leader's NEW shape against THIS in-flight-adjusted self-state instead of
@@ -1445,7 +1455,7 @@ export async function createUserRuntime(
     if (!ctx) return;
     await runContinuation(pendingTwoSidedOpens, buyCommandId, async () => {
       const { e, leader, dist, sizeLamports, solSide, tokenMint, sizeSol, recordedSizeSol } = ctx;
-      if (consumeOpenCancellation(e.position, e.pool)) return; // leader closed before the buy landed → don't open into an exited pool
+      if (consumeOpenCancellation(e.position, e.pool, leader)) return; // leader closed before the buy landed → don't open into an exited pool
       // The buy landed and its bought token is on the wallet; RE-STAMP the in-flight grace so it covers THIS hop's
       // deposit landing (finding #96 — the buy-publish stamp can expire before a congested deposit lands → the sweep/
       // close-sell would sell the leg mid-open). Every downstream branch (build, split, Token-2022, or a late skip) is
@@ -1602,7 +1612,7 @@ export async function createUserRuntime(
         issuedAtSlot,
         deadlineSlot,
       };
-      if (consumeOpenCancellation(e.position, e.pool)) return; // a close arrived DURING the build → abort before the on-chain publish
+      if (consumeOpenCancellation(e.position, e.pool, leader)) return; // a close arrived DURING the build → abort before the on-chain publish
       const mirror = openMirror({
         leaderPosition: e.position,
         leaderAddress: leader, // the EVENT's leader (3b fan-out) — drives per-leader stop-closes/exposure/rug config
@@ -1636,7 +1646,7 @@ export async function createUserRuntime(
     if (!ctx) return;
     await runContinuation(pendingToken2022Deposits, createCommandId, async () => {
       const { e, leader, lower, upper, sizeSol, recordedSizeSol } = ctx;
-      if (consumeOpenCancellation(e.position, e.pool)) return; // leader closed before the create landed → don't fund an exited pool (the empty position is orphan-closed)
+      if (consumeOpenCancellation(e.position, e.pool, leader)) return; // leader closed before the create landed → don't fund an exited pool (the empty position is orphan-closed)
       // TX2 is the actual token deposit of a Token-2022 open (create→deposit chain); RE-STAMP an already-in-flight
       // bought token so its grace outlasts THIS hop's landing too (finding #96). Gated on `.has`: a one-sided wide
       // open reaches here via the prebuilt path with NO bought token, so its untouched pool mint must not be protected.
@@ -1686,7 +1696,7 @@ export async function createUserRuntime(
           );
         depositTx = txs[0] as Transaction;
       }
-      if (consumeOpenCancellation(e.position, e.pool)) return; // a close arrived DURING the deposit build → abort before the on-chain deposit
+      if (consumeOpenCancellation(e.position, e.pool, leader)) return; // a close arrived DURING the deposit build → abort before the on-chain deposit
       const depositEventKey = `${leader}:${e.pool}:open-deposit:${e.position}:${e.signature}`;
       const depositCommandId = commandIdFor(depositEventKey);
       const { issuedAtSlot, deadlineSlot } = await slots();
@@ -1740,7 +1750,7 @@ export async function createUserRuntime(
     if (!pend) return;
     await runContinuation(pendingToken2022Mirrors, depositCommandId, async () => {
       const leader = pend.leader; // the ORIGINATING event's leader, threaded create → deposit → mirror (3b)
-      if (consumeOpenCancellation(pend.leaderPosition, pend.pool)) {
+      if (consumeOpenCancellation(pend.leaderPosition, pend.pool, leader)) {
         // Leader closed while the deposit was in flight. The deposit already landed (this is its confirm) → capital is
         // in the pool, but we do NOT register the mirror: lift the orphan-close grace so the reconcile/orphan sweep
         // closes the now-funded, untracked position and pulls the capital back out.
@@ -1933,12 +1943,17 @@ export async function createUserRuntime(
   // correlation-only, same value while the hub is seeded with [cfg.leader].
   const openCancelledKey = (pool: string, leaderPosition: string): string =>
     `${userId}:${bootLeader}:${pool}:open-cancelled:${leaderPosition}`;
-  const emitOpenCancelled = (leaderPosition: string, pool: string, dropped: number): void => {
+  const emitOpenCancelled = (
+    leaderPosition: string,
+    pool: string,
+    dropped: number,
+    leader: string,
+  ): void => {
     events.emit('failsafe.activated', {
       stage: 'open',
       outcome: 'skipped',
       reason: 'leader_closed',
-      leader: bootLeader,
+      leader,
       pool,
       leaderPosition,
       eventKey: openCancelledKey(pool, leaderPosition),
@@ -1955,6 +1970,27 @@ export async function createUserRuntime(
   // stash can outlive the reservation's TTL if a buy/create never lands.)
   const hasPendingOpenStash = (leaderPosition: string): boolean =>
     stashCount(pendingStashesFor(leaderPosition, pendingOpenMapsView())) > 0;
+  // The originating event's leader carried on ANY in-flight open stash for this leader position (each stash threads it
+  // from the event) — labels the open-cancelled failsafe with the REAL leader instead of the bootLeader fallback.
+  const stashLeaderFor = (keys: PendingStashKeys): string | null => {
+    for (const k of keys.twoSidedOpens) {
+      const v = pendingTwoSidedOpens.get(k);
+      if (v) return v.leader;
+    }
+    for (const k of keys.token2022Deposits) {
+      const v = pendingToken2022Deposits.get(k);
+      if (v) return v.leader;
+    }
+    for (const k of keys.token2022Mirrors) {
+      const v = pendingToken2022Mirrors.get(k);
+      if (v) return v.leader;
+    }
+    for (const k of keys.reshapeAdds) {
+      const v = pendingReshapeAdds.get(k);
+      if (v) return v.leader;
+    }
+    return null;
+  };
 
   // Cancel an IN-FLIGHT multi-tx open because the leader closed before it completed. Drops every pending-open stash
   // for this leader position across the 4 continuation maps, clears the duplicate-open reservation, and marks it in
@@ -1962,8 +1998,11 @@ export async function createUserRuntime(
   // aborts before publishing on-chain (see consumeOpenCancellation). There is nothing on-chain to close (the open
   // never landed); any token already bought is left to the periodic sweep (residual → sold back to SOL).
   function cancelPendingOpen(leaderPosition: string, pool: string): void {
-    cancelledOpens.add(leaderPosition); // ALWAYS mark (also covers the race where a continuation already deleted its stash)
     const keys: PendingStashKeys = pendingStashesFor(leaderPosition, pendingOpenMapsView());
+    // Resolve the REAL leader from any in-flight stash BEFORE deleting; fall back to bootLeader only when nothing is
+    // stashed (then dropped==0 below and we don't emit anyway).
+    const leader = stashLeaderFor(keys) ?? bootLeader;
+    cancelledOpens.reserve(leaderPosition); // ALWAYS mark (also covers the race where a continuation already deleted its stash)
     for (const k of keys.twoSidedOpens) pendingTwoSidedOpens.delete(k);
     for (const k of keys.token2022Deposits) pendingToken2022Deposits.delete(k);
     for (const k of keys.token2022Mirrors) pendingToken2022Mirrors.delete(k);
@@ -1974,17 +2013,17 @@ export async function createUserRuntime(
     // (b) the RACE where a continuation already grabbed+deleted its stash — in that case the continuation's
     // `consumeOpenCancellation` emits instead (it always emits), so we still get exactly one row.
     const dropped = stashCount(keys);
-    if (dropped > 0) emitOpenCancelled(leaderPosition, pool, dropped);
+    if (dropped > 0) emitOpenCancelled(leaderPosition, pool, dropped, leader);
   }
 
   // Cross-path guard called INSIDE each multi-tx open continuation: if the leader closed (cancelPendingOpen marked
   // this leader position) WHILE the continuation was in flight, clear the reservation, forget the marker, emit, and
   // tell the caller to abort BEFORE publishing on-chain. Returns true iff the open was cancelled.
-  function consumeOpenCancellation(leaderPosition: string, pool: string): boolean {
-    if (!cancelledOpens.has(leaderPosition)) return false;
-    cancelledOpens.delete(leaderPosition);
+  function consumeOpenCancellation(leaderPosition: string, pool: string, leader: string): boolean {
+    if (!cancelledOpens.isPending(leaderPosition)) return false;
+    cancelledOpens.clear(leaderPosition);
     pendingOpens.clear(leaderPosition);
-    emitOpenCancelled(leaderPosition, pool, 0);
+    emitOpenCancelled(leaderPosition, pool, 0, leader);
     return true;
   }
 
@@ -2252,13 +2291,56 @@ export async function createUserRuntime(
       );
       rm++;
     }
+    // Exposure cap re-check on a GROW (idx15): checkCaps runs only at OPEN, but a reshape/resync ADD grows the position
+    // → post-open growth could breach maxTotalExposureSol / the per-leader ceiling. Gate the grow on the SAME caps
+    // function, but ONLY the exposure ceilings apply to growing an already-open position — the open-count / per-token /
+    // per-window / kill-switch ENTRY gates are neutralized (a grow is not a new entry). Basis = the SOL-leg growth
+    // target (== the one-sided recordedSize; a two-sided grow's extra token-leg value is separately bounded by
+    // maxTradeSizeSol per position and re-checked at the next event/reconcile). A shrink never breaches an exposure cap.
+    const leaderSolSizeSol = leaderBins.reduce((s, b) => s + b.sol, 0); // also the recorded-size basis below
+    const growTargetSol = Math.min(copyRatio * leaderSolSizeSol, ec.sizing.maxTradeSizeSol);
+    let growBlocked = false;
+    if (growTargetSol > m.sizeSol) {
+      const growCap = checkCaps(
+        {
+          ...ec.caps,
+          killSwitchGlobal: false,
+          killSwitchLeader: false,
+          maxOpenPositions: null,
+          maxConcurrentPerToken: null,
+          maxOpensPerWindow: null,
+        },
+        capsState(leader, tokenMint), // live totals already include m.sizeSol
+        growTargetSol - m.sizeSol, // the exposure DELTA this grow adds
+        Date.now(),
+        ec.leaderMaxTotalExposureSol,
+      );
+      if (growCap.action === 'block') {
+        // Skip the grow add (the removes above still stand; recordedSize clamps to the current size below → no
+        // exposure inflation). Consistent with the open path's cap block and the token_unbuyable grow skip.
+        growBlocked = true;
+        emitFor(growCap.reason, {
+          stage: 'reshape',
+          outcome: 'blocked',
+          reason: growCap.reason,
+          leader,
+          pool: m.pool,
+          leaderPosition: e.position,
+          ourPosition: m.ourPosition,
+          eventKey: reshapeSkipKey(e, m),
+          leaderSizeSol: leaderSolSizeSol,
+          ourSizeSol: growTargetSol,
+          adminDetail: { mint: tokenMint, nonSolSymbol: m.nonSolSymbol, currentSizeSol: m.sizeSol },
+        });
+      }
+    }
     // #145 — track what the GROW side actually PUBLISHES so the recorded size never runs ahead of on-chain reality.
     // A one-sided add publishes synchronously below (`growPublished`); a two-sided add is DEFERRED to the buy's
     // confirm (`deferredGrowKey`, applied in publishReshapeAddAfterBuy). A skipped/unquotable grow sets NEITHER, so
     // the size block clamps to the current exposure (no inflation). Removes always publish above → shrinks still count.
     let growPublished = false;
     let deferredGrowKey: string | null = null;
-    if (twoSidedAdd) {
+    if (!growBlocked && twoSidedAdd) {
       // TWO-SIDED reshape add: a deficit on the SOL leg AND the token leg → BUY the token deficit via ExactIn (ExactOut
       // has no Token-2022 route), then ADD both legs once the buy lands — the bought amount is variable, so we
       // build-after-buy and deposit the ACTUAL balance (exactly like the two-sided OPEN). `tokenMint`/`tokenAdds` were
@@ -2389,7 +2471,7 @@ export async function createUserRuntime(
           },
         });
       }
-    } else if (adds.length > 0) {
+    } else if (!growBlocked && adds.length > 0) {
       // A reshape ADD spanning ≥26 bins would chunk the SDK by-weight deposit into [pre, main, post] (deposit not the
       // first tx) → can't be one published tx. Split the deficit into ≤25-bin-span CHUNKS, each a self-contained
       // single-tx addLiquidityOneSide (wrap+deposit+unwrap), published INDEPENDENTLY (idempotent commandId, no
@@ -2455,7 +2537,7 @@ export async function createUserRuntime(
     // we actually copy the token leg (twoSidedMode 'on' AND the leader holds token). This runs AFTER every reshape
     // command is already published (off the copy SLA path) and is guarded: a quote failure falls back to the SOL-leg
     // basis (never worse than before the fix), and it feeds ONLY the recorded size — the deposits are unaffected.
-    const leaderSolSizeSol = leaderBins.reduce((s, b) => s + b.sol, 0);
+    // (`leaderSolSizeSol` is computed once above, for the grow-cap gate.)
     let tokenLegValueSol = 0;
     if (ec.twoSidedMode === 'on' && leaderTokenRawTotal > 0) {
       try {
@@ -3030,7 +3112,12 @@ export async function createUserRuntime(
   ): Promise<boolean> {
     const t0 = Date.now();
     const ec = eff(); // wallet-level economics = the publishing runtime's config (SYSTEM for sweeps — documented wallet-context path)
-    const eventKey = `${bootLeader}:${pool}:${source}:${tokenMint}:${residualRaw}`; // hoisted: also keys the below-min-sell-out skip's emit dedup
+    // The below-min-sell-out emit dedups on this DETERMINISTIC key so a permanently-uneconomic residual stays ONE row.
+    const sellDedupKey = `${bootLeader}:${pool}:${source}:${tokenMint}:${residualRaw}`;
+    // The published eventKey (⇒ the derived commandId) adds a time-epoch discriminator so a legitimately-recurring
+    // identical residual is not PERMANENTLY idempotency-rejected (a sell never forceReclaims). It MUST live in the
+    // eventKey — the vault re-derives commandId == deriveCommandId(userId, eventKey). See SELL_COMMAND_EPOCH_MS.
+    const eventKey = `${sellDedupKey}:${Math.floor(Date.now() / SELL_COMMAND_EPOCH_MS)}`;
     const quote = await getJupiterQuote(
       jupiterBaseUrl,
       tokenMint,
@@ -3045,7 +3132,7 @@ export async function createUserRuntime(
         reason: 'below_min_sell_out',
         leader: bootLeader,
         pool,
-        eventKey,
+        eventKey: sellDedupKey,
         adminDetail: { mint: tokenMint, outAmount: quote.outAmount, source },
       });
       return false;
@@ -3222,7 +3309,31 @@ export async function createUserRuntime(
             lastLatencyMs = Date.now() - t0;
             log.info({ kind, brainMs: lastLatencyMs }, '🧠 build+publish');
           })
-          .catch((err) => log.error({ err: (err as Error).message }, 'mirror error'));
+          .catch((err) => {
+            // A build/publish throw is caught so the position queue keeps draining (a throwing task must never block
+            // this position's next event) — control flow is UNCHANGED. A bus-publish failure is already journaled by
+            // `publish` (lifecycle.publish_failed); a BUILD-phase throw (before publish) previously had ONLY this log
+            // line. Also emit the typed system.mirror_error so a build failure is OBSERVABLE with its context
+            // (leader/position/kind/action/phase + the serialized cause), mirroring the publish-failure journaling.
+            events.emit('system.mirror_error', {
+              stage: kind ? stageForKind(kind) : 'detect',
+              outcome: 'failed',
+              leader,
+              pool: e.pool,
+              leaderPosition: e.position,
+              eventKey: `${leader}:${e.pool}:mirror-error:${e.signature}:${e.position}`,
+              adminDetail: { kind, action, phase: 'build' },
+              cause: {
+                name: (err as Error).name,
+                message: (err as Error).message,
+                stack: (err as Error).stack,
+              },
+            });
+            log.error(
+              { err: (err as Error).message, leader, position: e.position, kind, action },
+              'mirror error',
+            );
+          });
       }
     });
   };

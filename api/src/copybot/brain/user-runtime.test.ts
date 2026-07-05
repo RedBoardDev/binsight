@@ -92,7 +92,12 @@ import {
 } from '@/infrastructure/solana/jupiter/jupiter-swap-builder';
 import { readOwnerTokenBalance } from '@/infrastructure/solana/token-balance-reader';
 import { runClosedFeeBackstop } from './fee-sweep';
-import { createUserRuntime, INFLIGHT_BUY_GRACE_MS, type SharedBrainDeps } from './user-runtime';
+import {
+  createUserRuntime,
+  INFLIGHT_BUY_GRACE_MS,
+  SELL_COMMAND_EPOCH_MS,
+  type SharedBrainDeps,
+} from './user-runtime';
 
 // Fresh in-memory Postgres (PGlite) with the real Drizzle migrations applied — MirrorStore/RugExitStore/EventStore
 // run against the exact production schema (multi-tenant PKs included).
@@ -1679,13 +1684,14 @@ describe('UserRuntime — a RESYNC records the tracked size from PUBLISHED ops o
 
   // ratio 100% ⇒ copyRatio 1.0 (deterministic newSize = leader SOL total, capped at maxTradeSizeSol = 5). infiniteAdd
   // ON so a leader ADD (deposit) routes to resync (a GROW) — a withdrawal always resyncs regardless (spec §8).
-  const cfg = (twoSidedMode: 'on' | 'off') => ({
+  const cfg = (twoSidedMode: 'on' | 'off', capTotalSol: number | null = null) => ({
     ...CONFIG_DEFAULTS,
     user: {
       ...CONFIG_DEFAULTS.user,
       twoSidedMode,
       infiniteAdd: true,
       sizing: { ...CONFIG_DEFAULTS.user.sizing, tradeRatioPct: 100, maxTradeSizeSol: 5 },
+      caps: { ...CONFIG_DEFAULTS.user.caps, maxTotalExposureSol: capTotalSol },
     },
     leaders: [{ address: R_LEADER, enabled: true, maxTotalExposureSol: null, overrides: {} }],
   });
@@ -1701,6 +1707,7 @@ describe('UserRuntime — a RESYNC records the tracked size from PUBLISHED ops o
     depositSol: number;
     withdrawSol: number;
     instruction: string;
+    capTotalSol?: number | null;
   }) {
     const published: Array<Record<string, unknown>> = [];
     const conn = new Connection('http://127.0.0.1:1');
@@ -1719,7 +1726,7 @@ describe('UserRuntime — a RESYNC records the tracked size from PUBLISHED ops o
     const rt = await createUserRuntime({ ...sharedR, conn, bus, blockhashCache }, p.userId, {
       ...opts,
       leader: R_LEADER,
-      initialConfig: cfg(p.twoSidedMode),
+      initialConfig: cfg(p.twoSidedMode, p.capTotalSol ?? null),
     });
     rt.registry.open({
       leaderPosition: R_LEADER_POS,
@@ -1893,6 +1900,42 @@ describe('UserRuntime — a RESYNC records the tracked size from PUBLISHED ops o
     vi.mocked(getJupiterBuyQuoteExactIn).mockReset();
     vi.mocked(buildJupiterSwapTx).mockReset();
     vi.mocked(readOwnerTokenBalance).mockReset();
+    vi.mocked(buildAddByWeight).mockReset();
+  });
+
+  it('a one-sided GROW that would breach maxTotalExposureSol is BLOCKED — the add never publishes and the size clamps (idx15)', async () => {
+    // WHY (idx15, exposure safety): checkCaps ran ONLY at open, so a reshape ADD grew the position past the wallet
+    // maxTotalExposureSol UNCHECKED. With a 3 SOL cap and the copy already at 2.5, a leader 2× grow to 5.0 would
+    // breach it → the add MUST be skipped (no on-chain deploy) and the tracked size CLAMPED to the current 2.5,
+    // exactly like the OPEN-path cap block. This FAILS if the grow re-check regresses (the add would publish and the
+    // exposure would exceed the cap the operator set). Shrinks are unaffected — they never breach an exposure cap.
+    vi.mocked(buildAddByWeight).mockImplementation(async () => new Transaction());
+    const U = 'resync-idx15-capblock';
+    const { rt, published, recorded } = await driveResync({
+      userId: U,
+      twoSidedMode: 'off',
+      startSizeSol: 2.5, // current exposure
+      leader: { x: 1_000n, y: 2_500_000_000n }, // leader SOL leg 2.5/bin × 2 = 5.0 → a grow to 5.0
+      ours: { x: 1_000n, y: 1_250_000_000n }, // our SOL leg 1.25/bin × 2 = 2.5
+      depositSol: 2, // a leader ADD → resync (a GROW)
+      withdrawSol: 0,
+      instruction: 'AddLiquidityByStrategy2',
+      capTotalSol: 3, // wallet total-exposure cap BELOW the 5.0 grow target
+    });
+    expect(published.some((c) => c.kind === 'add')).toBe(false); // the grow add was blocked
+    expect(recorded).toBeCloseTo(2.5); // clamped to the current size — no exposure inflation
+    expect(rt.registry.get(R_LEADER_POS)?.sizeSol).toBeCloseTo(2.5);
+    expect(rt.capsState(R_LEADER, R_MINT).totalExposureSol).toBeCloseTo(2.5);
+    // the block is journaled with the SAME code the open path emits (feed-visible).
+    const codes = await waitFor(
+      () =>
+        db
+          .select({ code: schema.copyJournal.code })
+          .from(schema.copyJournal)
+          .where(eq(schema.copyJournal.userId, U)),
+      (rows) => rows.some((r) => r.code === 'cap.max_total_exposure'),
+    );
+    expect(codes.some((r) => r.code === 'cap.max_total_exposure')).toBe(true);
     vi.mocked(buildAddByWeight).mockReset();
   });
 });
@@ -2292,5 +2335,165 @@ describe('UserRuntime — a RESYNC nets against the IN-FLIGHT reshape, not the s
 
     vi.mocked(buildRemovePartial).mockReset();
     vi.mocked(readLeaderPositionShape).mockReset();
+  });
+});
+
+describe('UserRuntime — a recurring residual SELL is not permanently idempotency-rejected (idx9/idx43)', () => {
+  const SOL_MINT = 'So11111111111111111111111111111111111111112';
+  const S_LEADER = Keypair.generate().publicKey.toBase58();
+  const S_POOL = Keypair.generate().publicKey.toBase58();
+  const S_MINT = Keypair.generate().publicKey.toBase58();
+  const S_BLOCKHASH = Keypair.generate().publicKey.toBase58();
+  const RESIDUAL = 1_000_000n;
+
+  async function bootSell(userId: string) {
+    const published: Array<Record<string, unknown>> = [];
+    const conn = new Connection('http://127.0.0.1:1');
+    vi.spyOn(conn, 'getSlot').mockResolvedValue(1_000); // slots() resolves so publishSell reaches the publish
+    const blockhashCache = new BlockhashCache(async () => ({
+      blockhash: S_BLOCKHASH,
+      lastValidBlockHeight: 0,
+    }));
+    await blockhashCache.start();
+    const bus = {
+      publish: async (_s: string, _h: string, _k: string, payload: Record<string, unknown>) => {
+        published.push(payload);
+        return 'sid';
+      },
+    } as unknown as RedisBus;
+    const rt = await createUserRuntime({ ...shared, conn, bus, blockhashCache }, userId, {
+      ...opts,
+      leader: S_LEADER, // ⇒ bootLeader = S_LEADER (the sell eventKey's prefix)
+    });
+    return { rt, published };
+  }
+
+  it('the SAME residual re-sold in a LATER epoch derives a FRESH commandId (a stuck token can retry), while two attempts in ONE epoch share it (in-flight dedup intact)', async () => {
+    // WHY (idx9/idx43, money — a stranded token): a sell never forceReclaims, so a residual whose earlier sell FAILED
+    // recurs with the SAME (pool, mint, amount). Without the epoch discriminator it re-derives the SAME commandId and
+    // the vault's (user, command_id) idempotency PERMANENTLY rejects it → the non-SOL token is stuck on the wallet
+    // forever. The published eventKey now folds a time-epoch: a LATER window ⇒ a fresh commandId (the retry lands),
+    // while two attempts INSIDE one window keep the SAME commandId so a concurrent/in-flight re-attempt still dedups
+    // (no wasteful double broadcast). This FAILS if the discriminator regresses (all three commandIds collapse to one).
+    vi.mocked(getJupiterQuote).mockResolvedValue({
+      inputMint: S_MINT,
+      outputMint: SOL_MINT,
+      inAmount: RESIDUAL.toString(),
+      outAmount: '5000000000', // 5 SOL out — comfortably above minSellOutLamports so the sell publishes
+      raw: {},
+    });
+    vi.mocked(buildJupiterSwapTx).mockResolvedValue('selltx-b64');
+    const { rt, published } = await bootSell('sell-epoch-user');
+
+    // Anchor to the CURRENT epoch's start so no blockhash/staleness clock logic trips on a far-past mock.
+    const baseEpoch = Math.floor(Date.now() / SELL_COMMAND_EPOCH_MS);
+    const t0 = baseEpoch * SELL_COMMAND_EPOCH_MS;
+    const nowSpy = vi.spyOn(Date, 'now');
+
+    nowSpy.mockReturnValue(t0); // epoch N
+    expect(await rt.publishSell(S_MINT, RESIDUAL, S_POOL, 'sweep')).toBe(true);
+    nowSpy.mockReturnValue(t0 + 1); // still epoch N (a concurrent / in-flight re-attempt)
+    expect(await rt.publishSell(S_MINT, RESIDUAL, S_POOL, 'sweep')).toBe(true);
+    nowSpy.mockReturnValue(t0 + SELL_COMMAND_EPOCH_MS); // epoch N+1 (a genuine later retry)
+    expect(await rt.publishSell(S_MINT, RESIDUAL, S_POOL, 'sweep')).toBe(true);
+
+    const sells = published.filter((c) => c.kind === 'sell');
+    expect(sells).toHaveLength(3);
+    const cmds = sells.map((c) => c.commandId as string);
+    expect(cmds[0]).toBe(cmds[1]); // same epoch → SAME commandId ⇒ the vault dedups (no double broadcast)
+    expect(cmds[2]).not.toBe(cmds[0]); // later epoch → FRESH commandId ⇒ the recurring residual retries
+    // The discriminator lives in the eventKey (the vault re-derives commandId == deriveCommandId(userId, eventKey)).
+    const keys = sells.map((c) => c.eventKey as string);
+    expect(keys[0]).toBe(`${S_LEADER}:${S_POOL}:sweep:${S_MINT}:${RESIDUAL}:${baseEpoch}`);
+    expect(keys[2]).toBe(`${S_LEADER}:${S_POOL}:sweep:${S_MINT}:${RESIDUAL}:${baseEpoch + 1}`);
+
+    nowSpy.mockRestore();
+    vi.mocked(getJupiterQuote).mockReset();
+    vi.mocked(buildJupiterSwapTx).mockReset();
+  });
+});
+
+describe('UserRuntime — a BUILD-phase handler throw is observable as system.mirror_error (idx7)', () => {
+  it('a close whose buildCloseTx THROWS emits the typed system.mirror_error with context — not just a bare log line', async () => {
+    // WHY (idx7, observability): a bus-publish failure is journaled (lifecycle.publish_failed), but a BUILD-phase throw
+    // (before publish) was swallowed with ONLY a log line — invisible to the feed/audit. It now ALSO emits the typed
+    // system.mirror_error carrying the real leader/position so a build failure is observable. Control flow is unchanged
+    // (still swallowed → the position queue keeps draining). This FAILS if the typed emit regresses to a bare log.
+    const U = 'mirror-error-user';
+    const M_LEADER = Keypair.generate().publicKey.toBase58();
+    const M_POOL = Keypair.generate().publicKey.toBase58();
+    const M_POS = Keypair.generate().publicKey.toBase58();
+    const M_OUR = Keypair.generate().publicKey.toBase58();
+    const M_MINT = Keypair.generate().publicKey.toBase58();
+    const rt = await createUserRuntime({ ...shared }, U, { ...opts, leader: M_LEADER });
+    rt.registry.open({
+      leaderPosition: M_POS,
+      leaderAddress: M_LEADER,
+      ourPosition: M_OUR,
+      pool: M_POOL,
+      nonSolSymbol: 'TKN',
+      nonSolMint: M_MINT,
+      sizeSol: 1,
+      lowerBin: 0,
+      upperBin: 1,
+      openedAt: Date.now(),
+    });
+    vi.mocked(buildCloseTx).mockRejectedValueOnce(new Error('build boom')); // the BUILD throws before any publish
+    rt.onEvent(
+      {
+        signature: 'sig-mirror-err',
+        blockTime: 1,
+        instruction: 'ClosePosition',
+        depositSol: 0,
+        depositTokenRaw: 0,
+        withdrawSol: 0,
+        claimSol: 0,
+        closed: true,
+        pool: M_POOL,
+        position: M_POS,
+        nonSolMint: M_MINT,
+        nonSolSymbol: 'TKN',
+      },
+      'ws',
+      M_LEADER,
+      1,
+    );
+    const rows = await waitFor(
+      () =>
+        db
+          .select({ code: schema.copyJournal.code, leader: schema.copyJournal.leader })
+          .from(schema.copyJournal)
+          .where(eq(schema.copyJournal.userId, U)),
+      (r) => r.some((x) => x.code === 'system.mirror_error'),
+    );
+    // the build failure is journaled as the typed code AND attributed to the real (event) leader.
+    expect(rows.some((r) => r.code === 'system.mirror_error' && r.leader === M_LEADER)).toBe(true);
+    vi.mocked(buildCloseTx).mockReset();
+  });
+});
+
+describe('UserRuntime — a cancelled multi-tx open names the REAL leader, not bootLeader (idx10)', () => {
+  it('cancelPendingOpen labels the open-cancelled failsafe with the STASH leader (3b fan-out), not the boot leader', async () => {
+    // WHY (idx10): the open-cancelled failsafe hardcoded bootLeader, mislabelling a fan-out leader's cancelled open.
+    // The originating leader is threaded on the in-flight open stash — cancelPendingOpen now reads it so the row is
+    // attributable to the leader that actually opened. This FAILS if the label regresses to the boot leader.
+    const U = 'cancel-leader-user';
+    const OTHER_LEADER = Keypair.generate().publicKey.toBase58();
+    const POS = Keypair.generate().publicKey.toBase58();
+    const POOL = Keypair.generate().publicKey.toBase58();
+    const rt = await createUserRuntime({ ...shared }, U, { ...opts, leader: LEADER }); // bootLeader = LEADER
+    // Seed an in-flight two-sided open stash for OTHER_LEADER (a fan-out leader ≠ the boot leader).
+    const maps = rt.pendingOpenMapsView().twoSidedOpens as unknown as Map<string, unknown>;
+    maps.set('cmd-cancel-x', { e: { position: POS, pool: POOL }, leader: OTHER_LEADER });
+    rt.cancelPendingOpen(POS, POOL);
+    const rows = await waitFor(
+      () =>
+        db
+          .select({ code: schema.copyJournal.code, leader: schema.copyJournal.leader })
+          .from(schema.copyJournal)
+          .where(eq(schema.copyJournal.userId, U)),
+      (r) => r.some((x) => x.code === 'failsafe.activated'),
+    );
+    expect(rows.find((r) => r.code === 'failsafe.activated')?.leader).toBe(OTHER_LEADER);
   });
 });
