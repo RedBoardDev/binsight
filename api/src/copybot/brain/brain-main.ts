@@ -18,8 +18,9 @@ import { DLMM_PROGRAM_ID } from '@binsight/shared';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { pino } from 'pino';
 import { createDiscordAlertSink } from '@/copybot/alert';
-import { assertBusKey } from '@/copybot/bus-key-guard';
+import { assertBusKey, deriveHopKeys } from '@/copybot/bus-key-guard';
 import { ConfigStore } from '@/copybot/config-store';
+import { requireCopierOwner } from '@/copybot/copier-identity';
 import { makeDetectionDeps } from '@/copybot/detection';
 import { HeartbeatStore } from '@/copybot/heartbeat-store';
 import { SYSTEM_USER_ID } from '@/copybot/journal-store';
@@ -117,7 +118,7 @@ const cfg = {
   redisUrl: process.env.REDIS_URL ?? 'redis://localhost:6385',
   dbUrl: process.env.DATABASE_URL ?? 'postgres://meteora:meteora@localhost:5435/meteora',
   leader: process.env.COPYBOT_LEADER ?? '8ryctvNwpJTuuap3wuNTfcyEx4DjSuXvhGXSDHNaU8sQ',
-  ownerPubkey: process.env.COPIER_OWNER ?? 'Ybbt2Td4TjxwpzvuicbP9ANizBwAJzqjuRmRrvDh9zz',
+  // ownerPubkey is NOT defaulted here (#24): the copy wallet is resolved fail-closed in main() via requireCopierOwner.
   balanceSol: Number(process.env.COPIER_BALANCE_SOL ?? '10'),
   jupiterBaseUrl: process.env.JUPITER_BASE_URL ?? DEFAULT_JUPITER_BASE_URL,
   jitoEnabledEnv:
@@ -185,7 +186,16 @@ async function main(): Promise<void> {
     log.error(busKey.error);
     process.exit(1);
   }
-  const hmacKey = busKey.key;
+  // #24 — split the single validated secret into per-hop keys: the brain SIGNs cmd:sign with kSign and VERIFIEs
+  // ev:executed with kEvt (the coffre mirrors it), so a leak/confusion of one hop's key can never forge the other.
+  const { kSign, kEvt } = deriveHopKeys(busKey.key);
+  // Fail-closed on the copy wallet identity (#24): no silent hardcoded-owner test default — a real deploy MUST set it.
+  const ownerRes = requireCopierOwner(process.env);
+  if ('error' in ownerRes) {
+    log.error(ownerRes.error);
+    process.exit(1);
+  }
+  const ownerPubkey = ownerRes.owner;
   const args = process.argv.slice(2);
   const once = args.includes('--once');
   const secondsArg = args.find((a) => a.startsWith('--seconds='));
@@ -193,7 +203,7 @@ async function main(): Promise<void> {
 
   const conn = new Connection(cfg.httpUrl, 'confirmed');
   const leaderPk = new PublicKey(cfg.leader);
-  const ownerPk = new PublicKey(cfg.ownerPubkey);
+  const ownerPk = new PublicKey(ownerPubkey);
   const poolReader = new OnchainPoolMetaReader(conn);
   const tokenMeta = new HeliusTokenMetadataGateway(cfg.httpUrl, log);
   const bus = RedisBus.connect(cfg.redisUrl);
@@ -254,7 +264,7 @@ async function main(): Promise<void> {
     conn,
     db,
     bus,
-    hmacKey,
+    hmacKey: kSign, // #24 — the runtime publishes SignRequests on the cmd:sign hop, so it signs with kSign
     poolReader,
     tokenMeta,
     blockhashCache,
@@ -336,13 +346,13 @@ async function main(): Promise<void> {
   // here ONCE, never fabricated per user.
   const detectionLog = log.child({
     userId: SYSTEM_USER_ID,
-    wallet: cfg.ownerPubkey,
+    wallet: ownerPubkey,
     process: 'brain',
   });
   const detectionEvents = new CopyEvents(
     new EventStore(db, detectionLog),
     detectionLog,
-    { userId: SYSTEM_USER_ID, wallet: cfg.ownerPubkey, process: 'brain' },
+    { userId: SYSTEM_USER_ID, wallet: ownerPubkey, process: 'brain' },
     shared.alertSink,
   );
   // WS trigger, created EARLY (never connects until start(), below) so the hub can record its watches.
@@ -562,14 +572,14 @@ async function main(): Promise<void> {
       poolReader,
       (e) => systemRt.handleOpen(e, cfg.leader), // --once runs on the SYSTEM runtime (always booted above)
       bus,
-      hmacKey,
+      kSign, // #24 — --once forces a cmd:sign publish then re-reads it, so it uses the cmd:sign hop key
       log,
     );
     await Promise.all([bus.quit(), control.quit()]);
     process.exit(0);
   }
 
-  log.info({ owner: cfg.ownerPubkey, redis: cfg.redisUrl }, '🧠 brain started');
+  log.info({ owner: ownerPubkey, redis: cfg.redisUrl }, '🧠 brain started');
   // Boot pass (7b): spawn every active user's runtime; the hub is seeded with the CONFIG-DERIVED leader set
   // (computeLeaderSet — 7a), each added leader replay-seeded (cursor + tracker, without publishing) before its
   // WS watch is recorded.
@@ -723,13 +733,16 @@ async function main(): Promise<void> {
     publishReshapeAddAfterBuy: async (commandId, buySig) => {
       const owner = ownerOfCommand(commandId);
       if (!owner) return;
+      // #60 — resolve the REAL per-command leader BEFORE the continuation (which drops the stash on a terminal
+      // failure) so a multi-leader add-failed alert names the actual leader, not the demoted default.
+      const leader = owner.leaderOfCommand(commandId) ?? cfg.leader;
       await owner.publishReshapeAddAfterBuy(commandId, buySig).catch((e) =>
         settleContinuationFailure(e, () =>
           owner.events.emit('reshape.add_failed', {
             stage: 'reshape',
             outcome: 'failed',
             reason: 'add_failed',
-            leader: cfg.leader,
+            leader,
             commandId,
             adminDetail: { error: (e as Error).message, commandId },
           }),
@@ -739,13 +752,15 @@ async function main(): Promise<void> {
     publishTwoSidedOpenAfterBuy: async (commandId, buySig) => {
       const owner = ownerOfCommand(commandId);
       if (!owner) return;
+      // #60 — real per-command leader resolved before the continuation drops the stash (see publishReshapeAddAfterBuy).
+      const leader = owner.leaderOfCommand(commandId) ?? cfg.leader;
       await owner.publishTwoSidedOpenAfterBuy(commandId, buySig).catch((e) =>
         settleContinuationFailure(e, () =>
           owner.events.emit('lifecycle.open_failed', {
             stage: 'open',
             outcome: 'failed',
             reason: 'open_failed',
-            leader: cfg.leader,
+            leader,
             commandId,
             adminDetail: { error: (e as Error).message, commandId },
           }),
@@ -757,6 +772,8 @@ async function main(): Promise<void> {
     publishDepositAfterPositionCreated: async (commandId) => {
       const owner = ownerOfCommand(commandId);
       if (!owner) return;
+      // #60 — real per-command leader resolved before the continuation drops the stash (see publishReshapeAddAfterBuy).
+      const leader = owner.leaderOfCommand(commandId) ?? cfg.leader;
       await owner.publishDepositAfterPositionCreated(commandId).catch((e) =>
         // the deposit leg of a Token-2022 OPEN failed to build/publish → the open did not complete (open_failed).
         settleContinuationFailure(e, () =>
@@ -764,7 +781,7 @@ async function main(): Promise<void> {
             stage: 'open',
             outcome: 'failed',
             reason: 'open_failed',
-            leader: cfg.leader,
+            leader,
             commandId,
             adminDetail: { error: (e as Error).message, commandId, leg: 'token2022_deposit' },
           }),
@@ -780,13 +797,15 @@ async function main(): Promise<void> {
     finalizeToken2022Open: async (commandId) => {
       const owner = ownerOfCommand(commandId);
       if (!owner) return;
+      // #60 — real per-command leader resolved before the continuation drops the stash (see publishReshapeAddAfterBuy).
+      const leader = owner.leaderOfCommand(commandId) ?? cfg.leader;
       await owner.finalizeToken2022Open(commandId).catch((e) =>
         settleContinuationFailure(e, () =>
           owner.events.emit('lifecycle.open_failed', {
             stage: 'open',
             outcome: 'failed',
             reason: 'open_failed',
-            leader: cfg.leader,
+            leader,
             commandId,
             adminDetail: { error: (e as Error).message, commandId, leg: 'token2022_finalize' },
           }),
@@ -858,7 +877,7 @@ async function main(): Promise<void> {
             'brain',
             'brain-1',
             'ev:executed',
-            hmacKey,
+            kEvt,
             100,
           ),
           executedDeps,
@@ -869,7 +888,7 @@ async function main(): Promise<void> {
             'brain',
             'brain-1',
             'ev:executed',
-            hmacKey,
+            kEvt,
             10,
             5000,
           ),

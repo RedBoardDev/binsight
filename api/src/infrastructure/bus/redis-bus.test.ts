@@ -1,6 +1,7 @@
 import Redis from 'ioredis';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { RedisBus } from './redis-bus';
+import { encodeEnvelope } from './envelope';
+import { MAX_BUS_ENVELOPE_BYTES, RedisBus } from './redis-bus';
 
 // Integration test: requires the local Redis container (docker compose up -d redis → :6385).
 const URL = process.env.REDIS_URL ?? 'redis://localhost:6385';
@@ -214,6 +215,42 @@ describe('RedisBus — a trimmed PEL entry parses as a TOMBSTONE, never throws (
     expect(reject?.payload).toBeNull(); // a reject ALSO has a null payload…
     expect(reject?.tombstone).toBeUndefined(); // …but it is NOT a tombstone…
     expect(reject?.raw).toEqual({ body: 'B', hmac: '00' }); // …and it KEEPS its bytes for a verbatim DLQ
+  });
+});
+
+// #24 — a 64 KiB envelope cap. An over-cap body is rejected in parse BEFORE verifyEnvelope/JSON.parse so a crafted
+// giant frame cannot DoS the consume loop. FAIL-AGAINST-OLD: the body is signed CORRECTLY, so without the cap
+// verifyEnvelope would ACCEPT it and return a payload — the cap makes it a REJECT (payload null, raw kept for the DLQ).
+describe('RedisBus — oversized envelope rejected before HMAC/parse (fake redis, #24)', () => {
+  const KEY = 'k_sign_test';
+
+  it('★ an over-cap body with a VALID MAC → REJECT (payload null), never parsed — DoS guard', async () => {
+    // A body strictly larger than the cap, signed CORRECTLY for the hop. Without the cap verifyEnvelope would
+    // authenticate it and return the parsed object; the cap short-circuits to a reject before any HMAC/parse work.
+    const big = { commandId: 'x', blob: 'a'.repeat(MAX_BUS_ENVELOPE_BYTES) };
+    const env = encodeEnvelope('cmd:sign', KEY, big);
+    expect(Buffer.byteLength(env.body, 'utf8')).toBeGreaterThan(MAX_BUS_ENVELOPE_BYTES); // genuinely over-cap
+    const xreadgroup = vi.fn(async () => [
+      ['cmd:sign', [['9-0', ['body', env.body, 'hmac', env.hmac]]]],
+    ]);
+    const bus = new RedisBus({ xreadgroup } as never);
+    const [msg] = await bus.consumePending('cmd:sign', 'coffre', 'c1', 'cmd:sign', KEY);
+    expect(msg?.payload).toBeNull(); // rejected: the huge body never reached verifyEnvelope / JSON.parse
+    expect(msg?.tombstone).toBeUndefined(); // NOT a tombstone — the bytes are present
+    expect(msg?.raw).toEqual({ body: env.body, hmac: env.hmac }); // kept verbatim → caller dead-letters it (loud)
+  });
+
+  it('a body under the cap with a valid MAC still verifies (the guard rejects ONLY oversized frames)', async () => {
+    // Under the cap → the envelope authenticates and parses as before: the cap must not over-reject real traffic.
+    const ok = { commandId: 'y', blob: 'a'.repeat(MAX_BUS_ENVELOPE_BYTES - 100) };
+    const env = encodeEnvelope('cmd:sign', KEY, ok);
+    expect(Buffer.byteLength(env.body, 'utf8')).toBeLessThanOrEqual(MAX_BUS_ENVELOPE_BYTES);
+    const xreadgroup = vi.fn(async () => [
+      ['cmd:sign', [['9-1', ['body', env.body, 'hmac', env.hmac]]]],
+    ]);
+    const bus = new RedisBus({ xreadgroup } as never);
+    const [msg] = await bus.consumePending('cmd:sign', 'coffre', 'c1', 'cmd:sign', KEY);
+    expect(msg?.payload).toEqual(ok); // authenticated + parsed
   });
 });
 

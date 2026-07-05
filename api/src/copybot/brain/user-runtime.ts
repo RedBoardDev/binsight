@@ -3416,6 +3416,16 @@ export async function createUserRuntime(
       pendingToken2022Deposits.has(commandId) ||
       pendingToken2022Mirrors.has(commandId) ||
       pendingReshapeAdds.has(commandId),
+    /** The per-command leader stashed on an in-flight multi-tx open/add (two-sided open, Token-2022 create/deposit,
+     *  reshape add). A deferred-continuation FAILURE alert reads this so a fan-out leader's failed open/add is
+     *  labelled with the REAL leader — not the demoted default (cfg.leader) — mirroring the close-swap path (#60).
+     *  Resolve it BEFORE the continuation runs: `runContinuation` drops the stash on a terminal failure, so at emit
+     *  time the entry is already gone (undefined ⇒ the caller falls back to cfg.leader). Same four maps, disjoint keys. */
+    leaderOfCommand: (commandId: string): string | undefined =>
+      pendingTwoSidedOpens.get(commandId)?.leader ??
+      pendingToken2022Deposits.get(commandId)?.leader ??
+      pendingToken2022Mirrors.get(commandId)?.leader ??
+      pendingReshapeAdds.get(commandId)?.leader,
     /** What still ties this runtime to each leader — feeds the pure `shouldRetainLeader` (a removed leader's hub
      *  entry drains only once no mirror/pending close references it; null = unattributable ⇒ retain). */
     leaderHoldings: (): LeaderHoldings => ({

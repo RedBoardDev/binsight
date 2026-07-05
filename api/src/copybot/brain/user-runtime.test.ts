@@ -375,6 +375,32 @@ describe('UserRuntime — fan-out ownership accessors (Inc.3b S5)', () => {
     expect(rtA.ownsLeaderPosition(LP3)).toBe(false);
   });
 
+  it('leaderOfCommand: reads the STASH leader across all four continuation maps (#60 multi-leader alerts), undefined once gone', () => {
+    // WHY (idx60): a deferred-continuation FAILURE (two-sided open / Token-2022 create·deposit / reshape add) alerts
+    // with a leader label. The originating (fan-out) leader is threaded on the in-flight stash; this accessor reads it
+    // so the brain's `.catch` emit names the REAL leader, not the demoted default (cfg.leader). It must cover ALL FOUR
+    // continuation maps (a dropped map ⇒ a mislabelled alert), and return undefined once the continuation dropped the
+    // stash so the brain falls back to cfg.leader. FAILS if the accessor stops reading .leader or omits a map.
+    const view = rtA.pendingOpenMapsView();
+    const seeds: [Map<string, unknown>, string][] = [
+      [view.twoSidedOpens as unknown as Map<string, unknown>, 'CMD_TWO_60'],
+      [view.token2022Deposits as unknown as Map<string, unknown>, 'CMD_DEP_60'],
+      [view.token2022Mirrors as unknown as Map<string, unknown>, 'CMD_MIR_60'],
+      [view.reshapeAdds as unknown as Map<string, unknown>, 'CMD_ADD_60'],
+    ];
+    const stashLeader = new Map<string, string>();
+    for (const [map, cmd] of seeds) {
+      const leader = Keypair.generate().publicKey.toBase58(); // a fan-out leader ≠ the runtime's boot/default leader
+      expect(leader).not.toBe(LEADER);
+      map.set(cmd, { leader });
+      stashLeader.set(cmd, leader);
+    }
+    for (const [, cmd] of seeds) expect(rtA.leaderOfCommand(cmd)).toBe(stashLeader.get(cmd)); // real per-map leader
+    expect(rtA.leaderOfCommand('CMD_MISSING_60')).toBeUndefined(); // no stash ⇒ caller falls back to cfg.leader
+    for (const [map, cmd] of seeds) map.delete(cmd); // cleanup (shared rtA) — and the drop-then-undefined check below
+    expect(rtA.leaderOfCommand('CMD_TWO_60')).toBeUndefined(); // dropped stash ⇒ undefined (terminal-failure emit path)
+  });
+
   it('ownsOurPosition: mirror row (even closed) + pending rug-exit both claim the confirm routing', () => {
     // WHY: a close confirm can arrive AFTER registry.close flipped the row, and a rug-SL retry entry can outlive
     // its mirror — both must still route the ev:executed close to THIS runtime (purge + markClosed idempotent).

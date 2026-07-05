@@ -14,7 +14,7 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import type { Logger } from 'pino';
 import { pino } from 'pino';
 import { createDiscordAlertSink } from '@/copybot/alert';
-import { assertBusKey } from '@/copybot/bus-key-guard';
+import { assertBusKey, deriveHopKeys } from '@/copybot/bus-key-guard';
 import { ConfirmWorker } from '@/copybot/coffre/confirm-worker';
 import { loadCopierKeypair } from '@/copybot/coffre/keypair';
 import { laneKeyOf, SigningLanes } from '@/copybot/coffre/lanes';
@@ -26,6 +26,7 @@ import {
   type Signer,
 } from '@/copybot/coffre/signer';
 import { ConfigStore } from '@/copybot/config-store';
+import { requireCopierWallet } from '@/copybot/copier-identity';
 import { HeartbeatStore } from '@/copybot/heartbeat-store';
 import { SYSTEM_USER_ID } from '@/copybot/journal-store';
 import { CopyEvents } from '@/copybot/observability/copy-events';
@@ -338,8 +339,8 @@ const cfg = {
   httpUrl: process.env.SOLANA_HTTP_URL ?? '',
   redisUrl: process.env.REDIS_URL ?? 'redis://localhost:6385',
   dbUrl: process.env.DATABASE_URL ?? 'postgres://meteora:meteora@localhost:5435/meteora',
-  keypairPath: process.env.COPIER_KEYPAIR_PATH ?? '.wallets/copier-test.json',
-  owner: process.env.COPIER_OWNER ?? 'Ybbt2Td4TjxwpzvuicbP9ANizBwAJzqjuRmRrvDh9zz',
+  // keypairPath + owner are NOT defaulted here (#24): the signing wallet is resolved fail-closed in main() via
+  // requireCopierWallet — no silent `.wallets/copier-test.json` / hardcoded-owner fallback onto the bench wallet.
   signingEnabled: process.env.SIGNING_ENABLED === 'true', // Inc.4 ; false = dry-run
   jitoBundleUrl: process.env.COPYBOT_JITO_BUNDLE_URL, // block-engine URL; absent ⇒ never bundle (plain RPC land)
   jitoEnabledEnv:
@@ -414,7 +415,9 @@ async function main(): Promise<void> {
     log.error(busKey.error);
     process.exit(1);
   }
-  const hmacKey = busKey.key;
+  // #24 — split the single validated secret into per-hop keys: the coffre VERIFIEs cmd:sign with kSign and SIGNs
+  // ev:executed with kEvt (the brain mirrors it), so a leak/confusion of one hop's key can never forge the other.
+  const { kSign, kEvt } = deriveHopKeys(busKey.key);
   // Fail-closed on the numeric envs (#151): a bare Number() would turn a typo like `MAX_TRADE_SOL=0,5` into NaN and
   // silently corrupt the sign path (BigInt(NaN) throws for every command; a NaN retryMax disables the sign loop).
   const numeric = parseCoffreNumericConfig(process.env);
@@ -422,20 +425,27 @@ async function main(): Promise<void> {
     log.error(numeric.error);
     process.exit(1);
   }
+  // Fail-closed on the signing wallet identity (#24): both envs required — no silent bench `.wallets/copier-test.json`
+  // / hardcoded-owner fallback that would make a mis-configured deploy sign as the wrong wallet.
+  const wallet = requireCopierWallet(process.env);
+  if ('error' in wallet) {
+    log.error(wallet.error);
+    process.exit(1);
+  }
   // THE-TRAP: the loaded key MUST be the expected copier wallet (fail-closed otherwise).
-  const copier = loadCopierKeypair(cfg.keypairPath, cfg.owner);
+  const copier = loadCopierKeypair(wallet.keypairPath, wallet.owner);
   const conn = new Connection(cfg.httpUrl, 'confirmed');
   const db = openDatabase(cfg.dbUrl);
   // ONE observability emitter bound to this tenant (mono-user PoC): a tenant-scoped pino child is its logger. The
   // vault's call sites (process1 + the loop) emit TYPED codes through it directly; every row back-fills
   // user/wallet/correlation. Operator-actionable (pinned) events also fan out to the external ALERT_WEBHOOK via the
   // injected sink (no-op when unset).
-  const tlog = log.child({ userId: SYSTEM_USER_ID, wallet: cfg.owner, process: 'coffre' });
+  const tlog = log.child({ userId: SYSTEM_USER_ID, wallet: wallet.owner, process: 'coffre' });
   const alertSink = createDiscordAlertSink(process.env.DISCORD_WEBHOOK_URL, tlog);
   const events = new CopyEvents(
     new EventStore(db, tlog),
     tlog,
-    { userId: SYSTEM_USER_ID, wallet: cfg.owner, process: 'coffre' },
+    { userId: SYSTEM_USER_ID, wallet: wallet.owner, process: 'coffre' },
     alertSink,
   );
   const configStore = new ConfigStore(db, log);
@@ -536,7 +546,7 @@ async function main(): Promise<void> {
     bus,
     events,
     ledger: positionLedger,
-    hmacKey,
+    hmacKey: kEvt, // #24 — the confirm worker publishes ev:executed, so it signs with kEvt
     log,
   });
   const resumed = await confirmWorker.loadPending();
@@ -600,7 +610,7 @@ async function main(): Promise<void> {
     policyFor, // per-message, per-USER sign-time policy (reads the live per-user config cache — SPEC §11)
     signingEnabled: cfg.signingEnabled,
     operatorFeeAddress: cfg.operatorFeeAddress, // Inc.4d Wall B fee-sink allowlist (coffre-trusted, not the request)
-    hmacKey,
+    hmacKey: kEvt, // #24 — process1 publishes ev:executed on a confirmed land, so it signs with kEvt
     retryMax: numeric.retryMax,
     retryDelayMs: numeric.retryDelayMs,
     onSubmitted: (t) => {
@@ -653,7 +663,7 @@ async function main(): Promise<void> {
   };
   try {
     // Crash recovery (recovering=true → a stranded 'claimed' from a CRASHED prior instance is re-claimable).
-    await processBatch(await bus.consumePending(STREAM, GROUP, CONSUMER, HOP, hmacKey, 100), true);
+    await processBatch(await bus.consumePending(STREAM, GROUP, CONSUMER, HOP, kSign, 100), true);
   } catch (e) {
     events.system('system.recovery_failed', e, {
       stage: 'recover',
@@ -701,12 +711,9 @@ async function main(): Promise<void> {
       // ALWAYS a prior read that never finalized (a process1 throw, OR a #7 in-flight left unACKed), so it must get
       // the exactly-once recovery pre-check (a landed tx is finalized, a still-in-flight one is left, only a dead
       // one is re-signed). Harmless for a pre-claim throw (no 'submitted' row ⇒ the pre-check is a no-op).
+      await processBatch(await bus.consumePending(STREAM, GROUP, CONSUMER, HOP, kSign, 100), true);
       await processBatch(
-        await bus.consumePending(STREAM, GROUP, CONSUMER, HOP, hmacKey, 100),
-        true,
-      );
-      await processBatch(
-        await bus.consume(STREAM, GROUP, CONSUMER, HOP, hmacKey, 10, drain ? 3000 : 5000),
+        await bus.consume(STREAM, GROUP, CONSUMER, HOP, kSign, 10, drain ? 3000 : 5000),
       );
       backoff = 1000; // success → reset
     } catch (e) {

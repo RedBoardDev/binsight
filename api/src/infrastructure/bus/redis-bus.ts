@@ -30,6 +30,15 @@ const fieldsToRecord = (fields: string[] | null | undefined): Record<string, str
   return r;
 };
 
+/**
+ * Hard cap on a bus envelope body (bytes). An over-cap frame is rejected in `parse` BEFORE the HMAC + JSON.parse
+ * (both are O(body length)) so a crafted giant body can never DoS the consume loop. 64 KiB sits far above any real
+ * message — a cmd:sign's serialized DLMM tx is bounded by Solana's 1232-byte packet (~1.6 KB base64) plus a few
+ * small fields; ev:executed is smaller still — yet well below a memory/CPU-abuse frame. The fixed 64-char hmac is
+ * negligible, so the body length is the whole envelope's parse/HMAC surface.
+ */
+export const MAX_BUS_ENVELOPE_BYTES = 65_536;
+
 export class RedisBus {
   constructor(private readonly redis: Redis) {}
 
@@ -136,6 +145,12 @@ export class RedisBus {
       if (!Array.isArray(fields) || fields.length === 0)
         return { id, payload: null, raw: {}, tombstone: true };
       const f = fieldsToRecord(fields);
+      // #24 — reject an OVERSIZED envelope BEFORE the HMAC + JSON.parse (both O(body length)): a crafted giant body
+      // would otherwise let ONE frame burn CPU / allocate unbounded and stall this consume loop. Over the cap → a
+      // REJECT (payload null, raw KEPT) exactly like a bad MAC, so the caller dead-letters it verbatim (loud, not a
+      // silent drop) — the "size" half of the coffre's documented bus checks 1-4. NOT a tombstone: the bytes exist.
+      if (f.body !== undefined && Buffer.byteLength(f.body, 'utf8') > MAX_BUS_ENVELOPE_BYTES)
+        return { id, payload: null, raw: f };
       const payload =
         f.body !== undefined && f.hmac !== undefined
           ? verifyEnvelope(hop, key, { body: f.body, hmac: f.hmac })
