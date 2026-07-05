@@ -127,6 +127,16 @@ export function planLeaseRenew(
   return outcome.ok ? { action: 'renewed' } : { action: 'exit', reason: 'lost' };
 }
 
+/**
+ * PURE (Inc.4e): does a broadcast just handed to the confirm worker prove Privy custody RECOVERED — i.e. should it
+ * flip `signingAvailable` back true? Only a LIVE-Privy submit is such proof: the SYSTEM/bench wallet signs with a
+ * LOCAL keypair (never a Privy outage) and a dry-run never touches Privy, so neither is evidence Privy returned —
+ * flipping on one would wrongly CLEAR the "signing unavailable" banner while a real user's Privy outage persists.
+ */
+export function signalsSigningRecovered(privySigningEnabled: boolean, userId: string): boolean {
+  return privySigningEnabled && userId !== SYSTEM_USER_ID;
+}
+
 /** A real user's Privy wallet identity (the activation table lands in wave 4b; 4a resolves null for every user). */
 export interface UserWallet {
   walletId: string; // Privy wallet id — signTransaction needs the id, not the address
@@ -571,8 +581,9 @@ async function main(): Promise<void> {
   });
 
   // Inc.4e — the LIVE signing-availability flag the coffre heartbeat carries (the web renders a "signing unavailable"
-  // banner off it, SPEC §2.4/#20). Starts true; a Privy OUTAGE flips it false (no automatism — the reconcile
-  // self-heals when Privy returns); a subsequent successful sign flips it back true.
+  // banner off it, SPEC §2.4/#20). Starts true; a Privy OUTAGE flips it false; a subsequent successful LIVE-Privy
+  // broadcast flips it back true (onSubmitted below, gated by signalsSigningRecovered). No dedicated health prober —
+  // the flip-back rides the next real sign that lands, which the reconcile keeps retrying until one does.
   let signingAvailable = true;
 
   // CRASH RECOVERY (no-miss): re-process any cmd:sign a prior (crashed) instance read but never ACKed — its PEL,
@@ -592,9 +603,16 @@ async function main(): Promise<void> {
     hmacKey,
     retryMax: numeric.retryMax,
     retryDelayMs: numeric.retryDelayMs,
-    onSubmitted: (t) => confirmWorker.track(t), // lane → worker hand-off at the broadcast (3c)
+    onSubmitted: (t) => {
+      confirmWorker.track(t); // lane → worker hand-off at the broadcast (3c) — the money-critical no-miss step, FIRST
+      // Inc.4e — a live-Privy submit is PROOF custody recovered → clear the outage flag (the "a subsequent successful
+      // sign flips it back true" contract). Gated so a SYSTEM/bench (local keypair) or dry-run submit never clears a
+      // real Privy outage. Pure in-memory assignment — onSubmitted MUST never throw.
+      if (signalsSigningRecovered(privyCfg.signingEnabled, t.userId)) signingAvailable = true;
+    },
     // Inc.4e — per-user Privy CUSTODY sign-failure side effects (outage #20 / revoked #21), isolated per user:
-    //  - outage:  flip the heartbeat `signingAvailable` flag + beat NOW so the web banner appears fast. NO automatism.
+    //  - outage:  flip `signingAvailable` false + beat NOW so the web banner appears fast; it flips back true on the
+    //             next successful live sign (onSubmitted above) — no health prober re-arms it.
     //  - revoked: disable signing for THAT user (sticky — signer_added=false), keeping its OPEN mirrors so the
     //    reconcile keeps trying to close them (never-miss — never dropped). Re-activation is blocked until re-consent.
     //    TODO(devnet-4f): also invalidate the in-memory signerFor cache entry so a running coffre skips the user

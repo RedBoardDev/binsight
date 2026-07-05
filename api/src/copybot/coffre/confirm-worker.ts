@@ -7,8 +7,8 @@
  * terminal outcome:
  *  - confirmed/finalized → CONDITIONAL finalize 'landed' → publish ev:executed (same payload as the old inline path);
  *  - on-chain error      → CONDITIONAL finalize 'failed' (atomic revert — re-claimable, pinned alert);
- *  - not found AND blockhash expired (current height > lastValidBlockHeight, height read BEFORE the status batch so
- *    "expired + not visible" is PROOF the tx can never land) → CONDITIONAL finalize 'failed';
+ *  - not found AND blockhash expired (current height > a REAL lastValidBlockHeight, read BEFORE the status batch so
+ *    "expired + not visible" is PROOF the tx can never land; a legacy unknown lvbh is exempt) → finalize 'failed';
  *  - anything else (not found but blockhash alive, or only 'processed') → keep polling.
  * Every finalize is the signature-pinned compare-and-set (`finalizeSubmitted`) — the boot recovery pre-check may
  * resolve the same row concurrently (PEL re-delivery of the same command), and only the winner publishes/emits.
@@ -44,6 +44,10 @@ type Db = ReturnType<typeof openDatabase>;
 export const CONFIRM_POLL_MS = 2_000;
 // getSignatureStatuses accepts at most 256 signatures per call (Solana RPC hard limit).
 const SIGNATURE_STATUS_BATCH_MAX = 256;
+// A legacy pre-#7 'submitted' row has a NULL lastValidBlockHeight (persisted only since #7); loadPending coerces it to
+// this sentinel. `height > 0` is trivially true and is NOT proof the tx can no longer land, so a row carrying it is
+// NEVER declared expired on height alone (no-miss) — it is resolved only by a REAL on-chain status.
+const UNKNOWN_LVBH = 0;
 
 const keyOf = (t: { userId: string; commandId: string }): string => `${t.userId}:${t.commandId}`;
 
@@ -104,7 +108,7 @@ export class ConfirmWorker {
         userId: row.userId,
         commandId: row.commandId,
         signature: row.signature as string,
-        lastValidBlockHeight: row.lastValidBlockHeight ?? 0,
+        lastValidBlockHeight: row.lastValidBlockHeight ?? UNKNOWN_LVBH,
         publish: (row.publishCtx as SubmittedPublishCtx | null) ?? null,
       });
     }
@@ -152,7 +156,9 @@ export class ConfirmWorker {
         const status = value[i];
         // on-chain error → 'failed' (atomic revert, nothing applied); confirmed/finalized → 'landed'.
         if (await this.resolveByStatus(t, status)) continue;
-        if (!status && height > t.lastValidBlockHeight) {
+        // A known-expired blockhash (chain height past a REAL lastValidBlockHeight) is the death trigger; a legacy
+        // row carrying UNKNOWN_LVBH is exempt — `height > 0` is not proof, so it never dies on height alone.
+        if (!status && t.lastValidBlockHeight > UNKNOWN_LVBH && height > t.lastValidBlockHeight) {
           // #148 — the batch read above omits searchTransactionHistory (recent-status cache only), so a tx that
           // actually LANDED before a downtime reads as not-found here; with its blockhash now expired the naive
           // path would misdeclare it 'failed' and fire a spurious "close manually" alert. Re-check against full

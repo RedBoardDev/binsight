@@ -16,6 +16,7 @@ import {
   routeVerdict,
   type SignerResolverDeps,
   SigningDisabledError,
+  signalsSigningRecovered,
   type UserWallet,
   UserWalletUnresolvedError,
 } from './coffre-main';
@@ -281,6 +282,28 @@ describe('coffre createSignerResolver — per-user signer routing + caching (Inc
       );
       await expect(signerFor('u1')).rejects.toBeInstanceOf(UserWalletUnresolvedError);
     }
+  });
+});
+
+// Inc.4e — signalsSigningRecovered: the ONE signal that flips the coffre's `signingAvailable` flag back true after a
+// Privy outage. It must be TRUE only for a real user under live signing — a SYSTEM local-keypair submit or a dry-run
+// submit proves nothing about Privy custody, so flipping on one would wrongly clear a genuine "signing unavailable"
+// banner while Privy is still down (the observability drift the flip-back gate exists to avoid).
+describe('coffre signalsSigningRecovered — only a live-Privy real-user submit clears the outage flag (Inc.4e)', () => {
+  it('a real user under PRIVY_SIGNING_ENABLED → recovered (its Privy sign just landed = custody is back)', () => {
+    expect(signalsSigningRecovered(true, 'user-9')).toBe(true);
+  });
+
+  it('SYSTEM (local keypair) never signals recovery — a bench sign is not proof Privy returned', () => {
+    // WHY: the flag is a GLOBAL "is Privy custody working". SYSTEM signs with a LOCAL keypair (it can never raise a
+    // Privy outage), so a SYSTEM submit must NOT clear a banner a real user's Privy outage raised — that would HIDE a
+    // live outage. Without the SYSTEM guard a bench/SYSTEM broadcast would spuriously flip the flag back true.
+    expect(signalsSigningRecovered(true, SYSTEM_USER_ID)).toBe(false);
+  });
+
+  it('PRIVY_SIGNING_ENABLED OFF → never signals recovery (dry-run never touches Privy, so nothing to recover)', () => {
+    expect(signalsSigningRecovered(false, 'user-9')).toBe(false);
+    expect(signalsSigningRecovered(false, SYSTEM_USER_ID)).toBe(false);
   });
 });
 

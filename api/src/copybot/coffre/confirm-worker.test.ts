@@ -44,6 +44,7 @@ async function seedSubmitted(opts: {
   userId?: string;
   signature: string;
   publish?: SubmittedPublishCtx | null;
+  lastValidBlockHeight?: number | null; // undefined ⇒ the default LVBH; null models a legacy pre-#7 row
 }): Promise<{
   userId: string;
   commandId: string;
@@ -61,7 +62,8 @@ async function seedSubmitted(opts: {
     state: 'submitted',
     deadlineSlot: 1_000_000,
     signature: opts.signature,
-    lastValidBlockHeight: LVBH,
+    lastValidBlockHeight:
+      opts.lastValidBlockHeight === undefined ? LVBH : opts.lastValidBlockHeight,
     publishCtx: publish,
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -229,6 +231,43 @@ describe('ConfirmWorker — ONE batched status read confirms every in-flight bro
     expect(codes).toContain('lifecycle.close_failed'); // kind-precise pinned alert, from the persisted context
     // …and the failed row is re-claimable (the reconcile re-publish can retry the command):
     expect(await claimExecution(db, s.userId, s.commandId, 'ek', 999, Date.now())).toBe(true);
+  });
+
+  it('★ a LEGACY row with an UNKNOWN (null→0) lastValidBlockHeight is NEVER failed on height alone — keeps polling', async () => {
+    // WHY (no-miss): lastValidBlockHeight is persisted only since #7. A pre-#7 'submitted' row re-read at boot has
+    // NULL, which loadPending coerces to 0. `height > 0` is trivially true, so the naive expiry path would MIS-FAIL
+    // such a broadcast the moment it is not-found — declaring dead (and re-driving a close) a tx whose REAL expiry is
+    // unknown. A row with an unknown expiry must keep polling until a real on-chain status resolves it. Contrast the
+    // EXPIRY test above: a row with a genuine lvbh still fails, so the death path is not weakened.
+    const s = await seedSubmitted({ signature: 'SIG_UNKNOWN_LVBH' });
+    const { conn, getStatuses } = connOf({ statuses: () => null, blockHeight: LVBH + 1_000_000 });
+    const w = workerOf(conn);
+    w.track({
+      userId: s.userId,
+      commandId: s.commandId,
+      signature: s.signature,
+      lastValidBlockHeight: 0, // the sentinel loadPending assigns a legacy NULL lastValidBlockHeight
+      publish: s.publish,
+    });
+    await w.tick();
+    expect((await rowOf(s.userId, s.commandId))?.state).toBe('submitted'); // NOT 'failed' — unknown ≠ expired
+    expect(w.inflightCount).toBe(1); // still watched — a later REAL status (not height) will resolve it
+    expect(getStatuses).toHaveBeenCalledTimes(1); // only the cheap batch — no history-search death re-check ran
+    expect(bus.publish).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled(); // no spurious pinned "close manually" alert
+  });
+
+  it('loadPending resumes a legacy NULL-lvbh row and a not-found tick leaves it submitted (end-to-end)', async () => {
+    // WHY: the full durable-recovery path — a pre-#7 row is stored with a NULL lastValidBlockHeight; loadPending must
+    // resume it (coerce → unknown sentinel, no crash) and a subsequent not-found tick must leave it 'submitted', never
+    // fail it purely because the chain height exceeds a fabricated 0. blockHeight is kept below the OTHER seeded rows'
+    // real lvbh so this shared-db test only ever resolves its own row.
+    const s = await seedSubmitted({ signature: 'SIG_LEGACY_NULL', lastValidBlockHeight: null });
+    const { conn } = connOf({ statuses: () => null, blockHeight: 500 });
+    const w = workerOf(conn);
+    expect(await w.loadPending()).toBeGreaterThanOrEqual(1); // the legacy NULL row is resumed (coerced)
+    await w.tick();
+    expect((await rowOf(s.userId, s.commandId))?.state).toBe('submitted'); // its NULL→0 lvbh spared it the death path
   });
 
   it('#148 — an aged LANDED tx invisible to the recent-cache batch is confirmed via HISTORY search, not failed', async () => {
