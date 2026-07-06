@@ -59,6 +59,7 @@ import {
 } from '@/domain/copybot/filters';
 import { jitoTipFor } from '@/domain/copybot/jito-tip';
 import { type JournalEntry, stageForKind } from '@/domain/copybot/journal';
+import { withTimeout } from '@/domain/copybot/latency';
 import type { EventSource } from '@/domain/copybot/leader-detector';
 import {
   type CopyCode,
@@ -170,6 +171,20 @@ export const SELL_RESIDUAL_DUST_RAW = 0n;
 // re-attempt — keep the SAME commandId so the vault still dedups them. Sized to exceed one sell's on-chain deadline
 // (DEADLINE_SLOTS ≈ 60s): by the time the epoch rolls, the prior sell has landed or expired, so a re-sell is correct.
 export const SELL_COMMAND_EPOCH_MS = 60_000;
+// #164 — the sell-confirm's best-effort tx read (appendSellRowAndAssess) runs on the SEQUENTIAL ev:executed loop,
+// where web3.js exposes NO per-call timeout. A hung RPC on that read would stall EVERY queued message behind it —
+// including a close's markClosed (the #1 forbidden stall). Bound the read so an unresponsive node degrades to
+// "assess on the ledger as it stands" (a permanently-missing SELL row is covered by the periodic fee backstop)
+// rather than an unbounded stall. Generous vs a normal <1s getTransaction so a merely-slow node still CAPTURES the
+// SELL row (the fee base); finite so a truly-hung node cannot serialize behind close processing. Exported for tests.
+export const SELL_CONFIRM_TX_READ_TIMEOUT_MS = 5_000;
+// idx9 — a residual SELL for a mint is considered IN-FLIGHT for this long after `publishSell` stamps it on the shared
+// pendingSellMints stash (cleared on confirm). publishSell SKIPS a second sell of the SAME mint within this window so
+// a re-trigger straddling a SELL_COMMAND_EPOCH_MS boundary — which mints a FRESH, non-deduped commandId, defeating
+// the vault's idempotency — cannot double-publish an already-in-flight residual. Sized == SELL_COMMAND_EPOCH_MS: one
+// window past a publish the prior sell has landed or expired (its ~60s on-chain deadline), so a genuine re-sell then
+// proceeds — preserving the epoch-retry intent. Exported for the tests that pin the derived guard window.
+export const SELL_INFLIGHT_GRACE_MS = SELL_COMMAND_EPOCH_MS;
 // A two-sided open's BOUGHT token sits on the wallet from the buy landing until the DEPOSIT lands — a MULTI-hop,
 // multi-tx window (buy → open/deposit; a Token-2022 open is create → deposit; a reshape is buy → add). Selling it in
 // that window (close-triggered sell OR safety sweep — both read the WHOLE shared-wallet balance) would empty the
@@ -302,6 +317,10 @@ export interface SharedBrainDeps {
       /** #140 — set ONLY for a CLOSE-path sell (the position it liquidates); null for a wallet-sweep sell. The
        *  sell-confirm writes the SELL ledger row + assesses the fee for this position (SPEC §9). */
       ourPosition: string | null;
+      /** idx9 — ms this sell was published (stamped by `publishSell`). Bounds the in-flight-sell guard: a same-mint
+       *  re-trigger within SELL_INFLIGHT_GRACE_MS is skipped as a duplicate. Optional: a hand-built stash (tests) or
+       *  a legacy entry with no stamp reads as "not in-flight" and never blocks. */
+      publishedAt?: number;
     }
   >;
   /** Short-TTL SOL-balance cache shared by every runtime (Inc.4c) — one entry per REAL wallet; SYSTEM bypasses
@@ -2991,9 +3010,17 @@ export async function createUserRuntime(
    * so the fee base at close counts the SOL SPENT buying the token leg (not only the SOL leg). `lamportsOut` = the
    * buy's ExactIn SOL input (`buyQuote.inAmount`), deterministic pre-land; the ~5000-lamport tx fee the buy also
    * paid is a negligible approximation vs SPEC §9's lamport-exact ideal (the close/sell rows ARE exact via the owner
-   * delta). Idempotent on `(userId, buySig, ourPosition)`. Best-effort post-open bookkeeping, EXACTLY like the confirm
-   * worker's row write: a rare DB blip is swallowed + logged so it NEVER breaks the money-critical open publish. A
-   * one-sided open funds no buy → `buyInLamports`/`buySig` are absent → no row.
+   * delta). Idempotent on `(userId, buySig, ourPosition)`. A one-sided open funds no buy → `buyInLamports`/`buySig`
+   * are absent → no row.
+   * Best-effort (finding #140, LOW): a rare DB blip is swallowed + logged so it NEVER breaks the money-critical open
+   * publish (the position is already on-chain by here — making this throw could abort a live open). EXPOSURE: a
+   * swallowed append omits the buy's `lamportsOut`, so the close fee base is OVER-stated → a bounded, USER-unfavorable
+   * OVER-charge. Unlike the coffre confirm-worker's row write (which its tick RE-PROCESSES on a throw), this append
+   * has NO backstop: the periodic fee backstop re-assesses a MISSING fee but cannot reconstruct a MISSING buy row —
+   * the buy cost is not persisted durably (it lives only in the transient continuation ctx). The durable fix (persist
+   * the buy cost atomically with the position, or reconstruct it in the fee backstop) is cross-file (mirror-store /
+   * repo / fee-sweep) + disproportionate for a bounded LOW; an in-line retry is avoided — it would add latency to the
+   * open publish that awaits this append (open speed is a #1 priority) and diverge from the swallow convention.
    */
   async function appendBuyRow(
     ourPosition: string,
@@ -3021,9 +3048,15 @@ export async function createUserRuntime(
 
   /**
    * Inc.4d (finding #140) — a CLOSE-path residual sell CONFIRMED: append its SELL as a ledger row (lamportsIn = the
-   * owner's SOL delta on the sell tx — EXACT via the confirmed meta, i.e. the proceeds net of the tx fee) attributed
-   * to `ourPosition`, THEN assess the fee. The base now counts the token-leg proceeds returned to SOL, so a two-sided
-   * position that recovers its token value is charged on the TRUE net (SPEC §9), not on the SOL leg alone. One
+   * owner's NET SOL delta on the sell tx, via `ledgerRowFromMeta`) attributed to `ourPosition`, THEN assess the fee.
+   * The base now counts the token-leg proceeds returned to SOL, so a two-sided position that recovers its token value
+   * is charged on the TRUE net (SPEC §9), not on the SOL leg alone.
+   * #140 (fee-base imprecision, LOW): that owner NET delta is NOT exactly the Jupiter SOL output — it folds in the
+   * priority fee (−, under-states proceeds) and, when the swap unwraps + closes the WSOL ATA, the ~0.00204-SOL rent
+   * reclaim (+, over-states). The two partly offset and the residue is small; the exact source would be the swap's
+   * own SOL output (the quote / the WSOL token-balance delta), but isolating it here — `ledgerRowFromMeta` is a
+   * shared domain helper — is disproportionate for a bounded LOW, and the deviation is further bounded by
+   * maxConcurrentPerToken. One
    * getTransaction per confirmed close-sell (reuses the pure `ledgerRowFromMeta` + shared `accountKeysOf`). Idempotent:
    * append is keyed `(userId, sellSig, ourPosition)` and `assessFee` is keyed `(userId, ourPosition)`, so a PEL re-run
    * — and the periodic backstop — can never double-count nor double-charge. Best-effort: a getTransaction/DB blip is
@@ -3037,7 +3070,14 @@ export async function createUserRuntime(
    */
   async function appendSellRowAndAssess(ourPosition: string, sig: string): Promise<void> {
     try {
-      const tx = await conn.getTransaction(sig, { maxSupportedTransactionVersion: 0 });
+      // #164 — BOUND this read: it sits on the SEQUENTIAL ev:executed loop, so a hung RPC (web3.js has NO per-call
+      // timeout) would stall every queued message behind it — including a close's markClosed (the #1 forbidden stall).
+      // `withTimeout` degrades a hung/slow read to `undefined`, which the `tx?.meta` guard already treats as "no row"
+      // → we still assess on the ledger as it stands (a permanently-missing SELL row is covered by the fee backstop).
+      const tx = await withTimeout(
+        conn.getTransaction(sig, { maxSupportedTransactionVersion: 0 }),
+        SELL_CONFIRM_TX_READ_TIMEOUT_MS,
+      );
       const row = tx?.meta
         ? ledgerRowFromMeta(
             ownerPk.toBase58(),
@@ -3169,8 +3209,9 @@ export async function createUserRuntime(
   /** Build + publish a Jupiter token→SOL sell for `residualRaw` units of `tokenMint` (shared by the close-
    *  triggered residual sell and the wallet safety sweep). `source` only labels the event/log. `nonSolSymbol`
    *  (resolvable only on the close path, via the Mirror) names the token in the sell-confirm FEED line; null on
-   *  the sweep path falls back to the truncated mint. Returns whether a sell was published (false = quote below
-   *  the SOL-out floor). */
+   *  the sweep path falls back to the truncated mint. Returns `false` ONLY when NO sell will occur (the quote is
+   *  below the SOL-out floor) so the caller must finalize/assess NOW; `true` means a sell was published OR one for
+   *  this mint is already in-flight (idx9 dedup), so the caller DEFERS to that sell's confirm (or the fee backstop). */
   async function publishSell(
     tokenMint: string,
     residualRaw: bigint,
@@ -3183,6 +3224,26 @@ export async function createUserRuntime(
   ): Promise<boolean> {
     const t0 = Date.now();
     const ec = eff(); // wallet-level economics = the publishing runtime's config (SYSTEM for sweeps — documented wallet-context path)
+    // idx9 — SKIP if a residual sell for THIS mint is already IN-FLIGHT (published within SELL_INFLIGHT_GRACE_MS; the
+    // stash is cleared on confirm). A sell drains the WHOLE wallet balance of the mint, so a second same-mint sell is
+    // redundant — and a re-trigger straddling a SELL_COMMAND_EPOCH_MS boundary mints a FRESH, non-deduped commandId
+    // the vault would NOT catch, so this guard does. Scans the SHARED stash, so a close-sell and the wallet sweep dedup
+    // against EACH OTHER too. Returns `true` (NOT `false`): a sell for this residual exists, so the caller must DEFER
+    // to that sell's confirm (or the fee backstop) — returning `false` would make onCloseExecuted finalize the fee NOW
+    // on a base still missing the in-flight proceeds (a re-delivered close would lock an under-charge). Past the grace
+    // the prior sell has landed/expired → a genuine re-sell proceeds. (A sub-second race — two calls interleaving
+    // before either stamps the stash — is out of scope: the realistic double-publish is triggers seconds apart.)
+    for (const inFlight of pendingSellMints.values())
+      if (
+        inFlight.tokenMint === tokenMint &&
+        t0 - (inFlight.publishedAt ?? 0) < SELL_INFLIGHT_GRACE_MS
+      ) {
+        log.info(
+          { tokenMint, pool, source },
+          '💤 sell skipped: a residual sell for this mint is already in-flight (epoch-boundary dedup)',
+        );
+        return true;
+      }
     // The below-min-sell-out emit dedups on this DETERMINISTIC key so a permanently-uneconomic residual stays ONE row.
     const sellDedupKey = `${bootLeader}:${pool}:${source}:${tokenMint}:${residualRaw}`;
     // The published eventKey (⇒ the derived commandId) adds a time-epoch discriminator so a legitimately-recurring
@@ -3213,8 +3274,15 @@ export async function createUserRuntime(
     const commandId = commandIdFor(eventKey);
     // Stash the sold token keyed by the sell's commandId so the `ev:executed{kind:'sell'}` confirm can name it in
     // the FEED `swap.executed` line without an extra RPC (deleted on confirm; see onSellConfirmed). Set BEFORE the
-    // publish so an instant confirm can never race ahead of the stash.
-    pendingSellMints.set(commandId, { tokenMint, nonSolSymbol, pool, ourPosition });
+    // publish so an instant confirm can never race ahead of the stash. `publishedAt` bounds the idx9 in-flight-sell
+    // guard above (a same-mint re-trigger within SELL_INFLIGHT_GRACE_MS is skipped as a duplicate).
+    pendingSellMints.set(commandId, {
+      tokenMint,
+      nonSolSymbol,
+      pool,
+      ourPosition,
+      publishedAt: Date.now(),
+    });
     const { issuedAtSlot, deadlineSlot } = await slots();
     await publish({
       commandId,
@@ -3265,8 +3333,15 @@ export async function createUserRuntime(
         '💤 close-sell deferred: mint has an in-flight two-sided buy (sweep backstop sells the residue)',
       );
       // #140 — no close-sell will be attributed to THIS position (the sweep sell that eventually clears the residue
-      // is a wallet-level, unattributed sell) → its ledger is as complete as it will get → assess NOW. The tiny
-      // shared-wallet imprecision (proceeds land at the wallet level) is bounded by maxConcurrentPerToken.
+      // is a wallet-level, UNATTRIBUTED sell) → its ledger is as complete as it will get → assess NOW.
+      // #140 (incomplete-ledger assess, LOW): this base is MISSING the residual-sell proceeds (they land at the wallet
+      // level via the unattributed sweep, never as a SELL row for this position). Since proceeds ≥ 0, the base is a
+      // LOWER bound → the fee can only UNDER-charge (operator-unfavorable; never over-charges the user). Deferring the
+      // assess (skip here, let the backstop pick it up later) would be behavior-NEUTRAL — the sweep is unattributed,
+      // so the backstop would re-compute the SAME incomplete base — so we assess now rather than delay a fee for no
+      // gain. The exact fix (attribute the sweep proceeds, or make the fee row revisable) is cross-file (the residual
+      // sweep) + disproportionate for a bounded LOW; the deviation only arises on a rare cross-user same-mint overlap
+      // (maxConcurrentPerToken defaults to 1) and is bounded by it.
       return assessFeeSafe(ev.positionPubkey);
     }
     const residual = await readOwnerTokenBalance(conn, ownerPk, new PublicKey(tokenMint));

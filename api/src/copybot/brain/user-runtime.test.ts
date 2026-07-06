@@ -97,6 +97,8 @@ import {
   createUserRuntime,
   INFLIGHT_BUY_GRACE_MS,
   SELL_COMMAND_EPOCH_MS,
+  SELL_CONFIRM_TX_READ_TIMEOUT_MS,
+  SELL_INFLIGHT_GRACE_MS,
   type SharedBrainDeps,
 } from './user-runtime';
 
@@ -1495,6 +1497,48 @@ describe('UserRuntime — #140 two-sided fee completeness (buy + sell ledger row
     expect(fee).toMatchObject({ basePnlLamports: 400_000_000, feeLamports: 20_000_000 }); // …but the fee IS assessed
   });
 
+  it('a HUNG sell-tx read is BOUNDED (#164): it never stalls the confirm loop and the fee is STILL assessed', async () => {
+    // WHY (#164, robustness): onSellConfirmed → appendSellRowAndAssess runs on the SEQUENTIAL ev:executed loop, so a
+    // getTransaction that NEVER resolves (web3.js has NO per-call timeout) would stall EVERY queued message behind it —
+    // including a close's markClosed (the #1 forbidden stall). SELL_CONFIRM_TX_READ_TIMEOUT_MS bounds the read: a hang
+    // degrades to "no SELL row" and the fee is STILL assessed on the ledger as it stands (open + close) — the SAME
+    // outcome as a getTransaction rejection. This FAILS (times out) if the withTimeout wrap is removed.
+    const U = 'fee164-hung-read';
+    const OUR = 'OUR_HUNG';
+    await seed(U, OUR, [
+      { kind: 'open', out: 1_000_000_000 },
+      { kind: 'close', in: 1_400_000_000 }, // base +0.4 SOL without a sell row
+    ]);
+    const conn = {
+      getSlot: async () => 0,
+      getTransaction: () => new Promise(() => {}), // NEVER resolves — a hung RPC (no web3.js timeout)
+    } as unknown as Connection;
+    const rt = await createUserRuntime(
+      { ...shared, conn, operatorFeeAddress: OPERATOR_FEE },
+      U,
+      opts,
+    );
+    shared.pendingSellMints.set('hung', {
+      tokenMint: WSOL,
+      nonSolSymbol: null,
+      pool: 'P',
+      ourPosition: OUR,
+    });
+    vi.useFakeTimers();
+    const done = rt.onSellConfirmed({ commandId: 'hung', sig: 'HUNGSIG', pool: 'P' });
+    // Advance PAST the read timeout so `withTimeout` fires and resolves `undefined` (the hung read is abandoned).
+    await vi.advanceTimersByTimeAsync(SELL_CONFIRM_TX_READ_TIMEOUT_MS + 1);
+    vi.useRealTimers(); // hand the remaining async (the DB assess) back to real timers
+    await done; // RESOLVES (bounded) — never hangs behind the hung read
+    // No SELL row (the read timed out)…
+    expect(
+      await db.select().from(schema.positionLedger).where(eq(schema.positionLedger.sig, 'HUNGSIG')),
+    ).toHaveLength(0);
+    // …but the fee IS assessed on the ledger as it stands (open + close).
+    const [fee] = await feeRows(OUR);
+    expect(fee).toMatchObject({ basePnlLamports: 400_000_000, feeLamports: 20_000_000 });
+  });
+
   it('DEFERRED-then-FAILED sell → the periodic backstop still assesses (no permanently-unassessed tail), idempotently', async () => {
     // WHY (#140 no-miss): moving the trigger to the sell-confirm created a "never assessed" path — a close-sell that
     // FAILS to land means onSellConfirmed never runs. FAILURE INJECTED: we drive markClosed + a WINNING ledger but
@@ -2871,13 +2915,18 @@ describe('UserRuntime — a recurring residual SELL is not permanently idempoten
     return { rt, published };
   }
 
-  it('the SAME residual re-sold in a LATER epoch derives a FRESH commandId (a stuck token can retry), while two attempts in ONE epoch share it (in-flight dedup intact)', async () => {
+  it('the brain SKIPS an in-flight same-mint re-attempt (idx9), and a LATER-epoch retry derives a FRESH commandId (idx43 — a stuck token still retries)', async () => {
     // WHY (idx9/idx43, money — a stranded token): a sell never forceReclaims, so a residual whose earlier sell FAILED
-    // recurs with the SAME (pool, mint, amount). Without the epoch discriminator it re-derives the SAME commandId and
-    // the vault's (user, command_id) idempotency PERMANENTLY rejects it → the non-SOL token is stuck on the wallet
-    // forever. The published eventKey now folds a time-epoch: a LATER window ⇒ a fresh commandId (the retry lands),
-    // while two attempts INSIDE one window keep the SAME commandId so a concurrent/in-flight re-attempt still dedups
-    // (no wasteful double broadcast). This FAILS if the discriminator regresses (all three commandIds collapse to one).
+    // recurs with the SAME (pool, mint, amount). TWO guarantees must hold together:
+    //  • idx43 — the recurring residual MUST be able to retry: the published eventKey folds a time-epoch, so a LATER
+    //    window derives a FRESH commandId, and the vault's (user, command_id) idempotency no longer PERMANENTLY rejects
+    //    it → the non-SOL token is not stuck on the wallet forever.
+    //  • idx9  — a residual sell drains the WHOLE wallet balance of the mint, so a re-trigger while one is already
+    //    IN-FLIGHT must NOT double-publish. The brain now GATES on the shared in-flight stash and SKIPS the re-attempt
+    //    (superseding the old reliance on the epoch-aligned commandId to dedup — which still broadcast a wasteful 2nd
+    //    bus message the vault then rejected, AND missed a re-trigger straddling an epoch boundary → a fresh, non-
+    //    deduped commandId). This FAILS if the guard regresses (the in-flight re-attempt re-publishes) OR the epoch
+    //    discriminator regresses (the later retry collapses to the same commandId → the token stays stuck).
     vi.mocked(getJupiterQuote).mockResolvedValue({
       inputMint: S_MINT,
       outputMint: SOL_MINT,
@@ -2887,30 +2936,73 @@ describe('UserRuntime — a recurring residual SELL is not permanently idempoten
     });
     vi.mocked(buildJupiterSwapTx).mockResolvedValue('selltx-b64');
     const { rt, published } = await bootSell('sell-epoch-user');
+    const sells = () => published.filter((c) => c.kind === 'sell');
 
     // Anchor to the CURRENT epoch's start so no blockhash/staleness clock logic trips on a far-past mock.
     const baseEpoch = Math.floor(Date.now() / SELL_COMMAND_EPOCH_MS);
     const t0 = baseEpoch * SELL_COMMAND_EPOCH_MS;
     const nowSpy = vi.spyOn(Date, 'now');
 
-    nowSpy.mockReturnValue(t0); // epoch N
+    nowSpy.mockReturnValue(t0); // epoch N — the first sell of this residual
     expect(await rt.publishSell(S_MINT, RESIDUAL, S_POOL, 'sweep')).toBe(true);
-    nowSpy.mockReturnValue(t0 + 1); // still epoch N (a concurrent / in-flight re-attempt)
-    expect(await rt.publishSell(S_MINT, RESIDUAL, S_POOL, 'sweep')).toBe(true);
-    nowSpy.mockReturnValue(t0 + SELL_COMMAND_EPOCH_MS); // epoch N+1 (a genuine later retry)
-    expect(await rt.publishSell(S_MINT, RESIDUAL, S_POOL, 'sweep')).toBe(true);
+    expect(sells()).toHaveLength(1);
 
-    const sells = published.filter((c) => c.kind === 'sell');
-    expect(sells).toHaveLength(3);
-    const cmds = sells.map((c) => c.commandId as string);
-    expect(cmds[0]).toBe(cmds[1]); // same epoch → SAME commandId ⇒ the vault dedups (no double broadcast)
-    expect(cmds[2]).not.toBe(cmds[0]); // later epoch → FRESH commandId ⇒ the recurring residual retries
+    nowSpy.mockReturnValue(t0 + 1); // still epoch N, the prior sell IN-FLIGHT → idx9: the guard skips it (defer)
+    expect(await rt.publishSell(S_MINT, RESIDUAL, S_POOL, 'sweep')).toBe(true); // "handled by the in-flight sell"
+    expect(sells()).toHaveLength(1); // deduped at the BRAIN — still exactly ONE bus broadcast
+
+    // Grace elapsed (the prior sell has landed/expired) AND epoch N+1 (SELL_INFLIGHT_GRACE_MS == SELL_COMMAND_EPOCH_MS).
+    nowSpy.mockReturnValue(t0 + SELL_INFLIGHT_GRACE_MS);
+    expect(await rt.publishSell(S_MINT, RESIDUAL, S_POOL, 'sweep')).toBe(true); // idx43: the stuck token retries
+    expect(sells()).toHaveLength(2);
+
+    const cmds = sells().map((c) => c.commandId as string);
+    expect(cmds[1]).not.toBe(cmds[0]); // later epoch → FRESH commandId ⇒ the recurring residual is not stuck forever
     // The discriminator lives in the eventKey (the vault re-derives commandId == deriveCommandId(userId, eventKey)).
-    const keys = sells.map((c) => c.eventKey as string);
+    const keys = sells().map((c) => c.eventKey as string);
     expect(keys[0]).toBe(`${S_LEADER}:${S_POOL}:sweep:${S_MINT}:${RESIDUAL}:${baseEpoch}`);
-    expect(keys[2]).toBe(`${S_LEADER}:${S_POOL}:sweep:${S_MINT}:${RESIDUAL}:${baseEpoch + 1}`);
+    expect(keys[1]).toBe(`${S_LEADER}:${S_POOL}:sweep:${S_MINT}:${RESIDUAL}:${baseEpoch + 1}`);
 
     nowSpy.mockRestore();
+    vi.mocked(getJupiterQuote).mockReset();
+    vi.mocked(buildJupiterSwapTx).mockReset();
+  });
+
+  it('the in-flight-sell guard is MINT-scoped and cross-source: a close-sell blocks a same-mint sweep, but a DIFFERENT mint still sells (idx9)', async () => {
+    // WHY (idx9): the guard must dedup the exact hazard — a second sell of a mint whose whole-balance sell is already
+    // in-flight (a close-sell and the wallet sweep both drain the same balance, so the sweep must defer to the in-flight
+    // close-sell) — WITHOUT over-blocking an unrelated mint (which has its own independent balance). A guard that keyed
+    // on anything coarser than the mint would starve every other residual; one that ignored source would miss the
+    // close-vs-sweep cross-path double-publish. Same clock throughout (all calls land in ONE epoch, so any 2nd publish
+    // could ONLY come from a guard regression, not the epoch discriminator).
+    // FRESH mints (not the describe-level S_MINT, which the previous test leaves in the SHARED in-flight stash) so
+    // this test's guard view is clean and mint-scoping is what's under test.
+    const MINT_A = Keypair.generate().publicKey.toBase58();
+    const MINT_B = Keypair.generate().publicKey.toBase58();
+    vi.mocked(getJupiterQuote).mockResolvedValue({
+      inputMint: MINT_A,
+      outputMint: SOL_MINT,
+      inAmount: RESIDUAL.toString(),
+      outAmount: '5000000000',
+      raw: {},
+    });
+    vi.mocked(buildJupiterSwapTx).mockResolvedValue('selltx-b64');
+    const { rt, published } = await bootSell('sell-guard-scope-user');
+    const sellsOf = (mint: string) =>
+      published.filter(
+        (c) => c.kind === 'sell' && (c.sell as { inputMint: string }).inputMint === mint,
+      );
+
+    // A CLOSE-path sell for MINT_A publishes and marks the mint in-flight.
+    expect(await rt.publishSell(MINT_A, RESIDUAL, S_POOL, 'close')).toBe(true);
+    expect(sellsOf(MINT_A)).toHaveLength(1);
+    // A SWEEP sell for the SAME mint (a different trigger) must DEFER to the in-flight close-sell — not re-publish.
+    expect(await rt.publishSell(MINT_A, RESIDUAL, S_POOL, 'sweep')).toBe(true);
+    expect(sellsOf(MINT_A)).toHaveLength(1); // cross-source dedup — still ONE broadcast for MINT_A
+    // A DIFFERENT mint has its own balance → NOT blocked by MINT_A's in-flight sell.
+    expect(await rt.publishSell(MINT_B, RESIDUAL, S_POOL, 'sweep')).toBe(true);
+    expect(sellsOf(MINT_B)).toHaveLength(1); // the unrelated mint still sells
+
     vi.mocked(getJupiterQuote).mockReset();
     vi.mocked(buildJupiterSwapTx).mockReset();
   });
