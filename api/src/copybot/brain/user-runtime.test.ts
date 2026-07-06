@@ -7,6 +7,7 @@ import { pino } from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 import { deriveCommandId } from '@/copybot/command-id';
 import type { HeartbeatStore } from '@/copybot/heartbeat-store';
+import { LOG_MARKER_RESHAPE_PUBLISHED } from '@/copybot/log-markers';
 import { checkCaps } from '@/domain/copybot/caps';
 import { CONFIG_DEFAULTS } from '@/domain/copybot/config';
 import type { TokenSnapshot } from '@/domain/copybot/filters';
@@ -2077,6 +2078,368 @@ describe('UserRuntime — a RESYNC records the tracked size from PUBLISHED ops o
     vi.mocked(buildJupiterSwapTx).mockReset();
     vi.mocked(readOwnerTokenBalance).mockReset();
     vi.mocked(buildAddByWeight).mockReset();
+  });
+
+  it('a DEFERRED grow does NOT clobber an intervening resync that recorded a SMALLER size (finding #163)', async () => {
+    // WHY (#163, money): #145 defers a two-sided grow's recorded size to the buy CONFIRM. If the leader DE-RISKS
+    // between the grow-publish and the buy-confirm, an intervening resync records the new, SMALLER size — but the
+    // deferred grow target was applied UNCONDITIONALLY when the buy landed, clobbering it back UP (exposure
+    // over-counted up to ~4×, wrong fee base, spurious open-blocking). The monotonic per-position record seq marks the
+    // stashed target STALE, so publishReshapeAddAfterBuy skips the size write and the newer de-risked size stands. This
+    // drives resync-A (grow, deferred) → resync-B (de-risk, records smaller) → buy-A confirm, and FAILS pre-fix
+    // (the size would be clobbered back up to the ~4.5 grow target).
+    vi.mocked(getJupiterQuote).mockResolvedValue({
+      inputMint: R_MINT,
+      outputMint: WSOL,
+      inAmount: '0',
+      outAmount: '500000000', // token leg valued at 0.5 SOL (price quote AND size-basis value quote)
+      raw: {},
+    });
+    vi.mocked(getJupiterBuyQuoteExactIn).mockResolvedValue({
+      inputMint: WSOL,
+      outputMint: R_MINT,
+      inAmount: '500000000',
+      outAmount: '1000',
+      raw: {},
+    });
+    vi.mocked(buildJupiterSwapTx).mockResolvedValue('buytx-b64');
+    vi.mocked(readOwnerTokenBalance).mockReset();
+    vi.mocked(readOwnerTokenBalance).mockResolvedValueOnce(0n).mockResolvedValue(1_000n);
+    vi.mocked(buildAddByWeight).mockImplementation(async () => new Transaction());
+
+    // Resync A: a two-sided GROW (leader SOL 4.0 + a token deficit) → publishes the BUY and DEFERS the size (target
+    // 4.5), leaving the recorded size clamped at the current 2.0 (exactly the #145 defer flow).
+    const { rt, published } = await driveResync({
+      userId: 'resync-163-defer-clobber',
+      twoSidedMode: 'on',
+      startSizeSol: 2,
+      leader: { x: 2_000n, y: 2_000_000_000n }, // SOL 2.0/bin × 2 = 4.0 + a real token deficit
+      ours: { x: 1_000n, y: 1_000_000_000n }, // SOL 1.0/bin × 2 = 2.0
+      depositSol: 2,
+      withdrawSol: 0,
+      instruction: 'AddLiquidityByStrategy2',
+    });
+    const buy = published.find((c) => c.kind === 'buy');
+    expect(buy).toBeDefined();
+    expect(rt.registry.get(R_LEADER_POS)?.sizeSol).toBeCloseTo(2); // deferred → clamped to the current size
+
+    // Resync B: the leader DE-RISKS before the buy confirms → OUR position now exceeds it → removes publish and the
+    // recorded size drops BELOW the deferred grow target. Re-mock to the shrunk leader (our on-chain shape unchanged —
+    // resync A's add is still in flight). This resync records at a NEWER seq than the deferred stash was stamped with.
+    vi.mocked(buildRemovePartial).mockImplementation(async () => [new Transaction()]);
+    vi.mocked(readLeaderPositionShape).mockImplementation(async (_c, _pool, _o, position) =>
+      position === R_LEADER_POS ? shape(200n, 200_000_000n) : shape(1_000n, 1_000_000_000n),
+    );
+    const updateSizeB = vi.spyOn(rt.store, 'updateSize');
+    rt.onEvent(
+      {
+        signature: 'sig-163-derisk',
+        blockTime: 2,
+        instruction: 'RemoveLiquidityByRange2',
+        depositSol: 0,
+        depositTokenRaw: 0,
+        withdrawSol: 2, // a leader REMOVE → resync (a de-risk)
+        claimSol: 0,
+        closed: false,
+        pool: R_POOL,
+        position: R_LEADER_POS,
+        nonSolMint: R_MINT,
+        nonSolSymbol: 'TKN',
+      },
+      'ws',
+      R_LEADER,
+      2,
+    );
+    await waitFor(
+      () => Promise.resolve(updateSizeB.mock.calls.filter((c) => c[0] === R_LEADER_POS).length),
+      (n) => n > 0,
+    );
+    const derisked = rt.registry.get(R_LEADER_POS)?.sizeSol as number;
+    expect(derisked).toBeLessThan(2); // resync B recorded a SMALLER (de-risked) size
+
+    // The buy from resync A finally confirms. Its deferred grow target (~4.5, stamped at the OLDER seq) must NOT
+    // clobber the newer de-risked size — the add still publishes (the bought token is deposited), only the SUPERSEDED
+    // size write is skipped.
+    await rt.publishReshapeAddAfterBuy(buy?.commandId as string, 'buysig');
+    expect(published.some((c) => c.kind === 'add')).toBe(true); // the deferred add DID publish (the full body ran)
+    const afterBuy = rt.registry.get(R_LEADER_POS)?.sizeSol as number;
+    expect(afterBuy).toBeCloseTo(derisked); // #163: the de-risked size STANDS — not clobbered back up
+    expect(afterBuy).toBeLessThan(3); // definitely NOT the ~4.5 grow target
+    expect(
+      (await rt.store.loadOpen()).find((m) => m.leaderPosition === R_LEADER_POS)?.sizeSol,
+    ).toBeCloseTo(derisked); // and the persisted size matches — never a stale over-count
+
+    updateSizeB.mockRestore();
+    vi.mocked(getJupiterQuote).mockReset();
+    vi.mocked(getJupiterBuyQuoteExactIn).mockReset();
+    vi.mocked(buildJupiterSwapTx).mockReset();
+    vi.mocked(readOwnerTokenBalance).mockReset();
+    vi.mocked(buildAddByWeight).mockReset();
+    vi.mocked(buildRemovePartial).mockReset();
+  });
+});
+
+describe('UserRuntime — a two-sided OPEN caps the buy on the LIVE quoted spend (finding #160)', () => {
+  const WSOL = 'So11111111111111111111111111111111111111112';
+  const O_LEADER = Keypair.generate().publicKey.toBase58();
+  const O_LEADER_POS = Keypair.generate().publicKey.toBase58();
+  const O_POOL = Keypair.generate().publicKey.toBase58();
+  const O_MINT = Keypair.generate().publicKey.toBase58();
+  const O_BLOCKHASH = Keypair.generate().publicKey.toBase58();
+  const MAX_TRADE_SOL = 1.0; // per-trade cap == the combined-deploy ceiling here (decision size is also 1.0)
+
+  // 2-bin two-sided leader: SOL/Y leg 0.25 SOL/bin (→ 0.5 SOL total) + a token/X leg (→ classified two-sided). Both
+  // legs on each bin ⇒ readStableShape settles on the first poll.
+  const shape = {
+    positionPubkey: '__open_160__',
+    activeBinId: 0,
+    lowerBinId: 0,
+    upperBinId: 1,
+    perBin: [
+      { binId: 0, x: 1_000n, y: 250_000_000n },
+      { binId: 1, x: 1_000n, y: 250_000_000n },
+    ],
+  };
+
+  it('a buy quote HIGHER than the detection estimate is scaled down: combined ≤ maxDeploy, buy never trips over_max_trade', async () => {
+    // WHY (#160, money): #94 caps the two-sided OPEN on the COMBINED leg value, but the token leg is valued at the
+    // DETECTION (bin-price) estimate while the ACTUAL buy spends the LIVE Jupiter price. A token pump between detection
+    // and execution makes `sizeLamports + buyQuote.inAmount` overshoot maxDeployLamports (a silent #94 breach) AND
+    // pushes the buy leg past maxTradeSol → the coffre rejects it (over_max_trade) and the whole open is DROPPED.
+    // Detection valued the 0.5-SOL token leg at 0.5 SOL; the live SELL quote returns 1.2 SOL (a spike). The fix re-caps
+    // the buy to the remaining budget (0.5 SOL) and re-quotes → combined == the 1.0 cap and buy == 0.5 ≤ maxTradeSol.
+    // Pre-fix the published buy would be 1.2 SOL (dropped) and the recorded combined 1.7 SOL (cap breached).
+    const published: Array<Record<string, unknown>> = [];
+    const conn = new Connection('http://127.0.0.1:1');
+    vi.spyOn(conn, 'getSlot').mockResolvedValue(1_000);
+    const blockhashCache = new BlockhashCache(async () => ({
+      blockhash: O_BLOCKHASH,
+      lastValidBlockHeight: 0,
+    }));
+    await blockhashCache.start();
+    const sharedO: SharedBrainDeps = {
+      ...shared,
+      conn,
+      blockhashCache,
+      // The two-sided OPEN path resolves the token's transfer fee (a Token-2022 fee would break the buy/deposit math);
+      // an UNREADABLE mint fails the guard closed (`transfer_fee_unavailable`). Resolve it to "no fee" so a plain SPL
+      // two-sided open proceeds — the divergent-buy scenario under test, not the transfer-fee guard.
+      filterDeps: { ...shared.filterDeps, mintExtensions: async () => false },
+      bus: {
+        publish: async (_s: string, _h: string, _k: string, payload: Record<string, unknown>) => {
+          published.push(payload);
+          return 'sid';
+        },
+      } as unknown as RedisBus,
+      poolReader: {
+        loadPoolMeta: async (pool: string) =>
+          pool === O_POOL
+            ? ({ solSide: 'Y', binStep: 20, mintX: O_MINT, mintY: WSOL } as LoadedPoolMeta)
+            : null,
+      } as unknown as OnchainPoolMetaReader,
+    };
+    const rt = await createUserRuntime(sharedO, 'open-160-recap', {
+      ...opts,
+      leader: O_LEADER,
+      initialConfig: {
+        ...CONFIG_DEFAULTS,
+        user: {
+          ...CONFIG_DEFAULTS.user,
+          twoSidedMode: 'on',
+          sizing: {
+            ...CONFIG_DEFAULTS.user.sizing,
+            tradeRatioPct: 100,
+            maxTradeSizeSol: MAX_TRADE_SOL,
+          },
+        },
+        leaders: [{ address: O_LEADER, enabled: true, maxTotalExposureSol: null, overrides: {} }],
+      },
+    });
+    vi.mocked(readLeaderPositionShape).mockResolvedValue(shape);
+    // The LIVE SELL price of tokenTarget = 1.2 SOL (a spike above the 0.5-SOL detection value): the divergence #160
+    // is about. getJupiterBuyQuoteExactIn is ExactIn → it echoes whatever SOL input it is asked to spend.
+    vi.mocked(getJupiterQuote).mockResolvedValue({
+      inputMint: O_MINT,
+      outputMint: WSOL,
+      inAmount: '0',
+      outAmount: '1200000000', // 1.2 SOL live value of the token target (detection valued it at 0.5)
+      raw: {},
+    });
+    vi.mocked(getJupiterBuyQuoteExactIn).mockImplementation(async (_url, _mint, solToSpend) => ({
+      inputMint: WSOL,
+      outputMint: O_MINT,
+      inAmount: String(solToSpend), // ExactIn echoes the requested spend
+      outAmount: '1000',
+      raw: {},
+    }));
+    vi.mocked(buildJupiterSwapTx).mockResolvedValue('buytx-b64');
+    vi.mocked(readOwnerTokenBalance).mockReset();
+    vi.mocked(readOwnerTokenBalance).mockResolvedValue(0n); // pre-buy snapshot
+
+    rt.onEvent(
+      {
+        signature: 'sig-160-open',
+        blockTime: 1,
+        instruction: 'AddLiquidityByStrategy2',
+        depositSol: 1, // detection total value 1.0 SOL (SOL leg 0.5 + token leg detection-valued 0.5)
+        depositTokenRaw: 2_000, // > dustTokenRaw → a genuine two-sided leader
+        withdrawSol: 0,
+        claimSol: 0,
+        closed: false,
+        pool: O_POOL,
+        position: O_LEADER_POS,
+        nonSolMint: O_MINT,
+        nonSolSymbol: 'TKN',
+      },
+      'ws',
+      O_LEADER,
+      1,
+    );
+    await waitFor(
+      () => Promise.resolve(published.some((c) => c.kind === 'buy')),
+      (v) => v,
+    );
+
+    const buy = published.find((c) => c.kind === 'buy');
+    const buySpendSol = buy?.sizeSol as number;
+    // (1) the buy leg alone is ≤ the per-trade cap → the coffre re-clamp PASSES → the open is NOT dropped (over_max_trade).
+    expect(buySpendSol).toBeLessThanOrEqual(MAX_TRADE_SOL);
+    expect(buySpendSol).toBeCloseTo(0.5); // scaled from the 1.2-SOL spike down to the 0.5-SOL remaining budget
+
+    const twoSidedOpens = rt.pendingOpenMapsView().twoSidedOpens as unknown as Map<
+      string,
+      { sizeSol: number; recordedSizeSol: number }
+    >;
+    const [stash] = [...twoSidedOpens.values()];
+    // (2) the COMBINED deployment recorded on the mirror is ≤ the cap (SOL leg + the ACTUAL buy spend) — no silent
+    // overshoot of #94's combined ceiling.
+    expect(stash?.recordedSizeSol).toBeLessThanOrEqual(MAX_TRADE_SOL);
+    expect(stash?.recordedSizeSol).toBeCloseTo(1.0); // 0.5 SOL leg + 0.5 capped buy == exactly the cap
+    // (3) only the token buy was trimmed — the SOL leg is deployed in full (the SOL leg did not get more expensive).
+    expect(stash?.sizeSol).toBeCloseTo(0.5);
+
+    vi.mocked(getJupiterQuote).mockReset();
+    vi.mocked(getJupiterBuyQuoteExactIn).mockReset();
+    vi.mocked(buildJupiterSwapTx).mockReset();
+    vi.mocked(readOwnerTokenBalance).mockReset();
+  });
+});
+
+describe('UserRuntime — the reshape-published emit is single-sourced from LOG_MARKER_RESHAPE_PUBLISHED (finding #168)', () => {
+  const WSOL = 'So11111111111111111111111111111111111111112';
+  const M_LEADER = Keypair.generate().publicKey.toBase58();
+  const M_LEADER_POS = Keypair.generate().publicKey.toBase58();
+  const M_OUR_POS = Keypair.generate().publicKey.toBase58();
+  const M_POOL = Keypair.generate().publicKey.toBase58();
+  const M_MINT = Keypair.generate().publicKey.toBase58();
+  const M_BLOCKHASH = Keypair.generate().publicKey.toBase58();
+
+  const shape = (xRaw: bigint, ySol: bigint) => ({
+    positionPubkey: '__resync_168__',
+    activeBinId: 0,
+    lowerBinId: 0,
+    upperBinId: 1,
+    perBin: [
+      { binId: 0, x: xRaw, y: ySol },
+      { binId: 1, x: xRaw, y: ySol },
+    ],
+  });
+
+  it('the reshape emit message CONTAINS the shared marker (a producer reword cannot silently kill the harness gate)', async () => {
+    // WHY (#168, CI integrity): the mega-soak harness (test-onchain/harness.ts) gates its reshape corroboration on
+    // grepping LOG_MARKER_RESHAPE_PUBLISHED out of the brain log. The emit used a bare literal, so a wording change
+    // would silently break the gate (it matches nothing → the reshape check goes dead) — the exact dead-gate class
+    // #101 fixed for `SIGN landed`. The emit is now built from the imported const; this drives a real reshape and
+    // asserts the LOGGED message still contains that marker, so any producer-side drift FAILS loudly here.
+    const msgs: string[] = [];
+    const capturingLog = {
+      info(_o: unknown, msg?: string) {
+        if (typeof msg === 'string') msgs.push(msg);
+      },
+      warn() {},
+      debug() {},
+      error() {},
+      child() {
+        return capturingLog;
+      },
+    };
+    const conn = new Connection('http://127.0.0.1:1');
+    vi.spyOn(conn, 'getSlot').mockResolvedValue(1_000);
+    const blockhashCache = new BlockhashCache(async () => ({
+      blockhash: M_BLOCKHASH,
+      lastValidBlockHeight: 0,
+    }));
+    await blockhashCache.start();
+    const sharedM: SharedBrainDeps = {
+      ...shared,
+      log: capturingLog as never,
+      conn,
+      blockhashCache,
+      bus: { publish: async () => 'sid' } as unknown as RedisBus,
+      poolReader: {
+        loadPoolMeta: async (pool: string) =>
+          pool === M_POOL
+            ? ({ solSide: 'Y', binStep: 20, mintX: M_MINT, mintY: WSOL } as LoadedPoolMeta)
+            : null,
+      } as unknown as OnchainPoolMetaReader,
+    };
+    const rt = await createUserRuntime(sharedM, 'reshape-marker-168', {
+      ...opts,
+      leader: M_LEADER,
+      initialConfig: {
+        ...CONFIG_DEFAULTS,
+        user: {
+          ...CONFIG_DEFAULTS.user,
+          twoSidedMode: 'off', // a pure SOL-leg shrink → no Jupiter; the reshape emit still fires
+          sizing: { ...CONFIG_DEFAULTS.user.sizing, tradeRatioPct: 100, maxTradeSizeSol: 5 },
+        },
+        leaders: [{ address: M_LEADER, enabled: true, maxTotalExposureSol: null, overrides: {} }],
+      },
+    });
+    rt.registry.open({
+      leaderPosition: M_LEADER_POS,
+      leaderAddress: M_LEADER,
+      ourPosition: M_OUR_POS,
+      pool: M_POOL,
+      nonSolSymbol: 'TKN',
+      nonSolMint: M_MINT,
+      sizeSol: 5,
+      lowerBin: 0,
+      upperBin: 1,
+      openedAt: Date.now(),
+    });
+    await rt.store.saveOpen(rt.registry.get(M_LEADER_POS)!);
+    // A leader DE-RISK → our position exceeds it → removes publish → the reshape-published emit fires.
+    vi.mocked(buildRemovePartial).mockImplementation(async () => [new Transaction()]);
+    vi.mocked(readLeaderPositionShape).mockImplementation(async (_c, _pool, _o, position) =>
+      position === M_LEADER_POS ? shape(1_000n, 500_000_000n) : shape(1_000n, 2_500_000_000n),
+    );
+    rt.onEvent(
+      {
+        signature: 'sig-168',
+        blockTime: 1,
+        instruction: 'RemoveLiquidityByRange2',
+        depositSol: 0,
+        depositTokenRaw: 0,
+        withdrawSol: 2,
+        claimSol: 0,
+        closed: false,
+        pool: M_POOL,
+        position: M_LEADER_POS,
+        nonSolMint: M_MINT,
+        nonSolSymbol: 'TKN',
+      },
+      'ws',
+      M_LEADER,
+      1,
+    );
+    const reshapeLogged = (): boolean => msgs.some((m) => m.includes(LOG_MARKER_RESHAPE_PUBLISHED));
+    await waitFor(
+      () => Promise.resolve(reshapeLogged()),
+      (v) => v,
+    );
+    expect(reshapeLogged()).toBe(true); // the harness's marker substring IS present in the runtime message
+    vi.mocked(buildRemovePartial).mockReset();
   });
 });
 

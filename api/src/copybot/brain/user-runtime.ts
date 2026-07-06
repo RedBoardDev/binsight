@@ -31,7 +31,7 @@ import type { Logger } from 'pino';
 import { deriveCommandId } from '@/copybot/command-id';
 import { derivePositionKeypair } from '@/copybot/ephemeral-position';
 import type { HeartbeatStore } from '@/copybot/heartbeat-store';
-import { LOG_MARKER_EVENT_ROUTED } from '@/copybot/log-markers';
+import { LOG_MARKER_EVENT_ROUTED, LOG_MARKER_RESHAPE_PUBLISHED } from '@/copybot/log-markers';
 import { CopyEvents } from '@/copybot/observability/copy-events';
 import { EventStore } from '@/copybot/observability/event-store';
 import { purgeRugExitPending, RugExitStore } from '@/copybot/rug-exit-store';
@@ -590,6 +590,10 @@ export async function createUserRuntime(
        *  exposure (removes land synchronously; the grow is not real until its add publishes); this target is applied
        *  when publishReshapeAddAfterBuy actually publishes the add — never inflating caps for an add that never lands. */
       deferredSizeSol?: number;
+      /** #163 — the monotonic per-position resync sequence at which `deferredSizeSol` was recorded. If a LATER resync
+       *  recorded a (smaller) size while this buy was in flight (leader de-risked between grow-publish and buy-confirm),
+       *  the stashed target is STALE; publishReshapeAddAfterBuy skips it rather than clobber the newer recorded size. */
+      deferredSizeSeq?: number;
     }
   >();
   const buildingToken2022Positions = new Map<string, number>(); // ourPosition → ms the create was published (orphan-close grace while the deposit lands)
@@ -633,6 +637,14 @@ export async function createUserRuntime(
     string,
     { atMs: number; sol: Map<number, number>; token: Map<number, number> }
   >();
+  // #163 — a monotonic per-leader-position sequence, bumped every time handleResync RECORDS a size. A DEFERRED
+  // two-sided grow stamps the seq it recorded at onto its pending-add ctx; when the buy confirms,
+  // publishReshapeAddAfterBuy applies the deferred size ONLY if no NEWER resync has recorded since (i.e. the stamp is
+  // still the latest). Without this, a resync that de-risked the position between the grow-publish and the buy-confirm
+  // (recording a SMALLER size) would be silently CLOBBERED back up to the stale grow target — exposure over-counted
+  // (up to ~4×), a wrong fee base and spurious open-blocking. In-memory like the pending maps above; a crash drops it
+  // and the on-chain reconcile re-trues the size, so nothing is stuck. Cleared on close alongside inFlightReshapeTargets.
+  const resyncRecordSeq = new Map<string, number>();
 
   // Per-user opens-per-window ring (3b step 8): wall-clock ms of every mirror THIS user opened, feeding
   // caps.maxOpensPerWindow (checkCaps filters by the live window). PER USER by construction — user A's open burst
@@ -1230,6 +1242,27 @@ export async function createUserRuntime(
         solToSpend,
         ec.execution.slippageBps,
       );
+      // #160 — re-cap the buy on the ACTUAL quoted spend. sizeTwoSided bounded the COMBINED deploy (SOL leg + token
+      // leg) on the DETECTION token value (bin-price), but buyQuote.inAmount is the LIVE, Jupiter-priced spend: a
+      // token price move UP between detection and this quote makes `sizeLamports + inAmount` overshoot
+      // maxDeployLamports (~20%, up to ~2× token-heavy) — a silent breach of #94's combined cap AND a buy leg that can
+      // exceed maxTradeSol, which the coffre rejects (over_max_trade) → the whole open is silently DROPPED. Cap the
+      // buy spend to the remaining budget and re-quote so the combined deploy stays ≤ the ceiling (same combined
+      // semantics as #94/#158). `sizeLamports ≤ maxDeployLamports` by construction ⇒ `availableForBuy ≥ 0` and ≥ the
+      // intended (detection-valued) token budget ⇒ this only ever trims a price-spike overshoot, never a normal buy.
+      // If it STILL overshoots after the re-quote (a pathological ExactIn echo), the throw skips both-or-nothing —
+      // never a partial one-sided open, never a cap breach. Only the token leg is reduced; the SOL leg is untouched.
+      const availableForBuy = maxDeployLamports - sizeLamports;
+      if (sizeLamports + BigInt(buyQuote.inAmount) > maxDeployLamports) {
+        buyQuote = await getJupiterBuyQuoteExactIn(
+          jupiterBaseUrl,
+          tokenMint,
+          availableForBuy,
+          ec.execution.slippageBps,
+        );
+        if (sizeLamports + BigInt(buyQuote.inAmount) > maxDeployLamports)
+          throw new Error('two-sided buy still exceeds the combined deploy cap after re-quote');
+      }
       buyTxB64 = await buildJupiterSwapTx(jupiterBaseUrl, buyQuote, ownerPk.toBase58());
     } catch (err) {
       // SAFE: the token leg genuinely can't be acquired (no route EVEN via ExactIn, or a priced-at-0 leg). We do NOT
@@ -1924,9 +1957,21 @@ export async function createUserRuntime(
       // handleResync stashed. Until this point the tracked size stayed at the pre-grow value, so the caps never
       // counted a grow whose add had not landed (a Jupiter blip / unsettled balance returns above, before the
       // publish → the size is never inflated for an add that never happened).
+      // #163 — but apply it ONLY if this stash is still the LATEST recorded resync (its stamped seq == the current
+      // per-position record seq). A resync that de-risked this position while the buy was in flight already recorded
+      // the current, SMALLER size; writing the stale grow target here would clobber it → exposure over-counted (up to
+      // ~4×), a wrong fee base and spurious open-blocking. The monotonic seq is correct under any interleave (a
+      // raise-only reconcile would still clobber a de-risk). Superseded ⇒ skip; the newer size stands, the reconcile re-trues.
       if (ctx.deferredSizeSol !== undefined) {
-        registry.adjustSize(leaderPosition, ctx.deferredSizeSol);
-        await store.updateSize(leaderPosition, ctx.deferredSizeSol);
+        const latestSeq = resyncRecordSeq.get(leaderPosition);
+        const superseded =
+          ctx.deferredSizeSeq !== undefined &&
+          latestSeq !== undefined &&
+          latestSeq > ctx.deferredSizeSeq;
+        if (!superseded) {
+          registry.adjustSize(leaderPosition, ctx.deferredSizeSol);
+          await store.updateSize(leaderPosition, ctx.deferredSizeSol);
+        }
       }
       log.info(
         { our: ourPosition, bins: dist.length },
@@ -2052,6 +2097,7 @@ export async function createUserRuntime(
     const { issuedAtSlot, deadlineSlot } = await slots();
     registry.close(e.position); // in-memory fast path (caps/dedup); the DB is marked closed by the reconcile once confirmed on-chain
     inFlightReshapeTargets.delete(e.position); // #121 — the position is closing; drop any in-flight reshape target
+    resyncRecordSeq.delete(e.position); // #163 — closing; drop the resync record sequence (a fresh open starts from 0)
     await publish(
       {
         commandId: commandIdFor(eventKey),
@@ -2568,11 +2614,19 @@ export async function createUserRuntime(
     // the open path records SOL leg + buy spend, and here `deploy == newSize` by construction. A deferred two-sided
     // grow records `newSize` later, when publishReshapeAddAfterBuy publishes its add (stashed on the pending ctx below).
     const recordedSize = growPublished ? newSize : Math.min(newSize, m.sizeSol);
+    // #163 — bump the monotonic per-position record sequence. A deferred grow stamps this value onto its pending-add
+    // ctx; a LATER resync that records (e.g. a de-risk) bumps it past the stamp, so publishReshapeAddAfterBuy can tell
+    // its stashed target has been SUPERSEDED and skip the write instead of clobbering the newer, smaller recorded size.
+    const recordSeq = (resyncRecordSeq.get(e.position) ?? 0) + 1;
+    resyncRecordSeq.set(e.position, recordSeq);
     registry.adjustSize(e.position, recordedSize);
     await store.updateSize(e.position, recordedSize);
     if (deferredGrowKey) {
       const pending = pendingReshapeAdds.get(deferredGrowKey);
-      if (pending) pending.deferredSizeSol = newSize; // applied on the deferred add's publish (buy confirm)
+      if (pending) {
+        pending.deferredSizeSol = newSize; // applied on the deferred add's publish (buy confirm) — unless superseded (#163)
+        pending.deferredSizeSeq = recordSeq; // the seq this deferred target was recorded at (see publishReshapeAddAfterBuy)
+      }
     }
     // #121 — record the target this reshape drives OUR position toward, so a rapid follow-up resync nets against it
     // (the read override above) instead of the stale on-chain read. Only when we PUBLISHED something (removes / a
@@ -2614,7 +2668,9 @@ export async function createUserRuntime(
         recordedSize,
         target: newSize,
       },
-      '🔧 reshape published (per-bin exact)',
+      // #168 — build the message from the shared marker const so a reword can NEVER silently kill the mega-soak
+      // harness reshape-corroboration gate (harness.ts greps LOG_MARKER_RESHAPE_PUBLISHED). Byte-identical text.
+      `🔧 ${LOG_MARKER_RESHAPE_PUBLISHED} (per-bin exact)`,
     );
   }
 
@@ -2865,6 +2921,7 @@ export async function createUserRuntime(
     await store.markClosed(m.leaderPosition);
     registry.close(m.leaderPosition);
     inFlightReshapeTargets.delete(m.leaderPosition); // #121 — close confirmed; drop any in-flight reshape target
+    resyncRecordSeq.delete(m.leaderPosition); // #163 — close confirmed; drop the resync record sequence
     recentlyPublishedClose.delete(ourPosition);
     rugSlTracker.forget(ourPosition);
     events.closed({

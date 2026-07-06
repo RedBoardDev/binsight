@@ -25,7 +25,8 @@ export const LOG_MARKER_SUBMITTED = '🚀 submitted';
  * Brain: a reshape (proportional add/remove mirroring the leader's bin-shape change) was published to the bus. This is
  * the STABLE core of the emit message `🔧 reshape published (per-bin exact)` (user-runtime.ts) — the emoji and the
  * `(per-bin exact)` qualifier are volatile decoration, so the shared marker is the semantic substring the harness gates
- * on. (Emit site is in the sibling-owned user-runtime.ts; wiring it to this const is a follow-up.)
+ * on. The emit site (user-runtime.ts `handleResync`) builds its message from this const (#168), so the producer and the
+ * harness gate share the SAME source string — a reword there can no longer silently drift the gate dead.
  */
 export const LOG_MARKER_RESHAPE_PUBLISHED = 'reshape published';
 
