@@ -1,5 +1,5 @@
 /**
- * Copy-bot · BRAIN — validated numeric env tunables (grace/cadence/batch), finding #58. Split into its OWN module,
+ * Copy-bot · BRAIN — validated numeric env tunables (grace/cadence/batch/balance), finding #58. Split into its OWN module,
  * PURE + SDK-free, so it is unit-testable in isolation: brain-main.ts transitively imports the DLMM SDK, which does
  * not load under vitest, so the parser could not be tested through brain-main.
  *
@@ -7,6 +7,9 @@
  * `setInterval(NaN)` (and any value <= 0) busy-loops ~every 1ms, and `now - openedAt < NaN` is always false so the
  * reconcile open-grace never applies (a fresh open gets false-closed). So each tunable that is not a finite number in
  * its sensible range falls back to its documented default and is RECORDED as a warning the boot caller logs LOUDLY.
+ * COPIER_BALANCE_SOL (the SYSTEM/bench sizing balance) is validated here too — it escaped #58's original pass, and a
+ * NaN there silently corrupts the SYSTEM/bench sizing — with the SAME fail-safe fallback + loud warning (a positive
+ * amount that, unlike the ms/count tunables, MAY be fractional, e.g. 0.5 SOL).
  * Mirrors coffre parseCoffreNumericConfig, but fail-SAFE (a mistyped operational tunable must not kill the brain — a
  * dead brain misses a leader close, the #1 sin), not fail-closed.
  */
@@ -18,6 +21,7 @@ const DEFAULT_SWEEP_MS = 60_000; // wallet token→SOL safety-sweep cadence (SYS
 const DEFAULT_FEE_SWEEP_MS = 60_000; // performance-fee sweep cadence (Inc.4d): retry each pending fee transfer until it lands
 const DEFAULT_FEE_SWEEP_BATCH = 25; // max pending fees published per sweep tick (bounds the per-tick publish burst)
 const DEFAULT_FEE_BACKSTOP_GRACE_MS = 300_000; // 5 min — a CLOSED position is only re-assessed by the backstop after this (the exact close-sell assess wins first)
+const DEFAULT_COPIER_BALANCE_SOL = 10; // SYSTEM/bench copy-wallet balance (SOL) used for sizing when COPIER_BALANCE_SOL is unset
 
 /** The brain's validated numeric env tunables (grace/cadence/batch). */
 export interface BrainNumericConfig {
@@ -26,6 +30,7 @@ export interface BrainNumericConfig {
   feeSweepMs: number;
   feeSweepBatch: number;
   feeBackstopGraceMs: number;
+  copierBalanceSol: number;
 }
 
 /** A tunable that failed validation and fell back to its documented default (the boot caller logs it loudly). */
@@ -42,6 +47,7 @@ export function parseBrainNumericConfig(env: {
   FEE_SWEEP_MS?: string;
   FEE_SWEEP_BATCH?: string;
   FEE_BACKSTOP_GRACE_MS?: string;
+  COPIER_BALANCE_SOL?: string;
 }): { config: BrainNumericConfig; warnings: BrainNumericTunableWarning[] } {
   const warnings: BrainNumericTunableWarning[] = [];
   // A finite duration (ms) >= MIN_TUNABLE_MS; anything else (NaN / <= 0 / non-finite) → default + a warning.
@@ -64,6 +70,17 @@ export function parseBrainNumericConfig(env: {
     }
     return n;
   };
+  // A finite amount strictly > 0 (SOL — MAY be fractional, e.g. 0.5, so it is NOT a durationMs/count); NaN / <= 0 /
+  // non-finite → default + a warning. A 0 or NaN balance would size every position to nothing (silent sizing corruption).
+  const positiveFinite = (name: string, raw: string | undefined, fallback: number): number => {
+    if (raw === undefined) return fallback;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) {
+      warnings.push({ name, raw, fallback });
+      return fallback;
+    }
+    return n;
+  };
   const config: BrainNumericConfig = {
     reconcileOpenGraceMs: durationMs(
       'RECONCILE_OPEN_GRACE_MS',
@@ -81,6 +98,11 @@ export function parseBrainNumericConfig(env: {
       'FEE_BACKSTOP_GRACE_MS',
       env.FEE_BACKSTOP_GRACE_MS,
       DEFAULT_FEE_BACKSTOP_GRACE_MS,
+    ),
+    copierBalanceSol: positiveFinite(
+      'COPIER_BALANCE_SOL',
+      env.COPIER_BALANCE_SOL,
+      DEFAULT_COPIER_BALANCE_SOL,
     ),
   };
   return { config, warnings };

@@ -10,6 +10,7 @@ describe('parseBrainNumericConfig — validated numeric env tunables (finding #5
       feeSweepMs: 60_000,
       feeSweepBatch: 25,
       feeBackstopGraceMs: 300_000,
+      copierBalanceSol: 10,
     });
     expect(warnings).toEqual([]);
   });
@@ -21,6 +22,7 @@ describe('parseBrainNumericConfig — validated numeric env tunables (finding #5
       FEE_SWEEP_MS: '120000',
       FEE_SWEEP_BATCH: '10',
       FEE_BACKSTOP_GRACE_MS: '600000',
+      COPIER_BALANCE_SOL: '25',
     });
     expect(config).toEqual({
       reconcileOpenGraceMs: 45_000,
@@ -28,6 +30,7 @@ describe('parseBrainNumericConfig — validated numeric env tunables (finding #5
       feeSweepMs: 120_000,
       feeSweepBatch: 10,
       feeBackstopGraceMs: 600_000,
+      copierBalanceSol: 25,
     });
     expect(warnings).toEqual([]);
   });
@@ -56,6 +59,24 @@ describe('parseBrainNumericConfig — validated numeric env tunables (finding #5
     const zero = parseBrainNumericConfig({ FEE_SWEEP_BATCH: '0' });
     expect(zero.config.feeSweepBatch).toBe(25);
     expect(zero.warnings[0]?.name).toBe('FEE_SWEEP_BATCH');
+  });
+
+  it('COPIER_BALANCE_SOL is validated as a positive finite amount: NaN / <= 0 fall back, a fractional balance is kept', () => {
+    // WHY (#2): COPIER_BALANCE_SOL escaped #58's original pass — a bare Number() let a typo become NaN that silently
+    // corrupts the SYSTEM/bench sizing. Unlike a duration/batch it MAY be fractional (e.g. 0.5 SOL), so it gets its
+    // own strictly-positive-finite check rather than reusing durationMs (which would wrongly reject 0.5).
+    const nan = parseBrainNumericConfig({ COPIER_BALANCE_SOL: '1O' }); // letter-O, not a zero → NaN
+    expect(nan.config.copierBalanceSol).toBe(10); // the documented default, NOT NaN
+    expect(nan.warnings).toEqual([{ name: 'COPIER_BALANCE_SOL', raw: '1O', fallback: 10 }]);
+    const zero = parseBrainNumericConfig({ COPIER_BALANCE_SOL: '0' });
+    expect(zero.config.copierBalanceSol).toBe(10); // a 0 balance sizes every position to nothing → fall back
+    expect(zero.warnings[0]?.name).toBe('COPIER_BALANCE_SOL');
+    const negative = parseBrainNumericConfig({ COPIER_BALANCE_SOL: '-5' });
+    expect(negative.config.copierBalanceSol).toBe(10);
+    expect(negative.warnings[0]?.name).toBe('COPIER_BALANCE_SOL');
+    const fractional = parseBrainNumericConfig({ COPIER_BALANCE_SOL: '0.5' });
+    expect(fractional.config.copierBalanceSol).toBe(0.5); // fractional SOL is VALID (not rejected like a batch count)
+    expect(fractional.warnings).toEqual([]);
   });
 
   it('only the mistyped tunable falls back — the valid ones are untouched (per-tunable isolation)', () => {

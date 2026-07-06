@@ -119,7 +119,9 @@ const cfg = {
   dbUrl: process.env.DATABASE_URL ?? 'postgres://meteora:meteora@localhost:5435/meteora',
   leader: process.env.COPYBOT_LEADER ?? '8ryctvNwpJTuuap3wuNTfcyEx4DjSuXvhGXSDHNaU8sQ',
   // ownerPubkey is NOT defaulted here (#24): the copy wallet is resolved fail-closed in main() via requireCopierOwner.
-  balanceSol: Number(process.env.COPIER_BALANCE_SOL ?? '10'),
+  // balanceSol is #58-hardened in parseBrainNumericConfig (finite, > 0; a typo → the documented default + a loud boot
+  // warning): a bare Number() let a mistyped COPIER_BALANCE_SOL become NaN that silently corrupts SYSTEM/bench sizing.
+  balanceSol: brainNumericConfig.copierBalanceSol,
   jupiterBaseUrl: process.env.JUPITER_BASE_URL ?? DEFAULT_JUPITER_BASE_URL,
   jitoEnabledEnv:
     process.env.COPYBOT_JITO !== undefined ? process.env.COPYBOT_JITO === 'true' : undefined, // env override of the DB jitoEnabled (anti-sandwich tip ix)
@@ -562,6 +564,9 @@ async function main(): Promise<void> {
       log,
       listActiveUserIds: () => configStore.listActiveUserIds(),
       listUserIdsWithOpenMirrors: () => copybotPositionsRepo.listUserIdsWithOpenMirrors(),
+      // #3 — union users still owing a PENDING fee into the spawn set: a user who STOPPED after their last close left
+      // a pending fee has no open mirror either, so ONLY this boots them (drained / fee-sweep-only) to collect it.
+      listUserIdsWithPendingFees: () => feeLedgerRepo.listUserIdsWithPendingFees(),
       loadConfig: (uid) => configStore.load(uid),
       spawn: spawnRuntime,
       runtimes,
@@ -936,6 +941,9 @@ async function main(): Promise<void> {
     process.exit(0);
   };
   process.on('SIGINT', () => void shutdown());
+  // SIGINT covers Ctrl-C; docker/systemd/k8s deliver SIGTERM on stop, so WITHOUT this handler the graceful shutdown()
+  // never runs under a supervisor (the bus/DB/WS are left un-drained). Mirrors the coffre, which registers both.
+  process.on('SIGTERM', () => void shutdown());
   if (autoStopSec > 0) setTimeout(() => void shutdown(), autoStopSec * 1000);
 }
 

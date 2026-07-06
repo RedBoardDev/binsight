@@ -5,6 +5,8 @@
  *  - listPending returns only sweepable fees, oldest first (a 'skipped' no-sink row is never swept);
  *  - listPending is scoped to CURRENTLY-BOOTED users and bounded AFTER that filter, so a deactivated user's
  *    un-swept fee can never head-of-line-block a live user's fee out of the bounded batch (finding #155);
+ *  - listUserIdsWithPendingFees returns DISTINCT pending-fee owners (the #3 spawn union that boots a stopped user
+ *    so their fee is collected) — landed/skipped excluded, each owner once (it keys a runtime spawn, not a fee list);
  *  - markLanded flips pending → landed once (a duplicate ev:executed(fee) confirm must not re-report);
  *  - bumpAttempts records each publish try (per-attempt journaling), leaving the row retryable.
  */
@@ -57,6 +59,20 @@ describe('FeeLedgerRepository', () => {
     const { repo } = await newRepo();
     await repo.assess('U', 'POS', 100, 5, 'pending');
     expect(await repo.listPending([], 10)).toEqual([]); // empty booted set → no query, no rows
+  });
+
+  it('listUserIdsWithPendingFees returns DISTINCT pending owners (landed/skipped excluded) — the #3 spawn union', async () => {
+    // WHY (#3): the boot/reload spawn set unions these so a STOPPED user with a pending fee is booted fee-sweep-only
+    // and the operator collects it. Only 'pending' owners count (a landed/skipped row must not resurrect a runtime),
+    // and a user with several pending fees appears ONCE (it is a spawn KEY, not a per-fee list).
+    const { repo } = await newRepo();
+    await repo.assess('A', 'POS1', 100, 5, 'pending');
+    await repo.assess('A', 'POS2', 100, 5, 'pending'); // same user, 2nd pending fee → still ONE id (distinct)
+    await repo.assess('B', 'POS3', 100, 5, 'landed'); // already collected → excluded
+    await repo.assess('C', 'POS4', 100, 5, 'skipped'); // no-sink → excluded
+    await repo.assess('D', 'POS5', 100, 5, 'pending');
+    const ids = await repo.listUserIdsWithPendingFees();
+    expect([...ids].sort()).toEqual(['A', 'D']); // distinct owners with a 'pending' fee only
   });
 
   it('bumpAttempts increments and leaves the row pending (retryable)', async () => {

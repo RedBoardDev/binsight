@@ -72,6 +72,22 @@ export class FeeLedgerRepository {
       .limit(limit);
   }
 
+  /**
+   * DISTINCT user_ids that still owe a 'pending' fee. The boot/reload spawn UNION reads this (finding #3) so a user
+   * who STOPPED with a pending performance fee — no open mirror ⇒ absent from BOTH listActiveUserIds and
+   * listUserIdsWithOpenMirrors — is still spawned (drained / fee-sweep-only) and the operator collects that fee.
+   * Complements listPending's booted-only filter (#155): that filter stops un-bootable fees from head-of-line-
+   * blocking the bounded batch; this makes those users bootable so the pending fee actually drains. Mirrors
+   * CopybotPositionsRepository.listUserIdsWithOpenMirrors — a spawn KEY (each owner once), not a per-fee list.
+   */
+  async listUserIdsWithPendingFees(): Promise<string[]> {
+    const rows = await this.db
+      .selectDistinct({ userId: feeLedger.userId })
+      .from(feeLedger)
+      .where(eq(feeLedger.state, 'pending'));
+    return rows.map((r) => r.userId);
+  }
+
   /** Count a publish attempt for a pending fee (per-attempt journaling; the row stays pending until it lands). */
   async bumpAttempts(userId: string, ourPosition: string): Promise<void> {
     const row = await this.db
