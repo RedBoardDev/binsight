@@ -10,7 +10,7 @@ import type { FilterConfig } from '../filters';
 import type { PriorityFeeConfig } from '../priority-fee';
 import type { RugSlConfig } from '../rug-sl';
 import type { SizingConfig } from '../sizing';
-import type { CopybotConfig, EffectiveConfig, ExecutionConfig } from './types';
+import type { CopybotConfig, EffectiveConfig, ExecutionConfig, TwoSidedMode } from './types';
 
 /** Merge a sparse leader sizing override onto the user sizing. `maxTradeSizeSol` is lower-only (tighten, never raise). */
 function mergeSizing(base: SizingConfig, ov?: Partial<SizingConfig>): SizingConfig {
@@ -24,6 +24,24 @@ function mergeSizing(base: SizingConfig, ov?: Partial<SizingConfig>): SizingConf
 /** Merge a sparse filter override (per-leader, or env bridge) onto a base filter config. */
 function mergeFilters(base: FilterConfig, ov?: Partial<FilterConfig>): FilterConfig {
   return ov ? { ...base, ...ov } : base;
+}
+
+/**
+ * Force the transfer-fee guard ON for any TWO-SIDED flow (`twoSidedMode !== 'off'`). The two-sided deposit funds the
+ * token leg through a flat ~0.1% haircut (`user-runtime` `depositableToken`) that a real Token-2022 `TransferFeeConfig`
+ * mint defeats: the fee'd transfer lands SHORT, so the deposit fails (empty position orphan-closed + token swept back =
+ * pure buy/sell/fee churn) or lands mis-composed — and every two-sided open of that mint repeats the loss (finding #165,
+ * completing #105). Coupling `skipTransferFeeTokens` here — a fail-closed brick (an unreadable/unverifiable mint also
+ * skips) — means a two-sided open of a fee'd mint can NEVER proceed. Returns a NEW config (never mutates the shared
+ * `user.filters` reference `mergeFilters` may pass through). One-sided-only leaders (`twoSidedMode === 'off'`) are
+ * untouched: the brick stays opt-in for them.
+ */
+function forceTwoSidedFilterGuards(
+  filters: FilterConfig,
+  twoSidedMode: TwoSidedMode,
+): FilterConfig {
+  if (twoSidedMode === 'off') return filters;
+  return { ...filters, skipTransferFeeTokens: true };
 }
 
 /** Merge a sparse execution override (per-leader, or env bridge) onto a base execution config. */
@@ -52,6 +70,7 @@ export function effectiveFor(cfg: CopybotConfig, address: string): EffectiveConf
   const leader = cfg.leaders.find((l) => l.address === address);
   const ov = leader?.overrides ?? {};
   const leaderEnabled = leader?.enabled ?? false;
+  const twoSidedMode = ov.twoSidedMode ?? user.twoSidedMode; // resolve once — also gates the forced two-sided filter guard
   const caps: CapsConfig = {
     ...user.caps,
     killSwitchGlobal: user.caps.killSwitchGlobal || !user.enabled, // master switch off ⇒ no opens
@@ -59,8 +78,8 @@ export function effectiveFor(cfg: CopybotConfig, address: string): EffectiveConf
   };
   return {
     sizing: mergeSizing(user.sizing, ov.sizing),
-    twoSidedMode: ov.twoSidedMode ?? user.twoSidedMode,
-    filters: mergeFilters(user.filters, ov.filters),
+    twoSidedMode,
+    filters: forceTwoSidedFilterGuards(mergeFilters(user.filters, ov.filters), twoSidedMode),
     execution: mergeExecution(user.execution, ov.execution),
     priorityFee: mergePriorityFee(user.priorityFee, ov.priorityFee),
     rugSl: mergeRugSl(user.rugSl, ov.rugSl),

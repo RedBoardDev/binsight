@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { FILTERS_ALL_OFF, type FilterContext, runFilters } from '../filters';
 import { RUG_SL_RETAIN_MS } from '../rug-sl';
 import {
   CONFIG_DEFAULTS,
@@ -7,6 +8,7 @@ import {
   DEFAULT_LEADER_ADDRESS,
   effectiveFor,
   isValidConfigBlob,
+  type LeaderOverride,
   parseConfig,
   STOPPED_CONFIG_DEFAULTS,
 } from './index';
@@ -413,5 +415,100 @@ describe('config · caps rate-limit pairing (idx18)', () => {
 
   it('rejects a window with no count (the reverse half-config — also a silently-off limit)', () => {
     expect(CopybotConfigSchema.safeParse(withRateLimit(null, 10)).success).toBe(false);
+  });
+});
+
+describe('config · effectiveFor · two-sided forces the transfer-fee guard (finding #165)', () => {
+  // WHY (#165, completing #105): a two-sided open funds the token leg through a flat ~0.1% deposit haircut that a
+  // Token-2022 TransferFeeConfig mint defeats — the fee'd transfer lands SHORT → a failed/mis-composed deposit that
+  // churns pure buy/sell/fee loss, repeated on EVERY such open. So ANY two-sided flow (twoSidedMode !== 'off') MUST run
+  // the fail-closed skipTransferFeeTokens guard regardless of the user's filter config; one-sided ('off') users stay
+  // opt-in. The coupling lives at the effectiveFor resolution site so both the source fetch (neededSources) and the gate
+  // (runFilters) see the forced flag.
+  const feeCandidate = { nonSolMint: 'MINT', pool: 'POOL' };
+  const withFee: FilterContext = { openTokenMints: new Set(), hasTransferFee: true };
+  const feeFree: FilterContext = { openTokenMints: new Set(), hasTransferFee: false };
+
+  // User keeps filters at defaults (all OFF); vary only the two-sided mode (user-global or via a leader override).
+  const configWith = (
+    userTwoSided: CopybotConfig['user']['twoSidedMode'],
+    leaderOverride: LeaderOverride = {},
+  ): CopybotConfig => ({
+    user: { ...CONFIG_DEFAULTS.user, twoSidedMode: userTwoSided },
+    leaders: [
+      { address: LEADER, enabled: true, maxTotalExposureSol: null, overrides: leaderOverride },
+    ],
+  });
+
+  it('leader twoSidedMode=on + filters left at defaults → the guard is forced ON in the effective filters', () => {
+    const eff = effectiveFor(configWith('off', { twoSidedMode: 'on' }), LEADER);
+    expect(eff.filters.skipTransferFeeTokens).toBe(true); // forced despite the user never enabling it
+  });
+
+  it('a two-sided open of a fee-carrying mint is SKIPPED even though the user left the filter off (no churn)', () => {
+    const eff = effectiveFor(configWith('off', { twoSidedMode: 'on' }), LEADER);
+    expect(runFilters(feeCandidate, withFee, eff.filters)).toEqual({
+      action: 'skip',
+      reason: 'transfer_fee_token',
+    });
+  });
+
+  it('a two-sided open of a fee-FREE mint still proceeds (the guard only blocks fee/unverifiable mints)', () => {
+    const eff = effectiveFor(configWith('off', { twoSidedMode: 'on' }), LEADER);
+    expect(runFilters(feeCandidate, feeFree, eff.filters)).toEqual({ action: 'pass' });
+  });
+
+  it('user-global twoSidedMode=on (no leader override) also forces the guard — the finding’s exact scenario', () => {
+    const eff = effectiveFor(configWith('on'), LEADER);
+    expect(eff.filters.skipTransferFeeTokens).toBe(true);
+    expect(runFilters(feeCandidate, withFee, eff.filters).action).toBe('skip');
+  });
+
+  it('shadow mode forces the guard too — the boundary is `!== off`, not only `on`', () => {
+    expect(effectiveFor(configWith('shadow'), LEADER).filters.skipTransferFeeTokens).toBe(true);
+  });
+
+  it('forcing the guard preserves the user’s OTHER filter settings (surgical — one key only)', () => {
+    const cfg: CopybotConfig = {
+      user: {
+        ...CONFIG_DEFAULTS.user,
+        twoSidedMode: 'on',
+        filters: { ...FILTERS_ALL_OFF, minHolders: 100 },
+      },
+      leaders: [{ address: LEADER, enabled: true, maxTotalExposureSol: null, overrides: {} }],
+    };
+    const f = effectiveFor(cfg, LEADER).filters;
+    expect(f.skipTransferFeeTokens).toBe(true); // forced
+    expect(f.minHolders).toBe(100); // the user's own filter setting is untouched
+  });
+
+  it('one-sided (twoSidedMode=off) keeps the guard OPTIONAL: user config respected, a fee mint is NOT force-skipped', () => {
+    const eff = effectiveFor(configWith('off'), LEADER); // user left skipTransferFeeTokens off
+    expect(eff.filters.skipTransferFeeTokens).toBe(false); // NOT forced
+    expect(runFilters(feeCandidate, withFee, eff.filters)).toEqual({ action: 'pass' }); // guard never runs
+  });
+
+  it('a one-sided user who OPTED IN still keeps the guard (opt-in honored, coupling is one-directional)', () => {
+    const cfg: CopybotConfig = {
+      user: {
+        ...CONFIG_DEFAULTS.user,
+        twoSidedMode: 'off',
+        filters: { ...FILTERS_ALL_OFF, skipTransferFeeTokens: true },
+      },
+      leaders: [{ address: LEADER, enabled: true, maxTotalExposureSol: null, overrides: {} }],
+    };
+    expect(effectiveFor(cfg, LEADER).filters.skipTransferFeeTokens).toBe(true);
+  });
+
+  it('forcing the guard does NOT mutate the caller’s filters object (effectiveFor stays pure)', () => {
+    // WHY: mergeFilters passes the base filters through BY REFERENCE when there is no override; forcing the flag must
+    // clone, never write back — else a single two-sided resolve would corrupt the shared/persisted user config.
+    const sharedFilters = { ...FILTERS_ALL_OFF }; // skipTransferFeeTokens: false
+    const cfg: CopybotConfig = {
+      user: { ...CONFIG_DEFAULTS.user, twoSidedMode: 'on', filters: sharedFilters },
+      leaders: [{ address: LEADER, enabled: true, maxTotalExposureSol: null, overrides: {} }],
+    };
+    expect(effectiveFor(cfg, LEADER).filters.skipTransferFeeTokens).toBe(true); // resolved config has the guard
+    expect(sharedFilters.skipTransferFeeTokens).toBe(false); // ...but the source object is untouched
   });
 });
