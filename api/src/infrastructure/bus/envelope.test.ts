@@ -24,7 +24,7 @@ describe('envelope HMAC — bus integrity', () => {
 
   it('wrong key → null', () => {
     const env = encodeEnvelope(HOP, KEY, payload);
-    expect(verifyEnvelope(HOP, 'autre_cle', env)).toBeNull();
+    expect(verifyEnvelope(HOP, 'wrong_key', env)).toBeNull();
   });
 
   it('tampered hmac of different length → null (no throw)', () => {

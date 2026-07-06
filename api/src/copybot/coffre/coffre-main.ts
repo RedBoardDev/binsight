@@ -19,6 +19,7 @@ import { ConfirmWorker } from '@/copybot/coffre/confirm-worker';
 import { loadCopierKeypair } from '@/copybot/coffre/keypair';
 import { laneKeyOf, SigningLanes } from '@/copybot/coffre/lanes';
 import { type Ctx, process1, type UserSignPolicy } from '@/copybot/coffre/process-command';
+import type { SignErrorClass } from '@/copybot/coffre/sign-error-classifier';
 import {
   DryRunSigner,
   LocalKeypairSigner,
@@ -181,6 +182,20 @@ async function resolveSigner(userId: string, deps: SignerResolverDeps): Promise<
 }
 
 /**
+ * The per-user signer resolver: callable to resolve+cache one Signer per SIGNED tenant, plus `evict` to drop a cached
+ * entry so a subsequent per-user state change (a kill switch) is honored WITHOUT a coffre restart.
+ */
+export interface SignerResolver {
+  (userId: string): Promise<Signer>;
+  /**
+   * Drop a user's cached signer. The NEXT resolve re-reads the wallet and re-applies the flags, so a user whose
+   * signing was just disabled (revoked delegation / operator kill, #21/#55) throws SigningDisabledError on its very
+   * next command — no restart. MUST run AFTER the signing_disabled write lands, else the re-read re-caches a live signer.
+   */
+  evict(userId: string): void;
+}
+
+/**
  * Build `signerFor(userId)` (SPEC §11): resolve + CACHE one Signer per SIGNED tenant.
  *  - SYSTEM → the cached local-keypair signer (bench, byte-identical).
  *  - any other user → resolve its wallet (the single source of the address, needed by BOTH the live and the dry-run
@@ -188,18 +203,54 @@ async function resolveSigner(userId: string, deps: SignerResolverDeps): Promise<
  *    flag chooses OFF → DryRunSigner (pipeline runs end-to-end, nothing signed) vs ON → signingDisabled ⇒
  *    SigningDisabledError, else a live PrivySessionSigner.
  * Every error is per-user (isolated): the caller (process-command) finalizes 'failed' for THAT command only.
+ * `evict(userId)` drops the cache entry so a per-user kill (#21/#55) takes effect on the next command, not on restart.
  */
-export function createSignerResolver(
-  deps: SignerResolverDeps,
-): (userId: string) => Promise<Signer> {
+export function createSignerResolver(deps: SignerResolverDeps): SignerResolver {
   const cache = new Map<string, Signer>();
-  return async (userId) => {
-    const cached = cache.get(userId);
-    if (cached) return cached;
-    const signer = await resolveSigner(userId, deps);
-    cache.set(userId, signer);
-    return signer;
-  };
+  const resolver: SignerResolver = Object.assign(
+    async (userId: string): Promise<Signer> => {
+      const cached = cache.get(userId);
+      if (cached) return cached;
+      const signer = await resolveSigner(userId, deps);
+      cache.set(userId, signer);
+      return signer;
+    },
+    {
+      evict: (userId: string): void => {
+        cache.delete(userId);
+      },
+    },
+  );
+  return resolver;
+}
+
+/** The injected side effects of a per-user custody sign failure — all passed in so `handleSignError` is pure routing. */
+export interface SignErrorEffects {
+  /** revoked (#21/#55): persist the STICKY per-user kill (signer_added=false); re-activation needs re-consent. */
+  markSigningRevoked: (userId: string) => Promise<void>;
+  /** revoked (#21/#55): drop the user's cached signer so its NEXT command re-reads the flag and skips it (no restart). */
+  evictSigner: (userId: string) => void;
+  /** outage (#20): flip the coffre `signingAvailable` heartbeat flag false + beat now so the web banner appears fast. */
+  onOutage: () => void;
+}
+
+/**
+ * Inc.4e — apply a per-user CUSTODY sign failure (Privy outage #20 / revoked delegation #21), isolated per user. PURE
+ * routing over injected effects so the wiring is unit-tested:
+ *  - 'outage' (transient): flip the global signing-available flag ONLY — never disable the user or drop its cache.
+ *  - 'revoked' (sticky): persist the kill, THEN evict the cached signer — the order matters, since eviction makes the
+ *    next command re-read the wallet, which must already see signing_disabled or it would re-cache a live signer.
+ */
+export async function handleSignError(
+  e: { class: Exclude<SignErrorClass, 'other'>; userId: string },
+  fx: SignErrorEffects,
+): Promise<void> {
+  if (e.class === 'outage') {
+    fx.onOutage();
+    return;
+  }
+  await fx.markSigningRevoked(e.userId);
+  fx.evictSigner(e.userId);
 }
 
 /** What the lane task needs to route ONE message to its terminal I/O (ack / dead-letter / retain). */
@@ -620,21 +671,23 @@ async function main(): Promise<void> {
       // real Privy outage. Pure in-memory assignment — onSubmitted MUST never throw.
       if (signalsSigningRecovered(privyCfg.signingEnabled, t.userId)) signingAvailable = true;
     },
-    // Inc.4e — per-user Privy CUSTODY sign-failure side effects (outage #20 / revoked #21), isolated per user:
+    // Inc.4e — per-user Privy CUSTODY sign-failure side effects (outage #20 / revoked #21), isolated per user (pure
+    // routing extracted to `handleSignError`):
     //  - outage:  flip `signingAvailable` false + beat NOW so the web banner appears fast; it flips back true on the
     //             next successful live sign (onSubmitted above) — no health prober re-arms it.
     //  - revoked: disable signing for THAT user (sticky — signer_added=false), keeping its OPEN mirrors so the
     //    reconcile keeps trying to close them (never-miss — never dropped). Re-activation is blocked until re-consent.
-    //    TODO(devnet-4f): also invalidate the in-memory signerFor cache entry so a running coffre skips the user
-    //    immediately (today the DB flag is sticky across restarts + the alert dedupes, so this is a live-path nicety).
-    onSignError: async (e) => {
-      if (e.class === 'outage') {
-        signingAvailable = false;
-        void heartbeat.beat({ signingEnabled: cfg.signingEnabled, signingAvailable });
-      } else {
-        await activationRepo.markSigningRevoked(e.userId, Date.now());
-      }
-    },
+    //    We ALSO evict the in-memory signerFor entry so a RUNNING coffre skips the user on its very next command — the
+    //    cache would otherwise ignore the freshly-written kill until a restart (#21/#55); eviction follows the write.
+    onSignError: (e) =>
+      handleSignError(e, {
+        markSigningRevoked: (userId) => activationRepo.markSigningRevoked(userId, Date.now()),
+        evictSigner: (userId) => signerFor.evict(userId),
+        onOutage: () => {
+          signingAvailable = false;
+          void heartbeat.beat({ signingEnabled: cfg.signingEnabled, signingAvailable });
+        },
+      }),
     log,
   };
   // 3c PER-USER SIGNING LANES: each message runs on its SIGNED user's lane — FIFO within a user, concurrent across

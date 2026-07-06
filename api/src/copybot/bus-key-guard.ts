@@ -4,8 +4,8 @@
  * The coffre is the SOLE key holder and its only transport authentication is the bus HMAC (envelope.ts MACs
  * `${hop}\n${body}`). Shipping with the PUBLIC dev default means anyone who can reach Redis can forge `cmd:sign`
  * and get the vault to sign. So both processes MUST refuse to boot unless a real, non-default, long-enough key is
- * set — UNLESS an explicit local-dev escape (COPYBOT_DEV_BUS_KEY=true) is present. Pure + unit-tested; the callers
- * do the log + process.exit so the boot pattern stays identical to the other missing-env checks.
+ * set — UNLESS an explicit local-dev escape (COPYBOT_DEV_BUS_KEY=true, refused under NODE_ENV=production) is present.
+ * Pure + unit-tested; the callers do the log + process.exit so the boot pattern stays identical to the other checks.
  */
 
 import { createHmac } from 'node:crypto';
@@ -14,28 +14,39 @@ import { createHmac } from 'node:crypto';
 export const DEV_DEFAULT_BUS_KEY = 'dev-k-sign-CHANGE-ME';
 /** Minimum bytes for a usable HMAC key — no shorter secret is worth accepting on the signing path. */
 export const MIN_BUS_KEY_LENGTH = 16;
+/**
+ * NODE_ENV value under which the dev-key escape is HARD-REFUSED. The COPYBOT_DEV_BUS_KEY escape is a local-dev-only
+ * convenience; refusing it in production means a stale `COPYBOT_DEV_BUS_KEY=true` left in a prod deploy can neither
+ * ship the PUBLIC key nor leave one process on the dev default while the other uses a real key — the silent
+ * brain/coffre key mismatch that fails closed (the coffre DLQs every command) with no symptom on the brain.
+ */
+export const PRODUCTION_NODE_ENV = 'production';
 
 export type BusKeyResult = { key: string } | { error: string };
 
 /**
  * Resolve the bus HMAC key fail-closed:
  *  - BUS_HMAC_KEY set, not the dev default, and ≥ MIN_BUS_KEY_LENGTH → OK, use it.
- *  - else COPYBOT_DEV_BUS_KEY === 'true' → explicit local-dev escape, allow the public default.
- *  - else → error (missing / insecure key).
+ *  - else COPYBOT_DEV_BUS_KEY === 'true' AND NODE_ENV !== 'production' → explicit local-dev escape, allow the default.
+ *  - else → error (missing / insecure key, or the dev escape attempted under production).
+ * Both processes call this with `process.env`, so the production refusal of the dev escape applies symmetrically to
+ * the brain and the coffre — a stale escape can never leave the two sides on different keys in prod (#mismatch).
  */
 export function assertBusKey(env: {
   BUS_HMAC_KEY?: string;
   COPYBOT_DEV_BUS_KEY?: string;
+  NODE_ENV?: string;
 }): BusKeyResult {
   const key = env.BUS_HMAC_KEY;
   if (key !== undefined && key !== DEV_DEFAULT_BUS_KEY && key.length >= MIN_BUS_KEY_LENGTH) {
     return { key };
   }
-  if (env.COPYBOT_DEV_BUS_KEY === 'true') {
+  if (env.COPYBOT_DEV_BUS_KEY === 'true' && env.NODE_ENV !== PRODUCTION_NODE_ENV) {
     return { key: DEV_DEFAULT_BUS_KEY };
   }
   return {
-    error: 'BUS_HMAC_KEY missing or insecure — set it, or COPYBOT_DEV_BUS_KEY=true for local dev',
+    error:
+      'BUS_HMAC_KEY missing or insecure — set it, or COPYBOT_DEV_BUS_KEY=true for local dev (refused under NODE_ENV=production)',
   };
 }
 

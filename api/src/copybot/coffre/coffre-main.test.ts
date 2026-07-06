@@ -8,6 +8,7 @@ import {
   createMessageHandler,
   createSignerResolver,
   deadLetterCode,
+  handleSignError,
   type LeaseRenewOutcome,
   type MessageHandlerDeps,
   parseCoffreNumericConfig,
@@ -282,6 +283,71 @@ describe('coffre createSignerResolver — per-user signer routing + caching (Inc
       );
       await expect(signerFor('u1')).rejects.toBeInstanceOf(UserWalletUnresolvedError);
     }
+  });
+
+  it('★ evict(userId) drops the cached signer so a newly-DISABLED user is skipped on the VERY NEXT command (no restart, #21/#55)', async () => {
+    // WHY: onSignError(revoked) persists signing_disabled, but the hot-path cache still holds the LIVE signer, so the
+    // kill switch would be IGNORED until a coffre restart (a latent bypass the moment an operator per-user disable is
+    // wired). After evict, the next resolve re-reads the wallet and — now that signing is disabled — throws
+    // SigningDisabledError: THAT user is skipped on its very next command, with no restart.
+    let signingDisabled = false;
+    const built = stubSigner();
+    const resolveUserWallet = vi.fn(async () => walletFor(signingDisabled)); // reflects the live flag on each read
+    const signerFor = createSignerResolver(
+      deps({ privySigningEnabled: true, resolveUserWallet, buildLiveSigner: () => built }),
+    );
+    expect(await signerFor('u1')).toBe(built); // 1st command: a live signer, now cached
+    signingDisabled = true; // markSigningRevoked persisted the per-user kill…
+    expect(await signerFor('u1')).toBe(built); // …but the CACHE still serves the live signer (the latent bypass)
+    signerFor.evict('u1'); // onSignError(revoked) evicts the entry AFTER the write…
+    await expect(signerFor('u1')).rejects.toBeInstanceOf(SigningDisabledError); // …so the next command skips the user
+    expect(resolveUserWallet).toHaveBeenCalledTimes(2); // one cached window (1 read), then a fresh read after evict
+  });
+});
+
+// Inc.4e — handleSignError: pure routing of a per-user custody sign failure over injected effects. Encodes the WHY of
+// the fix — a 'revoked' custody error must persist the sticky kill AND evict the cached signer (in THAT order) so a
+// running coffre skips the user on its next command; a transient 'outage' must do NEITHER (it never disables a user).
+describe('coffre handleSignError — per-user custody sign-failure routing (Inc.4e, #20/#21)', () => {
+  const track = (): {
+    calls: string[];
+    fx: {
+      markSigningRevoked: () => Promise<void>;
+      evictSigner: () => void;
+      onOutage: () => void;
+    };
+  } => {
+    const calls: string[] = [];
+    return {
+      calls,
+      fx: {
+        markSigningRevoked: async () => {
+          calls.push('mark');
+        },
+        evictSigner: () => {
+          calls.push('evict');
+        },
+        onOutage: () => {
+          calls.push('outage');
+        },
+      },
+    };
+  };
+
+  it("★ 'revoked' persists the kill THEN evicts the cached signer (order matters: the re-read must see the flag)", async () => {
+    // WHY: eviction makes the NEXT command re-read the wallet; if it ran before markSigningRevoked landed, the re-read
+    // would still see signing enabled and re-cache a LIVE signer — defeating the kill. So mark strictly precedes evict.
+    const { calls, fx } = track();
+    await handleSignError({ class: 'revoked', userId: 'u1' }, fx);
+    expect(calls).toEqual(['mark', 'evict']);
+  });
+
+  it("'outage' flips the signing-available flag ONLY — never disables the user, never drops the cache (isolation)", async () => {
+    // WHY: a Privy outage is transient (custody returns); disabling the user or dropping its cache on a blip would be
+    // wrong. Only the global availability flag flips (banner), and it flips back on the next successful live sign.
+    const { calls, fx } = track();
+    await handleSignError({ class: 'outage', userId: 'u1' }, fx);
+    expect(calls).toEqual(['outage']);
   });
 });
 

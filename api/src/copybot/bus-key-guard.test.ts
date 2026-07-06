@@ -7,6 +7,7 @@ import {
   HOP_KEY_INFO_EVT,
   HOP_KEY_INFO_SIGN,
   MIN_BUS_KEY_LENGTH,
+  PRODUCTION_NODE_ENV,
 } from './bus-key-guard';
 
 // The bus HMAC is the coffre's ONLY transport auth (the vault is the sole key holder). A silent fallback to the
@@ -39,6 +40,37 @@ describe('assertBusKey — fail-closed bus HMAC key resolution (money path)', ()
   it('errors on a too-short key (below the min length) without the escape', () => {
     const r = assertBusKey({ BUS_HMAC_KEY: 'a'.repeat(MIN_BUS_KEY_LENGTH - 1) });
     expect('error' in r).toBe(true);
+  });
+
+  it('★ REFUSES the dev escape under NODE_ENV=production (a stale COPYBOT_DEV_BUS_KEY=true never ships the public key)', () => {
+    // WHY (silent key mismatch): both processes resolve with process.env, so a dev escape left set in a prod deploy
+    // would either serve the PUBLIC key or leave ONE side on the dev default while the other uses a real key — a
+    // silent brain/coffre mismatch that fails closed (the coffre DLQs every command) with no symptom on the brain.
+    // Under production the escape must ERROR, whether or not BUS_HMAC_KEY is also (mistakenly) the dev default.
+    expect(
+      'error' in assertBusKey({ COPYBOT_DEV_BUS_KEY: 'true', NODE_ENV: PRODUCTION_NODE_ENV }),
+    ).toBe(true);
+    expect(
+      'error' in
+        assertBusKey({
+          BUS_HMAC_KEY: DEV_DEFAULT_BUS_KEY,
+          COPYBOT_DEV_BUS_KEY: 'true',
+          NODE_ENV: PRODUCTION_NODE_ENV,
+        }),
+    ).toBe(true);
+  });
+
+  it('still accepts a REAL key under NODE_ENV=production (only the dev escape is refused, never a real key)', () => {
+    const key = 'a'.repeat(MIN_BUS_KEY_LENGTH);
+    expect(assertBusKey({ BUS_HMAC_KEY: key, NODE_ENV: PRODUCTION_NODE_ENV })).toEqual({ key });
+  });
+
+  it('allows the dev escape under a NON-production NODE_ENV (development / test / unset — local dev is untouched)', () => {
+    for (const NODE_ENV of ['development', 'test', undefined]) {
+      expect(assertBusKey({ COPYBOT_DEV_BUS_KEY: 'true', NODE_ENV }), NODE_ENV).toEqual({
+        key: DEV_DEFAULT_BUS_KEY,
+      });
+    }
   });
 });
 
