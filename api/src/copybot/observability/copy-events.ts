@@ -10,6 +10,7 @@
  * tenant `CopyEventContext` once (like `process` on the journal store today).
  */
 import type { Logger } from 'pino';
+import { shouldAlertOperator } from '@/copybot/alert';
 import {
   CODE_REGISTRY,
   type CopyCode,
@@ -92,8 +93,9 @@ export class CopyEvents {
     private readonly log: Logger,
     private readonly base: CopyEventContext,
     /**
-     * OPTIONAL external alert sink (e.g. an `ALERT_WEBHOOK` POST) — fired fire-and-forget for operator-actionable
-     * (`pinned`) events only, so the durable/feed-visible set also reaches the out-of-band channel. Best-effort:
+     * OPTIONAL external alert sink (e.g. a Discord webhook POST) — fired fire-and-forget for operator-actionable
+     * events: everything `pinned` PLUS the alert module's non-pinned allowlist (the shared `shouldAlertOperator`
+     * policy, e.g. `system.config_invalid_fallback`), so that set also reaches the out-of-band channel. Best-effort:
      * the sink MUST never throw (its call is guarded by the `emit` loop guard) and is absent (no-op) without config.
      */
     private readonly alertSink?: (e: CopyEvent) => void,
@@ -116,12 +118,15 @@ export class CopyEvents {
       this.log[level(e.severity)](toAdminJson(e), code); // structured admin mirror (sync)
       if (e.pinned) {
         void this.store.persistDurable(e); // critical: durable (awaited inside the store; never throws)
-        // Operator-actionable ("VERIFY/CLOSE MANUALLY"): also fan out to the external alert channel. Fire-and-forget,
-        // guarded by this try (a throwing sink must not break the hot path). No-op sink when ALERT_WEBHOOK is unset.
-        this.alertSink?.(e);
       } else {
         void this.store.persist(e); // fire-and-forget
       }
+      // Operator-actionable fan-out to the external alert channel — decoupled from the persist path above so it
+      // covers BOTH `pinned` events AND the non-pinned operator-alert allowlist (e.g. `system.config_invalid_fallback`:
+      // audience:'internal', never user-facing, but a live-user fail-closed the operator must know out-of-band).
+      // The shared `shouldAlertOperator` policy owns WHICH codes page, so the routing rule lives in one place.
+      // Fire-and-forget, guarded by this try (a throwing sink must never break the hot path); a no-op with no sink.
+      if (shouldAlertOperator(e)) this.alertSink?.(e);
     } catch (err) {
       // Defensive loop guard: even an assembly bug must not break the bot. Log loud, swallow.
       this.log.error({ err: (err as Error).message, code }, 'copy-events: emit failed (non-fatal)');

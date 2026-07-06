@@ -28,6 +28,15 @@ describe('resolveLegacyReason · verbatim leaf (no alias needed)', () => {
     // A two-segment leaf suffix still resolves uniquely.
     expect(resolveLegacyReason('failed_after_retries')).toBe('swap.failed_after_retries');
   });
+
+  it('maps the two-sided transfer-fee skips to their dedicated codes, NOT the system.unmapped fallback (#2)', () => {
+    // WHY: `skipTransferFeeTokens` journals these verbatim reasons; before the dedicated codes they fell through
+    // resolveLegacyReason → FALLBACK_CODE (system.unmapped), so an operator could not see WHY a two-sided open was
+    // skipped. The dedicated `filter.*` leaves make the skip cleanly observable (resolved here by unique suffix).
+    expect(resolveLegacyReason('transfer_fee_token')).toBe('filter.transfer_fee_token');
+    expect(resolveLegacyReason('transfer_fee_unavailable')).toBe('filter.transfer_fee_unavailable');
+    expect(resolveLegacyReason('transfer_fee_token')).not.toBe(FALLBACK_CODE);
+  });
 });
 
 describe('resolveLegacyReason · unmapped + empty (the fallback contract)', () => {

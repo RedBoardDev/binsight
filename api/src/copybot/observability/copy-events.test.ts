@@ -119,12 +119,29 @@ describe('CopyEvents.emit · external alert sink (operator-actionable fan-out)',
     expect(sink.mock.calls[0]![0]!.pinned).toBe(true);
   });
 
-  it('does NOT fire the sink for a non-pinned event (only the durable/feed-visible set pages the operator)', () => {
+  it('does NOT fire the sink for a routine non-pinned event off the operator-alert allowlist', () => {
     const { store } = fakeStore();
     const sink = vi.fn();
     const events = new CopyEvents(store, fakeLog(), BASE, sink);
     events.emit('detect.observed', { stage: 'detect', outcome: 'detected', commandId: 'NP' });
     expect(sink).not.toHaveBeenCalled();
+  });
+
+  it('fires the sink for a NON-pinned code on the operator-alert allowlist (config fail-closed pages out-of-band, #1)', () => {
+    // WHY: `system.config_invalid_fallback` is audience:'internal' (never user-facing) and NOT pinned, yet a live-user
+    // config fail-closed is operator business. Before the fix, emit only fed the sink inside `if (e.pinned)`, so the
+    // shouldAlertOperator allowlist branch was DEAD and this alert never reached Discord. Assert it now reaches the
+    // sink via the shared policy — while still taking the non-durable persist path (it is not a pinned/critical row).
+    const { store, persisted, durable } = fakeStore();
+    const sink = vi.fn();
+    const events = new CopyEvents(store, fakeLog(), BASE, sink);
+    events.emit('system.config_invalid_fallback', { stage: 'open', outcome: 'skipped' });
+    expect(sink).toHaveBeenCalledTimes(1);
+    expect(sink.mock.calls[0]![0]!.code).toBe('system.config_invalid_fallback');
+    expect(sink.mock.calls[0]![0]!.pinned).toBe(false); // reached the sink via the allowlist, not via `pinned`
+    expect(sink.mock.calls[0]![0]!.audience).toBe('internal'); // operator-only — never rendered to the user feed
+    expect(durable).toHaveLength(0); // non-pinned → fire-and-forget persist, not the durable path
+    expect(persisted).toHaveLength(1);
   });
 
   it('never lets a THROWING sink break emit (the sink is best-effort, guarded by the loop guard)', () => {

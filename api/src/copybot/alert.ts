@@ -4,8 +4,9 @@
  * `system.detection_stale`, repeated reconcile failures (they surface AS detection_stale) and the config
  * fail-closed activation. Everything `pinned` in the CODE_REGISTRY plus the explicit non-pinned allowlist below.
  *
- * Injected as `CopyEvents`' `alertSink` at boot (brain + coffre). The emitter forwards EVERY emitted event;
- * THIS module owns the delivery policy (`shouldAlertOperator`) so routing rules live in one place.
+ * Injected as `CopyEvents`' `alertSink` at boot (brain + coffre). The emitter gates the fan-out on the shared
+ * `shouldAlertOperator` policy defined HERE (so the routing rule lives in one place), and the sink re-applies it
+ * defensively — so a `pinned` event OR a non-pinned code on the allowlist (below) reaches the operator channel.
  *
  * Rate-limit friendly by construction: an in-process FIFO sends at most one webhook POST per
  * `DISCORD_MIN_INTERVAL_MS`, and duplicates of the same `(userId, code, correlationId)` within

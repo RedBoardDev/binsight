@@ -75,6 +75,9 @@ describe('codes · legacy reason migration (SPEC §2.2 test 2)', () => {
     'ignored_token',
     'single_pool_per_token',
     'entry_filter',
+    // two-sided transfer-fee guard (skipTransferFeeTokens) — dedicated codes resolved by suffix (finding #2)
+    'transfer_fee_token',
+    'transfer_fee_unavailable',
     // cap
     'kill_switch_global',
     'kill_switch_leader',

@@ -271,6 +271,15 @@ const RAW_CODE_REGISTRY = {
     render: 'skipped-filter',
     coalesceMs: FEED_COALESCE_MS,
   },
+  // Two-sided transfer-fee guard (`skipTransferFeeTokens`, opt-in / safe-preset): a real Token-2022
+  // `TransferFeeConfig` mint (`transfer_fee_token`), or an unreadable mint whose fee flag stays unknown so we fail
+  // closed (`transfer_fee_unavailable`) — the two-sided deposit haircut cannot fund such a token leg, so we do NOT
+  // open (both-or-nothing, finding #105). audience:'internal' (unlike the sibling feed filters): this PRESERVES the
+  // pre-existing non-user-facing behavior — these reasons previously fell through to `system.unmapped` — while
+  // giving the operator a dedicated, greppable code for WHY a two-sided open was skipped. `resolveLegacyReason`
+  // maps the verbatim producer reasons here by unique suffix (no alias needed, exactly like the other filter leaves).
+  'filter.transfer_fee_token': { category: 'FILTER', severity: 'info', audience: 'internal' },
+  'filter.transfer_fee_unavailable': { category: 'FILTER', severity: 'info', audience: 'internal' },
   // FUTURE: aggregate "an entry filter rejected this" rollup — no dedicated producer yet (rollup of the 16 above).
   'filter.entry_filter': {
     category: 'FILTER',
