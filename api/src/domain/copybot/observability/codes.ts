@@ -556,6 +556,13 @@ const RAW_CODE_REGISTRY = {
   'system.config_missing': { category: 'SYSTEM', severity: 'error', audience: 'internal' },
   'system.process_started': { category: 'SYSTEM', severity: 'info', audience: 'internal' },
   'system.ws_error': { category: 'SYSTEM', severity: 'warn', audience: 'internal' },
+  // The wallet transactionSubscribe went BLIND — silently dropped while the socket STAYS connected (the JSON-RPC
+  // keepalive still answers), so every leader event now waits for the ~15s completeness poll. DISTINCT from
+  // `system.ws_error` (a connection error) and from `system.detection_stale` (the poll ITSELF failing → a possible
+  // MISS): here the poll still guarantees no-miss, so this is LATENCY observability, NOT a miss. audience:'internal'
+  // (never user-facing); the operator is paged out-of-band via `OPERATOR_ALERT_CODES` (alert.ts), exactly like
+  // `system.config_invalid_fallback`.
+  'system.ws_subscription_blind': { category: 'SYSTEM', severity: 'warn', audience: 'internal' },
   'system.poll_error': { category: 'SYSTEM', severity: 'warn', audience: 'internal' },
   'system.reconcile_failed': { category: 'SYSTEM', severity: 'error', audience: 'internal' },
   'system.reconcile_enumerate_failed': {

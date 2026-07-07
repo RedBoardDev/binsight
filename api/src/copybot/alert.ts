@@ -37,6 +37,10 @@ export const DISCORD_CONTENT_MAX = 1_900;
  */
 const OPERATOR_ALERT_CODES: ReadonlySet<CopyCode> = new Set<CopyCode>([
   'system.config_invalid_fallback',
+  // Latency observability (#201): the wallet WS subscription went silently BLIND (dropped while the socket stays
+  // connected). audience:'internal' (the poll still guarantees no-miss, so it is never user-facing) — but the
+  // operator must learn out-of-band that the low-latency trigger is dead so they can restart/investigate.
+  'system.ws_subscription_blind',
 ]);
 
 /** PURE delivery policy: everything pinned (the operator-actionable set) + the explicit allowlist above. */

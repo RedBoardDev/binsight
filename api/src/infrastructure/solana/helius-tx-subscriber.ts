@@ -8,7 +8,10 @@
  *
  * Role: low-latency trigger. Completeness stays guaranteed by the LeaderDetector's cursor poll; this client
  * only delivers early (signature + logs) what the poll would re-cover. Resilience modeled on
- * `HeliusSubscriber` (backoff + jitter reconnect, anti-silence heartbeat, re-subscribe on reconnect).
+ * `HeliusSubscriber` (backoff + jitter reconnect, anti-silence heartbeat, re-subscribe on reconnect). A silently
+ * dropped subscription (socket alive, keepalive answered, but no notifications) is surfaced as an observable
+ * WS-blind signal (#201): the poll masks the miss so correctness holds, but the dead low-latency path must still
+ * be visible instead of looking healthy.
  */
 import type { ParsedTransactionWithMeta } from '@solana/web3.js';
 import type { Logger } from 'pino';
@@ -56,8 +59,12 @@ export interface ParsedTxNotification {
  * (an array — the truncation-proof DLMM signal that classify decodes) AND the inner `transaction.signatures`
  * (an array, i.e. the jsonParsed tx object, not a base64 tuple) must BOTH be present. An incomplete payload
  * yields `null` so the caller falls back to the authoritative RPC fetch — the never-miss guarantee is preserved,
- * never weakened. The notification carries no `blockTime` → `null` (non-load-bearing for the open/close
- * decision; the cursor poll re-covers the audit-grade timestamp).
+ * never weakened. The notification carries no `blockTime` → `null`, and the cursor poll does NOT backfill it: once
+ * the WS delivers a sig the detector marks it `seen`, so the contiguous poll filters it out and never re-classifies
+ * it — a WS-first position's tracker `openedAt`/`closedAt` therefore STAY `null`. Tolerated because no live consumer
+ * reads them (sizing/exits use amounts; the reconcile open-grace uses `Mirror.openedAt`, stamped at copy time, not
+ * the leader tracker's timestamps). If an audit-grade leader timestamp is ever needed here, fetch the sig's
+ * blockTime before recording — the poll will not.
  */
 export function reshapeFullTx(result: Record<string, unknown>): ParsedTransactionWithMeta | null {
   const wsTx = result.transaction as Record<string, unknown> | undefined;
@@ -90,6 +97,31 @@ export function parseTxNotification(msg: Record<string, unknown>): ParsedTxNotif
   return { subId, signature, logs, tx: reshapeFullTx(result) };
 }
 
+/**
+ * Consecutive leader events surfaced by the COMPLETENESS POLL that the WS never delivered — the proof that the
+ * wallet subscription was silently dropped while the socket itself stays alive (#201). Set >1 to tolerate the rare
+ * benign case where the WS DID deliver the sig but its tx was not yet RPC-resolvable (the detector un-reserves it
+ * for a poll retry, so it re-surfaces once as a poll event) before we declare the low-latency path dead.
+ */
+export const WS_BLIND_MISS_THRESHOLD = 3;
+
+/**
+ * Pure: is the wallet subscription BLIND — silently dropped while the socket stays connected? True once the poll
+ * (the completeness backstop) has surfaced `threshold` leader events IN A ROW that the WS never delivered, while we
+ * are connected and actually watching. DISTINCT from connection liveness (`isWsDead`): a dropped subscription keeps
+ * answering the JSON-RPC keepalive, so the socket looks healthy while every event now waits for the ~15s poll — a
+ * latency regression the poll masks (never a miss). A delivered notification resets the streak (proof it delivers
+ * again), so this clears on its own. Not connected / nothing watched ⇒ not "blind" (that is a different signal).
+ */
+export function isSubscriptionBlind(
+  connected: boolean,
+  watchedCount: number,
+  wsMissStreak: number,
+  threshold: number = WS_BLIND_MISS_THRESHOLD,
+): boolean {
+  return connected && watchedCount > 0 && wsMissStreak >= threshold;
+}
+
 export class HeliusTxSubscriber {
   private ws: WebSocket | undefined;
   private readonly watched = new Map<string, TxActivityCb>();
@@ -101,9 +133,17 @@ export class HeliusTxSubscriber {
   private stopped = false;
   private lastMessageAt = 0;
   private unansweredPings = 0; // keepalives sent with no reply since the last inbound frame (#52 liveness)
+  // Subscription liveness (#201) — DISTINCT from the connection/keepalive liveness above. A silently-dropped wallet
+  // subscription keeps answering the keepalive (socket looks healthy) while delivering NO notifications, so events
+  // fall back to the ~15s poll with no signal. `lastNotificationAt` tracks REAL subscription delivery; `wsMissStreak`
+  // counts consecutive poll-surfaced leader events the WS never delivered → the observable blind signal.
+  private lastNotificationAt = 0;
+  private wsMissStreak = 0;
+  private wsBlind = false;
   private heartbeat: ReturnType<typeof setInterval> | undefined;
   private readonly reconnectCbs: Array<() => void> = [];
   private readonly connChangeCbs: Array<(connected: boolean) => void> = [];
+  private readonly blindCbs: Array<(blind: boolean) => void> = [];
 
   constructor(
     private readonly wsUrl: string,
@@ -116,8 +156,27 @@ export class HeliusTxSubscriber {
   onConnectionChange(cb: (connected: boolean) => void): void {
     this.connChangeCbs.push(cb);
   }
+  /** Observability (#201): fired when the wallet subscription goes BLIND (silently dropped while the socket stays
+   *  connected) and again when it recovers. Consumers surface it as a degraded-latency signal — the completeness
+   *  poll still guarantees no MISS; only the low-latency trigger is dead. Mirrors `onConnectionChange`. */
+  onWsBlind(cb: (blind: boolean) => void): void {
+    this.blindCbs.push(cb);
+  }
   isConnected(): boolean {
     return this.connected;
+  }
+  /** Timestamp (ms) of the last notification delivered to a watched wallet — real subscription activity, 0 since the
+   *  last connect if none. DISTINCT from connection liveness: a keepalive reply does NOT advance it (#201). */
+  subscriptionActivityAt(): number {
+    return this.lastNotificationAt;
+  }
+  /** Completeness-layer seam (#201): the poll surfaced a live leader event the WS never delivered. On a healthy
+   *  subscription the WS triggers first, so the detector's `seen` dedups the poll's re-observation and it never
+   *  reaches here; a RUN of these proves the subscription was silently dropped. A delivered notification resets the
+   *  streak. Wired by the fan-out (hub) for a live `source==='poll'` DLMM event; unwired, the class is still usable. */
+  noteMissedByWs(): void {
+    this.wsMissStreak += 1;
+    this.evaluateBlind();
   }
 
   start(): void {
@@ -158,6 +217,9 @@ export class HeliusTxSubscriber {
       this.backoffMs = BACKOFF_BASE_MS;
       this.lastMessageAt = Date.now();
       this.unansweredPings = 0;
+      this.lastNotificationAt = Date.now(); // fresh subscription: not blind until the poll proves the WS is missing events
+      this.wsMissStreak = 0;
+      this.evaluateBlind();
       for (const wallet of this.watched.keys()) this.subscribe(wallet);
       for (const cb of this.reconnectCbs) cb(); // catches up via the poll on what may have slipped through during the outage
       this.startHeartbeat();
@@ -180,8 +242,22 @@ export class HeliusTxSubscriber {
     }
   }
 
+  private setBlind(b: boolean): void {
+    if (this.wsBlind !== b) {
+      this.wsBlind = b;
+      for (const cb of this.blindCbs) cb(b);
+    }
+  }
+  /** Recompute + fire the blind signal on transition. Cheap and idempotent (guarded by `setBlind`), so it is safe to
+   *  call from every liveness touch-point: the miss seam, a delivered notification, (re)connect, disconnect, and the
+   *  heartbeat backstop. */
+  private evaluateBlind(): void {
+    this.setBlind(isSubscriptionBlind(this.connected, this.watched.size, this.wsMissStreak));
+  }
+
   private scheduleReconnect(): void {
     this.setConnected(false);
+    this.evaluateBlind(); // a down socket is DISCONNECTED, not blind — clear the signal (the connection-change alert covers it)
     this.subToWallet.clear();
     this.reqToWallet.clear();
     if (this.heartbeat) clearInterval(this.heartbeat);
@@ -195,6 +271,7 @@ export class HeliusTxSubscriber {
   private startHeartbeat(): void {
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = setInterval(() => {
+      this.evaluateBlind(); // periodic backstop: also clears blind once the last watched wallet is unwatched
       if (this.watched.size === 0) return;
       // Death by UNANSWERED keepalives (fast) or by a long silence backstop. A healthy idle connection replies to
       // the keepalive, so unansweredPings resets and neither trips — no more churning healthy connections (#52).
@@ -266,6 +343,11 @@ export class HeliusTxSubscriber {
     const notif = parseTxNotification(msg);
     if (!notif) return;
     const wallet = this.subToWallet.get(notif.subId);
-    if (wallet) this.watched.get(wallet)?.(notif.signature, notif.logs, notif.tx);
+    if (wallet) {
+      this.lastNotificationAt = Date.now(); // real subscription delivery → the subscription is alive: reset the streak (#201)
+      this.wsMissStreak = 0;
+      this.evaluateBlind();
+      this.watched.get(wallet)?.(notif.signature, notif.logs, notif.tx);
+    }
   }
 }

@@ -37,7 +37,14 @@ const h = vi.hoisted(() => {
 });
 vi.mock('undici', () => ({ WebSocket: h.FakeWebSocket }));
 
-import { HeliusTxSubscriber, parseSubAck, parseTxNotification } from './helius-tx-subscriber';
+import {
+  HeliusTxSubscriber,
+  isSubscriptionBlind,
+  parseSubAck,
+  parseTxNotification,
+  WS_BLIND_MISS_THRESHOLD,
+} from './helius-tx-subscriber';
+import { WS_PING_INTERVAL_MS } from './ws-keepalive';
 
 // REAL subscription response observed on the Developer plan (2026-06-24).
 const SUB_ACK = { jsonrpc: '2.0', id: 1, result: 3084839 };
@@ -130,7 +137,10 @@ describe('helius-tx-subscriber — full-tx reshape (WS fast-path, finding #32)',
     expect(n?.tx).not.toBeNull();
     expect(n?.tx?.meta?.innerInstructions).toHaveLength(1); // the truncation-proof DLMM signal (#117) is intact
     expect(n?.tx?.transaction?.signatures?.[0]).toBe('SIGFULL');
-    expect(n?.tx?.blockTime).toBeNull(); // not delivered by the notification → null (poll re-covers the timestamp)
+    // Not delivered by the notification → null, and the poll never backfills it: a WS-seen sig is deduped, so the
+    // contiguous poll never re-classifies it. No live consumer reads the tracker's openedAt/closedAt (reconcile
+    // uses Mirror.openedAt), so the null is tolerated on the WS path.
+    expect(n?.tx?.blockTime).toBeNull();
   });
 
   it('returns tx:null for an INCOMPLETE payload → classify falls back to the RPC fetch (never-miss preserved)', () => {
@@ -251,5 +261,156 @@ describe('helius-tx-subscriber — unwatch (Inc.3b S4 leader-set changes)', () =
     ws.message(ack(frame?.id as number, 33)); // late ack
     ws.message(notif(33, 'sigLate'));
     expect(seen).toEqual([]);
+  });
+});
+
+describe('helius-tx-subscriber — WS-blind signal (silent subscription drop, #201)', () => {
+  const log = pino({ level: 'silent' });
+  const ack = (id: number, subId: number) => ({ jsonrpc: '2.0', id, result: subId });
+  const notif = (subId: number, signature: string) => ({
+    jsonrpc: '2.0',
+    method: 'transactionNotification',
+    params: {
+      subscription: subId,
+      result: { signature, transaction: { meta: { logMessages: [] } } },
+    },
+  });
+  // A benign keepalive reply: an inbound frame that is NEITHER an ack NOR a notification (a JSON-RPC error for the
+  // unknown `ping` method). It advances CONNECTION liveness (resets unansweredPings) but is NOT subscription
+  // activity — the crux of #201: this must never make a dead subscription look healthy.
+  const keepaliveReply = (id: number) => ({
+    jsonrpc: '2.0',
+    id,
+    error: { code: -32601, message: 'Method not found' },
+  });
+  const ackWallet = (ws: (typeof h.sockets)[number], wallet: string, subId: number): void => {
+    const frame = ws.sent.find(
+      (f) =>
+        f.method === 'transactionSubscribe' &&
+        (f.params as Array<{ accountInclude?: string[] }>)[0]?.accountInclude?.[0] === wallet,
+    );
+    if (!frame) throw new Error(`no subscribe frame for ${wallet}`);
+    ws.message(ack(frame.id as number, subId));
+  };
+
+  let sub: HeliusTxSubscriber | undefined;
+  beforeEach(() => {
+    vi.useFakeTimers(); // heartbeat + reconnect run on timers — keep them deterministic
+    h.sockets.length = 0;
+    sub = undefined;
+  });
+  afterEach(() => {
+    sub?.stop(); // the pure-function test creates no subscriber
+    vi.useRealTimers();
+  });
+
+  it('isSubscriptionBlind trips only when connected AND watching AND the miss streak hits the threshold', () => {
+    // WHY: a dropped subscription is a DISTINCT failure from a dropped connection — it must not fire while
+    // disconnected (that is a connection alert) nor with nothing to watch, and only after enough poll-only events
+    // to rule out the benign WS-outran-RPC re-observation.
+    expect(isSubscriptionBlind(true, 1, WS_BLIND_MISS_THRESHOLD)).toBe(true);
+    expect(isSubscriptionBlind(true, 1, WS_BLIND_MISS_THRESHOLD - 1)).toBe(false);
+    expect(isSubscriptionBlind(false, 1, WS_BLIND_MISS_THRESHOLD)).toBe(false); // not connected
+    expect(isSubscriptionBlind(true, 0, WS_BLIND_MISS_THRESHOLD)).toBe(false); // nothing watched
+  });
+
+  it('fires onWsBlind(true) after a run of poll-only misses, then onWsBlind(false) when a notification arrives', () => {
+    // WHY (#201): the poll surfacing leader events the WS never delivered is the ONLY proof a subscription was
+    // silently dropped; a real notification proves it is delivering again and must clear the signal.
+    const blindEvents: boolean[] = [];
+    sub = new HeliusTxSubscriber('ws://test', log);
+    sub.watch('WALLET_A', () => {});
+    sub.onWsBlind((b) => blindEvents.push(b));
+    sub.start();
+    const ws = h.sockets[0];
+    if (!ws) throw new Error('no socket');
+    ws.open();
+    ackWallet(ws, 'WALLET_A', 11);
+
+    for (let i = 0; i < WS_BLIND_MISS_THRESHOLD - 1; i++) sub.noteMissedByWs();
+    expect(blindEvents).toEqual([]); // under the threshold — not yet blind (tolerates the RPC-lag re-observation)
+    sub.noteMissedByWs();
+    expect(blindEvents).toEqual([true]); // threshold reached → blind
+
+    ws.message(notif(11, 'sigA')); // the subscription delivered → recovered
+    expect(blindEvents).toEqual([true, false]);
+  });
+
+  it('a keepalive reply keeps the CONNECTION alive but does NOT clear a blind subscription (the #201 crux)', () => {
+    // WHY: the whole bug is that keepalive traffic makes a dead subscription look healthy. A keepalive reply must
+    // advance connection liveness WITHOUT counting as subscription activity, so blindness is not falsely cleared.
+    const blindEvents: boolean[] = [];
+    sub = new HeliusTxSubscriber('ws://test', log);
+    sub.watch('WALLET_A', () => {});
+    sub.onWsBlind((b) => blindEvents.push(b));
+    sub.start();
+    const ws = h.sockets[0];
+    if (!ws) throw new Error('no socket');
+    ws.open();
+    ackWallet(ws, 'WALLET_A', 11);
+    const activityAtConnect = sub.subscriptionActivityAt();
+
+    for (let i = 0; i < WS_BLIND_MISS_THRESHOLD; i++) sub.noteMissedByWs();
+    expect(blindEvents).toEqual([true]);
+
+    vi.advanceTimersByTime(1_000);
+    ws.message(keepaliveReply(999)); // connection liveness only
+    expect(blindEvents).toEqual([true]); // STILL blind — a keepalive reply is not a delivery
+    expect(sub.subscriptionActivityAt()).toBe(activityAtConnect); // and it did not count as subscription activity
+  });
+
+  it('subscriptionActivityAt advances on a delivered notification, never on a keepalive reply', () => {
+    sub = new HeliusTxSubscriber('ws://test', log);
+    sub.watch('WALLET_A', () => {});
+    sub.start();
+    const ws = h.sockets[0];
+    if (!ws) throw new Error('no socket');
+    const t0 = Date.now();
+    ws.open();
+    ackWallet(ws, 'WALLET_A', 11);
+    expect(sub.subscriptionActivityAt()).toBe(t0); // seeded at connect
+
+    vi.advanceTimersByTime(1_000);
+    ws.message(keepaliveReply(999));
+    expect(sub.subscriptionActivityAt()).toBe(t0); // keepalive reply → unchanged (connection liveness only)
+
+    vi.advanceTimersByTime(1_000);
+    ws.message(notif(11, 'sigA'));
+    expect(sub.subscriptionActivityAt()).toBe(t0 + 2_000); // real delivery → advanced
+  });
+
+  it('an idle subscription (no misses) is never flagged blind, even across a heartbeat tick', () => {
+    // WHY (#52 lesson): silence alone is legitimate (an idle leader). Only poll-confirmed misses may trip blind —
+    // otherwise the signal would cry wolf on every quiet leader and mask the real one.
+    const blindEvents: boolean[] = [];
+    sub = new HeliusTxSubscriber('ws://test', log);
+    sub.watch('WALLET_A', () => {});
+    sub.onWsBlind((b) => blindEvents.push(b));
+    sub.start();
+    const ws = h.sockets[0];
+    if (!ws) throw new Error('no socket');
+    ws.open();
+    ackWallet(ws, 'WALLET_A', 11);
+
+    vi.advanceTimersByTime(WS_PING_INTERVAL_MS); // one heartbeat tick, no misses
+    ws.message(keepaliveReply(999)); // the keepalive is answered → connection healthy
+    expect(blindEvents).toEqual([]); // never blind while idle
+  });
+
+  it('disconnect clears an active blind signal (a down socket is a connection failure, not a blind subscription)', () => {
+    const blindEvents: boolean[] = [];
+    sub = new HeliusTxSubscriber('ws://test', log);
+    sub.watch('WALLET_A', () => {});
+    sub.onWsBlind((b) => blindEvents.push(b));
+    sub.start();
+    const ws = h.sockets[0];
+    if (!ws) throw new Error('no socket');
+    ws.open();
+    ackWallet(ws, 'WALLET_A', 11);
+    for (let i = 0; i < WS_BLIND_MISS_THRESHOLD; i++) sub.noteMissedByWs();
+    expect(blindEvents).toEqual([true]);
+
+    ws.close(); // server drop → the blind signal must clear (connection-change alert takes over)
+    expect(blindEvents).toEqual([true, false]);
   });
 });

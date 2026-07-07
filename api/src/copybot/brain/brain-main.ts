@@ -58,7 +58,10 @@ import {
   readUserPositions,
 } from '@/infrastructure/solana/dlmm/leader-position-reader';
 import { OnchainPoolMetaReader } from '@/infrastructure/solana/dlmm/pool-meta';
-import { HeliusTxSubscriber } from '@/infrastructure/solana/helius-tx-subscriber';
+import {
+  HeliusTxSubscriber,
+  WS_BLIND_MISS_THRESHOLD,
+} from '@/infrastructure/solana/helius-tx-subscriber';
 import {
   DEFAULT_JUPITER_BASE_URL,
   WSOL_MINT,
@@ -640,6 +643,25 @@ async function main(): Promise<void> {
   wsConnected = sub.isConnected(); // seed; the callback keeps it live (observability — status only)
   sub.onConnectionChange((c) => {
     wsConnected = c;
+  });
+  // WS-subscription-blind (#201): the socket stays connected but the wallet subscription was silently dropped, so
+  // every leader event now waits for the ~15s completeness poll. The poll still guarantees NO MISS — this is a
+  // LATENCY regression, not a lost event — so the operator is paged OUT-OF-BAND (never user-facing) via the shared
+  // detection emitter (`system.ws_subscription_blind` is on OPERATOR_ALERT_CODES → Discord, like detection_stale).
+  // Fires only on the blind TRANSITION (the subscriber guards it), with a fresh eventKey per episode so a later
+  // episode is not dedup-suppressed. Recovery is intentionally LOW-NOISE: NO clear event (the signal self-heals — a
+  // delivered WS notification resets the streak, and nothing was missed while blind), just a local info log.
+  sub.onWsBlind((blind) => {
+    if (!blind) {
+      log.info('tx WS subscription recovered — low-latency trigger delivering again');
+      return;
+    }
+    detectionEvents.emit('system.ws_subscription_blind', {
+      stage: 'detect',
+      outcome: 'detected',
+      eventKey: `ws-blind:${Date.now()}`,
+      adminDetail: { missThreshold: WS_BLIND_MISS_THRESHOLD },
+    });
   });
   sub.start();
   // One process-level poll loop: the hub iterates its per-leader detectors sequentially (per-leader failure

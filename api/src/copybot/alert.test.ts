@@ -62,6 +62,11 @@ describe('shouldAlertOperator — the delivery policy', () => {
   it('does NOT page a routine non-pinned event (an open/close feed row is not operator business)', () => {
     expect(shouldAlertOperator({ pinned: false, code: 'lifecycle.open_confirmed' })).toBe(false);
   });
+  it('pages the WS-blind code from the allowlist (internal + non-pinned, but a silent-drop must reach the operator, #201)', () => {
+    // WHY: `system.ws_subscription_blind` is audience:'internal' / non-pinned (the poll still guarantees no-miss),
+    // so ONLY the explicit allowlist carries it to Discord — assert the policy pages it despite pinned:false.
+    expect(shouldAlertOperator({ pinned: false, code: 'system.ws_subscription_blind' })).toBe(true);
+  });
   it('pages the RPC/WS-outage alert (`system.detection_stale`) as configured in the registry — never merely logs it (#167)', () => {
     // WHY: the brain runs BOTH never-miss detection AND execution on ONE Helius endpoint (a SPOF). If that key
     // outages, the poll + reconcile loops go blind while the heartbeat stays green — the ONLY v1 mitigation is this

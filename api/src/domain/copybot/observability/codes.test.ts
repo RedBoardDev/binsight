@@ -40,6 +40,18 @@ describe('codes · registry exhaustiveness (SPEC §2.2 test 1)', () => {
   it('the registry is non-empty (the closed union actually replaces the ad-hoc strings)', () => {
     expect(ALL_CODES.length).toBeGreaterThan(0);
   });
+
+  it('system.ws_subscription_blind is an internal warn SYSTEM code (operator-out-of-band, never user-facing) (#201)', () => {
+    // WHY: the WS-blind signal is LATENCY observability — the completeness poll still guarantees no-miss, so it must
+    // stay audience:'internal' (a user must never see it as an alert) yet be greppable at warn severity. It reaches
+    // the operator via alert.ts' OPERATOR_ALERT_CODES, NOT by being pinned/feed — lock the exact shape here so a
+    // future edit that makes it user-facing or downgrades it fails loudly.
+    const meta = CODE_REGISTRY['system.ws_subscription_blind'];
+    expect(meta.category).toBe('SYSTEM');
+    expect(meta.severity).toBe('warn');
+    expect(meta.audience).toBe('internal');
+    expect(meta.pinned ?? false).toBe(false);
+  });
 });
 
 describe('codes · legacy reason migration (SPEC §2.2 test 2)', () => {

@@ -144,6 +144,27 @@ describe('CopyEvents.emit · external alert sink (operator-actionable fan-out)',
     expect(persisted).toHaveLength(1);
   });
 
+  it('fires the sink for the WS-blind code (internal + non-pinned, pages the operator out-of-band via the allowlist, #201)', () => {
+    // WHY: `system.ws_subscription_blind` is audience:'internal' and NOT pinned (the completeness poll still
+    // guarantees no-miss — it is latency observability, never user-facing), yet a silently-dropped subscription is
+    // operator business. Assert it reaches the sink via the shared shouldAlertOperator allowlist (mirroring
+    // config_invalid_fallback), while still taking the non-durable persist path (it is not a critical/pinned row).
+    const { store, persisted, durable } = fakeStore();
+    const sink = vi.fn();
+    const events = new CopyEvents(store, fakeLog(), BASE, sink);
+    events.emit('system.ws_subscription_blind', {
+      stage: 'detect',
+      outcome: 'detected',
+      eventKey: 'ws-blind:1',
+    });
+    expect(sink).toHaveBeenCalledTimes(1);
+    expect(sink.mock.calls[0]![0]!.code).toBe('system.ws_subscription_blind');
+    expect(sink.mock.calls[0]![0]!.pinned).toBe(false); // reached the sink via the allowlist, not via `pinned`
+    expect(sink.mock.calls[0]![0]!.audience).toBe('internal'); // operator-only — never rendered to the user feed
+    expect(durable).toHaveLength(0); // non-pinned → fire-and-forget persist, not the durable path
+    expect(persisted).toHaveLength(1);
+  });
+
   it('never lets a THROWING sink break emit (the sink is best-effort, guarded by the loop guard)', () => {
     const { store, durable } = fakeStore();
     const log = fakeLog();

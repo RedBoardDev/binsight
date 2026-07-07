@@ -48,6 +48,9 @@ export interface TxWatcher {
   ): void;
   unwatch(wallet: string): void;
   onReconnect(cb: () => void): void;
+  /** (optional, #201) The completeness POLL surfaced a genuinely-new leader event the WS never delivered → a WS
+   *  miss (feeds the subscriber's blind-detection streak). Optional so no-WS boots / test stubs stay compatible. */
+  noteMissedByWs?(): void;
 }
 
 /** The per-user runtime surface the fan-out drives (structural — `UserRuntime` satisfies it; tests stub it). */
@@ -251,6 +254,13 @@ export class LeaderHub {
       '👁️ onEvent in',
     );
     if (source === 'replay' || !pos) return; // forward-only: never copy a past open
+    // WS-blind observability (#201): a genuinely-new event that the COMPLETENESS POLL surfaced means the WS trigger
+    // never delivered it. On a healthy subscription the WS fires first → the detector marks the sig `seen` → the
+    // poll's re-observation is deduped BEFORE it reaches this router, so it is never routed as new; reaching here
+    // with source==='poll' therefore proves a WS miss. Never fired for `ws` (the healthy path) or `replay`, nor for
+    // a position-less leg (both dropped above). The subscriber's streak threshold tolerates the benign "poll briefly
+    // outran a slightly-slow WS" case, and a delivered WS notification resets it — so a transient never pages.
+    if (source === 'poll') this.deps.watcher?.noteMissedByWs?.();
     // ONE detection row per on-chain fact (SYSTEM context): duplicating it per user would fabricate N detection
     // rows for one event. `eventKey` = the per-leg correlation (sig:position) so the emit dedup keys uniquely PER
     // routed leg; WS + cursor-poll re-observations of the SAME leg correctly collapse to one row.

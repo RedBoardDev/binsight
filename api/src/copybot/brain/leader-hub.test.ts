@@ -81,6 +81,7 @@ function makeHub(opts: {
     }
   >();
   const pollFails = opts.pollFails ?? new Set<string>();
+  const wsMisses: string[] = []; // one marker per noteMissedByWs() call (#201 anti-false-positive lock)
   const watcher: TxWatcher = {
     watch: (wallet) => {
       calls.push(`watch:${wallet}`);
@@ -89,6 +90,9 @@ function makeHub(opts: {
       calls.push(`unwatch:${wallet}`);
     },
     onReconnect: () => {},
+    noteMissedByWs: () => {
+      wsMisses.push('miss');
+    },
   };
   const hub = new LeaderHub({
     log,
@@ -112,7 +116,7 @@ function makeHub(opts: {
     retainLeader: opts.retain ?? (() => false),
     watcher,
   });
-  return { hub, calls, emitted, detectors, pollFails };
+  return { hub, calls, emitted, detectors, pollFails, wsMisses };
 }
 
 describe('LeaderHub — applyLeaderSet (S4)', () => {
@@ -437,5 +441,62 @@ describe('LeaderHub — WS fast-path gate keys off the decoded tx, not the trunc
     const { invoke, wsCalls } = await mkWsHarness();
     invoke('sigWs', TRUNCATED_LOGS, null);
     expect(wsCalls).toHaveLength(0);
+  });
+});
+
+describe('LeaderHub — WS-blind miss seam (#201, anti-false-positive lock)', () => {
+  it('only a genuinely-new POLL-routed event marks a WS miss — WS, replay and position-less events never do', async () => {
+    // WHY (#201): the completeness poll routing a genuinely-new event proves the WS trigger missed it (a healthy
+    // subscription delivers first → the detector's `seen` dedups the poll re-observation BEFORE route). But the
+    // healthy WS path, a forward-only replay-seed drop, and a position-less dropped leg are NOT misses — counting
+    // any of them would trip the blind signal on healthy traffic (a false page). This is the correctness invariant
+    // the whole seam rests on: noteMissedByWs fires iff the event is post-dedup, genuinely-new, AND source==='poll'.
+    const a = stubRuntime('user-a');
+    const { hub, detectors, wsMisses } = makeHub({
+      runtimes: new Map([['user-a', a.rt]]),
+      configs: new Map([['user-a', cfgCopying(L1)]]),
+    });
+    await hub.applyLeaderSet(new Set([L1]));
+    const det = detectors.get(L1);
+    if (!det) throw new Error('no detector');
+
+    det.onEvent(mkEvent(), 'ws'); // the healthy low-latency path — the WS delivered it → NOT a miss
+    det.onEvent(mkEvent(), 'replay'); // forward-only drop (a past open) → NOT a miss
+    det.onEvent(mkEvent({ position: '' }), 'poll'); // position-less leg dropped before routing → NOT a miss
+    expect(wsMisses).toHaveLength(0);
+    expect(a.received).toHaveLength(1); // only the live WS event fanned out (proves the others were dropped/ignored)
+
+    det.onEvent(mkEvent(), 'poll'); // genuinely-new, routed, poll-surfaced → the WS never delivered it
+    expect(wsMisses).toHaveLength(1);
+  });
+
+  it('a poll-routed event does not throw when the watcher OMITS noteMissedByWs (optional seam, no-WS boot)', async () => {
+    // WHY: `noteMissedByWs` is optional on TxWatcher so a poll-only (no-WS) boot stays valid. The router's
+    // `watcher?.noteMissedByWs?.()` guard must tolerate the absent method — a poll event still routes, never crashes.
+    const detectors = new Map<
+      string,
+      { onEvent: (e: DetectedEvent, source: EventSource) => void }
+    >();
+    const a = stubRuntime('user-a');
+    const watcher = {
+      watch: () => {},
+      unwatch: () => {},
+      onReconnect: () => {},
+    } as TxWatcher; // deliberately no noteMissedByWs
+    const hub = new LeaderHub({
+      log,
+      events: { emit: () => {} } as unknown as CopyEvents,
+      makeDetector: (leader, onEvent): HubDetector => {
+        detectors.set(leader, { onEvent });
+        return { poll: async () => {}, onWsSignature: async () => {} };
+      },
+      getConfigs: () => new Map([['user-a', cfgCopying(L1)]]),
+      getRuntimes: () => new Map([['user-a', a.rt]]),
+      retainLeader: () => false,
+      watcher,
+    });
+    await hub.applyLeaderSet(new Set([L1]));
+    expect(() => detectors.get(L1)?.onEvent(mkEvent(), 'poll')).not.toThrow();
+    expect(a.received).toHaveLength(1); // still routed normally despite the missing optional method
   });
 });
