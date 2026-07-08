@@ -15,7 +15,7 @@
  * booted: it is the WALLET context (orphan closes / sweep sells / --once publish as SYSTEM, INC3B-PLAN §4).
  */
 import { DLMM_PROGRAM_ID } from '@binsight/shared';
-import { Connection, PublicKey } from '@solana/web3.js';
+import { type Connection, PublicKey } from '@solana/web3.js';
 import { pino } from 'pino';
 import { createDiscordAlertSink } from '@/copybot/alert';
 import { assertBusKey, deriveHopKeys } from '@/copybot/bus-key-guard';
@@ -58,6 +58,10 @@ import {
   readUserPositions,
 } from '@/infrastructure/solana/dlmm/leader-position-reader';
 import { OnchainPoolMetaReader } from '@/infrastructure/solana/dlmm/pool-meta';
+import {
+  BRAIN_FAILOVER_READS,
+  createFailoverConnection,
+} from '@/infrastructure/solana/failover-connection';
 import {
   HeliusTxSubscriber,
   WS_BLIND_MISS_THRESHOLD,
@@ -117,6 +121,9 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 
 const cfg = {
   httpUrl: process.env.SOLANA_HTTP_URL ?? '',
+  // Optional reads-only secondary RPC (#50): whitelisted brain READS failover to it when the primary throws.
+  // Unset ⇒ single-endpoint, byte-for-byte today's behavior. Submit is untouched (brain never submits anyway).
+  fallbackUrl: process.env.COPYBOT_RPC_FALLBACK_URL,
   wsUrl: process.env.SOLANA_WS_URL,
   redisUrl: process.env.REDIS_URL ?? 'redis://localhost:6385',
   dbUrl: process.env.DATABASE_URL ?? 'postgres://meteora:meteora@localhost:5435/meteora',
@@ -206,7 +213,9 @@ async function main(): Promise<void> {
   const secondsArg = args.find((a) => a.startsWith('--seconds='));
   const autoStopSec = secondsArg ? Number(secondsArg.slice('--seconds='.length)) : 0;
 
-  const conn = new Connection(cfg.httpUrl, 'confirmed');
+  // Reads-only failover (#50): whitelisted idempotent reads retry ONCE on COPYBOT_RPC_FALLBACK_URL when the
+  // primary throws; unset ⇒ a bare single-endpoint Connection (identical to before).
+  const conn = createFailoverConnection(cfg.httpUrl, cfg.fallbackUrl, BRAIN_FAILOVER_READS, log);
   const leaderPk = new PublicKey(cfg.leader);
   const ownerPk = new PublicKey(ownerPubkey);
   const poolReader = new OnchainPoolMetaReader(conn);
@@ -402,12 +411,15 @@ async function main(): Promise<void> {
   // throw forever the bot is silently BLIND to leader events while the heartbeat stays GREEN. Poll health is now
   // PER LEADER inside the hub (its own counters + stale alerts); the wallet-level reconcile keeps its own
   // process-level counter + alert here. wsConnected is mirrored from the WS connection-change callback (below).
-  // ── OPERATOR RUNBOOK · `system.detection_stale` (RPC/WS outage) — v1 mitigation for the single-endpoint SPOF ──
+  // ── OPERATOR RUNBOOK · `system.detection_stale` (RPC/WS outage) — mitigations for the single-endpoint SPOF ──
   // The brain runs BOTH never-miss detection AND the exec path on ONE Helius endpoint (cfg.httpUrl/wsUrl =
-  // SOLANA_HTTP_URL / SOLANA_WS_URL) — a single point of failure (#167; the secondary-RPC failover #50 is deferred).
+  // SOLANA_HTTP_URL / SOLANA_WS_URL) (#167). FIRST mitigation is now AUTOMATIC (#50): with COPYBOT_RPC_FALLBACK_URL
+  // set, whitelisted brain READS failover to the secondary endpoint, so detection/reconcile survive a primary HTTP
+  // outage without operator action (the WS trigger and the coffre's SUBMIT path stay on the primary).
   // On a revoked/outaged key the poll AND reconcile loops throw repeatedly → after DETECTION_STALE_FAILURES in a row
   // the PINNED `system.detection_stale` event fans out to the Discord operator sink ("check RPC/key"), not just a log.
-  // ACTION on that page: point SOLANA_HTTP_URL/SOLANA_WS_URL at a BACKUP Helius/RPC key and restart the brain — on
+  // ACTION on that page: point SOLANA_HTTP_URL/SOLANA_WS_URL at a BACKUP Helius/RPC key and restart — the key-swap
+  // remains the mitigation for the WS trigger and for SUBMIT (sendRawTransaction never fails over by design) — on
   // boot the reconcile sweep re-reads on-chain state and force-closes any position the leader exited while blind (the
   // never-miss-close backstop), so held positions recover. (Opens missed during the outage are forward-only.)
   let wsConnected = false; // last-known WS trigger connectivity

@@ -10,7 +10,7 @@
  *   node --import tsx --env-file=../.env src/copybot/coffre/coffre-main.ts
  */
 import { randomUUID } from 'node:crypto';
-import { Connection, PublicKey } from '@solana/web3.js';
+import { PublicKey } from '@solana/web3.js';
 import type { Logger } from 'pino';
 import { pino } from 'pino';
 import { createDiscordAlertSink } from '@/copybot/alert';
@@ -41,6 +41,10 @@ import { openDatabase } from '@/infrastructure/persistence/database';
 import { PositionLedgerRepository } from '@/infrastructure/persistence/position-ledger-repository';
 import { PrivyServer } from '@/infrastructure/privy/privy-server';
 import { BlockhashCache } from '@/infrastructure/solana/blockhash-cache';
+import {
+  COFFRE_FAILOVER_READS,
+  createFailoverConnection,
+} from '@/infrastructure/solana/failover-connection';
 
 const STREAM = 'copybot:cmd:sign';
 const GROUP = 'coffre';
@@ -388,6 +392,10 @@ export function parseCoffreNumericConfig(env: {
 
 const cfg = {
   httpUrl: process.env.SOLANA_HTTP_URL ?? '',
+  // Optional reads-only secondary RPC (#50): ONLY getSlot/getLatestBlockhash/getTransaction failover to it.
+  // Confirm verdicts (getSignatureStatus(es)/getBlockHeight) and sendRawTransaction stay primary-only — a lagging
+  // fallback must never fabricate a 'dead' verdict or double-land. Unset ⇒ single-endpoint, today's behavior.
+  fallbackUrl: process.env.COPYBOT_RPC_FALLBACK_URL,
   redisUrl: process.env.REDIS_URL ?? 'redis://localhost:6385',
   dbUrl: process.env.DATABASE_URL ?? 'postgres://meteora:meteora@localhost:5435/meteora',
   // keypairPath + owner are NOT defaulted here (#24): the signing wallet is resolved fail-closed in main() via
@@ -485,7 +493,9 @@ async function main(): Promise<void> {
   }
   // THE-TRAP: the loaded key MUST be the expected copier wallet (fail-closed otherwise).
   const copier = loadCopierKeypair(wallet.keypairPath, wallet.owner);
-  const conn = new Connection(cfg.httpUrl, 'confirmed');
+  // Reads-only failover (#50): the tight COFFRE whitelist retries ONCE on COPYBOT_RPC_FALLBACK_URL when the
+  // primary throws; unset ⇒ a bare single-endpoint Connection (identical to before). Submit/confirm never failover.
+  const conn = createFailoverConnection(cfg.httpUrl, cfg.fallbackUrl, COFFRE_FAILOVER_READS, log);
   const db = openDatabase(cfg.dbUrl);
   // ONE observability emitter bound to this tenant (mono-user PoC): a tenant-scoped pino child is its logger. The
   // vault's call sites (process1 + the loop) emit TYPED codes through it directly; every row back-fills
