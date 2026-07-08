@@ -36,8 +36,18 @@ export interface OwnerTokenBalance {
 
 /**
  * Select which of the wallet's token balances to sweep back to SOL (the no-miss safety net behind the
- * close-triggered sell): every non-SOL mint above dust. Skips wSOL — it is SOL already (a swap would be
- * circular; it is unwrapped natively instead). Pure; reuses `decideResidualSell` for the per-token cutoff.
+ * close-triggered sell): every non-SOL mint above dust. Pure; reuses `decideResidualSell` for the per-token cutoff.
+ *
+ * wSOL is DELIBERATELY excluded (verified against the Meteora DLMM SDK, not a bug): the WSOL ATA is a single
+ * canonical per-owner address, its create is idempotent (a stranded ATA never blocks a later open), and every
+ * SOL-paired op (a wide/two-sided open's `pre`-wrap, and every close/remove) ends with the SDK's `post` step doing
+ * `closeAccount(entire WSOL ATA -> owner)`, reclaiming the WHOLE balance — stranded WSOL included — as native SOL.
+ * Since start/stop = force-close, even a STOP reabsorbs it. So a leftover-WSOL residual is self-healing on the next
+ * open/close; the ONLY truly-stranded case is a wallet that performs no further SOL-op ever (dormant). A standalone
+ * recovery-unwrap tx is deliberately NOT added: it would race the SHARED, fungible WSOL ATA — a balance read cannot
+ * separate stranded WSOL from an in-flight open's freshly-wrapped, not-yet-deposited WSOL — so it could drain a live
+ * open's capital to recover a residual the same op reabsorbs for free. Recovery is delegated to the SDK's next-op
+ * native unwrap by design. See ULTRACODE-REVIEW WSOL (#7).
  */
 export function planWalletSweep(
   balances: OwnerTokenBalance[],
