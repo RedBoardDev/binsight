@@ -7,7 +7,10 @@ import {
   planTwoSided,
   planTwoSidedReshape,
   resolveTwoSidedTokenDeposit,
+  scaleTokenDeadbandRaw,
   sizeTwoSided,
+  TOKEN_DEADBAND_MIN_RAW,
+  TOKEN_DEADBAND_REFERENCE_DECIMALS,
   twoSidedLegTotals,
 } from './two-sided';
 
@@ -626,5 +629,60 @@ describe('resolveTwoSidedTokenDeposit — never deposit a stale/short token leg 
     });
     expect(r.ready).toBe(true);
     expect(r.depositRaw).toBe(EXPECTED); // min(bought, expected) → capped
+  });
+});
+
+describe('scaleTokenDeadbandRaw — decimals-aware token-leg deadband (idx17)', () => {
+  // The calibrated config default (RESHAPE_BIN_DEADBAND_TOKEN_RAW): raw units AT the reference decimals.
+  const BASE = 100;
+  // A per-bin move of 50 raw units: on a 2-decimals mint that is HALF A TOKEN (a real move the copy must follow);
+  // on a 9-decimals mint it is 5e-8 tokens (read/rounding dust the deadband exists to swallow). Same raw number,
+  // opposite economic meaning — the exact asymmetry the scaling fixes.
+  const DELTA_RAW = 50;
+  const LOW_DECIMALS = 2;
+
+  it('at the reference decimals the calibrated value passes through unchanged (the reference case is byte-identical)', () => {
+    expect(scaleTokenDeadbandRaw(BASE, TOKEN_DEADBAND_REFERENCE_DECIMALS)).toBe(BASE);
+  });
+
+  it('unknown decimals (undefined) falls back to the unscaled calibrated value — pre-fix behavior, never a throw', () => {
+    expect(scaleTokenDeadbandRaw(BASE, undefined)).toBe(BASE);
+  });
+
+  it('is monotonic in decimals and never 0 (floored at TOKEN_DEADBAND_MIN_RAW ≥ 1)', () => {
+    // WHY: a deadband that scaled down to 0 would make planReshape fire on ±1-raw integer rounding noise —
+    // dust reshape churn, the exact failure the deadband prevents. And a higher-decimals mint must never get a
+    // SMALLER effective threshold than a lower-decimals one (the economic threshold must be non-decreasing).
+    const decimals = [0, 2, 5, 6, 9, 12];
+    const scaled = decimals.map((d) => scaleTokenDeadbandRaw(BASE, d));
+    for (const s of scaled) expect(s).toBeGreaterThanOrEqual(TOKEN_DEADBAND_MIN_RAW);
+    for (let i = 1; i < scaled.length; i++)
+      expect(scaled[i]!).toBeGreaterThanOrEqual(scaled[i - 1]!);
+    expect(scaleTokenDeadbandRaw(0, 0)).toBe(TOKEN_DEADBAND_MIN_RAW); // even a 0 base never yields a 0 deadband
+  });
+
+  // The two WHY scenarios, driven through the ACTUAL planner the reshape site calls.
+  // Legs: SOL sides identical (no SOL ops); token side differs by DELTA_RAW on bin 0 → the token leg alone decides.
+  const leaderSol: BinSol[] = [{ offset: 0, sol: 1 }];
+  const ourSol: BinSol[] = [{ offset: 0, sol: 1 }];
+  const leaderToken: BinSol[] = [{ offset: 0, sol: DELTA_RAW }];
+  const ourToken: BinSol[] = [{ offset: 0, sol: 0 }];
+  const plan = (tokenDeadband: number) =>
+    planTwoSidedReshape(leaderSol, ourSol, leaderToken, ourToken, 1, 100, 0, 0.0002, tokenDeadband);
+
+  it('LOW-decimals mint: a real per-bin move that raw-100 SUPPRESSED now triggers the token reshape (fidelity)', () => {
+    // WHY (idx17, money): 50 raw on a 2-decimals mint is half a token per bin — a real leader move. The unscaled
+    // raw-100 deadband swallowed it (|50| ≤ 100 → noop) and the copy silently drifted off the leader's bin shape.
+    expect(plan(BASE).tokenAddOps).toHaveLength(0); // the pre-fix defect, pinned
+    const scaled = scaleTokenDeadbandRaw(BASE, LOW_DECIMALS); // 100 × 10^(2−9) → floored to 1 raw
+    expect(plan(scaled).tokenAddOps).toEqual([{ offset: 0, action: 'add', addSol: DELTA_RAW }]);
+  });
+
+  it('HIGH-decimals (reference) mint: the same 50-raw delta is DUST and still does NOT trigger (no churn)', () => {
+    // WHY: on the reference 9-decimals mint 50 raw is 5e-8 tokens — read noise. The scaled deadband equals the
+    // calibrated 100 there, so the no-churn behavior the default was tuned for is unchanged by the fix.
+    const scaled = scaleTokenDeadbandRaw(BASE, TOKEN_DEADBAND_REFERENCE_DECIMALS);
+    expect(plan(scaled).tokenAddOps).toHaveLength(0);
+    expect(plan(scaled).ops).toHaveLength(0);
   });
 });

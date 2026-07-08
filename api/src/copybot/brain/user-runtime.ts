@@ -95,6 +95,7 @@ import {
   planTwoSidedReshape,
   reshapeCapFactor,
   resolveTwoSidedTokenDeposit,
+  scaleTokenDeadbandRaw,
   sizeTwoSided,
   type TwoSidedPlan,
   twoSidedLegTotals,
@@ -2190,6 +2191,17 @@ export async function createUserRuntime(
     const solSide = meta.solSide;
     const tokenMint = solSide === 'Y' ? meta.mintX : meta.mintY; // hoisted: the token-leg SOL valuation (below) runs INSIDE the read loop, before the plan
     const pair = await createDlmmPair(conn, poolPk);
+    // idx17 — decimals-aware token-leg deadband: `reshapeBinDeadbandToken` is calibrated in RAW units for a
+    // TOKEN_DEADBAND_REFERENCE_DECIMALS mint; scale it to THIS position's mint so the threshold keeps the same
+    // ECONOMIC size on every mint (unscaled, raw-100 suppressed real per-bin moves on a low-decimals mint —
+    // bin-shape fidelity loss — and fired on dust for anything above the reference). Decimals come off the
+    // ALREADY-LOADED SDK pair (DLMM.create fetched both Mint accounts) — zero extra RPC on the reshape path;
+    // a degenerate pair without mint info falls back to the unscaled value inside the helper (never throws).
+    const tokenMintDecimals = (solSide === 'Y' ? pair.tokenX : pair.tokenY)?.mint?.decimals;
+    const tokenBinDeadbandRaw = scaleTokenDeadbandRaw(
+      ec.execution.reshapeBinDeadbandToken,
+      tokenMintDecimals,
+    );
     // Stable read: a leader ADD/REMOVE we just saw may not be indexed yet → a premature read shows no change → we'd
     // skip the reshape (the copy wouldn't grow/shrink). readStableShape waits for the leader's liquidity to settle.
     // SHAPE-EXACT re-sync, aligned by offset-from-LOWER. A leader ADD/REMOVE seen via WS may not be indexed yet
@@ -2291,7 +2303,7 @@ export async function createUserRuntime(
         ec.sizing.maxTradeSizeSol,
         tokenLegValueSol,
         ec.execution.reshapeBinDeadbandSol,
-        ec.execution.reshapeBinDeadbandToken,
+        tokenBinDeadbandRaw,
       );
       if (plan.ops.length > 0 || (ec.twoSidedMode === 'on' && plan.tokenAddOps.length > 0)) break; // deficit found → proceed
       // noop this read — if a change was expected, the leader event likely isn't indexed yet → retry

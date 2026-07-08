@@ -128,6 +128,40 @@ export function reshapeCapFactor(
 }
 
 /**
+ * The mint decimals the raw token-leg deadband (`RESHAPE_BIN_DEADBAND_TOKEN_RAW` in config/defaults, wired as
+ * `execution.reshapeBinDeadbandToken`) was CALIBRATED for: the common high-decimals SPL mint paired with SOL
+ * (9 decimals — the SOL-standard maximum, per that constant's rationale). At the reference decimals the scale
+ * factor is 1, so the calibrated raw value passes through unchanged (the reference behavior is byte-identical).
+ */
+export const TOKEN_DEADBAND_REFERENCE_DECIMALS = 9;
+
+/**
+ * Floor of the scaled token-leg deadband, in raw units. `planReshape` skips `|delta| <= deadband`, so a floor of 1
+ * still swallows ±1-raw integer rounding noise, while a deadband that scaled down to 0 would reshape on that very
+ * noise (dust churn on every read — the exact failure mode the deadband exists to prevent).
+ */
+export const TOKEN_DEADBAND_MIN_RAW = 1;
+
+/**
+ * Scale the per-bin token-leg reshape deadband to the position mint's decimals (idx17, PURE). The config value is
+ * ONE raw-unit number, but a raw unit's economic size varies by 10^decimals across mints: 100 raw is ~1e-7 tokens
+ * on a 9-decimals mint (negligible, as calibrated) yet a whole token on a 2-decimals mint — where it SUPPRESSED
+ * real leader per-bin moves (two-sided bin-shape fidelity loss, the copy silently drifted off the leader's shape).
+ * `base × 10^(mintDecimals − reference)` keeps the ECONOMIC threshold the calibration expressed constant across
+ * mints; monotonic in decimals and floored at TOKEN_DEADBAND_MIN_RAW (never 0). `mintDecimals` undefined (an SDK
+ * pair without loaded mint info — a real DLMM instance always carries both `Mint`s in memory, so this is
+ * mocks/degenerate states only) falls back to the unscaled calibrated value: pre-fix behavior, never a throw on
+ * the money path.
+ */
+export function scaleTokenDeadbandRaw(baseRaw: number, mintDecimals: number | undefined): number {
+  const scaled =
+    mintDecimals === undefined
+      ? baseRaw
+      : baseRaw * 10 ** (mintDecimals - TOKEN_DEADBAND_REFERENCE_DECIMALS);
+  return Math.max(TOKEN_DEADBAND_MIN_RAW, scaled);
+}
+
+/**
  * Plan a TWO-SIDED re-shape of an existing position (PURE). `removeLiquidity(bps)` pulls BOTH legs of a bin at
  * once, so a SOL-leg remove already trims the token in any bin that ALSO carries SOL (the active bin + the SOL
  * range). But a position's PURE-TOKEN bins (above the active bin, no SOL leg) are invisible to the SOL-leg plan —

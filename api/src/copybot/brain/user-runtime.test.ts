@@ -1829,6 +1829,10 @@ describe('UserRuntime — a RESYNC records the tracked size from PUBLISHED ops o
     withdrawSol: number;
     instruction: string;
     capTotalSol?: number | null;
+    /** idx17 — a pair whose tokenX/tokenY carry mint decimals (the global mock returns `{}` = decimals unknown). */
+    pairMock?: unknown;
+    /** idx17 — a suppressed reshape ends at `reshape.noop` (updateSize never fires); wait on that emit instead. */
+    completion?: 'updateSize' | 'reshapeNoop';
   }) {
     const published: Array<Record<string, unknown>> = [];
     const conn = new Connection('http://127.0.0.1:1');
@@ -1863,6 +1867,9 @@ describe('UserRuntime — a RESYNC records the tracked size from PUBLISHED ops o
     });
     await rt.store.saveOpen(rt.registry.get(R_LEADER_POS)!);
     const updateSize = vi.spyOn(rt.store, 'updateSize');
+    const emitted = vi.spyOn(rt.events, 'emit');
+    if (p.pairMock !== undefined)
+      vi.mocked(createDlmmPair).mockResolvedValueOnce(p.pairMock as never);
     // readStableShape(leader) and readLeaderPositionShape(our) both hit this mock — split by the position pubkey.
     vi.mocked(readLeaderPositionShape).mockImplementation(async (_c, _pool, _o, position) =>
       position === R_LEADER_POS ? shape(p.leader.x, p.leader.y) : shape(p.ours.x, p.ours.y),
@@ -1886,10 +1893,17 @@ describe('UserRuntime — a RESYNC records the tracked size from PUBLISHED ops o
       R_LEADER,
       1,
     );
-    await waitFor(
-      () => Promise.resolve(updateSize.mock.calls.length),
-      (n) => n > 0,
-    );
+    if (p.completion === 'reshapeNoop') {
+      await waitFor(
+        () => Promise.resolve(emitted.mock.calls.some((c) => c[0] === 'reshape.noop')),
+        (hit) => hit,
+      );
+    } else {
+      await waitFor(
+        () => Promise.resolve(updateSize.mock.calls.length),
+        (n) => n > 0,
+      );
+    }
     const recorded = updateSize.mock.calls.find((c) => c[0] === R_LEADER_POS)?.[1];
     return { rt, published, recorded };
   }
@@ -2022,6 +2036,74 @@ describe('UserRuntime — a RESYNC records the tracked size from PUBLISHED ops o
     vi.mocked(buildJupiterSwapTx).mockReset();
     vi.mocked(readOwnerTokenBalance).mockReset();
     vi.mocked(buildAddByWeight).mockReset();
+  });
+
+  it('idx17 — LOW-decimals mint: a real token-leg move the RAW deadband suppressed now publishes the reshape BUY', async () => {
+    // WHY (idx17, fidelity/money): `reshapeBinDeadbandToken` = 100 RAW units, calibrated for a 9-decimals mint. On
+    // a 2-decimals mint a 50-raw per-bin delta is HALF A TOKEN — a real leader move — yet |50| ≤ 100 turned the
+    // whole resync into reshape.noop: the copy silently drifted off the leader's bin shape for its whole life.
+    // The reshape site now reads the mint's decimals off the ALREADY-LOADED SDK pair (no extra RPC) and scales the
+    // deadband (× 10^(2−9), floored at 1 raw), so the SAME event now plans the token add and publishes its funding
+    // BUY. This FAILS if the site stops scaling (passes the raw config value again) or invents an RPC decimals read.
+    vi.mocked(getJupiterQuote).mockResolvedValue({
+      inputMint: R_MINT,
+      outputMint: WSOL,
+      inAmount: '0',
+      outAmount: '500000', // 100 raw of a 2-decimals token ≈ 0.0005 SOL (value + price quotes)
+      raw: {},
+    });
+    vi.mocked(getJupiterBuyQuoteExactIn).mockResolvedValue({
+      inputMint: WSOL,
+      outputMint: R_MINT,
+      inAmount: '500000',
+      outAmount: '100', // the token deficit bought (raw)
+      raw: {},
+    });
+    vi.mocked(buildJupiterSwapTx).mockResolvedValue('buytx-b64');
+    vi.mocked(readOwnerTokenBalance).mockResolvedValue(0n); // pre-buy snapshot (#33) — offline
+    const { published } = await driveResync({
+      userId: 'resync-idx17-lowdec',
+      twoSidedMode: 'on',
+      startSizeSol: 2,
+      leader: { x: 1_050n, y: 1_000_000_000n }, // token leg +50 raw/bin vs ours; SOL legs identical (no SOL ops)
+      ours: { x: 1_000n, y: 1_000_000_000n },
+      depositSol: 2, // a leader ADD → resync (infiniteAdd on)
+      withdrawSol: 0,
+      instruction: 'AddLiquidityByStrategy2',
+      pairMock: { tokenX: { mint: { decimals: 2 } }, tokenY: { mint: { decimals: 9 } } }, // solSide 'Y' → token = X
+    });
+    expect(published.some((c) => c.kind === 'buy')).toBe(true); // the real move IS mirrored now
+    vi.mocked(getJupiterQuote).mockReset();
+    vi.mocked(getJupiterBuyQuoteExactIn).mockReset();
+    vi.mocked(buildJupiterSwapTx).mockReset();
+    vi.mocked(readOwnerTokenBalance).mockReset();
+  });
+
+  it('idx17 — HIGH-decimals (reference) mint: the same 50-raw delta is dust → still reshape.noop (no dust churn)', async () => {
+    // WHY (idx17, the other side): on the reference 9-decimals mint 50 raw is 5e-8 tokens — read/rounding noise.
+    // The scale factor is 1 there, so the calibrated no-churn behavior is unchanged: no ops, no buy, reshape.noop.
+    // This FAILS if the scaling accidentally shrinks the reference deadband (dust buys / fee bleed on every read).
+    vi.mocked(getJupiterQuote).mockResolvedValue({
+      inputMint: R_MINT,
+      outputMint: WSOL,
+      inAmount: '0',
+      outAmount: '500000', // keeps the token-leg value quote offline (its result is irrelevant to the noop)
+      raw: {},
+    });
+    const { published } = await driveResync({
+      userId: 'resync-idx17-refdec',
+      twoSidedMode: 'on',
+      startSizeSol: 2,
+      leader: { x: 1_050n, y: 1_000_000_000n }, // the SAME +50 raw/bin token delta as the low-decimals test
+      ours: { x: 1_000n, y: 1_000_000_000n },
+      depositSol: 0,
+      withdrawSol: 0.0005, // routes to resync (any withdrawal); ≤ RESYNC_MIN_CHANGE_SOL → one read, no retry sleeps
+      instruction: 'RemoveLiquidityByRange2',
+      pairMock: { tokenX: { mint: { decimals: 9 } }, tokenY: { mint: { decimals: 9 } } },
+      completion: 'reshapeNoop',
+    });
+    expect(published).toHaveLength(0); // nothing deployed for dust
+    vi.mocked(getJupiterQuote).mockReset();
   });
 
   it('a one-sided GROW that would breach maxTotalExposureSol is BLOCKED — the add never publishes and the size clamps (idx15)', async () => {

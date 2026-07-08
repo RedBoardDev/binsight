@@ -10,13 +10,13 @@ import type { CopybotConfig, UserSettings } from './types';
 export const DEFAULT_LEADER_ADDRESS = '8ryctvNwpJTuuap3wuNTfcyEx4DjSuXvhGXSDHNaU8sQ';
 
 /**
- * Per-bin token-leg reshape deadband, in RAW base units (two-sided reshape only). Unlike its SOL sibling
- * `reshapeBinDeadbandSol`, which is decimals-STABLE (SOL is always 9 decimals), this threshold is decimals-DEPENDENT
- * and no single raw value is correct for every mint: relative to typical per-bin token amounts, 100 raw units is
- * negligible on a high-decimals mint (→ fires on near-zero deltas: dust-sized reshape buys / fee bleed) yet large on
- * a low-decimals mint (→ suppresses real moves: reshape fidelity loss). It is left at 100 (calibrated for the common
- * high-decimals SPL/LP mint); the complete fix scales the deadband by the position mint's decimals at the reshape
- * site (the `planTwoSidedReshape` caller in the brain runtime), which lives outside this config module. See idx17.
+ * Per-bin token-leg reshape deadband, in RAW base units AT the reference decimals (two-sided reshape only). Unlike
+ * its SOL sibling `reshapeBinDeadbandSol`, which is decimals-STABLE (SOL is always 9 decimals), a raw token unit's
+ * economic size is decimals-DEPENDENT — so this value is CALIBRATED for `TOKEN_DEADBAND_REFERENCE_DECIMALS` (9, the
+ * common high-decimals SPL mint) and the reshape site (the `planTwoSidedReshape` caller in the brain runtime) scales
+ * it to the position mint's actual decimals via `scaleTokenDeadbandRaw` (two-sided.ts): `× 10^(mintDecimals − 9)`,
+ * floored at 1 raw. That keeps the SAME economic threshold on every mint — unscaled, 100 raw suppressed real moves
+ * on a low-decimals mint (fidelity loss) and fired on dust above the reference (reshape churn). Fixes idx17.
  */
 const RESHAPE_BIN_DEADBAND_TOKEN_RAW = 100;
 
