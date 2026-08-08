@@ -4,46 +4,38 @@ import type { EventBus } from '@/application/event-bus';
 import type { HealthMonitor } from '@/application/health-monitor';
 import type { PositionSync } from '@/application/position-sync-service';
 import type { RealizedPnlEngine } from '@/application/realized-pnl';
-import type { SwapFlowIngest } from '@/application/swap-flow-ingest';
-import type { WalletFlowIngest } from '@/application/wallet-flow-ingest';
 import type { AppConfig } from '@/config/env';
-import { classifyInstruction, type OnchainWalletSnapshot } from '@/domain/dlmm';
+import type { OnchainWalletSnapshot } from '@/domain/dlmm';
 import { liveMarkWallet } from '@/domain/live-mark';
 import type {
   AccountRepository,
   ConfigRepository,
-  DlmmIngest,
   OnchainDlmmGateway,
   PositionRepository,
-  PositionsGateway,
   PriceGateway,
-  RpcSubscriber,
   StreamActivityReason,
   TransactionStreamPort,
+  WalletTxIngestPort,
 } from '@/domain/ports';
 import { mintsNeedingPrice, valueSnapshot } from '@/domain/snapshot-valuation';
 import { KeyedSerializer, Semaphore } from '@/util/concurrency';
 import { StateEmitter } from './emitter';
-import { Reconciler } from './reconciler';
-import { PositionRefresher } from './refresher';
 import { makeRuntime, type WalletRuntime } from './runtime';
 import type { StrategyService } from './strategy-service';
 import { clamp, shouldRefreshOpenSnapshot, shouldRefreshRealized } from './utils';
 
 const INITIAL_LAG_MS = 1500;
-const RETRY_DELAYS_MS = [2000, 2500];
 // Shared price-mark cadence: ONE engine-wide timer re-marks every VIEWED wallet's OPEN positions from
 // cached on-chain data + the live Jupiter price (zero RPC). Replaces the blind per-wallet 30s
 // WALLET_BALANCE_REFRESH_MS getMultipleAccounts snapshot. Above the 5s Jupiter price-cache TTL so each
 // tick reflects a freshly fetched price; idle/un-viewed wallets are skipped → they cost 0 recurring RPC.
 const PRICE_MARK_INTERVAL_MS = 10_000;
-const CLOSED_RESYNC_MS = 90_000;
 const STRATEGY_BACKFILL_MS = 60_000;
 // Safety net: re-run snapshot discovery at least this often even with no WS activity, so a silently
 // dropped open/close (WS reconnect gap) can't keep a stale position set indefinitely.
 const SAFETY_REDISCOVER_MS = 600_000;
-// Spread a fleet-wide poll burst (WS reconnect / manual refresh) across this step per wallet so it
-// doesn't hit the shared Meteora budget all in one tick.
+// Spread a fleet-wide resync burst (WS reconnect / manual refresh) across this step per wallet so it
+// doesn't hit the shared RPC budget all in one tick.
 const POLL_STAGGER_MS = 50;
 // On-chain source: the OPEN-position refresh cadence. Drives BOTH (a) the periodic EXACT on-chain read
 // (onTick → doSnapshot) that grows a live position's unclaimed fees + rebalances its bin liquidity — the
@@ -60,15 +52,17 @@ const SYNC_INTERVAL_MS = 10_000;
 // real sale value converges without waiting for the wallet's next close. Bounded → ≤ this many extra
 // passes per close. Front-loaded because the bottleneck is the close→sell delay, not indexing.
 const REALIZED_REFRESH_OFFSETS_MS = [25_000, 60_000, 150_000];
+// Safety delta-ingest cadence — the no-miss backstop, adaptive on WS health. One getSignaturesForAddress
+// against the wallet's cursor, so a tick that finds nothing costs a single credit (~300/day/wallet while
+// connected). Faster when the socket is down, since the poll is then the only thing watching at all.
+const INGEST_POLL_CONNECTED_MS = 300_000;
+const INGEST_POLL_DISCONNECTED_MS = 30_000;
 
 /** Engine dependencies — one options object instead of 16 positional ctor args. */
 export interface EngineDeps {
-  gateway: PositionsGateway;
   prices: PriceGateway;
-  /** LEGACY 'meteora' WS backbone (logsSubscribe). Used only when POSITIONS_SOURCE !== 'onchain'. */
-  subscriber: RpcSubscriber;
-  /** ON-CHAIN WS backbone (Helius transactionSubscribe) — the trigger for triggerOnchainSync, replacing
-   *  the old unconditional BACKSTOP_INGEST_MS sweep. Used (started/watched) only in onchain mode. */
+  /** The WS backbone (Helius transactionSubscribe) — the trigger for triggerOnchainSync, replacing the
+   *  old unconditional BACKSTOP_INGEST_MS sweep. */
   stream: TransactionStreamPort;
   onchain: OnchainDlmmGateway;
   health: HealthMonitor;
@@ -79,18 +73,14 @@ export interface EngineDeps {
   bus: EventBus;
   logger: Logger;
   appConfig: AppConfig;
-  dlmmIngest: DlmmIngest;
+  walletTxIngest: WalletTxIngestPort;
   positionSync: PositionSync;
-  walletFlowIngest: WalletFlowIngest;
-  swapFlowIngest: SwapFlowIngest;
   realizedPnl: RealizedPnlEngine;
 }
 
 export class Engine {
   private readonly wallets = new Map<string, WalletRuntime>();
   private readonly emitter: StateEmitter;
-  private readonly refresher: PositionRefresher;
-  private readonly reconciler: Reconciler;
   private tick: NodeJS.Timeout | null = null;
   // Shared price-mark timer (one for the whole engine) + a single-flight guard so two ticks never overlap
   // the Jupiter fetch. The value-on-demand replacement for the deleted per-wallet 30s snapshot timer.
@@ -115,7 +105,6 @@ export class Engine {
   private readonly realizedPnlRerun = new Set<string>();
 
   private readonly prices: PriceGateway;
-  private readonly subscriber: RpcSubscriber;
   private readonly stream: TransactionStreamPort;
   private readonly onchain: OnchainDlmmGateway;
   private readonly health: HealthMonitor;
@@ -126,17 +115,13 @@ export class Engine {
   private readonly bus: EventBus;
   private readonly logger: Logger;
   private readonly appConfig: AppConfig;
-  private readonly dlmmIngest: DlmmIngest;
+  private readonly walletTxIngest: WalletTxIngestPort;
   private readonly positionSync: PositionSync;
-  private readonly walletFlowIngest: WalletFlowIngest;
-  private readonly swapFlowIngest: SwapFlowIngest;
   private readonly realizedPnl: RealizedPnlEngine;
 
   constructor(deps: EngineDeps) {
-    // gateway is only needed to build the refresher/reconciler below — it's not a field.
-    const { gateway, prices, subscriber, bus, logger, repo, appConfig } = deps;
+    const { prices, bus, logger, repo, appConfig } = deps;
     this.prices = prices;
-    this.subscriber = subscriber;
     this.stream = deps.stream;
     this.onchain = deps.onchain;
     this.health = deps.health;
@@ -147,51 +132,30 @@ export class Engine {
     this.bus = bus;
     this.logger = logger;
     this.appConfig = appConfig;
-    this.dlmmIngest = deps.dlmmIngest;
+    this.walletTxIngest = deps.walletTxIngest;
     this.positionSync = deps.positionSync;
-    this.walletFlowIngest = deps.walletFlowIngest;
-    this.swapFlowIngest = deps.swapFlowIngest;
     this.realizedPnl = deps.realizedPnl;
-    // The emitter reports WS health off whichever backbone is actually live for this mode (the on-chain
-    // TransactionStream or the legacy logsSubscribe subscriber) — both expose isConnected().
-    this.emitter = new StateEmitter(
-      this.wallets,
-      this.onchainSource ? deps.stream : subscriber,
-      bus,
-      this.health,
-    );
-    this.refresher = new PositionRefresher(
-      gateway,
-      prices,
-      repo,
-      this.emitter,
-      logger,
-      this.strategy,
-    );
-    this.reconciler = new Reconciler(gateway, repo, bus, logger);
+    // The emitter reports WS health off the live backbone (the on-chain TransactionStream).
+    this.emitter = new StateEmitter(this.wallets, deps.stream, bus, this.health);
     this.backfillSemaphore = new Semaphore(appConfig.BACKFILL_CONCURRENCY);
   }
 
   async start(): Promise<void> {
-    // ON-CHAIN: the Helius transactionSubscribe stream is the trigger; its onReconnect drives a fleet
-    // delta-resync (parity with the old subscriber) and its built-in gap detector + fromSlot replay now
-    // own the no-miss guarantee the deleted BACKSTOP_INGEST_MS sweep used to provide.
-    // LEGACY 'meteora': the logsSubscribe subscriber + the periodic Meteora poll.
-    const backbone = this.onchainSource ? this.stream : this.subscriber;
-    backbone.onReconnect(() =>
-      this.onchainSource ? this.resyncAllOnchain() : this.pollAllNow('ws-reconnect'),
-    );
-    backbone.onConnectionChange((c) =>
+    // The Helius transactionSubscribe stream is the trigger; its onReconnect drives a fleet delta-resync
+    // and its built-in gap detector + fromSlot replay own the no-miss guarantee the deleted
+    // BACKSTOP_INGEST_MS sweep used to provide.
+    this.stream.onReconnect(() => this.resyncAllOnchain());
+    this.stream.onConnectionChange((c) =>
       this.logger.debug({ connected: c }, 'Solana WS connection changed'),
     );
-    backbone.start();
+    this.stream.start();
     await this.strategy.init();
 
     for (const address of await this.accounts.monitoredWallets())
       await this.registerWallet(address);
 
     for (const [, rt] of this.wallets) {
-      void this.doInitialSync(rt);
+      void this.onchainBackfill(rt);
     }
 
     this.tick = setInterval(() => this.onTick(), 1000);
@@ -200,24 +164,20 @@ export class Engine {
     this.priceTick = setInterval(() => void this.runPriceMark(), PRICE_MARK_INTERVAL_MS);
   }
 
-  private get onchainSource(): boolean {
-    return this.appConfig.POSITIONS_SOURCE === 'onchain';
-  }
-
   stop(): void {
     if (this.tick) clearInterval(this.tick);
     if (this.priceTick) clearInterval(this.priceTick);
-    (this.onchainSource ? this.stream : this.subscriber).stop();
+    this.stream.stop();
   }
 
   async addWallet(address: string): Promise<void> {
     if (this.wallets.has(address)) return;
     await this.registerWallet(address);
-    void this.doInitialSync(this.wallets.get(address)!);
+    void this.onchainBackfill(this.wallets.get(address)!);
   }
 
   removeWallet(address: string): void {
-    (this.onchainSource ? this.stream : this.subscriber).unwatch(address);
+    this.stream.unwatch(address);
     this.wallets.delete(address);
     this.ingestLock.delete(address);
   }
@@ -241,10 +201,9 @@ export class Engine {
     return this.prices.getSolUsd();
   }
 
-  /** Immediately poll + snapshot all wallets (a manual refresh from a client). */
+  /** Immediately re-sync + snapshot all wallets (a manual refresh from a client). */
   refreshNow(): void {
-    if (this.onchainSource) this.resyncAllOnchain();
-    else this.pollAllNow('manual-refresh');
+    this.resyncAllOnchain();
   }
 
   /** The WS layer reports which wallets currently have a viewer. The recurring net-worth snapshot is
@@ -264,16 +223,22 @@ export class Engine {
   private async registerWallet(address: string): Promise<void> {
     const rt = makeRuntime(address, await this.repo.getOpen(address));
     this.wallets.set(address, rt);
-    if (this.onchainSource) {
-      // transactionSubscribe: a DLMM tx (or a gap-detector recovery) → the cursor-based delta ingest.
-      this.stream.watch(address, (wallet, reason) => this.onStreamActivity(wallet, reason));
-    } else {
-      // logsSubscribe: a classified DLMM instruction → the Meteora refresh path.
-      this.subscriber.watch(address, (_sig, instr) => this.onWsActivity(address, instr));
-    }
+    // transactionSubscribe: a DLMM tx (or a gap-detector recovery) → the cursor-based delta ingest.
+    this.stream.watch(address, (wallet, reason) => this.onStreamActivity(wallet, reason));
+  }
+
+  /** How often to run the safety delta ingest. Rare while the stream is up (it already delivers activity
+   *  within seconds); brisk while it is down, because then the poll is the ONLY way anything is noticed. */
+  private ingestPollIntervalMs(): number {
+    return this.stream.isConnected() ? INGEST_POLL_CONNECTED_MS : INGEST_POLL_DISCONNECTED_MS;
   }
 
   private onTick(): void {
+    // Poll-budget bookkeeping kept ONLY to keep the Health wire's `pollIntervalMs` / `effectiveRps`
+    // fields populated exactly as they already were in on-chain mode (native clients decode both, and
+    // the RuntimeSettings poll knobs are still exposed to the Settings page). Nothing polls per pool
+    // anymore — `rt.pools` is never populated now that the Meteora poller is gone, so `effectiveRps`
+    // stays 0 and the interval is a pure cadence hint, not a driver of any RPC.
     let totalPools = 0;
     for (const rt of this.wallets.values()) totalPools += Math.max(rt.pools.length, 1);
     const settings = this.config.getSettings();
@@ -287,26 +252,27 @@ export class Engine {
         : settings.pollIdleMs;
       rt.pollIntervalMs = interval;
 
-      if (!this.onchainSource && !rt.refreshing && Date.now() - rt.lastPollAt >= interval)
-        void this.doRefresh(rt, 'poll');
       // The blind per-wallet WALLET_BALANCE_REFRESH_MS getMultipleAccounts snapshot is GONE: an EXACT
       // on-chain read now fires only on a real event (WS position-set change, viewer-connect, detail
       // view), and a VIEWED wallet's live value/range is kept current by the shared price-mark timer
       // (runPriceMark) off cached data — zero RPC. So an idle wallet (no viewer, no activity) issues no
       // recurring RPC at all.
-      if (!this.onchainSource && Date.now() - rt.lastClosedSyncAt >= CLOSED_RESYNC_MS)
-        void this.reconciler.resyncClosed(rt);
-      // No unconditional on-chain delta-ingest here anymore: the deleted BACKSTOP_INGEST_MS fleet timer is
-      // replaced by the TransactionStream's live activity + its watermark gap detector (Step 5a), so an
-      // idle wallet costs ~0 RPC instead of a poll every 5 min.
-      // onchainSource: drive a SLOW periodic EXACT snapshot for any wallet with OPEN positions. The 10s
-      // price-mark only re-prices the cached snapshot's frozen amounts (zero RPC) — it can't grow unclaimed
-      // fees or re-balance bin liquidity, which need a fresh on-chain read. Without this, a quiet open
-      // position's unclaimed fees stay pinned at their open-time value (≈0) for BOTH WS and HTTP (widget)
-      // clients. A cached plan keeps this to getMultipleAccounts (no 10-credit gPA); idle wallets (no open
-      // positions) re-snapshot nothing. (At large scale, bound to a recently-requested set to keep it cheap.)
+      // The no-miss backstop. `logsSubscribe` — the only WS method available on every plan — offers no
+      // replay, so a dropped socket loses whatever happened while it was down and nothing can ask for it
+      // back. Correctness therefore cannot rest on the stream; it rests here. A poll with nothing new is
+      // ONE getSignaturesForAddress against the durable cursor: a single credit, ~300/day per wallet at
+      // the connected cadence. The stream is what makes updates feel instant, not what makes them safe.
+      if (Date.now() - rt.lastIngestAt >= this.ingestPollIntervalMs()) {
+        rt.lastIngestAt = Date.now(); // claim the slot now so the 1s tick can't queue a second pass
+        void this.triggerOnchainSync(rt.address);
+      }
+      // Drive a SLOW periodic EXACT snapshot for any wallet with OPEN positions. The 10s price-mark only
+      // re-prices the cached snapshot's frozen amounts (zero RPC) — it can't grow unclaimed fees or
+      // re-balance bin liquidity, which need a fresh on-chain read. Without this, a quiet open position's
+      // unclaimed fees stay pinned at their open-time value (≈0) for BOTH WS and HTTP (widget) clients. A
+      // cached plan keeps this to getMultipleAccounts (no 10-credit gPA); idle wallets (no open positions)
+      // re-snapshot nothing. (At large scale, bound to a recently-requested set to keep it cheap.)
       if (
-        this.onchainSource &&
         shouldRefreshOpenSnapshot({
           hasOpen,
           reconciled: rt.reconciled,
@@ -327,67 +293,6 @@ export class Engine {
 
     this.effectiveRps = rps;
     this.emitter.emitHealth(this.effectiveRps);
-  }
-
-  private pollAllNow(reason: string): void {
-    // Stagger the burst across wallets instead of firing every one in the same tick.
-    let i = 0;
-    for (const rt of this.wallets.values()) {
-      const { address } = rt;
-      setTimeout(() => {
-        const r = this.wallets.get(address);
-        if (r && !r.refreshing) void this.doRefresh(r, reason);
-      }, i++ * POLL_STAGGER_MS);
-    }
-  }
-
-  private onWsActivity(address: string, instr: string): void {
-    const kind = classifyInstruction(instr);
-    if (!kind) return;
-    // A position-set or range change (open/close/add/remove) invalidates the cached snapshot plan
-    // (Layer A); a claim only changes fees, so it keeps the plan and avoids a needless gPA.
-    if (kind !== 'claim') {
-      const target = this.wallets.get(address);
-      if (target) target.needsDiscovery = true;
-    }
-    if (this.onchainSource) {
-      this.onchainActivity(address);
-      return;
-    }
-    // Retry schedule absorbs Meteora indexer lag; the periodic poll is the backstop.
-    let attempt = 0;
-    const run = () => {
-      const rt = this.wallets.get(address);
-      if (!rt) return;
-      void this.doRefresh(rt, `ws:${kind}`).then((changed) => {
-        if (!changed && attempt < RETRY_DELAYS_MS.length) {
-          setTimeout(run, RETRY_DELAYS_MS[attempt]!);
-          attempt++;
-        }
-      });
-    };
-    setTimeout(run, INITIAL_LAG_MS);
-  }
-
-  private doRefresh(rt: WalletRuntime, trigger: string): Promise<boolean> {
-    return this.refresher
-      .refresh(rt, trigger, {
-        onClosed: (addr, pools) => void this.reconciler.captureClosed(addr, pools),
-        onBalance: (addr) => {
-          const target = this.wallets.get(addr);
-          if (target) void this.doSnapshot(target);
-        },
-      })
-      .then((changed) => {
-        this.health.record('meteora', rt.lastPollOk, rt.lastPollOk ? undefined : 'poll failed');
-        return changed;
-      })
-      .catch((err) => {
-        // Never let a poll rejection escape the loop — record it and keep serving last-good state.
-        this.health.record('meteora', false, err instanceof Error ? err.message : 'poll error');
-        this.logger.warn({ err, address: rt.address }, 'refresh failed');
-        return false;
-      });
   }
 
   /**
@@ -426,14 +331,14 @@ export class Engine {
       const valued = valueSnapshot(snap, priceMap);
       rt.onchain = valued;
       this.emitter.emitState(rt.address);
-      // On-chain source: keep the positions table in sync with the legs ⊕ this snapshot.
+      // Keep the positions table in sync with the legs ⊕ this snapshot.
       //  - after an INGEST (`needsSync`): FULL reproject (open + closed) — closed may have changed.
       //    Emit closed_changed ONLY when the closed count actually moves, so viewers don't refetch on
       //    every tick. Flags cleared AFTER success so a transient failure retries next tick.
       //  - otherwise on the CADENCE: refresh ONLY the open positions' live value/range (cheap) — never
       //    re-write the (large, unchanged) closed history. Waits for `reconciled` so a tick before the
       //    first backfill can't wipe the open set with an empty projection.
-      if (this.onchainSource && rt.needsSync) {
+      if (rt.needsSync) {
         // Gate the close-notification on prior reconciliation: the FIRST sync is the historical backfill
         // (can write ~15k closed rows) and must emit ZERO `closed` events. `sync` already returns only the
         // genuinely newly-closed rows (open→closed transitions vs the persisted open set), so on every
@@ -460,11 +365,7 @@ export class Engine {
           // bulk catch-up, which would otherwise fan out N extra realized passes per wallet on cold-start.
           if (wasReconciled && res.closedRows.length > 0) rt.lastCloseAt = Date.now();
         }
-      } else if (
-        this.onchainSource &&
-        rt.reconciled &&
-        Date.now() - rt.lastSyncAt >= SYNC_INTERVAL_MS
-      ) {
+      } else if (rt.reconciled && Date.now() - rt.lastSyncAt >= SYNC_INTERVAL_MS) {
         const open = await this.positionSync.refreshOpen(rt.address, snap, valued);
         rt.lastSyncAt = Date.now();
         this.applyOpenPositions(rt, open);
@@ -474,7 +375,6 @@ export class Engine {
       // window after the last close so a freshly market-sold residual's REAL value lands once Helius
       // indexes the swap — instead of showing the stale pool-spot mark until the wallet's next close.
       if (
-        this.onchainSource &&
         rt.reconciled &&
         shouldRefreshRealized({
           now: Date.now(),
@@ -548,7 +448,7 @@ export class Engine {
     }
   }
 
-  /** On-chain source: refresh the in-memory open set from the freshly persisted projection and push it
+  /** Refresh the in-memory open set from the freshly persisted projection and push it
    *  to viewers. `rt.open` is otherwise seeded only at registration, so without this a position opened
    *  after the wallet was registered never appears in the live state until the next process restart. */
   private applyOpenPositions(rt: WalletRuntime, positions: OpenPosition[]): void {
@@ -573,17 +473,16 @@ export class Engine {
     }
     this.realizedPnlRunning.add(wallet);
     try {
-      // Freshness: top up the persisted swap delta BEFORE reading swap_flows. A close fires this pass
-      // concurrently with the WS-path swap ingest, so without this top-up the FIFO could read the DB
-      // before the just-landed residual sell is persisted and overstate held value. Cheap — a complete
-      // cursor with no new sigs pages ZERO Enhanced calls (anti-re-seed); serialized with all wallet
-      // ingests. Isolated so a flaky delta still lets the recompute run on the already-persisted swaps.
+      // Freshness: top up the ingest BEFORE reading swap_flows. The residual sale usually lands a few
+      // seconds AFTER the close that triggered this pass, so without it the FIFO would read the DB too
+      // early and still count the residual as held — overstating PnL. A top-up that finds nothing costs
+      // ONE getSignaturesForAddress (1 credit), which is why it can run on every deferred pass.
       try {
-        await this.ingestLock.run(wallet, () => this.swapFlowIngest.ingest(wallet));
+        await this.ingestLock.run(wallet, () => this.walletTxIngest.ingest(wallet));
       } catch (err) {
         this.logger.warn(
           { err, wallet },
-          'realized-pnl: swap delta top-up failed — computing on already-persisted swaps',
+          'realized-pnl: delta top-up failed — computing on already-persisted swaps',
         );
       }
       do {
@@ -611,34 +510,20 @@ export class Engine {
     }
   }
 
-  private doReconcile(rt: WalletRuntime): Promise<void> {
-    return this.reconciler.reconcile(rt, this.appConfig.historyDays, {
-      doRefresh: (r) => this.doRefresh(r, 'reconcile'),
-      doBalance: (r) => void this.doSnapshot(r),
-    });
-  }
-
-  /** Initial catch-up for a wallet: on-chain backfill (legs → projection) or the Meteora reconcile. */
-  private doInitialSync(rt: WalletRuntime): Promise<void> {
-    return this.onchainSource ? this.onchainBackfill(rt) : this.doReconcile(rt);
-  }
-
-  /** Full historical ingest of a wallet's DLMM legs, then project the positions table from them. */
+  /** Initial catch-up for a wallet: the full historical ingest of its transactions — legs, cash-flows
+   *  and swap legs all decoded from the same fetch — then project the positions table from them. */
   private onchainBackfill(rt: WalletRuntime): Promise<void> {
-    // Admission control: at most MAX_CONCURRENT_BACKFILLS wallets backfill at once.
+    // Admission control: at most BACKFILL_CONCURRENCY wallets backfill at once.
     return this.backfillSemaphore.run(async () => {
-      // Default 1 so a thrown backfill still falls back to the cash-flow top-up; a success overwrites it.
-      let newTxs = 1;
       try {
         rt.lastIngestAt = Date.now();
-        const r = await this.ingestLock.run(rt.address, () =>
-          this.dlmmIngest.ingest(rt.address, {
+        await this.ingestLock.run(rt.address, () =>
+          this.walletTxIngest.ingest(rt.address, {
             onProgress: (txs) => {
               rt.ingestedTxs = txs; // surfaced as the UI's "indexing… (N txs)" onboarding progress
             },
           }),
         );
-        newTxs = r.txs;
         rt.needsSync = true;
         await this.doSnapshot(rt); // full reproject; emits closed_changed iff the closed count moved
         this.logger.info({ address: rt.address }, 'onchain backfill complete');
@@ -648,31 +533,7 @@ export class Engine {
           'onchain backfill failed — next stream activity / gap detector will retry',
         );
       }
-      // Cash-flow backfill for the wallet PnL curve — best-effort & isolated so a flow failure never
-      // blocks the positions path. GATED on new signatures: a restart that finds nothing new since the
-      // cursor skips the Enhanced paging (100cr/page) entirely (a fresh wallet's full backfill has txs>0).
-      if (newTxs > 0) await this.ingestWalletFlows(rt.address);
     });
-  }
-
-  /** Top up a wallet's persisted cash-flow (wallet PnL curve) AND its decoded swap legs (realized-PnL
-   *  FIFO inputs) on the same trigger/cadence. Each ingest is isolated so one failing never blocks the
-   *  other or the positions path; the swap top-up is what keeps a restart/close from re-paging the whole
-   *  Enhanced SWAP history. Never throws into callers. */
-  private async ingestWalletFlows(address: string): Promise<void> {
-    try {
-      await this.ingestLock.run(address, () => this.walletFlowIngest.ingest(address));
-    } catch (err) {
-      this.logger.warn({ err, address }, 'wallet flow ingest failed — curve may lag, will retry');
-    }
-    try {
-      await this.ingestLock.run(address, () => this.swapFlowIngest.ingest(address));
-    } catch (err) {
-      this.logger.warn(
-        { err, address },
-        'swap flow ingest failed — realized PnL may lag, will retry',
-      );
-    }
   }
 
   /** Onboarding status for a wallet: `ready` once its first projection has landed (history is queryable);
@@ -704,13 +565,9 @@ export class Engine {
   private async triggerOnchainSync(address: string): Promise<void> {
     const rt = this.wallets.get(address);
     if (!rt) return;
-    // Default 1 (= "run the cash-flow top-up") so a THROWN leg sync still falls back to it; a SUCCESSFUL
-    // sync overwrites this with the real new-tx count, which gates the (Enhanced, 100cr/page) top-up below.
-    let newTxs = 1;
     try {
       rt.lastIngestAt = Date.now();
-      const r = await this.ingestLock.run(address, () => this.dlmmIngest.ingest(address));
-      newTxs = r.txs;
+      const r = await this.ingestLock.run(address, () => this.walletTxIngest.ingest(address));
       // Only force a full reproject when the delta actually ingested new txs (a real open/close/add/
       // claim). A delta sync that finds nothing (e.g. a gap-backfill recovery) must NOT re-write the whole
       // closed history — that was a recurring 15k-row write per wallet. doSnapshot still refreshes net-worth.
@@ -730,11 +587,6 @@ export class Engine {
         'onchain delta sync failed (next stream activity will retry)',
       );
     }
-    // Cash-flow + swap top-up — captures post-close SWAP dumps the DLMM ingest can't see. GATED on new
-    // signatures: the DlmmIngest already paged EVERY wallet sig (a non-DLMM Jupiter sell makes newTxs>0
-    // too), so when nothing new landed there is nothing to top up — skip the Enhanced paging that a no-op
-    // WS reconnect / gap-resync would otherwise burn (the dominant idle cost: ~200cr per empty resync).
-    if (newTxs > 0) await this.ingestWalletFlows(address);
   }
 
   /** WS reconnect / manual refresh: a staggered safety delta-ingest of every wallet to self-heal gaps. */

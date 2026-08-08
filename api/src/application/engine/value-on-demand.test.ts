@@ -34,6 +34,7 @@ const logger = {
   },
 } as unknown as Logger;
 
+// The poll knobs are inert now (nothing polls) but still part of the RuntimeSettings wire contract.
 const settings: RuntimeSettings = {
   meteoraTargetRps: 15,
   pollMinMs: 1_000,
@@ -126,7 +127,6 @@ function makeEngine(opts: { withOpen: boolean; priceRef: { v: number } }) {
   };
 
   const appConfig = {
-    POSITIONS_SOURCE: 'onchain',
     BACKFILL_CONCURRENCY: 3,
     REALIZED_PNL_ENABLED: false,
     historyDays: 365,
@@ -137,9 +137,7 @@ function makeEngine(opts: { withOpen: boolean; priceRef: { v: number } }) {
   bus.on('state', (s) => states.push(s));
 
   const deps: EngineDeps = {
-    gateway: {} as unknown as EngineDeps['gateway'],
     prices: { getPricesSol, getSolUsd: vi.fn(async () => null) } as unknown as EngineDeps['prices'],
-    subscriber: {} as unknown as EngineDeps['subscriber'],
     stream: streamStub as unknown as EngineDeps['stream'],
     onchain: {
       snapshotWallet,
@@ -161,9 +159,9 @@ function makeEngine(opts: { withOpen: boolean; priceRef: { v: number } }) {
     bus,
     logger,
     appConfig,
-    dlmmIngest: {
-      ingest: vi.fn(async () => ({ legs: 0, txs: 0, complete: true })),
-    } as unknown as EngineDeps['dlmmIngest'],
+    walletTxIngest: {
+      ingest: vi.fn(async () => ({ legs: 0, txs: 0, flows: 0, swaps: 0, complete: true })),
+    } as unknown as EngineDeps['walletTxIngest'],
     positionSync: {
       sync: vi.fn(async () => ({
         open: opts.withOpen ? 1 : 0,
@@ -173,8 +171,6 @@ function makeEngine(opts: { withOpen: boolean; priceRef: { v: number } }) {
       })),
       refreshOpen: vi.fn(async () => (opts.withOpen ? [openRow()] : [])),
     } as unknown as EngineDeps['positionSync'],
-    walletFlowIngest: { ingest: noopAsync } as unknown as EngineDeps['walletFlowIngest'],
-    swapFlowIngest: { ingest: noopAsync } as unknown as EngineDeps['swapFlowIngest'],
     realizedPnl: { computeForWallet: vi.fn() } as unknown as EngineDeps['realizedPnl'],
   };
 

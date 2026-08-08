@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CREDIT_COST, type CreditFlushRow, CreditMeter, wsCredits } from './credit-meter';
+import { CREDIT_COST, type CreditFlushRow, CreditMeter } from './credit-meter';
 
 /** A meter on a mutable clock so the time-based flush day-bucket is deterministic. */
 function meterAt(start: number) {
@@ -8,15 +8,23 @@ function meterAt(start: number) {
   return { meter, clock };
 }
 
-describe('wsCredits', () => {
-  // WHY: Helius bills a WebSocket 1 credit to open + 20 per STARTED MB — an idle (0-byte) socket is the
-  // 1-credit floor, and any partial MB rounds UP a full 20-credit block (so a noisy leader is costed).
-  it('is 1 to open, +20 per started MB (idle = 1, sub-MB rounds up)', () => {
-    expect(wsCredits(0)).toBe(1); // open only — idle stream
-    expect(wsCredits(1)).toBe(21); // 1 byte starts the first MB → 1 + 20
-    expect(wsCredits(1_000_000)).toBe(21); // exactly 1 MB → 1 + 20
-    expect(wsCredits(1_000_001)).toBe(41); // just over 1 MB → 1 + 2*20
-    expect(wsCredits(2_000_000)).toBe(41); // exactly 2 MB → 1 + 2*20
+describe('WebSocket credit costs', () => {
+  // WHY: Helius bills a WebSocket 1 credit to open + 20 per STARTED megabyte. Those are ordinary entries
+  // in the cost map; it is the TRANSPORT that decides WHEN to record a megabyte (once per boundary
+  // crossed, never per frame — see helius-ws-transport). Billing per frame would charge 20 credits for a
+  // 100-byte notification.
+  it('prices an open at 1 credit and a streamed megabyte at 20', () => {
+    expect(CREDIT_COST.wsOpen).toBe(1);
+    expect(CREDIT_COST.wsData).toBe(20);
+  });
+
+  it('records them like any other method, on the stream code path', () => {
+    const { meter } = meterAt(0);
+    meter.record('wsOpen', { codePath: 'stream' });
+    meter.record('wsData', { codePath: 'stream' });
+    meter.record('wsData', { codePath: 'stream' });
+    expect(meter.stats().totalCredits).toBe(41); // 1 + 20 + 20
+    expect(meter.stats().byCodePath.stream).toBe(41);
   });
 });
 
@@ -65,12 +73,12 @@ describe('CreditMeter — credit accounting', () => {
     expect(meter.stats().byWallet).toEqual({ A: 100, B: 100 });
   });
 
-  // WHY: bytes-mode routes the cost through wsCredits instead of the method map — a metered WebSocket
-  // frame must be billed by volume, not as a flat 1-credit call.
-  it('uses wsCredits when bytes are given', () => {
+  // WHY: an unlisted method must never be free — it falls back to the std JSON-RPC cost rather than 0,
+  // so a newly-used call still shows up in the ledger instead of silently spending nothing.
+  it('falls back to the std cost for an unlisted method', () => {
     const { meter } = meterAt(0);
-    meter.record('ws', { bytes: 1_000_001 }); // 41
-    expect(meter.stats().totalCredits).toBe(41);
+    meter.record('someNewRpcMethod');
+    expect(meter.stats().totalCredits).toBe(CREDIT_COST.default);
   });
 });
 

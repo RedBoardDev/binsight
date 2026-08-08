@@ -55,16 +55,13 @@ const EnvSchema = z.object({
    *  the per-wallet history sweep; raise this only with the RPC tier's headroom (the backfill lane). */
   BACKFILL_CONCURRENCY: z.coerce.number().int().positive().default(3),
 
+  /** DEPRECATED poll-budget knobs. Nothing polls anymore (the on-chain DLMM engine is the single
+   *  positions source), but they still seed the `RuntimeSettings` the Settings page reads/writes and
+   *  the `pollIntervalMs` field of the Health wire that deployed native clients decode. */
   METEORA_TARGET_RPS: z.coerce.number().positive().default(15),
   POLL_MIN_MS: z.coerce.number().int().positive().default(1000),
   POLL_MAX_MS: z.coerce.number().int().positive().default(30_000),
   POLL_IDLE_MS: z.coerce.number().int().positive().default(300_000),
-
-  /** Positions table source: 'onchain' (the decoupled DLMM engine, default) or 'meteora' (datapi, legacy
-   *  escape hatch). 'onchain' makes the on-chain engine the single source — backfill on register, delta
-   *  ingest on WS activity, projection synced to the positions table; the Meteora open/closed reconcile is
-   *  bypassed. Verified live (62.27 SOL realized over 15 754 positions, symbols + economics correct). */
-  POSITIONS_SOURCE: z.enum(['meteora', 'onchain']).default('onchain'),
 
   /** Postgres connection string (self-hosted via docker-compose). */
   DATABASE_URL: z.string().default('postgres://meteora:meteora@localhost:5435/meteora'),

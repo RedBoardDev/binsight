@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CreditMeter } from './credit-meter';
-import { rpcMethodOf, SolanaRpcRateLimiter, Spacer } from './rpc-rate-limiter';
+import { rpcBatchSizeOf, rpcMethodOf, SolanaRpcRateLimiter, Spacer } from './rpc-rate-limiter';
 
 describe('Spacer', () => {
   it('spaces reservations by 1000/rps with a frozen clock', () => {
@@ -39,8 +39,51 @@ describe('rpcMethodOf', () => {
   });
 });
 
+describe('rpcBatchSizeOf', () => {
+  it('counts the entries of a batch, not the request', () => {
+    expect(
+      rpcBatchSizeOf(JSON.stringify([{ method: 'getTransaction' }, { method: 'getBalance' }])),
+    ).toBe(2);
+  });
+
+  it('counts a single call as 1', () => {
+    expect(rpcBatchSizeOf(JSON.stringify({ method: 'getBalance' }))).toBe(1);
+  });
+
+  it('falls back to 1 on unparseable or non-string bodies (never 0 — that would skip the gate)', () => {
+    expect(rpcBatchSizeOf(undefined)).toBe(1);
+    expect(rpcBatchSizeOf('not json')).toBe(1);
+    expect(rpcBatchSizeOf(JSON.stringify([]))).toBe(1);
+  });
+});
+
 describe('SolanaRpcRateLimiter', () => {
   const limits = { rps: 10, gpaRps: 5, dasRps: 2, sendRps: 1 };
+
+  it('charges a batch for EVERY call it carries, not once for the request', () => {
+    // WHY: a batch is one HTTP request but N billable calls, and the provider rate-limits it as N.
+    // Reserving a single slot for 50 of them is what let the ingest blow past a 10 rps ceiling and
+    // trigger a permanent 429 retry storm, while the credit meter under-reported the spend ~50-fold.
+    const lim = new SolanaRpcRateLimiter(limits, () => 1000);
+    expect(lim.reserveSlot('getTransaction', 5)).toBe(1400); // 5 calls × 100ms spacing, minus the first
+    expect(lim.stats().total).toBe(5);
+    expect(lim.stats().byMethod.getTransaction).toBe(5);
+  });
+
+  it('bills a batch as N credits on the meter', () => {
+    const meter = new CreditMeter(() => 1000);
+    const lim = new SolanaRpcRateLimiter(limits, () => 1000, meter);
+    lim.reserveSlot('getTransaction', 25);
+    expect(meter.stats().totalCalls).toBe(25);
+    expect(meter.stats().totalCredits).toBe(25); // getTransaction = 1 credit each
+  });
+
+  it('treats an absent or zero weight as a single call', () => {
+    const lim = new SolanaRpcRateLimiter(limits, () => 1000);
+    lim.reserveSlot('getBalance');
+    lim.reserveSlot('getBalance', 0);
+    expect(lim.stats().total).toBe(2);
+  });
 
   it('applies the tighter method sub-limit: getProgramAccounts pays 5/s, not the overall 10/s', () => {
     const lim = new SolanaRpcRateLimiter(limits, () => 1000);

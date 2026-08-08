@@ -14,11 +14,11 @@ import { Engine, type EngineDeps } from './index';
 
 // Step 5b INTEGRATION test — proves the WIRING (engine ⇄ TransactionStream) with ZERO network: a real
 // TransactionStream driven by a mock WS transport + an in-memory cursor store, plugged into a real Engine
-// whose `dlmmIngest.ingest` is the spy. NO real Helius socket is ever opened (the real ws-transport adapter
+// whose `walletTxIngest.ingest` is the spy. NO real Helius socket is ever opened (the real ws-transport adapter
 // is never imported here). Two guarantees are locked:
-//   1. a transactionSubscribe notification for a wallet funnels into the engine's triggerOnchainSync
+//   1. a logsSubscribe notification for a wallet funnels into the engine's triggerOnchainSync
 //      (= the SAME cursor-based delta ingest the deleted BACKSTOP sweep used to drive), and registration
-//      routes to the STREAM (not the legacy logsSubscribe subscriber);
+//      routes to the STREAM;
 //   2. the BACKSTOP_INGEST_MS fleet timer is GONE — idle time alone never triggers a periodic delta ingest.
 
 const WALLET = 'Leader1111111111111111111111111111111111111';
@@ -78,6 +78,7 @@ class FakeCursorStore implements WalletStreamCursorStore {
   }
 }
 
+// The poll knobs are inert now (nothing polls) but still part of the RuntimeSettings wire contract.
 const settings: RuntimeSettings = {
   meteoraTargetRps: 15,
   pollMinMs: 1_000,
@@ -102,16 +103,15 @@ function makeEngine() {
     logger,
     // Push ping/gap timers far out so they never fire mid-test (the gap detector is proven in Step 5a;
     // here we assert the engine wiring, not re-test the detector).
-    config: { pingIntervalMs: 1e9, gapCheckIntervalMs: 1e9 },
+    config: { pingIntervalMs: 1e9 },
   });
 
-  // The single assertion target: triggerOnchainSync delta-ingests via dlmmIngest.ingest(wallet). `nextTxs`
-  // lets a test choose how many NEW txs the delta reports — the signal the Enhanced top-up gate keys off.
+  // The single assertion target: triggerOnchainSync delta-ingests via walletTxIngest.ingest(wallet).
+  // `nextTxs` lets a test choose how many NEW txs the delta reports — the signal the discovery gate keys off.
   let nextTxs = 0;
-  const dlmmIngest = { ingest: vi.fn(async () => ({ legs: 0, txs: nextTxs, complete: true })) };
-  // Spied so a test can assert the Enhanced cash-flow/swap top-up is GATED (skipped when nothing new landed).
-  const walletFlowIngest = { ingest: vi.fn(async () => {}) };
-  const swapFlowIngest = { ingest: vi.fn(async () => {}) };
+  const walletTxIngest = {
+    ingest: vi.fn(async () => ({ legs: 0, txs: nextTxs, flows: 0, swaps: 0, complete: true })),
+  };
   // Returns a minimal snapshot whose `.plan` doSnapshot caches — lets a test assert the discovery gate:
   // a real new-tx activity must FORCE a re-discovery (snapshotWallet called with NO cached plan).
   const snapshotWallet = vi.fn(async () => ({
@@ -121,36 +121,17 @@ function makeEngine() {
     slot: 1,
     plan: { positionKeys: [] },
   }));
-  // Legacy logsSubscribe backbone — its watch MUST stay untouched in onchain mode (we assert this).
-  const subscriberWatch = vi.fn();
-
   const appConfig = {
-    POSITIONS_SOURCE: 'onchain',
     BACKFILL_CONCURRENCY: 3,
     REALIZED_PNL_ENABLED: false,
     historyDays: 365,
   } as unknown as AppConfig;
 
   const deps: EngineDeps = {
-    gateway: {
-      listOpenPools: vi.fn(),
-      listClosedPools: vi.fn(),
-      fetchOpenPositions: vi.fn(),
-      fetchClosedPositions: vi.fn(),
-    } as unknown as EngineDeps['gateway'],
     prices: {
       getPricesSol: vi.fn(async () => new Map()),
       getSolUsd: vi.fn(async () => null),
     } as unknown as EngineDeps['prices'],
-    subscriber: {
-      watch: subscriberWatch,
-      unwatch: vi.fn(),
-      isConnected: () => false,
-      onReconnect: vi.fn(),
-      onConnectionChange: vi.fn(),
-      start: vi.fn(),
-      stop: vi.fn(),
-    } as unknown as EngineDeps['subscriber'],
     stream,
     onchain: {
       snapshotWallet,
@@ -172,13 +153,11 @@ function makeEngine() {
     bus: new EventBus(),
     logger,
     appConfig,
-    dlmmIngest: dlmmIngest as unknown as EngineDeps['dlmmIngest'],
+    walletTxIngest: walletTxIngest as unknown as EngineDeps['walletTxIngest'],
     positionSync: {
       sync: vi.fn(async () => ({ open: 0, closed: 0, closedRows: [], openPositions: [] })),
       refreshOpen: vi.fn(async () => []),
     } as unknown as EngineDeps['positionSync'],
-    walletFlowIngest: walletFlowIngest as unknown as EngineDeps['walletFlowIngest'],
-    swapFlowIngest: swapFlowIngest as unknown as EngineDeps['swapFlowIngest'],
     realizedPnl: { computeForWallet: vi.fn() } as unknown as EngineDeps['realizedPnl'],
   };
 
@@ -186,52 +165,55 @@ function makeEngine() {
   return {
     engine,
     stream,
-    dlmmIngest,
-    walletFlowIngest,
-    swapFlowIngest,
+    walletTxIngest,
     snapshotWallet,
     setNextTxs: (n: number) => {
       nextTxs = n;
     },
-    subscriberWatch,
     transport: () => transports.at(-1)!,
   };
 }
 
-/** Build a transactionNotification (jsonParsed accountKeys = `{ pubkey }[]`) touching `wallet` + DLMM. */
-function notification(sig: string, slot: number, wallet: string): string {
+/** Build a logsNotification for the subscription bound to `wallet`, carrying a DLMM log. */
+function notification(sig: string, slot: number, _wallet: string): string {
   return JSON.stringify({
     jsonrpc: '2.0',
-    method: 'transactionNotification',
+    method: 'logsNotification',
     params: {
-      subscription: 1,
+      subscription: SUB_ID,
       result: {
-        signature: sig,
-        slot,
-        transaction: {
-          transaction: {
-            message: { accountKeys: [wallet, DLMM_PROGRAM_ID].map((pubkey) => ({ pubkey })) },
-          },
-          meta: { err: null },
+        context: { slot },
+        value: {
+          signature: sig,
+          err: null,
+          logs: [`Program ${DLMM_PROGRAM_ID} invoke [1]`, 'Program log: Instruction: Swap'],
         },
       },
     },
   });
 }
 
+/** The subscription id the fake server hands back for the wallet's logsSubscribe. */
+const SUB_ID = 1;
+
+/** Confirm the wallet's in-flight logsSubscribe so notifications route to it. */
+function confirmSubscription(t: { sent: string[]; emit: (d: string) => void }): void {
+  const frame = t.sent.map((x) => JSON.parse(x)).find((f) => f.method === 'logsSubscribe');
+  if (frame) t.emit(JSON.stringify({ jsonrpc: '2.0', id: frame.id, result: SUB_ID }));
+}
+
 /**
  * Start the engine, connect the stream, and settle the connect-time work (the historical backfill + the
- * onReconnect fleet resync both delta-ingest once on boot). Returns with `dlmmIngest.ingest` CLEARED, so any
+ * onReconnect fleet resync both delta-ingest once on boot). Returns with `walletTxIngest.ingest` CLEARED, so any
  * subsequent call is unambiguously attributable to the action under test.
  */
 async function startSettled(h: ReturnType<typeof makeEngine>) {
   await h.engine.start();
   h.transport().open();
   await h.stream.idle();
+  confirmSubscription(h.transport());
   await vi.advanceTimersByTimeAsync(2_000); // drain backfill + the on-connect resync + one engine tick
-  h.dlmmIngest.ingest.mockClear();
-  h.walletFlowIngest.ingest.mockClear();
-  h.swapFlowIngest.ingest.mockClear();
+  h.walletTxIngest.ingest.mockClear();
   h.snapshotWallet.mockClear();
 }
 
@@ -239,18 +221,16 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
 describe('Step 5b: TransactionStream is wired as the on-chain trigger', () => {
-  it('a stream notification for a wallet funnels into triggerOnchainSync (delta ingest), via the STREAM not the legacy subscriber', async () => {
+  it('a stream notification for a wallet funnels into triggerOnchainSync (delta ingest), via the STREAM', async () => {
     // WHY: the no-miss design swapped the TRIGGER (was an unconditional fleet timer) for live WS activity.
-    // The contract that must hold: a transactionSubscribe notification → the SAME cursor-based delta ingest
-    // (triggerOnchainSync → dlmmIngest.ingest(wallet)). If this regresses, a leader open/close detected on
+    // The contract that must hold: a logsSubscribe notification → the SAME cursor-based delta ingest
+    // (triggerOnchainSync → walletTxIngest.ingest(wallet)). If this regresses, a leader open/close detected on
     // the socket would never reach ingestion — a forbidden miss.
     const h = makeEngine();
     await startSettled(h);
 
-    // Registration went to the transactionSubscribe stream (the wallet is in a real subscribe frame), and
-    // NOT to the legacy logsSubscribe subscriber.
+    // Registration went to the transactionSubscribe stream (the wallet is in a real subscribe frame).
     expect(h.transport().sent.some((s) => s.includes(WALLET))).toBe(true);
-    expect(h.subscriberWatch).not.toHaveBeenCalled();
 
     // Drive a DLMM notification for the wallet → handler → onStreamActivity → triggerOnchainSync (after the
     // short settle lag the engine applies so the just-confirmed tx is visible to getSignaturesForAddress).
@@ -258,53 +238,54 @@ describe('Step 5b: TransactionStream is wired as the on-chain trigger', () => {
     await h.stream.idle();
     await vi.advanceTimersByTimeAsync(1_500);
 
-    expect(h.dlmmIngest.ingest).toHaveBeenCalledTimes(1);
-    expect(h.dlmmIngest.ingest).toHaveBeenCalledWith(WALLET);
+    expect(h.walletTxIngest.ingest).toHaveBeenCalledTimes(1);
+    expect(h.walletTxIngest.ingest).toHaveBeenCalledWith(WALLET);
 
     h.engine.stop();
   });
 
-  it('the BACKSTOP_INGEST_MS fleet timer is GONE — idle time alone never triggers a periodic delta ingest', async () => {
-    // WHY: the deleted backstop swept every wallet with a delta ingest every 5 min regardless of activity —
-    // the cost that motivated this refactor. Removing it is only safe because live WS activity + the gap
-    // detector cover no-miss. This test would FAIL (catch a re-introduced unconditional timer) if any
-    // periodic ingest fired with no stream activity at all.
+  it('a periodic safety ingest runs even with total silence — the stream cannot be the no-miss guarantee', async () => {
+    // WHY: `logsSubscribe` is the only WS method available on every plan, and it has NO replay. Anything
+    // that happens while the socket is down is never delivered and cannot be requested afterwards, so a
+    // WS-only trigger would silently lose it. The backstop is this poll: one getSignaturesForAddress
+    // against the durable cursor, a single credit when nothing is new. Deleting it would reintroduce a
+    // forbidden miss — which is why this asserts the poll FIRES, not that it is absent.
     const h = makeEngine();
     await startSettled(h);
 
-    // Advance well past the old 300_000ms backstop interval with ZERO stream notifications.
-    await vi.advanceTimersByTimeAsync(301_000);
+    // Just under the connected cadence: nothing yet.
+    await vi.advanceTimersByTimeAsync(290_000);
+    expect(h.walletTxIngest.ingest).not.toHaveBeenCalled();
 
-    expect(h.dlmmIngest.ingest).not.toHaveBeenCalled();
+    // Past it: exactly one catch-up, with no stream activity whatsoever.
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(h.walletTxIngest.ingest).toHaveBeenCalledTimes(1);
+    expect(h.walletTxIngest.ingest).toHaveBeenCalledWith(WALLET);
 
     h.engine.stop();
   });
 
-  it('the Enhanced cash-flow/swap top-up is GATED on new signatures — an empty resync spends ZERO Enhanced', async () => {
-    // WHY: each ingestWalletFlows call pages the Helius Enhanced API at 100 credits/page EVEN when nothing
-    // is new. A flapping WS fires triggerOnchainSync on every reconnect; ungated this burned ~200cr per
-    // EMPTY resync (measured live: 34 of 44 pages found added:0 → ~3,400cr wasted/hour, budget gone in ~3h).
-    // The gate must SKIP the top-up when the DLMM delta ingested no new txs, and still RUN it on real
-    // activity. The DlmmIngest pages every wallet sig, so a non-DLMM Jupiter sell still makes txs>0 (no miss).
+  it('one delta ingest covers legs, cash-flows and swaps — no second paging pass', async () => {
+    // WHY: cash-flows and swap legs used to be paged separately through the Enhanced API at 100 credits
+    // per page, billed even when nothing was new — ~200cr burned per EMPTY resync, and a flapping socket
+    // did that on every reconnect. They now come out of the SAME transaction fetch the leg ingest already
+    // performs, so an empty resync costs one getSignaturesForAddress and nothing else. This test pins the
+    // "exactly one ingest call per activity" contract that makes that true.
     const h = makeEngine();
     await startSettled(h);
 
-    // Empty activity: the delta finds nothing new (txs:0) → the Enhanced top-up MUST be skipped entirely.
     h.setNextTxs(0);
     h.transport().emit(notification('sigNoop', 1_000, WALLET));
     await h.stream.idle();
     await vi.advanceTimersByTimeAsync(1_500);
-    expect(h.dlmmIngest.ingest).toHaveBeenCalledTimes(1); // the cheap delta still runs…
-    expect(h.walletFlowIngest.ingest).not.toHaveBeenCalled(); // …but the 100cr Enhanced pages do NOT
-    expect(h.swapFlowIngest.ingest).not.toHaveBeenCalled();
+    expect(h.walletTxIngest.ingest).toHaveBeenCalledTimes(1);
 
-    // Real activity: the delta ingests a new tx (txs:1) → the top-up MUST run to capture post-close dumps.
     h.setNextTxs(1);
     h.transport().emit(notification('sigReal', 2_000, WALLET));
     await h.stream.idle();
     await vi.advanceTimersByTimeAsync(1_500);
-    expect(h.walletFlowIngest.ingest).toHaveBeenCalledWith(WALLET);
-    expect(h.swapFlowIngest.ingest).toHaveBeenCalledWith(WALLET);
+    expect(h.walletTxIngest.ingest).toHaveBeenCalledTimes(2);
+    expect(h.walletTxIngest.ingest).toHaveBeenLastCalledWith(WALLET);
 
     h.engine.stop();
   });

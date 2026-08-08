@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { classifyInstruction } from '@/domain/dlmm';
-import { parseInstruction } from './helius-subscriber';
+import { parseInstruction } from './log-instruction';
 
 const DLMM = 'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo';
 const invoke = (n = 1) => `Program ${DLMM} invoke [${n}]`;

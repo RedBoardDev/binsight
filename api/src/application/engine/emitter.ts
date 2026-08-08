@@ -11,9 +11,9 @@ export class StateEmitter {
 
   constructor(
     private readonly wallets: Map<string, WalletRuntime>,
-    // The active WS backbone (on-chain TransactionStream or legacy logsSubscribe subscriber) — only its
-    // live-connectivity slice is needed for the health payload.
-    private readonly subscriber: ConnectionStatus,
+    // The WS backbone (the on-chain TransactionStream) — only its live-connectivity slice is needed
+    // for the health payload.
+    private readonly backbone: ConnectionStatus,
     private readonly bus: EventBus,
     private readonly health: HealthMonitor,
   ) {}
@@ -53,18 +53,22 @@ export class StateEmitter {
   }
 
   emitHealth(effectiveRps: number): void {
-    const wsOk = this.subscriber.isConnected();
+    const wsOk = this.backbone.isConnected();
     this.health.set('ws', wsOk ? 'ok' : 'down', wsOk ? undefined : 'disconnected');
     this.bus.emit('health', {
       ok: this.health.ok,
       wsConnected: wsOk,
-      meteoraOk: this.health.statusOf('meteora') !== 'down',
+      // DEPRECATED, always true. The legacy Meteora datapi source it reported on is gone, so the field
+      // has no source left — but the already-deployed native clients (BinsightKit decodes `meteoraOk`
+      // as NON-optional) would fail to decode the whole health payload if it disappeared from the wire.
+      // Kept as a constant `true` for backward compatibility; remove only once those clients are retired.
+      meteoraOk: true,
       effectiveRps,
       chainTipSlot: this.health.chainTipSlot,
       sources: this.health.list(),
       wallets: [...this.wallets.values()].map((w) => ({
         wallet: w.address,
-        wsConnected: this.subscriber.isConnected(),
+        wsConnected: this.backbone.isConnected(),
         lastPollAt: w.lastPollAt || null,
         lastPollOk: w.lastPollOk,
         pollIntervalMs: w.pollIntervalMs,
