@@ -1,6 +1,6 @@
+import { API_URL, SESSION_COOKIE } from '@app/lib/apiConfig';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
-import { API_URL, SESSION_COOKIE } from '@/infrastructure/config';
 
 /**
  * Mints a short-lived WebSocket ticket from the backend using the httpOnly session JWT, so the

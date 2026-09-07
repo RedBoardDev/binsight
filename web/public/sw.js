@@ -5,7 +5,7 @@
 // (live data) or HTML documents. Navigations go to the network and fall back to a tiny offline page.
 //
 // Bump CACHE when the caching logic itself changes (asset URLs are hashed, so they self-invalidate).
-const CACHE = 'mlm-shell-v1';
+const CACHE = 'binsight-shell-v2';
 const OFFLINE_URL = '/offline.html';
 
 self.addEventListener('install', (event) => {

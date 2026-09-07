@@ -1,4 +1,4 @@
-import { forwardAuthSession } from '@/infrastructure/auth-flow';
+import { forwardAuthSession } from '@app/lib/authFlow';
 
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as {
