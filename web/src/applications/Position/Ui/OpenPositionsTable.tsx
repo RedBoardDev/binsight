@@ -43,8 +43,8 @@ const OpenPositionsHeader = () => (
 
 /** Placeholder rows built from the real table markup, so nothing reflows when the feed lands. */
 const OpenPositionsSkeleton = () => (
-  <Table.Root variant="secondary">
-    <Table.ScrollContainer>
+  <Table.Root variant="secondary" className="flex min-h-0 flex-1 flex-col">
+    <Table.ScrollContainer className="min-h-0 flex-1 overflow-y-auto">
       <Table.Content aria-label="Loading open positions">
         <OpenPositionsHeader />
         <Table.Body>
@@ -102,7 +102,7 @@ export const OpenPositionsTable = () => {
     setOpenChart((current) => (current === address ? null : address));
 
   return (
-    <Card.Root className="gap-0 p-0">
+    <Card.Root className="flex h-full min-h-0 flex-col gap-0 p-0">
       <Card.Header className="flex-row flex-wrap items-center justify-between gap-x-5 gap-y-2 px-4 pt-4 pb-3">
         <Card.Title>Open positions</Card.Title>
         <div className="flex flex-wrap items-center justify-end gap-x-5 gap-y-1 text-xs">
@@ -144,10 +144,8 @@ export const OpenPositionsTable = () => {
           hint="Active Meteora LP positions appear here live."
         />
       ) : (
-        <Table.Root variant="secondary">
-          <Table.ScrollContainer
-            className={cn(openChart == null && 'max-h-[min(34rem,70vh)] overflow-y-auto')}
-          >
+        <Table.Root variant="secondary" className="flex min-h-0 flex-1 flex-col">
+          <Table.ScrollContainer className="min-h-0 flex-1 overflow-y-auto">
             <Table.Content aria-label="Open positions">
               <OpenPositionsHeader />
               <Table.Body>
@@ -164,7 +162,7 @@ export const OpenPositionsTable = () => {
               </Table.Body>
             </Table.Content>
           </Table.ScrollContainer>
-          <Table.Footer>
+          <Table.Footer className="shrink-0">
             <PagerBar
               label="Open positions pages"
               page={safePage}

@@ -1,16 +1,16 @@
 'use client';
 
 import type { OpenPositionEntity } from '@app/applications/Position/Domain/position';
-import { rangeChipColor, rangeLabel } from '@app/applications/Position/Domain/positionLabels';
+import { rangeLabel } from '@app/applications/Position/Domain/positionLabels';
+import { BinChart } from '@app/applications/Position/Ui/BinChart';
 import { PnlCell } from '@app/applications/Position/Ui/PnlCell';
 import { PositionRowShell } from '@app/applications/Position/Ui/PositionRowShell';
-import { RangeBar } from '@app/applications/Position/Ui/RangeBar';
 import { TokenPair } from '@app/applications/Position/Ui/TokenPair';
 import { fmtDuration } from '@app/applications/Shared/Domain/formatters';
 import { TickFlash } from '@app/applications/Shared/Ui/TickFlash';
 import { useMoney } from '@app/applications/Shared/Ui/useMoney';
 import { useUi } from '@app/core/stores/uiStore';
-import { Chip, Table } from '@heroui/react';
+import { Table, Tooltip } from '@heroui/react';
 
 interface OpenPositionRowProps {
   position: OpenPositionEntity;
@@ -63,16 +63,17 @@ export const OpenPositionRow = ({
       </Table.Cell>
       <Table.Cell className="tabular text-right text-muted">{age}</Table.Cell>
       <Table.Cell className="tabular text-right">{money.sol(position.sizeSol)}</Table.Cell>
-      <Table.Cell className="tabular text-right leading-tight">
+      <Table.Cell className="tabular text-right">
         <div
+          className="inline-flex items-baseline gap-1.5"
           title={`${money.sol(position.raw.claimedFeesSol)} claimed · ${money.sol(position.raw.unclaimedFeesSol)} unclaimed`}
         >
           <span className="text-muted">{money.sol(position.raw.claimedFeesSol)}</span>
-          <span className="mx-1 text-faint">·</span>
+          <span className="text-faint">·</span>
           <span className="text-profit">{money.sol(position.raw.unclaimedFeesSol)}</span>
-        </div>
-        <div className="text-faint text-xs">
-          {position.sizeSol > 0 ? `${position.feeYieldPct.toFixed(2)}%` : '—'}
+          <span className="text-faint text-xs">
+            {position.sizeSol > 0 ? `${position.feeYieldPct.toFixed(2)}%` : '—'}
+          </span>
         </div>
       </Table.Cell>
       <Table.Cell className="text-right">
@@ -81,16 +82,17 @@ export const OpenPositionRow = ({
         </TickFlash>
       </Table.Cell>
       <Table.Cell>
-        <div className="flex flex-col items-end gap-1.5">
-          <Chip.Root size="sm" variant="soft" color={rangeChipColor(position.rangeStatus)}>
-            <Chip.Label>{rangeLabel(position.rangeStatus)}</Chip.Label>
-          </Chip.Root>
-          <RangeBar
-            placement={position.rangePlacement}
-            inRange={position.inRange}
-            className="max-w-32"
-          />
-        </div>
+        {/* The bin chart IS the range read: the marker pinned left means below, pinned right means
+            above, and its colour carries in/out — so the status chip that used to sit above it was
+            both redundant and the reason every row needed two lines. */}
+        <Tooltip.Root delay={400}>
+          <Tooltip.Trigger>
+            <div className="ml-auto w-28 cursor-default">
+              <BinChart positionAddress={position.address} outOfRange={!position.inRange} />
+            </div>
+          </Tooltip.Trigger>
+          <Tooltip.Content>{rangeLabel(position.rangeStatus)}</Tooltip.Content>
+        </Tooltip.Root>
       </Table.Cell>
     </PositionRowShell>
   );

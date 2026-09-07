@@ -39,13 +39,6 @@ export class OpenPositionEntity {
   get inRange(): boolean {
     return this.raw.rangeStatus === 'in';
   }
-
-  /** Where the live pool price sits inside [min,max], clamped to 0..1. Null if not priceable. */
-  get rangePlacement(): number | null {
-    const { poolPrice, minPrice, maxPrice } = this.raw;
-    if (poolPrice == null || maxPrice <= minPrice) return null;
-    return Math.min(1, Math.max(0, (poolPrice - minPrice) / (maxPrice - minPrice)));
-  }
 }
 
 /** A closed position with derived win/tone/duration helpers. */

@@ -53,8 +53,8 @@ const ClosedPositionsHeader = () => (
 
 /** Placeholder rows built from the real table markup, so nothing reflows when the page lands. */
 const ClosedPositionsSkeleton = () => (
-  <Table.Root variant="secondary">
-    <Table.ScrollContainer>
+  <Table.Root variant="secondary" className="flex min-h-0 flex-1 flex-col">
+    <Table.ScrollContainer className="min-h-0 flex-1 overflow-y-auto">
       <Table.Content aria-label="Loading history">
         <ClosedPositionsHeader />
         <Table.Body>
@@ -103,7 +103,7 @@ export const ClosedPositionsTable = () => {
   const isFiltered = closed.q !== '' || closed.result !== 'all';
 
   return (
-    <Card.Root className="gap-0 p-0">
+    <Card.Root className="flex h-full min-h-0 flex-col gap-0 p-0">
       <Card.Header className="flex-row items-center justify-between gap-3 px-4 pt-4 pb-3">
         <Card.Title>History</Card.Title>
         <span className="tabular text-faint text-xs">{closed.total}</span>
@@ -208,14 +208,10 @@ export const ClosedPositionsTable = () => {
           hint={isFiltered ? 'Try clearing the filters.' : 'Closed positions land here.'}
         />
       ) : (
-        <Table.Root variant="secondary">
+        <Table.Root variant="secondary" className="flex min-h-0 flex-1 flex-col">
           <Table.ScrollContainer
             aria-busy={closed.stale}
-            className={cn(
-              'transition-opacity',
-              closed.stale && 'opacity-60',
-              openChart == null && 'max-h-[min(40rem,75vh)] overflow-y-auto',
-            )}
+            className={cn('transition-opacity', closed.stale && 'opacity-60')}
           >
             <Table.Content aria-label="Closed positions">
               <ClosedPositionsHeader />
@@ -234,7 +230,7 @@ export const ClosedPositionsTable = () => {
             </Table.Content>
           </Table.ScrollContainer>
 
-          <Table.Footer>
+          <Table.Footer className="shrink-0">
             <PagerBar
               label="History pages"
               numbered

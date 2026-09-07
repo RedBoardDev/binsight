@@ -2,8 +2,8 @@
 
 import type { OpenPositionEntity } from '@app/applications/Position/Domain/position';
 import { rangeChipColor, rangeShortLabel } from '@app/applications/Position/Domain/positionLabels';
+import { BinChart } from '@app/applications/Position/Ui/BinChart';
 import { PnlCell } from '@app/applications/Position/Ui/PnlCell';
-import { RangeBar } from '@app/applications/Position/Ui/RangeBar';
 import { TokenPair } from '@app/applications/Position/Ui/TokenPair';
 import { fmtDuration } from '@app/applications/Shared/Domain/formatters';
 import { useMoney } from '@app/applications/Shared/Ui/useMoney';
@@ -68,7 +68,7 @@ export const OpenPositionCard = ({ position, now }: OpenPositionCardProps) => {
           </div>
         </div>
         <div className="w-28 shrink-0">
-          <RangeBar placement={position.rangePlacement} inRange={position.inRange} />
+          <BinChart positionAddress={position.address} outOfRange={!position.inRange} />
         </div>
       </div>
     </Button>

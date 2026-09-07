@@ -210,6 +210,18 @@
     box-shadow: none;
   }
 
+  /* HeroUI draws a short vertical rule on every column's trailing edge. On a dense financial table
+     the horizontal row rules already carry the grid, and the verticals only add fuss. */
+  .table__column::after {
+    display: none;
+  }
+
+  /* A data table earns its density: one line of figures per row, so more of the portfolio is on
+     screen at once. */
+  .table__cell {
+    padding-block: 0.5rem;
+  }
+
   /* Every numeric value renders tabular in JetBrains Mono — the single seam that gives the app its
      terminal read and keeps columns of figures aligned. */
   .tabular {

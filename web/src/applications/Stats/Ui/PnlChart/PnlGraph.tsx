@@ -3,7 +3,7 @@
 import { fmtDate, fmtDateFull, fmtSolSigned } from '@app/applications/Shared/Domain/formatters';
 import { AMOUNT_MASK } from '@app/applications/Shared/Domain/money';
 import { type Tone, toneOf, toneTextClass } from '@app/applications/Shared/Domain/tone';
-import { linePath, type Point, scale } from '@app/applications/Stats/Domain/chartScale';
+import { type Point, scale, smoothLinePath } from '@app/applications/Stats/Domain/chartScale';
 import { usePrefs } from '@app/core/stores/prefsStore';
 import type { ProfitBucket } from '@binsight/shared';
 import { cn, Surface } from '@heroui/react';
@@ -160,16 +160,17 @@ export const PnlGraph = ({ buckets, netWorth, showBars, mode, svgRef }: PnlGraph
                   y={up ? yr : zeroY}
                   width={barW}
                   height={Math.max(0.5, Math.abs(yr - zeroY))}
-                  rx="1"
+                  rx={Math.min(2, barW / 2)}
                   fill={up ? 'var(--success)' : 'var(--danger)'}
-                  opacity={hover === i ? 0.95 : 0.5}
+                  opacity={hover === i ? 1 : 0.55}
                 />
               );
             })}
 
-          {/* the accent line is the hero — no heavy area fill (kept clean, LPAgent-style) */}
+          {/* The accent line is the hero — smoothed, no heavy area fill. The spline is monotone
+              cubic, so it never overshoots into a peak or dip the wallet never had. */}
           <path
-            d={linePath(points)}
+            d={smoothLinePath(points)}
             fill="none"
             stroke="var(--accent)"
             strokeWidth="2"

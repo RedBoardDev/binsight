@@ -23,11 +23,14 @@ export const DesktopShell = () => {
   const setTab = useUi((s) => s.setTab);
 
   return (
-    <>
+    // Fixed-viewport shell: the document never scrolls. The header, the portfolio hero and the tab
+    // row stay put, and the panel below them is the only thing that scrolls — so the figures you
+    // navigate by are always on screen.
+    <div className="flex h-dvh flex-col overflow-hidden">
       <AppTopBar />
-      <main className="mx-auto flex max-w-6xl flex-col gap-5 px-6 py-6">
+      <main className="mx-auto flex w-full max-w-[1600px] flex-1 flex-col gap-5 overflow-hidden px-6 py-6">
         <PortfolioGate>
-          <div className="animate-rise">
+          <div className="animate-rise shrink-0">
             <PortfolioSummaryCard />
           </div>
           <IndexingBanner />
@@ -35,8 +38,9 @@ export const DesktopShell = () => {
             variant="secondary"
             selectedKey={tab}
             onSelectionChange={(key) => setTab(key as Tab)}
+            className="flex min-h-0 flex-1 flex-col"
           >
-            <div className="flex items-end justify-between gap-3">
+            <div className="flex shrink-0 items-end justify-between gap-3">
               <Tabs.ListContainer className="flex-1">
                 <Tabs.List aria-label="Dashboard sections">
                   {TABS.map((t) => (
@@ -53,19 +57,20 @@ export const DesktopShell = () => {
             </div>
             {/* Each panel mounts only when opened, so the Stats fetches and the chart never run on
                 a plain reload (which lands on Positions). */}
-            <Tabs.Panel id="positions" className="animate-rise pt-5">
+            <Tabs.Panel id="positions" className="animate-rise min-h-0 flex-1 pt-5">
               <OpenPositionsTable />
             </Tabs.Panel>
-            <Tabs.Panel id="stats" className="animate-rise pt-5">
+            {/* Stats is a stack of cards rather than one table, so it keeps its own scroller. */}
+            <Tabs.Panel id="stats" className="animate-rise min-h-0 flex-1 overflow-y-auto pt-5">
               <StatsView />
             </Tabs.Panel>
-            <Tabs.Panel id="history" className="animate-rise pt-5">
+            <Tabs.Panel id="history" className="animate-rise min-h-0 flex-1 pt-5">
               <ClosedPositionsTable />
             </Tabs.Panel>
           </Tabs.Root>
         </PortfolioGate>
       </main>
       <PositionDetailPanel />
-    </>
+    </div>
   );
 };

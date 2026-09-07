@@ -41,8 +41,10 @@ export const PortfolioSummaryCard = () => {
       aria-busy={scopeLoading}
       className={cn('p-6 transition-opacity duration-200 md:p-7', scopeLoading && 'opacity-60')}
     >
-      <Card.Content className="flex flex-col gap-7 lg:flex-row lg:items-end lg:justify-between lg:gap-12">
-        <div className="flex min-w-0 flex-col gap-2.5">
+      {/* One grid rather than two blocks pushed to opposite edges: on a wide screen the split left a
+          void down the middle of the app's most important card. */}
+      <Card.Content className="grid grid-cols-2 items-end gap-x-8 gap-y-7 sm:grid-cols-4 lg:grid-cols-6 lg:gap-x-10">
+        <div className="col-span-2 flex min-w-0 flex-col gap-2.5">
           <span className="font-medium text-faint text-xs uppercase tracking-wide">Net Worth</span>
           <TickFlash value={totals.walletTotalSol} className="flex items-center gap-2.5">
             <span className="tabular font-semibold text-4xl text-foreground leading-none tracking-tight md:text-[2.75rem]">
@@ -57,50 +59,48 @@ export const PortfolioSummaryCard = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-x-8 gap-y-6 sm:grid-cols-4 sm:gap-x-10 lg:shrink-0">
-          <StatTile
-            label="Today"
-            tone={today != null ? toneOf(today) : 'neutral'}
-            value={
-              today != null ? (
-                <TickFlash value={today}>{money.sol(today, { signed: true })}</TickFlash>
-              ) : (
-                '—'
-              )
-            }
-            sub={today != null ? money.pct(pctOf(today, totals.walletTotalSol)) : '—'}
-          />
-          <StatTile
-            label="Active PnL"
-            tone={toneOf(totals.uPnlSol)}
-            value={
-              <TickFlash value={totals.uPnlSol}>
-                {money.sol(totals.uPnlSol, { signed: true })}
-              </TickFlash>
-            }
-            sub={money.pct(totals.uPnlPct)}
-          />
-          <StatTile
-            label={`Gain (${periodLabel(period)})`}
-            tone={gain != null ? toneOf(gain) : 'neutral'}
-            value={gain != null ? money.sol(gain, { signed: true }) : '—'}
-            sub="Real PnL Δ"
-          />
-          <StatTile
-            label="Open"
-            value={totals.openCount}
-            sub={
-              <span className="flex gap-1.5">
-                <Chip.Root color="success" size="sm" variant="soft">
-                  <Chip.Label>{totals.inRangeCount} in</Chip.Label>
-                </Chip.Root>
-                <Chip.Root color="warning" size="sm" variant="soft">
-                  <Chip.Label>{totals.outOfRangeCount} out</Chip.Label>
-                </Chip.Root>
-              </span>
-            }
-          />
-        </div>
+        <StatTile
+          label="Today"
+          tone={today != null ? toneOf(today) : 'neutral'}
+          value={
+            today != null ? (
+              <TickFlash value={today}>{money.sol(today, { signed: true })}</TickFlash>
+            ) : (
+              '—'
+            )
+          }
+          sub={today != null ? money.pct(pctOf(today, totals.walletTotalSol)) : '—'}
+        />
+        <StatTile
+          label="Active PnL"
+          tone={toneOf(totals.uPnlSol)}
+          value={
+            <TickFlash value={totals.uPnlSol}>
+              {money.sol(totals.uPnlSol, { signed: true })}
+            </TickFlash>
+          }
+          sub={money.pct(totals.uPnlPct)}
+        />
+        <StatTile
+          label={`Gain (${periodLabel(period)})`}
+          tone={gain != null ? toneOf(gain) : 'neutral'}
+          value={gain != null ? money.sol(gain, { signed: true }) : '—'}
+          sub="Real PnL Δ"
+        />
+        <StatTile
+          label="Open"
+          value={totals.openCount}
+          sub={
+            <span className="flex gap-1.5">
+              <Chip.Root color="success" size="sm" variant="soft">
+                <Chip.Label>{totals.inRangeCount} in</Chip.Label>
+              </Chip.Root>
+              <Chip.Root color="warning" size="sm" variant="soft">
+                <Chip.Label>{totals.outOfRangeCount} out</Chip.Label>
+              </Chip.Root>
+            </span>
+          }
+        />
       </Card.Content>
     </Card.Root>
   );
@@ -108,21 +108,19 @@ export const PortfolioSummaryCard = () => {
 
 const PortfolioSummarySkeleton = () => (
   <Card.Root className="p-6 md:p-7">
-    <Card.Content className="flex flex-col gap-7 lg:flex-row lg:items-end lg:justify-between lg:gap-12">
-      <div className="flex flex-col gap-2.5">
+    <Card.Content className="grid grid-cols-2 items-end gap-x-8 gap-y-7 sm:grid-cols-4 lg:grid-cols-6 lg:gap-x-10">
+      <div className="col-span-2 flex flex-col gap-2.5">
         <Skeleton.Root className="h-3 w-24" />
         <Skeleton.Root className="h-10 w-48" />
         <Skeleton.Root className="h-4 w-40" />
       </div>
-      <div className="grid grid-cols-2 gap-x-8 gap-y-6 sm:grid-cols-4 sm:gap-x-10 lg:shrink-0">
-        {['today', 'pnl', 'gain', 'open'].map((key) => (
-          <div key={key} className="flex flex-col gap-1">
-            <Skeleton.Root className="h-3 w-16" />
-            <Skeleton.Root className="h-6 w-24" />
-            <Skeleton.Root className="h-4 w-20" />
-          </div>
-        ))}
-      </div>
+      {['today', 'pnl', 'gain', 'open'].map((key) => (
+        <div key={key} className="flex flex-col gap-1">
+          <Skeleton.Root className="h-3 w-16" />
+          <Skeleton.Root className="h-6 w-24" />
+          <Skeleton.Root className="h-4 w-20" />
+        </div>
+      ))}
     </Card.Content>
   </Card.Root>
 );
