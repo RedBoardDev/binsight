@@ -36,7 +36,7 @@ export function DesktopShell() {
       <main className="mx-auto flex max-w-6xl flex-col gap-5 px-6 py-6">
         {noWallets ? (
           <EmptyWallets />
-        ) : portfolioBroken && tab !== 'bot' ? (
+        ) : portfolioBroken ? (
           <PortfolioError />
         ) : (
           <>
