@@ -356,7 +356,15 @@ describe('PostgresPositionRepository — legs-recompute backfill (#113)', () => 
     const repo = await newRepo();
     const closedAt = Date.now() - 300_000; // well past SETTLE_MS → upsertClosed would refuse to re-mark
     await repo.upsertClosed([
-      { ...base, positionAddress: 'FZ', closedAt, depositSol: 0, withdrawSol: 0, pnlSol: 5, pnlSource: 'pool' },
+      {
+        ...base,
+        positionAddress: 'FZ',
+        closedAt,
+        depositSol: 0,
+        withdrawSol: 0,
+        pnlSol: 5,
+        pnlSource: 'pool',
+      },
     ]);
     await repo.setAuthoritativePnl('FZ', -0.42); // a market reprice that must be preserved
     await repo.replaceOpenForWallet('w', [{ ...openBase, positionAddress: 'OPEN', pnlSol: 7 }]);
@@ -369,12 +377,19 @@ describe('PostgresPositionRepository — legs-recompute backfill (#113)', () => 
     );
 
     const econ = await repo.closedEconomicsForWallet('w');
-    expect(econ.get('FZ')).toEqual({ depositSol: 3, withdrawSol: 2, claimedFeesSol: 0.5, pnlSol: -0.5 });
+    expect(econ.get('FZ')).toEqual({
+      depositSol: 3,
+      withdrawSol: 2,
+      claimedFeesSol: 0.5,
+      pnlSol: -0.5,
+    });
     expect(econ.has('OPEN')).toBe(false); // open positions are not closed economics
     const closed = await repo.getClosedByAddress('FZ');
     expect(closed?.pnlSol).toBeCloseTo(-0.42); // market_pnl_sol (effective PnL) untouched by the repair
     // The open row's raw pnl must be unchanged by the map entry that targeted it.
-    expect((await repo.getOpen('w')).find((p) => p.positionAddress === 'OPEN')?.pnlSol).toBeCloseTo(7);
+    expect((await repo.getOpen('w')).find((p) => p.positionAddress === 'OPEN')?.pnlSol).toBeCloseTo(
+      7,
+    );
   });
 
   it('end-to-end: a stale deposit_sol=0 closed row is corrected from its legs; a correct row is idempotent', async () => {
@@ -386,14 +401,27 @@ describe('PostgresPositionRepository — legs-recompute backfill (#113)', () => 
     // Frozen closed row written before the fix: deposit dropped to 0, pnl bogus-positive.
     const closedAt = Date.now() - 300_000;
     await repo.upsertClosed([
-      { ...base, positionAddress: 'P', poolAddress: 'POOL', closedAt, depositSol: 0, withdrawSol: 0, pnlSol: 4, pnlSource: 'pool' },
+      {
+        ...base,
+        positionAddress: 'P',
+        poolAddress: 'POOL',
+        closedAt,
+        depositSol: 0,
+        withdrawSol: 0,
+        pnlSol: 4,
+        pnlSource: 'pool',
+      },
     ]);
     // Its real on-chain SOL legs: deposit 3 SOL, withdraw 2 SOL, claim 0.5 SOL → pnl −0.5.
-    await legRepo.replaceForSignatures('w', ['sig'], [
-      dlmmLeg({ position: 'P', kind: 'deposit', amountY: BigInt(3 * SOL) }),
-      dlmmLeg({ position: 'P', kind: 'withdraw', amountY: BigInt(2 * SOL) }),
-      dlmmLeg({ position: 'P', kind: 'claim', amountY: BigInt(0.5 * SOL) }),
-    ]);
+    await legRepo.replaceForSignatures(
+      'w',
+      ['sig'],
+      [
+        dlmmLeg({ position: 'P', kind: 'deposit', amountY: BigInt(3 * SOL) }),
+        dlmmLeg({ position: 'P', kind: 'withdraw', amountY: BigInt(2 * SOL) }),
+        dlmmLeg({ position: 'P', kind: 'claim', amountY: BigInt(0.5 * SOL) }),
+      ],
+    );
 
     const r1 = await repairClosedEconomicsFromLegs('w', { legRepo, positionRepo: repo });
     expect(r1).toMatchObject({ scanned: 1, corrected: 1, skippedNoPoolMeta: 0, skippedNonSol: 0 });
