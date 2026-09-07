@@ -7,10 +7,13 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check:security": "node scripts/security-guard.mjs"
   },
   "dependencies": {
     "@binsight/shared": "workspace:*",
+    "@privy-io/react-auth": "3.33.1",
+    "@solana-program/memo": "0.8.0",
     "@solana/wallet-adapter-base": "0.9.27",
     "@solana/wallet-adapter-phantom": "0.9.29",
     "@solana/wallet-adapter-react": "0.15.39",

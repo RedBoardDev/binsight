@@ -17,7 +17,7 @@ import {
   sortedByCredits,
   todayTotals,
 } from '@/domain/rpc-telemetry';
-import { api } from '@/infrastructure/api/client';
+import { api, authApi } from '@/infrastructure/api/client';
 import {
   Badge,
   Card,
@@ -60,11 +60,12 @@ export default function RpcCreditsPage() {
   // Same owner gate as /admin: the backend re-checks isOwner on every /debug/rpc call, this just keeps
   // a non-owner from seeing the shell.
   useEffect(() => {
-    api
+    authApi
       .me()
       .then((me) => {
-        setAllowed(me.isOwner);
-        if (!me.isOwner) router.replace('/');
+        const isOwner = me.registered && me.isOwner;
+        setAllowed(isOwner);
+        if (!isOwner) router.replace('/');
       })
       .catch(() => {
         setAllowed(false);

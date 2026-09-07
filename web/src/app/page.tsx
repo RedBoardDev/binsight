@@ -1,18 +1,14 @@
-import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
-import { getOpenAccess } from '@/infrastructure/app-config';
-import { API_URL, SESSION_COOKIE } from '@/infrastructure/config';
+'use client';
+
+import { AuthGate } from '@/presentation/components/auth-gate';
 import { Dashboard } from '@/presentation/components/dashboard';
 
-export default async function Home() {
-  const session = (await cookies()).get(SESSION_COOKIE)?.value;
-  if (!session) redirect('/login');
-  // Gate on a VALID token (signature + expiry), not just cookie presence — the backend verifies it.
-  const res = await fetch(`${API_URL}/auth/verify`, {
-    headers: { authorization: `Bearer ${session}` },
-    cache: 'no-store',
-  }).catch(() => null);
-  if (!res || !res.ok) redirect('/login');
-  const openAccess = await getOpenAccess();
-  return <Dashboard openAccess={openAccess} />;
+// Auth state is 100% Privy and lives client-side — the dashboard is a client-gated shell
+// (no SSR session cookie to check anymore).
+export default function Home() {
+  return (
+    <AuthGate>
+      <Dashboard />
+    </AuthGate>
+  );
 }

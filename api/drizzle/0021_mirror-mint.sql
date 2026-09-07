@@ -1,0 +1,1 @@
+ALTER TABLE "copy_positions" ADD COLUMN "non_sol_mint" text;

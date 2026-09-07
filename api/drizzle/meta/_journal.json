@@ -92,6 +92,83 @@
       "when": 1782468966200,
       "tag": "0012_regular_sentinel",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1783024277431,
+      "tag": "0013_copybot",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1783059479710,
+      "tag": "0014_privy-auth",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1783063365770,
+      "tag": "0015_copybot-configs",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1783066101163,
+      "tag": "0016_multi-tenant",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1783067891203,
+      "tag": "0017_copy-positions-leader",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1783077010095,
+      "tag": "0018_executions-publish-ctx",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1783087775905,
+      "tag": "0019_activation",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1783096987197,
+      "tag": "0020_fee-ledger",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1783111471139,
+      "tag": "0021_mirror-mint",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1783271845510,
+      "tag": "0022_push-subscription-account-fk",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1783845003967,
+      "tag": "0023_fuzzy_blue_shield",
+      "breakpoints": true
     }
   ]
 }

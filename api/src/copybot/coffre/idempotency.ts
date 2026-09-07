@@ -1,0 +1,76 @@
+/**
+ * Copy-bot · vault idempotency claim (pure DB, no SDK). One command = one execution, claimed BEFORE signing.
+ *
+ * A command is identified by its deterministic `(userId, commandId)` pair (SPEC §11): the tenant is part of the
+ * key so the same leader event copied for two users claims two INDEPENDENT slots — user #2 is never rejected as
+ * user #1's duplicate. The claim INSERTs an `executions` row; on conflict it only re-claims when the existing row
+ * is in the terminal `'failed'` state — so a previously FAILED close (or open) can be retried by a later
+ * re-publish (the reconcile re-emits the same commandId), while an already `'landed'`/`'claimed'`/`'skipped'`
+ * command is rejected as a duplicate. This is what makes failsafe re-closes actually retry instead of being
+ * blocked forever by their own failed row.
+ */
+import { eq, inArray } from 'drizzle-orm';
+import type { openDatabase } from '@/infrastructure/persistence/database';
+import { executions } from '@/infrastructure/persistence/schema';
+
+type Database = ReturnType<typeof openDatabase>;
+
+/**
+ * Try to claim a command for execution. Returns `true` when we own it (fresh insert, or retrying a `'failed'`
+ * one), `false` when it is a duplicate already handled (landed / in-flight / skipped) → caller must skip.
+ *
+ * `forceReclaim` (a reconcile-driven FAILSAFE/ORPHAN close): re-claim from ANY prior state. These closes are
+ * emitted ONLY while the position is PROVABLY still on-chain (the no-miss backstop), so a stale terminal state
+ * ('landed'/'skipped'/'claimed') that never actually removed the position MUST NOT block the retry — else a
+ * phantom position is stuck open forever. Single-consumer ⇒ no live concurrent claimant (re-claiming 'claimed'
+ * is safe); a re-close of an already-gone position fails harmlessly. The brain's RECLOSE_GRACE bounds the rate.
+ */
+export async function claimExecution(
+  db: Database,
+  userId: string,
+  commandId: string,
+  eventKey: string,
+  deadlineSlot: number,
+  nowMs: number,
+  recovering = false,
+  forceReclaim = false,
+): Promise<boolean> {
+  // Normal flow: re-claim ONLY a terminal 'failed' command (a reconcile re-publish retry); a 'claimed'/'submitted'/
+  // 'landed'/'skipped' one is a duplicate → reject (no double-sign on a re-delivered in-flight command).
+  // recovering=true (vault boot PENDING-recovery only): ALSO re-claim a stranded 'claimed'/'submitted' — a PRIOR
+  // instance claimed/broadcast it then CRASHED before finalizing, and the single-consumer is provably dead now (no
+  // live claimant). For a 'submitted' row (a signature already went on the wire) the caller MUST have run the #7
+  // recoveryPreCheck first, so this only re-claims a PROVABLY-DEAD tx — never a landed/in-flight one. A re-claimed
+  // open re-signs its DETERMINISTIC keypair → if it had already landed, the account exists and the re-attempt fails
+  // harmlessly (no double position).
+  // The re-claim CLEARS the prior broadcast trace (signature/expiry/publish context): a re-claim only ever starts
+  // from a provably-dead tx (recovery pre-check) or a forceReclaim close (harmless re-close), and the async confirm
+  // worker's conditional finalize is SIGNATURE-PINNED — clearing the stale signature guarantees a delayed worker
+  // resolve of the OLD broadcast can never flip (or spuriously fail-alert) the row while the NEW attempt is signing.
+  const set = {
+    state: 'claimed' as const,
+    signature: null,
+    lastValidBlockHeight: null,
+    publishCtx: null,
+    updatedAt: nowMs,
+  };
+  const reclaimable = recovering
+    ? inArray(executions.state, ['failed', 'claimed', 'submitted'])
+    : eq(executions.state, 'failed');
+  // Conflict target = the composite PK (user_id, command_id): the claim is PER TENANT (SPEC §11).
+  const target = [executions.userId, executions.commandId];
+  const claimed = await db
+    .insert(executions)
+    .values({
+      userId,
+      commandId,
+      eventKey,
+      state: 'claimed',
+      deadlineSlot,
+      createdAt: nowMs,
+      updatedAt: nowMs,
+    })
+    .onConflictDoUpdate(forceReclaim ? { target, set } : { target, set, setWhere: reclaimable })
+    .returning({ commandId: executions.commandId });
+  return claimed.length > 0;
+}

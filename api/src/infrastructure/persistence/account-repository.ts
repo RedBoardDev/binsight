@@ -1,209 +1,165 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq, gt, lte, sql } from 'drizzle-orm';
+import { and, eq, gt, isNull, or, sql } from 'drizzle-orm';
 import type {
-  AccessEntry,
   AccountRepository,
   AccountSummary,
   AccountUser,
-  NoncePurpose,
+  InviteEntry,
+  InviteRedeemFailure,
   WalletOverview,
-  WhitelistEntry,
 } from '@/domain/ports';
 import type { Database } from './database';
 import {
-  authNonces,
-  authSessions,
+  copybotActivation,
+  copybotConfigs,
+  copyDecisions,
+  copyJournal,
+  copyPositions,
+  executions,
+  inviteCodes,
   positions as positionsTable,
+  pushSubscriptions,
+  rugExitPendings,
+  rugExits,
   users as usersTable,
   userWatchedWallets as uww,
-  walletWhitelist,
 } from './schema';
 
 /**
- * Postgres-backed accounts (Drizzle). Identity is the Solana wallet **address** (= username), proven by
- * a one-time signature at registration and protected by a password thereafter. Also owns the
- * registration whitelist (owner-managed gate) and the single-use signature nonces.
+ * Postgres-backed accounts (Drizzle). Identity is the Privy DID (`did:privy:...`) — sessions are
+ * 100% Privy, so there is no password / nonce / session state here. Also owns the single-use
+ * invitation codes that gate account creation (owner-managed).
  */
 export class PostgresAccountRepository implements AccountRepository {
   constructor(private readonly db: Database) {}
 
-  /** Seed the owner allowlist entry so the owner can register the bootstrap account (idempotent). */
-  async init(ownerAddress: string): Promise<void> {
-    if (!ownerAddress) return;
-    await this.db
-      .insert(walletWhitelist)
-      .values({
-        address: ownerAddress,
-        note: 'owner bootstrap',
-        addedBy: 'system',
-        createdAt: Date.now(),
-      })
-      .onConflictDoNothing({ target: walletWhitelist.address });
+  private static toUser(r: {
+    id: string;
+    privyUserId: string;
+    address: string | null;
+    isOwner: boolean;
+    createdAt: number;
+  }): AccountUser {
+    return {
+      id: r.id,
+      privyUserId: r.privyUserId,
+      address: r.address,
+      isOwner: r.isOwner,
+      createdAt: r.createdAt,
+    };
   }
 
-  async createUser(p: {
-    address: string;
-    passwordHash: string;
-    isOwner: boolean;
-  }): Promise<AccountUser> {
+  async createUser(p: { privyUserId: string; isOwner: boolean }): Promise<AccountUser> {
     const id = randomUUID();
+    const createdAt = Date.now();
     await this.db.insert(usersTable).values({
       id,
-      address: p.address,
-      passwordHash: p.passwordHash,
+      privyUserId: p.privyUserId,
+      address: null,
       isOwner: p.isOwner,
-      tokenVersion: 0,
-      createdAt: Date.now(),
+      createdAt,
     });
-    return { id, address: p.address, isOwner: p.isOwner, tokenVersion: 0 };
+    return { id, privyUserId: p.privyUserId, address: null, isOwner: p.isOwner, createdAt };
   }
 
-  async findByAddress(
-    address: string,
-  ): Promise<{ user: AccountUser; passwordHash: string } | null> {
+  async findByPrivyId(did: string): Promise<AccountUser | null> {
     const [r] = await this.db
       .select()
       .from(usersTable)
-      .where(eq(usersTable.address, address))
+      .where(eq(usersTable.privyUserId, did))
       .limit(1);
-    if (!r) return null;
-    return {
-      user: { id: r.id, address: r.address, isOwner: r.isOwner, tokenVersion: r.tokenVersion },
-      passwordHash: r.passwordHash,
-    };
+    return r ? PostgresAccountRepository.toUser(r) : null;
   }
 
   async findById(id: string): Promise<AccountUser | null> {
     const [r] = await this.db.select().from(usersTable).where(eq(usersTable.id, id)).limit(1);
-    return r
-      ? { id: r.id, address: r.address, isOwner: r.isOwner, tokenVersion: r.tokenVersion }
-      : null;
+    return r ? PostgresAccountRepository.toUser(r) : null;
   }
 
-  /** The account for `id` ONLY if its `jti` session is still allow-listed + unexpired — one JOIN query
-   *  for the auth hot path (was findById THEN isSessionValid, two sequential round-trips per request). */
-  async findByIdWithSession(id: string, jti: string): Promise<AccountUser | null> {
-    const [r] = await this.db
-      .select({
-        id: usersTable.id,
-        address: usersTable.address,
-        isOwner: usersTable.isOwner,
-        tokenVersion: usersTable.tokenVersion,
-      })
-      .from(usersTable)
-      .innerJoin(authSessions, eq(authSessions.userId, usersTable.id))
-      .where(
-        and(
-          eq(usersTable.id, id),
-          eq(authSessions.jti, jti),
-          gt(authSessions.expiresAt, Date.now()),
-        ),
-      )
-      .limit(1);
-    return r
-      ? { id: r.id, address: r.address, isOwner: r.isOwner, tokenVersion: r.tokenVersion }
-      : null;
+  // ── Invite codes (owner-managed account-creation gate) ──────────────────────────────────────
+  async createInvite(p: { code: string; note?: string; expiresAt?: number | null }): Promise<void> {
+    await this.db.insert(inviteCodes).values({
+      code: p.code,
+      note: p.note ?? '',
+      createdAt: Date.now(),
+      expiresAt: p.expiresAt ?? null,
+    });
   }
 
-  async resetPassword(id: string, passwordHash: string): Promise<void> {
-    // Bump tokenVersion in the same statement → every JWT minted before the reset becomes invalid.
-    await this.db
-      .update(usersTable)
-      .set({ passwordHash, tokenVersion: sql`${usersTable.tokenVersion} + 1` })
-      .where(eq(usersTable.id, id));
-  }
-
-  // ── Whitelist (owner-managed registration gate) ──────────────────────────────────────────────
-  async isWhitelisted(address: string): Promise<boolean> {
-    const [r] = await this.db
-      .select({ a: walletWhitelist.address })
-      .from(walletWhitelist)
-      .where(eq(walletWhitelist.address, address))
-      .limit(1);
-    return Boolean(r);
-  }
-
-  async listWhitelist(): Promise<WhitelistEntry[]> {
-    const rows = await this.db.select().from(walletWhitelist).orderBy(walletWhitelist.createdAt);
+  async listInvites(): Promise<InviteEntry[]> {
+    const rows = await this.db.select().from(inviteCodes).orderBy(inviteCodes.createdAt);
     return rows.map((r) => ({
-      address: r.address,
+      code: r.code,
       note: r.note,
-      addedBy: r.addedBy,
       createdAt: r.createdAt,
+      expiresAt: r.expiresAt,
+      usedByUserId: r.usedByUserId,
+      usedAt: r.usedAt,
     }));
   }
 
-  async addWhitelist(p: { address: string; note?: string; addedBy?: string }): Promise<void> {
-    await this.db
-      .insert(walletWhitelist)
-      .values({
-        address: p.address,
-        note: p.note ?? '',
-        addedBy: p.addedBy ?? '',
-        createdAt: Date.now(),
-      })
-      .onConflictDoUpdate({
-        target: walletWhitelist.address,
-        set: { note: p.note ?? '', addedBy: p.addedBy ?? '' },
-      });
-  }
-
-  async removeWhitelist(address: string): Promise<void> {
-    await this.db.delete(walletWhitelist).where(eq(walletWhitelist.address, address));
-  }
-
-  // ── Signature nonces (single-use, short TTL, purpose-bound) ──────────────────────────────────
-  async issueNonce(
-    address: string,
-    nonce: string,
-    expiresAt: number,
-    purpose: NoncePurpose,
-  ): Promise<void> {
-    // Opportunistically prune expired rows so the table never accumulates stale challenges.
-    await this.db.delete(authNonces).where(lte(authNonces.expiresAt, Date.now()));
-    await this.db.insert(authNonces).values({ nonce, address, expiresAt, purpose });
-  }
-
-  async consumeNonce(address: string, nonce: string, purpose: NoncePurpose): Promise<boolean> {
-    // Atomic single-use: DELETE the row only if it matches address+nonce+purpose AND is unexpired,
-    // reporting whether a row was actually removed. A returned row ⇒ valid & now consumed; none ⇒
-    // invalid / wrong-purpose / expired / already used. The delete-with-guard makes a captured
-    // signature un-replayable, and the purpose match stops a register challenge being used to reset.
+  async deleteInvite(code: string): Promise<boolean> {
+    // Only an UNUSED code may be deleted: a redeemed code is the audit trail (code → account) and
+    // deleting it would erase the traceability the invite gate exists for.
     const deleted = await this.db
-      .delete(authNonces)
-      .where(
-        and(
-          eq(authNonces.nonce, nonce),
-          eq(authNonces.address, address),
-          eq(authNonces.purpose, purpose),
-          gt(authNonces.expiresAt, Date.now()),
-        ),
-      )
-      .returning({ nonce: authNonces.nonce });
+      .delete(inviteCodes)
+      .where(and(eq(inviteCodes.code, code), isNull(inviteCodes.usedByUserId)))
+      .returning({ code: inviteCodes.code });
     return deleted.length > 0;
   }
 
-  // ── Session allowlist (one row per issued JWT jti) ───────────────────────────────────────────
-  async createSession(jti: string, userId: string, expiresAt: number): Promise<void> {
-    await this.db.delete(authSessions).where(lte(authSessions.expiresAt, Date.now())); // prune expired
-    await this.db.insert(authSessions).values({ jti, userId, expiresAt });
-  }
-
-  async isSessionValid(jti: string): Promise<boolean> {
-    const [r] = await this.db
-      .select({ jti: authSessions.jti })
-      .from(authSessions)
-      .where(and(eq(authSessions.jti, jti), gt(authSessions.expiresAt, Date.now())))
-      .limit(1);
-    return Boolean(r);
-  }
-
-  async deleteSession(jti: string): Promise<void> {
-    await this.db.delete(authSessions).where(eq(authSessions.jti, jti));
-  }
-
-  async deleteUserSessions(userId: string): Promise<void> {
-    await this.db.delete(authSessions).where(eq(authSessions.userId, userId));
+  async redeemInviteAndCreateUser(p: {
+    code: string;
+    privyUserId: string;
+    isOwner: boolean;
+    now: number;
+  }): Promise<{ ok: true; user: AccountUser } | { ok: false; reason: InviteRedeemFailure }> {
+    return this.db.transaction(async (tx) => {
+      const id = randomUUID();
+      // Atomic claim: the UPDATE only lands while used_by_user_id is still NULL (and the code is
+      // unexpired), so of two concurrent redeems of the SAME code exactly one gets a row back —
+      // the loser falls through to the typed-failure diagnosis below. Claim + user insert share one
+      // transaction: a failed insert rolls the claim back, never burning the code.
+      const claimed = await tx
+        .update(inviteCodes)
+        .set({ usedByUserId: id, usedAt: p.now })
+        .where(
+          and(
+            eq(inviteCodes.code, p.code),
+            isNull(inviteCodes.usedByUserId),
+            or(isNull(inviteCodes.expiresAt), gt(inviteCodes.expiresAt, p.now)),
+          ),
+        )
+        .returning({ code: inviteCodes.code });
+      if (claimed.length === 0) {
+        // Diagnose WHY for a precise client error (the claim's WHERE collapses all failures).
+        const [row] = await tx
+          .select()
+          .from(inviteCodes)
+          .where(eq(inviteCodes.code, p.code))
+          .limit(1);
+        if (!row) return { ok: false as const, reason: 'not_found' as const };
+        if (row.usedByUserId !== null) return { ok: false as const, reason: 'used' as const };
+        return { ok: false as const, reason: 'expired' as const };
+      }
+      await tx.insert(usersTable).values({
+        id,
+        privyUserId: p.privyUserId,
+        address: null,
+        isOwner: p.isOwner,
+        createdAt: p.now,
+      });
+      return {
+        ok: true as const,
+        user: {
+          id,
+          privyUserId: p.privyUserId,
+          address: null,
+          isOwner: p.isOwner,
+          createdAt: p.now,
+        },
+      };
+    });
   }
 
   // ── Admin: accounts ──────────────────────────────────────────────────────────────────────────
@@ -218,6 +174,7 @@ export class PostgresAccountRepository implements AccountRepository {
     }
     return us.map((u) => ({
       id: u.id,
+      privyUserId: u.privyUserId,
       address: u.address,
       isOwner: u.isOwner,
       createdAt: u.createdAt,
@@ -225,10 +182,11 @@ export class PostgresAccountRepository implements AccountRepository {
     }));
   }
 
-  /** Delete an account + its watchlist + its sessions; returns the wallets left with no watcher (so the
-   *  engine can stop LIVE monitoring them). The wallets' SHARED position/flow data is KEPT (keyed by
-   *  address, not by account) — revoking an account is "as if they never had one", the cached data
-   *  survives for whoever watches the wallet next. */
+  /** Delete an account + its watchlist + ALL its user-scoped copy-bot rows (the teardown cascade, Inc.4e / SPEC §2.4);
+   *  returns the wallets left with no watcher (so the engine can stop LIVE monitoring them). The wallets' SHARED
+   *  on-chain position/flow data is KEPT (keyed by address, not by account) — revoking an account is "as if they
+   *  never had one", the cached shared data survives for whoever watches the wallet next. Everything runs in ONE
+   *  transaction so a partial cascade can never leave a half-deleted account (a test asserts the completeness). */
   async deleteAccount(id: string): Promise<string[]> {
     return this.db.transaction(async (tx) => {
       const watched = (
@@ -243,44 +201,24 @@ export class PostgresAccountRepository implements AccountRepository {
           .where(eq(uww.walletAddress, addr));
         if (Number(r?.c ?? 0) === 0) orphans.push(addr);
       }
-      await tx.delete(authSessions).where(eq(authSessions.userId, id)); // revoke the account's sessions
+      // User-scoped copy-bot state — deleted with the account (unlike the SHARED, address-keyed on-chain data above).
+      // Every table that carries a `user_id` for THIS tenant is cleared; the teardown test enumerates them so a new
+      // user-scoped table can't silently escape the cascade.
+      await tx.delete(copybotConfigs).where(eq(copybotConfigs.userId, id));
+      await tx.delete(copyPositions).where(eq(copyPositions.userId, id));
+      await tx.delete(executions).where(eq(executions.userId, id));
+      await tx.delete(copyDecisions).where(eq(copyDecisions.userId, id));
+      await tx.delete(copyJournal).where(eq(copyJournal.userId, id));
+      await tx.delete(rugExits).where(eq(rugExits.userId, id));
+      await tx.delete(rugExitPendings).where(eq(rugExitPendings.userId, id));
+      await tx.delete(copybotActivation).where(eq(copybotActivation.userId, id));
+      // User-scoped notification state (NOT copy-bot state, NOT shared): drop this account's push
+      // subscriptions so a removed user stops receiving web-push (finding #102). The FK cascade backs
+      // this up at the DB level; the explicit delete keeps teardown complete even if the FK is absent.
+      await tx.delete(pushSubscriptions).where(eq(pushSubscriptions.userId, id));
       await tx.delete(usersTable).where(eq(usersTable.id, id));
       return orphans;
     });
-  }
-
-  /** Unified access view for the admin: every invited address (whitelist) + every registered account,
-   *  merged by address. status='joined' when an account exists for that address, else 'invited'. */
-  async listAccess(): Promise<AccessEntry[]> {
-    const [whitelist, accounts] = await Promise.all([this.listWhitelist(), this.listAccounts()]);
-    const byAddress = new Map(accounts.map((a) => [a.address, a]));
-    const seen = new Set<string>();
-    const out: AccessEntry[] = [];
-    for (const w of whitelist) {
-      const acct = byAddress.get(w.address);
-      seen.add(w.address);
-      out.push({
-        address: w.address,
-        status: acct ? 'joined' : 'invited',
-        isOwner: acct?.isOwner ?? false,
-        note: w.note,
-        wallets: acct?.wallets ?? [],
-        createdAt: acct?.createdAt ?? w.createdAt,
-      });
-    }
-    // An account whose whitelist entry was (somehow) removed still surfaces so it stays manageable.
-    for (const a of accounts) {
-      if (seen.has(a.address)) continue;
-      out.push({
-        address: a.address,
-        status: 'joined',
-        isOwner: a.isOwner,
-        note: '',
-        wallets: a.wallets,
-        createdAt: a.createdAt,
-      });
-    }
-    return out.sort((x, y) => x.createdAt - y.createdAt);
   }
 
   /** Per monitored wallet (anyone's watchlist): watcher count + open/closed position counts + the last

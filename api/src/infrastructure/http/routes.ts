@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import {
   EventKindSchema,
   type LiveEvent,
@@ -6,22 +7,31 @@ import {
   WalletSchema,
 } from '@binsight/shared';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { CopybotActivationService } from '@/application/copybot-activation';
+import type { CopybotAdminService } from '@/application/copybot-admin';
+import type { CopybotFundsService } from '@/application/copybot-funds';
+import type { CopybotLeadersService } from '@/application/copybot-leaders';
+import type { CopybotTeardownService } from '@/application/copybot-teardown';
 import type { Engine } from '@/application/engine';
 import type { EventBus } from '@/application/event-bus';
 import type { NotificationManager } from '@/application/notification/manager';
 import { BUCKET_MS, type Bucket, isBucket, profitHistory } from '@/application/profit-history';
 import type { ResidualBackfill } from '@/application/residual-backfill';
 import type { WalletPnlService } from '@/application/wallet-pnl-service';
+import { TWO_SIDED_MODES, type TwoSidedMode } from '@/domain/copybot/config/types';
+import type { NewLeaderInput } from '@/domain/copybot/leader-onboard';
 import type { AccountRepository, ConfigRepository, PositionRepository } from '@/domain/ports';
 import type { GeckoTerminalGateway } from '@/infrastructure/geckoterminal/geckoterminal-gateway';
+import { csvCell } from '@/infrastructure/http/csv';
 import type { PresenceTracker } from '@/infrastructure/notifications/presence';
+import { isAllowedPushEndpoint } from '@/infrastructure/notifications/push-endpoint';
 import type { NetworthSnapshotRepository } from '@/infrastructure/persistence/networth-snapshot-repository';
 import type { PushRepository, PushSub } from '@/infrastructure/persistence/push-repository';
 import type { RpcCreditLedgerRepository } from '@/infrastructure/persistence/rpc-credit-ledger-repository';
 import { renderClosedPnlCard } from '@/infrastructure/share-card/pnl-card';
 import type { CreditMeter } from '@/infrastructure/solana/credit-meter';
 import { TtlCache, VersionedCache } from '@/util/cache';
-import { isValidSolanaAddress } from './auth';
+import { isValidSolanaAddress } from '@/util/solana-address';
 
 /** Per-account watchlist size (the owner is exempt). Doubles as admission control. */
 const MAX_WALLETS_PER_ACCOUNT = 3;
@@ -29,6 +39,10 @@ const MAX_WALLETS_PER_ACCOUNT = 3;
 const GLOBAL_WALLET_CAP = 200;
 /** How many recent UTC days of persisted credit spend /debug/rpc returns (the panel's last-7d window). */
 const DEBUG_RPC_HISTORY_DAYS = 7;
+/** Invite-code entropy: 6 random bytes = 12 hex chars — unguessable at invite scale, easy to type. */
+const INVITE_CODE_BYTES = 6;
+/** Cap on the free-text note attached to an invite (same bound the old whitelist notes used). */
+const INVITE_NOTE_MAX_CHARS = 200;
 
 export type RouteDeps = {
   bus: EventBus;
@@ -53,8 +67,16 @@ export type RouteDeps = {
   vapidPublicKey: string;
   /** Send a test push to an account's own subscriptions; returns how many were targeted. */
   sendTestPush: (userId: string) => Promise<number>;
-  /** Open-access mode (env OPEN_ACCESS_MODE): single-wallet accounts + notifications disabled. */
-  openAccess: boolean;
+  /** Copy-bot operator admin: process health, GLOBAL KILL, quarantine/alerts (owner-only — SPEC §10/§13). */
+  copybotAdmin: CopybotAdminService;
+  /** Copy-bot custody activation (per-account provisioning + wizard state + signing gate — SPEC §3). */
+  copybotActivation: CopybotActivationService;
+  /** Copy-bot leader onboarding (validate a pasted leader + add it STOPPED — SPEC §4.3). */
+  copybotLeaders: CopybotLeadersService;
+  /** Copy-bot funds: the withdraw helper (free SOL) + withdrawal ack (Path B, read-only/no signing — SPEC §2.2). */
+  copybotFunds: CopybotFundsService;
+  /** Copy-bot account teardown: the server-enforced delete gate (SPEC §2.4 / #56). */
+  copybotTeardown: CopybotTeardownService;
 };
 
 /** Owner-only guard for operational/notification routes. Returns false (and replies 403) otherwise. */
@@ -82,7 +104,11 @@ export function registerRoutes(app: FastifyInstance, deps: RouteDeps): void {
     creditLedger,
     vapidPublicKey,
     sendTestPush,
-    openAccess,
+    copybotAdmin,
+    copybotActivation,
+    copybotLeaders,
+    copybotFunds,
+    copybotTeardown,
   } = deps;
 
   // A watchlist changes only on add/remove (which invalidate below), so cache it briefly instead of
@@ -180,11 +206,8 @@ export function registerRoutes(app: FastifyInstance, deps: RouteDeps): void {
     }
     const already = await accounts.isWatching(me.id, address);
     if (!already && !me.isOwner) {
-      // Open-access accounts are single-wallet (the registration address is auto-watched), so any
-      // second wallet is rejected. The owner is exempt in either mode.
-      const cap = openAccess ? 1 : MAX_WALLETS_PER_ACCOUNT;
-      if ((await accounts.countWatched(me.id)) >= cap) {
-        return reply.code(409).send({ error: `wallet limit reached (${cap})` });
+      if ((await accounts.countWatched(me.id)) >= MAX_WALLETS_PER_ACCOUNT) {
+        return reply.code(409).send({ error: `wallet limit reached (${MAX_WALLETS_PER_ACCOUNT})` });
       }
       const monitored = await accounts.monitoredWallets();
       if (!monitored.includes(address) && monitored.length >= GLOBAL_WALLET_CAP) {
@@ -284,15 +307,17 @@ export function registerRoutes(app: FastifyInstance, deps: RouteDeps): void {
   app.post<{ Body: { endpoint?: unknown; keys?: { p256dh?: unknown; auth?: unknown } } }>(
     '/push/subscribe',
     async (req, reply) => {
-      // Open-access mode disables notifications entirely — refuse subscriptions so no web push is ever
-      // routed to these accounts (the UI also hides the toggle; this is the server-side guarantee).
-      if (openAccess) return reply.code(403).send({ error: 'notifications disabled' });
       const b = req.body;
       const endpoint = typeof b?.endpoint === 'string' ? b.endpoint : null;
       const p256dh = typeof b?.keys?.p256dh === 'string' ? b.keys.p256dh : null;
       const auth = typeof b?.keys?.auth === 'string' ? b.keys.auth : null;
       if (!endpoint || !p256dh || !auth) {
         return reply.code(400).send({ error: 'invalid subscription' });
+      }
+      // Blind-SSRF guard (#108): the endpoint is a URL the server later POSTs to (delivery + /push/test), so pin it
+      // to the known push-service hosts. A foreign/internal host would let a caller probe our network on demand.
+      if (!isAllowedPushEndpoint(endpoint)) {
+        return reply.code(400).send({ error: 'endpoint host not allowed' });
       }
       await pushRepo.save(req.account!.id, { endpoint, p256dh, auth } satisfies PushSub);
       return { ok: true };
@@ -368,10 +393,6 @@ export function registerRoutes(app: FastifyInstance, deps: RouteDeps): void {
       dir: req.query.dir === 'asc' ? 'asc' : 'desc',
       result,
     });
-    const cell = (v: unknown) => {
-      const s = v == null ? '' : String(v);
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    };
     const iso = (ms: number | null) => (ms ? new Date(ms).toISOString() : '');
     const lines = [
       'Pair,Strategy,Invested SOL,Withdrawn SOL,Fees SOL,PnL SOL,PnL %,Opened,Closed,Duration s,Position',
@@ -391,7 +412,7 @@ export function registerRoutes(app: FastifyInstance, deps: RouteDeps): void {
           r.durationSeconds,
           r.positionAddress,
         ]
-          .map(cell)
+          .map(csvCell)
           .join(','),
       );
     }
@@ -506,39 +527,48 @@ export function registerRoutes(app: FastifyInstance, deps: RouteDeps): void {
     return configRepo.saveSettings(parsed.data);
   });
 
-  // ── Admin (owner only): unified access + wallet overview ──────────────────────────────────────
-  // One list over invites (whitelist) + accounts; one revoke removes BOTH so access truly ends.
-  app.get('/admin/access', async (req, reply) => {
+  // ── Admin (owner only): invite codes + wallet overview ────────────────────────────────────────
+  // Single-use codes gate account creation (SPEC §1): a verified Privy login with no account must
+  // redeem one. Codes are traceable (used_by → account) and optionally expire.
+  app.get('/admin/invites', async (req, reply) => {
     if (!requireOwner(req, reply)) return;
-    return accounts.listAccess();
+    const invites = await accounts.listInvites();
+    // Surface the used/unused state explicitly so the admin UI doesn't re-derive it.
+    return invites.map((i) => ({ ...i, used: i.usedByUserId !== null }));
   });
 
-  // Invite: whitelist an address so it can register.
-  app.post<{ Body: { address?: unknown; note?: unknown } }>('/admin/access', async (req, reply) => {
+  // Generate a new invite code — SERVER-generated (crypto randomness), never client-chosen.
+  app.post<{ Body: { note?: unknown; expiresAt?: unknown } }>(
+    '/admin/invites',
+    async (req, reply) => {
+      if (!requireOwner(req, reply)) return;
+      const expiresAtRaw = req.body?.expiresAt;
+      if (
+        expiresAtRaw != null &&
+        (typeof expiresAtRaw !== 'number' || !Number.isFinite(expiresAtRaw))
+      ) {
+        return reply.code(400).send({ error: 'expiresAt must be an epoch-ms number' });
+      }
+      const code = randomBytes(INVITE_CODE_BYTES).toString('hex');
+      await accounts.createInvite({
+        code,
+        note: (typeof req.body?.note === 'string' ? req.body.note : '').slice(
+          0,
+          INVITE_NOTE_MAX_CHARS,
+        ),
+        expiresAt: expiresAtRaw ?? null,
+      });
+      return { ok: true, code };
+    },
+  );
+
+  // Delete an UNUSED invite (revoking it before anyone redeems). A redeemed code is the permanent
+  // code→account audit trail and cannot be deleted — hence 404 for unknown AND used codes.
+  app.delete<{ Params: { code: string } }>('/admin/invites/:code', async (req, reply) => {
     if (!requireOwner(req, reply)) return;
-    const address = req.body?.address;
-    if (!isValidSolanaAddress(address)) {
-      return reply.code(400).send({ error: 'invalid Solana address' });
-    }
-    await accounts.addWhitelist({
-      address,
-      note: (typeof req.body?.note === 'string' ? req.body.note : '').slice(0, 200),
-      addedBy: req.account!.address,
-    });
+    const deleted = await accounts.deleteInvite(req.params.code);
+    if (!deleted) return reply.code(404).send({ error: 'invite not found or already used' });
     return { ok: true };
-  });
-
-  // Revoke access for an address: delete its account (if any) AND remove the invite — the person loses
-  // access and can't re-register. SHARED wallet data is kept; live monitoring of orphan wallets stops.
-  app.delete<{ Params: { address: string } }>('/admin/access/:address', async (req, reply) => {
-    if (!requireOwner(req, reply)) return;
-    const found = await accounts.findByAddress(req.params.address);
-    if (found?.user.isOwner) return reply.code(400).send({ error: 'cannot revoke the owner' });
-    let stopped: string[] = [];
-    if (found) stopped = await accounts.deleteAccount(found.user.id);
-    await accounts.removeWhitelist(req.params.address);
-    for (const w of stopped) engine.removeWallet(w);
-    return { ok: true, stoppedMonitoring: stopped.length };
   });
 
   // Operational overview of every monitored wallet — watchers + open/closed positions + last sync, plus
@@ -548,4 +578,163 @@ export function registerRoutes(app: FastifyInstance, deps: RouteDeps): void {
     const rows = await accounts.walletOverview();
     return rows.map((w) => ({ ...w, ...engine.ingestStatus(w.address) }));
   });
+
+  // ── Copy-bot operator admin (owner only — SPEC §10 admin surface, §13 away-from-desk kill) ──────────────
+  // Process health: brain/coffre heartbeat freshness (online/stale) + their per-user/per-leader snapshots.
+  app.get('/admin/copybot/status', async (req, reply) => {
+    if (!requireOwner(req, reply)) return;
+    return copybotAdmin.status();
+  });
+
+  // GLOBAL KILL: force killSwitchGlobal ON for every user + fire one control ping (halt applies in <100ms).
+  // Only `level:'global'` is supported today — reject anything else with 400 so an unknown scope can never no-op
+  // silently (the operator MUST know the kill applied; fail loud — Rule 11).
+  app.post<{ Body: { level?: unknown } }>('/admin/copybot/kill', async (req, reply) => {
+    if (!requireOwner(req, reply)) return;
+    if (req.body?.level !== 'global') {
+      return reply.code(400).send({ error: "unsupported kill level (only 'global' is supported)" });
+    }
+    return copybotAdmin.killGlobal();
+  });
+
+  // Recent pinned SYSTEM alerts (quarantined forged commands / fatal stops / blind detectors), newest first.
+  app.get<{ Querystring: { limit?: string } }>('/admin/copybot/quarantine', async (req, reply) => {
+    if (!requireOwner(req, reply)) return;
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    return copybotAdmin.quarantine(limit);
+  });
+
+  // ── Copy-bot custody activation (per-account — behind the Privy-DID hook, SPEC §3) ───────────────────────
+  // Provision the account's Privy custody wallet + create its activation row + per-user Wall A policy. Idempotent:
+  // a repeat call returns the existing state. `address` = the client-reported embedded-wallet address (the verified
+  // getWalletByAddress path); DID-only resolution is finalized on devnet 4f.
+  app.post<{ Body: { address?: unknown } }>('/copybot/provision', async (req, reply) => {
+    const me = req.account!;
+    const address = typeof req.body?.address === 'string' ? req.body.address : undefined;
+    if (address !== undefined && !isValidSolanaAddress(address)) {
+      return reply.code(400).send({ error: 'invalid wallet address' });
+    }
+    return copybotActivation.provision(me.id, me.privyUserId, { address });
+  });
+
+  // The resumable activation state (row + live SOL balance + the derived signing-ready verdict). Reconciles the
+  // per-account signing gate as a side effect (clears signing_disabled once ready — SPEC §3).
+  app.get('/copybot/activation/state', async (req) => copybotActivation.state(req.account!.id));
+
+  // The client ran addSigners (added the coffre session signer) → mark consent complete, advance to 'deposit'.
+  app.post('/copybot/activation/consent-complete', async (req) =>
+    copybotActivation.consentComplete(req.account!.id),
+  );
+
+  // The user acknowledged the key-export offer (exported or skipped) → advance the wizard to 'done'.
+  app.post('/copybot/activation/export-ack', async (req) =>
+    copybotActivation.exportAck(req.account!.id),
+  );
+
+  // ── Copy-bot funds (per-account — withdrawal Path B, SPEC §2.2) ──────────────────────────────────────────────
+  // The free (non-deployed, minus reserve) SOL the withdraw UI caps the amount to. READ-ONLY: nothing signs here —
+  // the user signs the transfer with their OWN Privy authority client-side (never the coffre).
+  app.get('/copybot/withdrawable', async (req) => copybotFunds.withdrawable(req.account!.id));
+
+  // The user completed a withdrawal (their own Privy signature) → stamp `withdrawal_ack_at` so the teardown gate
+  // (SPEC §2.4) sees a completed withdrawal. Lightweight bookkeeping; no funds move through the API.
+  app.post('/copybot/activation/withdrawal-ack', async (req) => {
+    await copybotFunds.acknowledgeWithdrawal(req.account!.id);
+    return { ok: true };
+  });
+
+  // ── Copy-bot account teardown (per-account — the server-enforced delete gate, SPEC §2.4 / #56) ───────────────
+  // A SYSTEM gate, not a UX toggle: refuse (409) while open mirrors exist OR the wallet holds more than dust,
+  // UNLESS a completed withdrawal or key-export ack is recorded. On pass: stop→force-close→confirm-closed→Privy
+  // delete (irreversible)→local cascade. Typed refusals map to precise statuses so the UI can guide the user.
+  app.delete('/copybot/account', async (req, reply) => {
+    const me = req.account!;
+    const result = await copybotTeardown.teardown(me.id, me.privyUserId);
+    if (result.ok) return { ok: true };
+    if (result.reason === 'system_user') return reply.code(403).send({ error: 'forbidden' });
+    // Privy detach failed → nothing was deleted locally; the account is intact and the delete is retryable.
+    if (result.reason === 'privy_delete_failed')
+      return reply.code(502).send({ error: 'account provider unavailable', reason: result.reason });
+    // Gate refusal (open_mirrors / funds_remain) or a force-close still in flight (in_progress) → 409 + the reason.
+    return reply.code(409).send({ error: 'teardown refused', reason: result.reason });
+  });
+
+  // ── Copy-bot leaders (per-account — SPEC §4.3) ───────────────────────────────────────────────────────────
+  // Validate a pasted leader address before adding it: rejects a malformed address, the user's own bot wallet,
+  // a duplicate, or a wallet with no DLMM activity.
+  app.post<{ Body: { address?: unknown } }>('/copybot/leader/validate', async (req, reply) => {
+    const address = typeof req.body?.address === 'string' ? req.body.address.trim() : '';
+    if (!address) return reply.code(400).send({ error: 'address is required' });
+    return copybotLeaders.validate(req.account!.id, address, req.account!.address);
+  });
+
+  // Add a wizard-configured leader — created STOPPED (the user presses Start later). Re-validates deterministically
+  // before persisting; 409 on a rejected candidate (duplicate/own-wallet/invalid), 400 on a malformed body.
+  app.post<{
+    Body: {
+      address?: unknown;
+      maxTradeSizeSol?: unknown;
+      tradeRatioPct?: unknown;
+      maxTotalExposureSol?: unknown;
+      twoSidedMode?: unknown;
+    };
+  }>('/copybot/leaders', async (req, reply) => {
+    const parsed = parseNewLeaderBody(req.body);
+    if (!parsed.ok) return reply.code(400).send({ error: parsed.error });
+    const result = await copybotLeaders.create(req.account!.id, parsed.value, req.account!.address);
+    if (!result.ok)
+      return reply.code(409).send({ error: 'leader rejected', reason: result.reason });
+    return { ok: true };
+  });
+}
+
+/** A finite number ≥ 0 (rejects NaN/Infinity/negatives/non-numbers). */
+function isNonNegativeNumber(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0;
+}
+
+/**
+ * Parse + validate the leader-create body into a typed `NewLeaderInput` (fail-closed): a valid address, a positive
+ * maxTradeSizeSol, a positive tradeRatioPct (>100 allowed to amplify; NEVER blank), a nullable non-negative
+ * maxTotalExposureSol, and a known twoSidedMode. Returns a typed error string the route turns into a 400.
+ */
+function parseNewLeaderBody(
+  body:
+    | {
+        address?: unknown;
+        maxTradeSizeSol?: unknown;
+        tradeRatioPct?: unknown;
+        maxTotalExposureSol?: unknown;
+        twoSidedMode?: unknown;
+      }
+    | undefined,
+): { ok: true; value: NewLeaderInput } | { ok: false; error: string } {
+  const address = typeof body?.address === 'string' ? body.address.trim() : '';
+  if (!isValidSolanaAddress(address)) return { ok: false, error: 'invalid leader address' };
+  if (!isNonNegativeNumber(body?.maxTradeSizeSol) || body.maxTradeSizeSol <= 0) {
+    return { ok: false, error: 'maxTradeSizeSol must be a positive number' };
+  }
+  if (!isNonNegativeNumber(body?.tradeRatioPct) || body.tradeRatioPct <= 0) {
+    return { ok: false, error: 'tradeRatioPct must be a positive number' };
+  }
+  const exposureRaw = body?.maxTotalExposureSol;
+  const maxTotalExposureSol =
+    exposureRaw === null || exposureRaw === undefined ? null : exposureRaw;
+  if (maxTotalExposureSol !== null && !isNonNegativeNumber(maxTotalExposureSol)) {
+    return { ok: false, error: 'maxTotalExposureSol must be a non-negative number or null' };
+  }
+  const twoSidedMode = body?.twoSidedMode;
+  if (!TWO_SIDED_MODES.includes(twoSidedMode as TwoSidedMode)) {
+    return { ok: false, error: `twoSidedMode must be one of ${TWO_SIDED_MODES.join(', ')}` };
+  }
+  return {
+    ok: true,
+    value: {
+      address,
+      maxTradeSizeSol: body.maxTradeSizeSol,
+      tradeRatioPct: body.tradeRatioPct,
+      maxTotalExposureSol,
+      twoSidedMode: twoSidedMode as TwoSidedMode,
+    },
+  };
 }

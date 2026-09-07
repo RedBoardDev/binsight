@@ -1,20 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import type { AccountRepository } from '@/domain/ports';
-import { liveToken, sessionStillValid } from './websocket';
+import type { AccountRepository, AccountUser } from '@/domain/ports';
+import { accountStillValid, liveToken } from './websocket';
 
-/** Minimal AccountRepository stub exposing only what sessionStillValid reads. */
-function accounts(opts: {
-  user: { tokenVersion: number } | null;
-  validJtis?: Set<string>;
-}): Pick<AccountRepository, 'findById' | 'isSessionValid'> {
-  return {
-    findById: async () => (opts.user ? ({ tokenVersion: opts.user.tokenVersion } as never) : null),
-    isSessionValid: async (jti: string) => opts.validJtis?.has(jti) ?? false,
-  } as Pick<AccountRepository, 'findById' | 'isSessionValid'>;
+/** Minimal AccountRepository stub exposing only what accountStillValid reads. */
+function accounts(user: AccountUser | null): Pick<AccountRepository, 'findById'> {
+  return { findById: async () => user };
 }
 
+const USER: AccountUser = {
+  id: 'U',
+  privyUserId: 'did:privy:u',
+  address: null,
+  isOwner: false,
+  createdAt: 0,
+};
+
 describe('liveToken — /live auth: native Authorization header vs browser ws-ticket (S10)', () => {
-  it('prefers the Authorization: Bearer header (native — keeps the long-lived JWT out of the URL)', () => {
+  it('prefers the Authorization: Bearer header (native — keeps the token out of the URL)', () => {
     expect(liveToken('Bearer abc.def.ghi', 'ticket')).toBe('abc.def.ghi');
   });
 
@@ -29,23 +31,15 @@ describe('liveToken — /live auth: native Authorization header vs browser ws-ti
   });
 });
 
-describe('sessionStillValid — live-socket revocation check (mirrors the Bearer hook /live bypasses)', () => {
-  it('true only when account exists, version matches, and the jti is still allow-listed', async () => {
-    const a = accounts({ user: { tokenVersion: 3 }, validJtis: new Set(['J']) });
-    expect(await sessionStillValid(a, 'U', 3, 'J')).toBe(true);
+describe('accountStillValid — live-socket revalidation (deletion must reach an open socket)', () => {
+  // Sessions are 100% Privy and the WS ticket expires seconds after connect, so account deletion is
+  // the ONE server-side revocation left — without this check a deleted account's socket would keep
+  // streaming its old watchlist forever (/live authenticates only once, at upgrade).
+  it('true while the account still exists', async () => {
+    expect(await accountStillValid(accounts(USER), 'U')).toBe(true);
   });
 
-  it('false when the account no longer exists (deleted / access revoked) — S12', async () => {
-    expect(await sessionStillValid(accounts({ user: null }), 'U', 3, 'J')).toBe(false);
-  });
-
-  it('false when the token version is stale (a password reset bumped it) — S02 reset', async () => {
-    const a = accounts({ user: { tokenVersion: 4 }, validJtis: new Set(['J']) });
-    expect(await sessionStillValid(a, 'U', 3, 'J')).toBe(false);
-  });
-
-  it('false when the jti was revoked (logout deleted the session) — S01/S02 logout', async () => {
-    const a = accounts({ user: { tokenVersion: 3 }, validJtis: new Set() });
-    expect(await sessionStillValid(a, 'U', 3, 'J')).toBe(false);
+  it('false once the account is deleted (access revoked) — the socket gets closed', async () => {
+    expect(await accountStillValid(accounts(null), 'U')).toBe(false);
   });
 });

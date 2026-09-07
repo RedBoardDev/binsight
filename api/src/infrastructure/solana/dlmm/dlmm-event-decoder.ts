@@ -7,6 +7,10 @@ export { DLMM_PROGRAM_ID } from './dlmm-coder';
 
 const bs58 = utils.bytes.bs58;
 
+// A close marker carries no capital, so its `activeBinId` is never used to value anything; use this
+// neutral placeholder when the tx has no price anchor at all (a standalone 100%-removed-then-close).
+const CLOSE_MARKER_BIN = 0;
+
 /**
  * Decodes Meteora DLMM liquidity events from a transaction PURELY from the on-chain Anchor events,
  * driven by the OFFICIAL program IDL (no hand-rolled byte offsets, no Meteora off-chain API).
@@ -71,12 +75,23 @@ function rawEvents(tx: ParsedTransactionWithMeta): RawEvent[] {
 }
 
 /**
+ * True iff the tx emitted ANY DLMM Event-CPI (read from `innerInstructions`). This is the ROBUST
+ * DLMM-detection signal: unlike `logMessages` — which Solana truncates at 10KB, so the DLMM program string
+ * can be dropped from a large bundle (e.g. a Jupiter zap) and a leader open/close would be silently missed —
+ * the inner CPI events are always present when the DLMM program actually executed.
+ */
+export function hasDlmmEvents(tx: ParsedTransactionWithMeta): boolean {
+  return rawEvents(tx).length > 0;
+}
+
+/**
  * Normalize a transaction's DLMM events into deposit/withdraw/claim legs.
  *
  * - AddLiquidity → one deposit leg (amounts[0]=X, amounts[1]=Y).
  * - RemoveLiquidity → one withdraw leg.
  * - Rebalancing → a withdraw leg (x/y_withdrawn) + a deposit leg (x/y_added) — it pulls liquidity
- *   from old bins and re-adds to new bins; Meteora counts both, so we do too.
+ *   from old bins and re-adds to new bins; Meteora counts both, so we do too. It may ALSO harvest
+ *   fees (x/y_fee_amount) → an extra claim leg (the modern compound flow).
  * - ClaimFee2 → one claim leg (fee_x, fee_y) at its own active bin.
  * - ClaimFee (v1) → claim leg, but the event carries NO bin id; we borrow the bin id from a sibling
  *   event in the SAME tx (a v1 claim is always alongside a Remove/Claim2 that has one).
@@ -100,6 +115,21 @@ export function decodeDlmmLegs(tx: ParsedTransactionWithMeta): DlmmLeg[] {
       lbPair: String(d.lb_pair ?? ''),
     };
     const bin = binOf(d) ?? txBin;
+    // A standalone PositionClose (leader removed 100% earlier, then closes the account) emits ONLY
+    // this event: no capital legs, no bin/price anchor. Emit a zero-amount 'close' marker BEFORE the
+    // bin guard below (which would otherwise drop it) so the fast path still sees the position key —
+    // the mirror is looked up BY position, not by pool/bin. PositionClose carries only
+    // { position, owner } (no lb_pair), so this leg's `lbPair` may be empty; that is acceptable.
+    if (e.name === 'PositionClose') {
+      legs.push({
+        ...base,
+        kind: 'close',
+        activeBinId: bin ?? CLOSE_MARKER_BIN,
+        amountX: 0n,
+        amountY: 0n,
+      });
+      continue;
+    }
     if (bin == null) continue; // no price anchor anywhere in the tx → cannot value; skip
 
     switch (e.name) {
@@ -134,6 +164,13 @@ export function decodeDlmmLegs(tx: ParsedTransactionWithMeta): DlmmLeg[] {
           legs.push({ ...base, kind: 'withdraw', activeBinId: bin, amountX: xWd, amountY: yWd });
         if (xAdd > 0n || yAdd > 0n)
           legs.push({ ...base, kind: 'deposit', activeBinId: bin, amountX: xAdd, amountY: yAdd });
+        // A rebalance can ALSO harvest fees (the modern Meteora compound flow); those are carried in
+        // x/y_fee_amount and must surface as a claim leg — else the leader's claim-via-rebalance is not
+        // mirrored and the tracker under-counts claimed fees.
+        const xFee = num(d.x_fee_amount),
+          yFee = num(d.y_fee_amount);
+        if (xFee > 0n || yFee > 0n)
+          legs.push({ ...base, kind: 'claim', activeBinId: bin, amountX: xFee, amountY: yFee });
         break;
       }
       case 'ClaimFee2':
@@ -148,7 +185,7 @@ export function decodeDlmmLegs(tx: ParsedTransactionWithMeta): DlmmLeg[] {
         break;
       }
       default:
-        break; // PositionCreate/Close, CompositionFee, rewards, swaps — not capital legs
+        break; // PositionCreate, CompositionFee, rewards, swaps — not capital legs (PositionClose handled above)
     }
   }
   return legs;

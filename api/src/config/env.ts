@@ -3,30 +3,31 @@ import { z } from 'zod';
 const EnvSchema = z.object({
   PORT: z.coerce.number().int().positive().default(8787),
 
-  /** The secret that signs every session JWT (HS256). REQUIRED — no default, no placeholder — so the
-   *  schema fails fast at boot if it is missing or too short. Generate a ≥32-char random value:
-   *  `openssl rand -hex 32`. Keep it STABLE: changing it invalidates every existing session. */
+  /** The WS-ticket signing key (HS256). Sessions are 100% Privy; this secret only signs the
+   *  short-lived /auth/ws-ticket a browser passes to /live (WS can't send an Authorization header).
+   *  REQUIRED — no default — so the schema fails fast at boot. Generate: `openssl rand -hex 32`. */
   AUTH_SECRET: z
     .string()
     .min(32, 'AUTH_SECRET is required: a ≥32-char random secret (generate: openssl rand -hex 32)'),
-  /** The owner's Solana wallet address: auto-whitelisted on boot and flagged `isOwner` when it
-   *  registers (the bootstrap account). Empty = no owner seeded (populate the whitelist another way). */
-  OWNER_ADDRESS: z
+  /** The Privy application id — the audience every access token must carry, and the key of the
+   *  per-app JWKS endpoint the verifier reads. REQUIRED: without it no token can be verified. */
+  PRIVY_APP_ID: z.string().min(1, 'PRIVY_APP_ID is required (the Privy application id)'),
+  /** The Privy application SECRET — needed server-side to resolve a user's embedded wallet + create its Wall A
+   *  policy at custody provisioning (Inc.4b). Empty this wave ⇒ provisioning against the live API is unavailable
+   *  (the DB/state/policy logic is exercised only by tests); set it to enable provisioning. */
+  PRIVY_APP_SECRET: z.string().default(''),
+  /** The single off-host GOVERNANCE key (P-256, base64 PKCS8) that owns + creates the per-user Wall A policies.
+   *  Empty ⇒ provisioning proceeds policy-less (Wall B stays authoritative); the policy is attached at devnet 4f. */
+  PRIVY_POLICY_GOVERNANCE_KEY: z.string().default(''),
+  /** The operator's Privy DID (`did:privy:...`): redeeming an invite with this identity creates the
+   *  account flagged `isOwner` (the bootstrap). Empty = no owner bootstrap on this deployment. */
+  OWNER_PRIVY_DID: z
     .string()
     .default('')
     .refine(
-      (v) => v === '' || /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v),
-      'OWNER_ADDRESS must be a base58 Solana address',
+      (v) => v === '' || v.startsWith('did:privy:'),
+      'OWNER_PRIVY_DID must be a Privy DID (did:privy:...)',
     ),
-
-  /** Open-access mode. When 'true', registration is address + password only — NO wallet signature and
-   *  NO whitelist (anyone can create an account for any address), accounts are single-wallet, and
-   *  notifications are disabled. The default 'false' keeps the secure SIWS + whitelist + multi-wallet
-   *  behavior. Reversible per deployment; the SIWS/whitelist code stays in place either way. */
-  OPEN_ACCESS_MODE: z
-    .enum(['true', 'false'])
-    .default('false')
-    .transform((v) => v === 'true'),
 
   /** Master switch for the on-chain realized-PnL pass (the chained-FIFO `market_pnl_sol` writer). It
    *  needs the wallet's FULL buys/sells history, fetched from Helius and NOT persisted, so on a cold
@@ -68,6 +69,11 @@ const EnvSchema = z.object({
 
   /** Postgres connection string (self-hosted via docker-compose). */
   DATABASE_URL: z.string().default('postgres://meteora:meteora@localhost:5435/meteora'),
+
+  /** Redis URL for the copy-bot control channel. The API only PUBLISHES config-changed pings on it (e.g. the
+   *  operator GLOBAL KILL) so the brain/coffre early-reload the halted config in <100ms. Default matches the
+   *  copy-bot processes' own default (brain-main/coffre-main), so a single-box dev setup needs no extra env. */
+  REDIS_URL: z.string().default('redis://localhost:6385'),
   // History depth: either a rolling window (HISTORY_DAYS) OR an absolute floor date
   // (HISTORY_SINCE, e.g. 2026-05-01) — when set, HISTORY_SINCE wins (everything after it).
   HISTORY_DAYS: z.coerce.number().int().min(1).max(365).default(365),
