@@ -1,18 +1,25 @@
 import SwiftUI
 import UserNotifications
 
-/// Shared notification settings for both Settings screens. A master toggle gates everything:
-/// when on it ensures OS permission (prompts, or points to System Settings if denied) and
-/// reveals the per-event rules; when off the rules are hidden and native notifs are muted.
-/// Renders grouped `Section`s — drop it directly inside a `Form`.
+/// Shared notification settings for both Settings screens.
+///
+/// OS permission comes first: until it is granted the section offers only the request (or the route
+/// to System Settings once denied). A master switch alongside a permission we don't have would
+/// promise delivery the OS has not agreed to — so it appears only once we're authorized, and then
+/// gates the per-event rules. Renders grouped `Section`s — drop it directly inside a `Form`.
 public struct NotificationsEditor: View {
     @State private var rules: [String: NotifRule] = [:]
     @State private var masterOn = Config.notificationsEnabled
     @State private var status: UNAuthorizationStatus = .notDetermined
+    /// Set when the OS refused to present the prompt, so the button reports why instead of looking
+    /// broken. Cleared on the next attempt.
+    @State private var permissionError: String?
 
     public init() {}
 
-    private var authorized: Bool { status == .authorized || status == .provisional }
+    private var sectionState: NotifSectionState {
+        notifSectionState(status: status, masterOn: masterOn)
+    }
 
     private enum Param { case none, sol, minutes }
     private struct Kind {
@@ -42,10 +49,18 @@ public struct NotificationsEditor: View {
     public var body: some View {
         Group {
             Section("Notifications") {
-                Toggle("Enable notifications", isOn: masterBinding)
-                if masterOn { permissionRow }
+                switch sectionState {
+                case .needsPermission:
+                    permissionRequest
+                case .blockedInSystemSettings:
+                    blockedRow
+                case .ready:
+                    Toggle("Enable notifications", isOn: masterBinding)
+                    Label("Notifications allowed", systemImage: "checkmark.circle.fill")
+                        .font(.system(size: 12)).foregroundStyle(Theme.profit)
+                }
             }
-            if masterOn, authorized {
+            if case .ready(rulesVisible: true) = sectionState {
                 ForEach(Self.groups, id: \.0) { group in
                     Section(group.0) {
                         ForEach(group.1, id: \.key) { kind in row(kind) }
@@ -74,19 +89,28 @@ public struct NotificationsEditor: View {
         )
     }
 
-    @ViewBuilder private var permissionRow: some View {
-        switch status {
-        case .authorized, .provisional:
-            Label("Notifications allowed", systemImage: "checkmark.circle.fill")
-                .font(.system(size: 12)).foregroundStyle(Theme.profit)
-        case .denied:
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Notifications are turned off for Binsight in System Settings.")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-                Button("Open System Settings") { NotifPermission.openSystemSettings() }
-            }
-        default:
+    /// The whole section while unauthorized: ask, and say what happened if the OS wouldn't ask.
+    @ViewBuilder private var permissionRequest: some View {
+        VStack(alignment: .leading, spacing: 6) {
             Button("Allow notifications") { Task { await ensurePermission() } }
+            Text("Binsight needs permission from macOS before it can alert you.")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+            if let permissionError {
+                // The unsigned-build case: retrying in-app can never succeed, so name the cause
+                // instead of leaving the user clicking a button that does nothing.
+                Text("macOS refused the request: \(permissionError)")
+                    .font(.system(size: 11)).foregroundStyle(Theme.warn)
+                Text("A build signed with a real certificate is required for notifications.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder private var blockedRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Notifications are turned off for Binsight in System Settings.")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+            Button("Open System Settings") { NotifPermission.openSystemSettings() }
         }
     }
 
@@ -135,9 +159,12 @@ public struct NotificationsEditor: View {
     }
 
     @MainActor private func ensurePermission() async {
+        permissionError = nil
         var s = await NotifPermission.status()
         if s == .notDetermined {
-            _ = await NotifPermission.request()
+            if case .unavailable(let reason) = await NotifPermission.request() {
+                permissionError = reason
+            }
             s = await NotifPermission.status()
         }
         status = s

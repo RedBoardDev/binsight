@@ -1,7 +1,10 @@
 import Foundation
 import UserNotifications
 
-public final class Notifier: NSObject, UNUserNotificationCenterDelegate {
+/// `@unchecked Sendable` is accurate rather than a waiver: the class holds NO stored properties, so
+/// the shared instance carries no mutable state across the threads UserNotifications delivers its
+/// delegate callbacks on. It exists only to give the notification centre a stable delegate object.
+public final class Notifier: NSObject, UNUserNotificationCenterDelegate, @unchecked Sendable {
     public static let shared = Notifier()
     override private init() { super.init() }
 

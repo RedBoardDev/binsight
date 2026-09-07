@@ -8,10 +8,6 @@ import Foundation
 public enum Config {
     public static let appGroup = "group.com.binsight"
 
-    /// Public web app. The menu-bar "open on the web" action deep-links here: Overview → the root,
-    /// a wallet scope → `?address=<wallet>` (the web reads `?address` to restore that wallet's scope).
-    public static let webURL = "https://binsight.thomasott.fr"
-
     static var defaults: UserDefaults { .standard }
 
     /// Non-empty Info.plist string baked at build time (see the Makefile's MLPM_* settings).
@@ -24,7 +20,9 @@ public enum Config {
 
     public static var apiURL: String {
         get { defaults.string(forKey: "apiURL") ?? seed("MLPMApiURL") ?? "http://localhost:8787" }
-        set { defaults.set(newValue, forKey: "apiURL") }
+        // Normalized on the way IN, so every reader is spared the question. Settings is not the only
+        // writer, and a raw value here breaks every request the app makes.
+        set { defaults.set(normalizedAPIURL(newValue), forKey: "apiURL") }
     }
 
     /// Production web origin — the live public site the panel's "open in browser" quick-link targets.
@@ -53,6 +51,29 @@ public enum Config {
     public static var isConfigured: Bool {
         !(Keychain.get("authAddress") ?? "").isEmpty && !(Keychain.get("authPassword") ?? "").isEmpty
     }
+}
+
+/// Cleans up a hand-typed API base URL: trims surrounding whitespace and strips trailing slashes.
+///
+/// Every caller appends its own `"/path"`, so a stored `https://host/api/` produced
+/// `https://host/api//auth/login`. That double slash is answered with a 308 redirect the client then
+/// has to follow on a POST — a whole class of confusing failures for one stray character.
+public func normalizedAPIURL(_ raw: String) -> String {
+    var url = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    while url.count > 1, url.hasSuffix("/") { url.removeLast() }
+    return url
+}
+
+/// True when the URL points at the web app's `/api` BFF rather than the API host itself.
+///
+/// Worth its own check because of HOW it fails: the BFF authenticates fine and puts the JWT in an
+/// httpOnly cookie, returning only `{ok: true}`. A native client therefore gets a 200 with no token,
+/// reports "unauthorized", and the server logs show a successful login — the most misleading state
+/// this app can reach. Native clients want the dedicated API host.
+public func looksLikeWebBFF(_ url: String) -> Bool {
+    guard let components = URL(string: normalizedAPIURL(url)) else { return false }
+    let path = components.path
+    return path == "/api" || path.hasPrefix("/api/")
 }
 
 /// User-facing hint for a non-live connection state (nil when live/connecting normally).

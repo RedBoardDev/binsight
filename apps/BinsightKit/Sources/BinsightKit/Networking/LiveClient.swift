@@ -18,6 +18,8 @@ public final class LiveClient {
     private var started = false
     private var heartbeat: Task<Void, Never>?
     private var reconnecting = false
+    /// When the last periodic `state` frame was actually processed. See `shouldSkipStateFrame`.
+    private var lastStateAppliedAt: Date?
 
     /// Whether this device counts as "present" right now. The host platform injects the real
     /// logic (macOS: not idle/asleep/locked). Default: always present.
@@ -58,6 +60,7 @@ public final class LiveClient {
 
     public func setScope(_ scope: String) {
         store.scope = scope // set synchronously so applied states match (no race)
+        store.resetClosedPaging() // another wallet's history starts at page 1, not the old depth
         subscribe(scope)
         onSync?()
     }
@@ -126,8 +129,16 @@ public final class LiveClient {
                 case .success(let message):
                     self.store.setConnection(.live)
                     self.backoff = 1
-                    if case .string(let text) = message, let data = text.data(using: .utf8) {
-                        self.handle(data)
+                    if case .string(let text) = message {
+                        // Drain the socket either way, but only pay for the frame when someone is
+                        // going to see it: skipping the UTF-8 copy, the decode and the store write is
+                        // the difference between processing ~1 frame a second forever and processing
+                        // one every few seconds while the panel is shut.
+                        if !self.shouldSkipStateFrame(text),
+                            let data = text.data(using: .utf8)
+                        {
+                            self.handle(data)
+                        }
                     }
                     self.receive()
                 case .failure:
@@ -135,6 +146,18 @@ public final class LiveClient {
                 }
             }
         }
+    }
+
+    /// Whether this raw frame can be dropped without the user ever knowing.
+    ///
+    /// True only for a periodic `state` snapshot, only while the panel is closed, and only inside the
+    /// window the menu bar is throttled to anyway — so the readout stays as fresh as it is allowed to
+    /// render. Every other frame type passes through untouched: a `notify` must never be dropped, and
+    /// `event` / `closed_changed` / `health` are rare by nature.
+    private func shouldSkipStateFrame(_ text: String, now: Date = Date()) -> Bool {
+        guard !store.panelVisible, isPeriodicStateFrame(text) else { return false }
+        guard let last = lastStateAppliedAt else { return false }
+        return now.timeIntervalSince(last) < menuBarThrottleSeconds
     }
 
     private func handle(_ data: Data) {
@@ -149,7 +172,9 @@ public final class LiveClient {
             return
         }
         switch msg {
-        case .state(let state): store.apply(state)
+        case .state(let state):
+            lastStateAppliedAt = Date()
+            store.apply(state)
         case .event:
             onSync?() // raw live feed: a transition (e.g. close) changes history → refresh, no banner
         case .notify(let event):

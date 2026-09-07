@@ -9,10 +9,21 @@ public extension Font {
     }
 }
 
-public func signed(_ n: Double) -> String { (n >= 0 ? "+" : "") + String(format: "%.4f", n) }
+/// Signed SOL value. A magnitude that rounds away to nothing is printed WITHOUT a sign: dust of
+/// -0.00001 formatted as "-0.0000", which reads as a loss the position never took.
+public func signed(_ n: Double) -> String {
+    let magnitude = String(format: "%.4f", abs(n))
+    guard magnitude.contains(where: { $0 != "0" && $0 != "." }) else { return magnitude }
+    return (n >= 0 ? "+" : "-") + magnitude
+}
 public func abs4(_ n: Double) -> String { String(format: "%.4f", abs(n)) }
 public func abs2(_ n: Double) -> String { String(format: "%.2f", abs(n)) }
-public func pct2(_ n: Double) -> String { String(format: "%+.2f%%", n) }
+/// Signed percent, with the same dust rule as `signed`.
+public func pct2(_ n: Double) -> String {
+    let magnitude = String(format: "%.2f", abs(n))
+    guard magnitude.contains(where: { $0 != "0" && $0 != "." }) else { return magnitude + "%" }
+    return (n >= 0 ? "+" : "-") + magnitude + "%"
+}
 public func short(_ a: String) -> String { a.count > 8 ? "\(a.prefix(4))…\(a.suffix(4))" : a }
 
 public func pctOf(_ part: Double, _ whole: Double) -> String {
@@ -28,34 +39,4 @@ public func ageString(_ openedAt: Double?, now: Date = Date()) -> String {
     if secs < 3600 { return "\(Int(secs / 60))m" }
     if secs < 86_400 { return "\(Int(secs / 3600))h" }
     return "\(Int(secs / 86_400))d"
-}
-
-/// How often a relative-age label re-evaluates. `ageString` is minute-grained, so a sub-minute tick
-/// keeps it correct within seconds of each rollover without churning the view tree.
-private let ageRefreshSeconds: TimeInterval = 30
-
-/// Self-refreshing relative-age label. `ageString` reads the wall clock, but SwiftUI only re-renders
-/// a view on state change — so a closed row (which gets no live WS frames) showed a frozen age until it
-/// was hovered. Driving the label from a `TimelineView` ticks it every `ageRefreshSeconds` on its own.
-public struct AgeText: View {
-    private let timestampMs: Double?
-    private let font: Font
-    private let style: AnyShapeStyle
-
-    // `some ShapeStyle` (not `Color`) so callers can pass hierarchical styles like `.tertiary`,
-    // exactly as `.foregroundStyle(.tertiary)` does — `Color` exposes only `.primary`/`.secondary`.
-    public init(
-        _ timestampMs: Double?, font: Font = .data(11),
-        color: some ShapeStyle = HierarchicalShapeStyle.secondary,
-    ) {
-        self.timestampMs = timestampMs
-        self.font = font
-        style = AnyShapeStyle(color)
-    }
-
-    public var body: some View {
-        TimelineView(.periodic(from: Date(), by: ageRefreshSeconds)) { _ in
-            Text(ageString(timestampMs)).font(font).foregroundStyle(style)
-        }
-    }
 }

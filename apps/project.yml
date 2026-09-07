@@ -1,8 +1,9 @@
 name: Binsight
 options:
   bundleIdPrefix: com.binsight
+  # Must match BinsightKit's Package.swift platform floor (see the rationale there).
   deploymentTarget:
-    macOS: "14.0"
+    macOS: "26.0"
   createIntermediateGroups: true
 
 packages:
@@ -32,6 +33,6 @@ targets:
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
         GENERATE_INFOPLIST_FILE: NO
-        SWIFT_VERSION: "5.0"
+        SWIFT_VERSION: "6.0" # Swift 6 language mode, matching BinsightKit
         ENABLE_HARDENED_RUNTIME: NO
         MLPM_API_URL: http://localhost:8787

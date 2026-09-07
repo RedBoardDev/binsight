@@ -12,6 +12,11 @@ public enum Theme {
     public static let inRange = Color(hex: 0x3DDC8D)
     public static let outRange = Color(hex: 0xF5B948)
 
+    // Bin-chart sides — mirror the web tokens --color-bin-x / --color-bin-y (globals.css) so the
+    // liquidity curve reads the same on the panel as on the site.
+    public static let binX = Color(hex: 0xA78BFA)
+    public static let binY = Color(hex: 0x38BDF8)
+
     // Surfaces / chrome greys
     public static let border = Color.white.opacity(0.08)
 
@@ -67,13 +72,11 @@ func isOut(_ s: RangeStatus) -> Bool { s == .out_up || s == .out_down }
 public extension View {
     /// Show the macOS pointing-hand cursor while hovering a clickable control.
     func pointingHandCursor() -> some View {
-        onHover { hovering in
-            if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-        }
+        modifier(PointingHandCursor())
     }
 
     /// Shared data-update animation: snap instantly under reduce-motion, else the entrance curve.
-    /// Generalizes the inline reduce-motion pattern RangeBar used.
+    /// Used by the bin chart so its marker snaps instead of sliding under reduce-motion.
     func dataAnimation(_ reduceMotion: Bool) -> Animation {
         reduceMotion ? .linear(duration: 0.01) : Theme.entrance
     }
@@ -82,6 +85,37 @@ public extension View {
     /// a faint top-edge highlight. Depth from material, not glassmorphism.
     func cardSurface(radius: CGFloat = Radius.md, elevated: Bool = false) -> some View {
         modifier(CardSurface(radius: radius, elevated: elevated))
+    }
+}
+
+/// Pointing-hand cursor while hovering. See `View.pointingHandCursor()`.
+///
+/// Pops the cursor on DISAPPEAR as well as on exit, and only ever pops what it pushed. A menu-bar
+/// popover is routinely dismissed while the pointer is still inside it (clicking a quick-link closes
+/// it), and a row can be replaced by a live data update under the pointer — in both cases
+/// `onHover(false)` never arrives, so a bare push/pop pair leaks a cursor onto the system stack and
+/// the hand sticks over unrelated apps for the rest of the session.
+struct PointingHandCursor: ViewModifier {
+    @State private var pushed = false
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { hovering in
+                if hovering { push() } else { pop() }
+            }
+            .onDisappear(perform: pop)
+    }
+
+    private func push() {
+        guard !pushed else { return }
+        pushed = true
+        NSCursor.pointingHand.push()
+    }
+
+    private func pop() {
+        guard pushed else { return }
+        pushed = false
+        NSCursor.pop()
     }
 }
 
@@ -110,8 +144,10 @@ public struct CardSurface: ViewModifier {
     }
 
     /// Card fill — a faint light lift over the panel's translucent material so the card reads as a
-    /// *raised* surface instead of an opaque dark patch.
+    /// *raised* surface instead of an opaque dark patch. Nudged up from 0.07/0.10: over a bright or
+    /// saturated backdrop the cards were reading muddy rather than raised. Kept deliberately small,
+    /// because the depth is meant to come from the material, not from painting over it.
     private var fill: Color {
-        Color.white.opacity(elevated ? 0.10 : 0.07)
+        Color.white.opacity(elevated ? 0.125 : 0.095)
     }
 }

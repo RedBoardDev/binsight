@@ -1,4 +1,10 @@
 import Foundation
+import OSLog
+
+/// Auth is the one path whose failure is invisible in the UI (it can only report "unauthorized"), so
+/// it logs the *reason*. Diagnosing a sign-in that the server answers with 200 while the app says
+/// unauthorized is otherwise guesswork. Never logs credentials — status codes and the endpoint only.
+private let authLog = Logger(subsystem: "com.binsight", category: "auth")
 
 /// Wallet-address + password → JWT auth. The account identity is the Solana wallet address; both the
 /// address and password are stored in the Keychain, and a short-lived JWT is fetched from `/auth/login`
@@ -79,15 +85,37 @@ public actor Auth {
     }
 
     private func fetch(address: String, password: String) async -> LoginResponse? {
-        guard let url = URL(string: Config.apiURL + "/auth/login") else { return nil }
+        let endpoint = Config.apiURL + "/auth/login"
+        guard let url = URL(string: endpoint) else {
+            authLog.error("login: malformed API URL \(endpoint, privacy: .public)")
+            return nil
+        }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try? JSONSerialization.data(
             withJSONObject: ["address": address, "password": password])
-        guard let (data, resp) = try? await URLSession.shared.data(for: req),
-            (resp as? HTTPURLResponse)?.statusCode == 200
-        else { return nil }
-        return try? JSONDecoder().decode(LoginResponse.self, from: data)
+
+        let response: (Data, URLResponse)
+        do {
+            response = try await URLSession.shared.data(for: req)
+        } catch {
+            authLog.error("login: transport failure — \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+        let status = (response.1 as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200 else {
+            authLog.error("login: HTTP \(status, privacy: .public) from \(endpoint, privacy: .public)")
+            return nil
+        }
+        guard let decoded = try? JSONDecoder().decode(LoginResponse.self, from: response.0) else {
+            // The web `/api` BFF lands exactly here: 200, but the token went into a cookie and the
+            // body is `{ok:true}`. Name it, because the symptom looks like bad credentials.
+            authLog.error(
+                "login: 200 without a usable token — is the API URL the web /api proxy? \(endpoint, privacy: .public)",
+            )
+            return nil
+        }
+        return decoded
     }
 }
