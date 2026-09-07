@@ -1,6 +1,6 @@
+import { API_URL, SESSION_COOKIE } from '@app/lib/apiConfig';
 import { cookies } from 'next/headers';
 import type { NextRequest } from 'next/server';
-import { API_URL, SESSION_COOKIE } from '@/infrastructure/config';
 
 type Context = { params: Promise<{ path: string[] }> };
 

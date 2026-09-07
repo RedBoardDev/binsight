@@ -1,7 +1,7 @@
 import type { MetadataRoute } from 'next';
 
-/** Web App Manifest (served at /manifest.webmanifest, auto-linked) — makes the app installable to the
- *  home screen and run standalone. Colours match the Graphite theme so the splash/chrome blend in. */
+/** Web App Manifest (served at /manifest.webmanifest, auto-linked) — makes the app installable and
+ *  run standalone. Colours track the theme's `--background` so the splash and chrome blend in. */
 export default function manifest(): MetadataRoute.Manifest {
   return {
     name: 'Binsight',

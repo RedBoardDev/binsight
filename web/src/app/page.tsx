@@ -1,8 +1,8 @@
+import { Dashboard } from '@app/core/Layout/Dashboard';
+import { API_URL, SESSION_COOKIE } from '@app/lib/apiConfig';
+import { getOpenAccess } from '@app/lib/appConfig';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { getOpenAccess } from '@/infrastructure/app-config';
-import { API_URL, SESSION_COOKIE } from '@/infrastructure/config';
-import { Dashboard } from '@/presentation/components/dashboard';
 
 export default async function Home() {
   const session = (await cookies()).get(SESSION_COOKIE)?.value;
@@ -13,6 +13,5 @@ export default async function Home() {
     cache: 'no-store',
   }).catch(() => null);
   if (!res || !res.ok) redirect('/login');
-  const openAccess = await getOpenAccess();
-  return <Dashboard openAccess={openAccess} />;
+  return <Dashboard openAccess={await getOpenAccess()} />;
 }
