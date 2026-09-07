@@ -28,7 +28,7 @@ export const DesktopShell = () => {
     // navigate by are always on screen.
     <div className="flex h-dvh flex-col overflow-hidden">
       <AppTopBar />
-      <main className="mx-auto flex w-full max-w-[1600px] flex-1 flex-col gap-5 overflow-hidden px-6 py-6">
+      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-5 overflow-hidden px-6 py-6">
         <PortfolioGate>
           <div className="animate-rise shrink-0">
             <PortfolioSummaryCard />
