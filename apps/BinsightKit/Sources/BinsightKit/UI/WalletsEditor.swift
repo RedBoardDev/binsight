@@ -27,8 +27,13 @@ public struct WalletsEditor: View {
                         if !w.label.isEmpty {
                             Text(w.label).font(.system(size: 13, weight: .medium))
                         }
+                        // Truncated for width, but the full value must stay reachable: selectable
+                        // for copy, and spelled out in the tooltip and to VoiceOver.
                         Text(short(w.address)).font(.system(size: 11).monospacedDigit())
                             .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .help(w.address)
+                            .accessibilityLabel("Wallet \(w.address)")
                     }
                     Spacer()
                     Button(role: .destructive) {
@@ -38,6 +43,8 @@ public struct WalletsEditor: View {
                     }
                     .buttonStyle(.borderless)
                     .disabled(busy)
+                    .help("Stop monitoring this wallet")
+                    .accessibilityLabel("Remove wallet \(short(w.address))")
                 }
             }
             VStack(alignment: .leading, spacing: 6) {

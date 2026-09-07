@@ -9,10 +9,21 @@ public extension Font {
     }
 }
 
-public func signed(_ n: Double) -> String { (n >= 0 ? "+" : "") + String(format: "%.4f", n) }
+/// Signed SOL value. A magnitude that rounds away to nothing is printed WITHOUT a sign: dust of
+/// -0.00001 formatted as "-0.0000", which reads as a loss the position never took.
+public func signed(_ n: Double) -> String {
+    let magnitude = String(format: "%.4f", abs(n))
+    guard magnitude.contains(where: { $0 != "0" && $0 != "." }) else { return magnitude }
+    return (n >= 0 ? "+" : "-") + magnitude
+}
 public func abs4(_ n: Double) -> String { String(format: "%.4f", abs(n)) }
 public func abs2(_ n: Double) -> String { String(format: "%.2f", abs(n)) }
-public func pct2(_ n: Double) -> String { String(format: "%+.2f%%", n) }
+/// Signed percent, with the same dust rule as `signed`.
+public func pct2(_ n: Double) -> String {
+    let magnitude = String(format: "%.2f", abs(n))
+    guard magnitude.contains(where: { $0 != "0" && $0 != "." }) else { return magnitude + "%" }
+    return (n >= 0 ? "+" : "-") + magnitude + "%"
+}
 public func short(_ a: String) -> String { a.count > 8 ? "\(a.prefix(4))…\(a.suffix(4))" : a }
 
 public func pctOf(_ part: Double, _ whole: Double) -> String {

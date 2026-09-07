@@ -19,6 +19,7 @@ import {
   or,
   sql,
 } from 'drizzle-orm';
+import type { PositionEconomics } from '@/domain/dlmm';
 import type { PoolRef, PositionRepository } from '@/domain/ports';
 import { toFiniteNumber as n } from '@/util/number';
 import type { Database } from './database';
@@ -174,6 +175,25 @@ export class PostgresPositionRepository implements PositionRepository {
     return rows.map(rowToOpen);
   }
 
+  async getOpenOrPendingClose(wallet: string): Promise<OpenPosition[]> {
+    // 'pending_close' = a position that disappeared from the on-chain open set but whose close hasn't
+    // been fetched/reprojected yet. It's still logically an OPEN position for the purpose of detecting the
+    // open→closed transition that fires a close notification: if the cadence refreshOpen marks it
+    // pending_close BEFORE the ingest-triggered sync computes the prior-open set, a plain `getOpen` (which
+    // filters to 'open' only) would drop it and the sync would never emit `closed` — a silently-lost push.
+    const rows = await this.db
+      .select()
+      .from(positionsTable)
+      .where(
+        and(
+          eq(positionsTable.wallet, wallet),
+          inArray(positionsTable.status, ['open', 'pending_close']),
+        ),
+      )
+      .orderBy(desc(positionsTable.pnlSol));
+    return rows.map(rowToOpen);
+  }
+
   async positionStatusForWallet(
     wallet: string,
   ): Promise<Map<string, { status: string; closedAt: number | null }>> {
@@ -308,6 +328,42 @@ export class PostgresPositionRepository implements PositionRepository {
       update ${positionsTable} as p
       set market_pnl_sol = v.pnl
       from (values ${sql.join(rows, sql`, `)}) as v(address, pnl)
+      where p.position_address = v.address and p.status = 'closed'
+    `);
+  }
+
+  async closedEconomicsForWallet(wallet: string): Promise<Map<string, PositionEconomics>> {
+    const rows = await this.db
+      .select({
+        a: positionsTable.positionAddress,
+        d: positionsTable.depositSol,
+        w: positionsTable.withdrawSol,
+        f: positionsTable.claimedFeesSol,
+        p: positionsTable.pnlSol,
+      })
+      .from(positionsTable)
+      .where(and(eq(positionsTable.wallet, wallet), eq(positionsTable.status, 'closed')));
+    return new Map(
+      rows.map((r) => [
+        r.a,
+        { depositSol: n(r.d), withdrawSol: n(r.w), claimedFeesSol: n(r.f), pnlSol: n(r.p) },
+      ]),
+    );
+  }
+
+  async repairClosedEconomicsMany(byPosition: Map<string, PositionEconomics>): Promise<void> {
+    if (byPosition.size === 0) return;
+    // Plain UPDATE … FROM (VALUES …) — a deliberate ground-truth rewrite of the four legs-derived
+    // columns. Unlike upsertClosed it has NO settle-freeze setWhere, so it corrects rows frozen past
+    // SETTLE_MS; the status='closed' guard keeps it off open positions, and market_pnl_sol is untouched.
+    const values = [...byPosition].map(
+      ([addr, e]) =>
+        sql`(${addr}, ${e.depositSol}::double precision, ${e.withdrawSol}::double precision, ${e.claimedFeesSol}::double precision, ${e.pnlSol}::double precision)`,
+    );
+    await this.db.execute(sql`
+      update ${positionsTable} as p
+      set deposit_sol = v.deposit, withdraw_sol = v.withdraw, claimed_fees_sol = v.claimed, pnl_sol = v.pnl
+      from (values ${sql.join(values, sql`, `)}) as v(address, deposit, withdraw, claimed, pnl)
       where p.position_address = v.address and p.status = 'closed'
     `);
   }

@@ -25,17 +25,30 @@ public struct ConnectionSettingsSection: View {
                 Text("That doesn't look like a Solana address.")
                     .font(.caption).foregroundStyle(Theme.loss)
             }
+            if looksLikeWebBFF(apiURL) {
+                // Caught BEFORE the save, because this failure is otherwise indistinguishable from
+                // a wrong password: the BFF signs you in and keeps the token in a cookie.
+                Text(
+                    "That's the web app's /api proxy — it keeps the token in a cookie, "
+                        + "so sign-in will appear to fail. Use the API host itself.",
+                )
+                .font(.caption).foregroundStyle(Theme.warn)
+            }
             if authError {
                 Text("Sign-in failed — wrong address/password or API unreachable.")
                     .font(.caption).foregroundStyle(Theme.loss)
             }
             Button("Save & reconnect") { save() }
+                .buttonStyle(.glassProminent)
             Text("No account yet? Create one on the web with your wallet.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
 
     private func save() {
+        // Reflect the stored form back into the field, so the user sees what was actually kept
+        // instead of silently diverging from it.
+        apiURL = normalizedAPIURL(apiURL)
         Config.apiURL = apiURL
         Task { @MainActor in
             // An empty password keeps the saved credentials (e.g. when only the URL changed).

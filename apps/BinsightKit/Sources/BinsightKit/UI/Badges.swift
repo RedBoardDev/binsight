@@ -28,11 +28,24 @@ public struct RangeBadge: View {
         }
         // Prose status label (IN/OUT) stays on the system font — mono is reserved for data values.
         .font(.system(size: 10, weight: .semibold))
+        .accessibilityElement()
+        .accessibilityLabel(rangeLabel)
         .lineLimit(1)
         .fixedSize() // keep "OUT ↑" on one line — never let row compression wrap it to "OU"/"T".
         .padding(.horizontal, 6).padding(.vertical, 2)
         .background(color.opacity(0.15), in: RoundedRectangle(cornerRadius: 5))
         .foregroundStyle(color)
+    }
+
+    /// Spoken form of the badge. The glyphs carry direction visually; VoiceOver needs the words —
+    /// and the `.unknown` case must not be announced as the SF Symbol "questionmark".
+    private var rangeLabel: String {
+        switch status {
+        case .out_up: "Out of range, above"
+        case .out_down: "Out of range, below"
+        case .in: "In range"
+        default: "Range unknown"
+        }
     }
 }
 
@@ -45,6 +58,7 @@ public struct StrategyBadge: View {
 
     public var body: some View {
         Text(family.rawValue)
+            .accessibilityLabel("\(family.rawValue) strategy")
             .font(.system(size: 10, weight: .semibold))
             .lineLimit(1)
             .fixedSize()
@@ -63,9 +77,10 @@ public struct FeesLabel: View {
 
     public var body: some View {
         let fees = position.claimedFeesSol + position.unclaimedFeesSol
+        // No glyph: the word "Fees" is right there, so the icon was pure redundancy — and the one it
+        // used (centsign.circle) read as a copyright mark.
         return HStack(spacing: 5) {
             Text("Fees")
-            Image(systemName: "centsign.circle")
             Text(abs4(fees))
             Text("(\(pctOf(fees, position.sizeSol)))")
         }
@@ -96,9 +111,10 @@ public struct PositionLinks: View {
         HStack(spacing: 6) {
             link(
                 "chart.bar.doc.horizontal",
+                "LPAgent portfolio",
                 "https://app.lpagent.io/portfolio?address=\(wallet)&positionId=\(positionAddress)",
             )
-            link("chart.line.uptrend.xyaxis", "https://gmgn.ai/sol/token/\(mint)")
+            link("chart.line.uptrend.xyaxis", "GMGN token chart", "https://gmgn.ai/sol/token/\(mint)")
             if let shareAddress {
                 ShareLink(
                     item: PnlCardTransferable(address: shareAddress),
@@ -112,12 +128,16 @@ public struct PositionLinks: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .help("Share the PnL card")
+                .accessibilityLabel("Share the PnL card")
                 .pointingHandCursor()
             }
         }
     }
 
-    private func link(_ icon: String, _ url: String) -> some View {
+    /// `title` is not decoration: an icon-only control must still carry a name, for the pointer
+    /// (tooltip) and for VoiceOver, which otherwise announces the SF Symbol's raw name.
+    private func link(_ icon: String, _ title: String, _ url: String) -> some View {
         Button {
             if let u = URL(string: url) { openURL(u) }
         } label: {
@@ -129,6 +149,8 @@ public struct PositionLinks: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help(title)
+        .accessibilityLabel(title)
         .pointingHandCursor()
     }
 }

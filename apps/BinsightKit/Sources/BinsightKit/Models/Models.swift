@@ -22,7 +22,7 @@ public enum SolanaAddress {
     }
 }
 
-public struct PortfolioTotals: Codable, Sendable {
+public struct PortfolioTotals: Codable, Sendable, Equatable {
     public let uPnlSol: Double
     public let uPnlPct: Double
     public let feesSol: Double
@@ -36,7 +36,7 @@ public struct PortfolioTotals: Codable, Sendable {
     public let outOfRangeCount: Int
 }
 
-public struct OpenPosition: Codable, Identifiable, Sendable {
+public struct OpenPosition: Codable, Identifiable, Sendable, Equatable {
     public var id: String { positionAddress }
     public let positionAddress: String
     public let wallet: String
@@ -84,6 +84,39 @@ public struct ClosedPage: Codable, Sendable {
     public let total: Int
 }
 
+/// One price bin of an open position: its price and the (UI) token amounts held there.
+/// Mirrors `PositionBinSchema` in `@binsight/shared`.
+public struct PositionBin: Codable, Sendable {
+    public let binId: Int
+    /// Price of token X in token Y (UI units).
+    public let price: Double
+    public let amountX: Double
+    public let amountY: Double
+
+    public init(binId: Int, price: Double, amountX: Double, amountY: Double) {
+        self.binId = binId
+        self.price = price
+        self.amountX = amountX
+        self.amountY = amountY
+    }
+}
+
+/// Per-bin liquidity distribution of ONE open position at a single slot — the data behind the card's
+/// bin chart. Mirrors `PositionBinsSchema` in `@binsight/shared` (only the fields the chart renders).
+public struct PositionBins: Codable, Sendable {
+    public let slot: Int
+    public let activeBinId: Int
+    public let binStep: Int
+    public let bins: [PositionBin]
+
+    public init(slot: Int, activeBinId: Int, binStep: Int, bins: [PositionBin]) {
+        self.slot = slot
+        self.activeBinId = activeBinId
+        self.binStep = binStep
+        self.bins = bins
+    }
+}
+
 public struct WalletInfo: Codable, Identifiable, Sendable {
     public var id: String { address }
     public let address: String
@@ -102,7 +135,7 @@ public struct Stats: Codable, Sendable {
 /// Engine health (subset). `wsConnected`/`meteoraOk` reflect the SERVER's data freshness —
 /// distinct from the client's own socket, so the UI can warn when the engine is blind.
 /// One external dependency's live status (rpc / meteora / jupiter / ws).
-public struct SourceHealth: Codable, Sendable, Identifiable {
+public struct SourceHealth: Codable, Sendable, Identifiable, Equatable {
     public var id: String { name }
     public let name: String
     public let status: String          // "ok" | "lagging" | "down"
@@ -112,7 +145,7 @@ public struct SourceHealth: Codable, Sendable, Identifiable {
     public let detail: String?
 }
 
-public struct Health: Codable, Sendable {
+public struct Health: Codable, Sendable, Equatable {
     public let ok: Bool
     public let wsConnected: Bool
     public let meteoraOk: Bool
@@ -138,6 +171,17 @@ public struct NotifRule: Codable, Identifiable, Sendable {
     public var mode: String
     public var threshold: Double?
     public var oorMinutes: Int?
+}
+
+/// Whether a raw frame is a periodic `state` snapshot — decided on the RAW text, before any decode.
+///
+/// That is the whole point: `state` is the 1 Hz firehose, and while the panel is closed the app only
+/// needs it every few seconds to keep the menu bar honest. Every OTHER frame type (notify, event,
+/// health, closed_changed) is rare and must never be dropped, so this deliberately answers "is it
+/// safe to skip?" rather than "what type is it?" — anything it cannot recognise decodes as before.
+public func isPeriodicStateFrame(_ text: String) -> Bool {
+    // The server emits a compact, key-ordered envelope; tolerate leading whitespace only.
+    text.drop(while: \.isWhitespace).hasPrefix(#"{"type":"state""#)
 }
 
 // Tagged server messages (discriminated union by `type`).

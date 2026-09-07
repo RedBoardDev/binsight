@@ -1,5 +1,6 @@
 'use client';
 
+import { usePortfolio } from '@/application/stores/portfolio-store';
 import { type Tab, useUi } from '@/application/stores/ui-store';
 import { useWallets } from '@/application/stores/wallets-store';
 import { Tabs } from '@/presentation/ui';
@@ -8,6 +9,7 @@ import { ClosedPositionsTable } from './closed-positions-table';
 import { EmptyWallets } from './empty-wallets';
 import { IndexingBanner } from './indexing-banner';
 import { OpenPositionsTable } from './open-positions-table';
+import { PortfolioError } from './portfolio-error';
 import { PositionDrawer } from './position-drawer';
 import { StatsPanel } from './stats-panel';
 import { SummaryCard } from './summary-card';
@@ -24,6 +26,9 @@ export function DesktopShell() {
   const tab = useUi((s) => s.tab);
   const setTab = useUi((s) => s.setTab);
   const noWallets = useWallets((s) => s.loaded && s.wallets.length === 0);
+  // Portfolio feed is broken (state fetch failed AND no socket payload yet): show retry, not endless
+  // skeletons. `portfolio === null` keeps any already-loaded data on screen rather than erroring over it.
+  const portfolioBroken = usePortfolio((s) => s.error && s.portfolio === null);
 
   return (
     <>
@@ -31,6 +36,8 @@ export function DesktopShell() {
       <main className="mx-auto flex max-w-6xl flex-col gap-5 px-6 py-6">
         {noWallets ? (
           <EmptyWallets />
+        ) : portfolioBroken ? (
+          <PortfolioError />
         ) : (
           <>
             <div className="rise">
