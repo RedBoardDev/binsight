@@ -3,16 +3,15 @@ import type { Logger } from 'pino';
 import { WebSocket } from 'undici';
 import { classifyInstruction } from '@/domain/dlmm';
 import type { RpcSubscriber } from '@/domain/ports';
+import { isWsDead, WS_PING_INTERVAL_MS } from './ws-keepalive';
+import {
+  BACKOFF_BASE_MS,
+  isSilentTooLong,
+  nextBackoffMs,
+  reconnectDelayMs,
+} from './ws-reconnect-policy';
 
 type ActivityCb = (signature: string, instruction: string) => void;
-
-const BACKOFF_BASE_MS = 1000;
-const BACKOFF_MAX_MS = 30_000;
-const HEARTBEAT_MS = 30_000;
-// A Solana logsSubscribe stream is legitimately silent when there's no activity, so
-// silence alone isn't a death signal. Only force a reconnect after a long silence AND
-// only when we actually have subscriptions (the poll is the real completeness backstop).
-const SILENCE_TIMEOUT_MS = 300_000;
 
 /**
  * Single resilient WS connection multiplexing logsSubscribe for many wallets.
@@ -30,6 +29,7 @@ export class HeliusSubscriber implements RpcSubscriber {
   private connected = false;
   private stopped = false;
   private lastMessageAt = 0;
+  private unansweredPings = 0; // keepalives sent with no reply since the last inbound frame (#52 liveness)
   private heartbeat: NodeJS.Timeout | null = null;
   private readonly reconnectCbs: Array<() => void> = [];
   private readonly connChangeCbs: Array<(c: boolean) => void> = [];
@@ -89,6 +89,7 @@ export class HeliusSubscriber implements RpcSubscriber {
       this.setConnected(true);
       this.backoffMs = BACKOFF_BASE_MS;
       this.lastMessageAt = Date.now();
+      this.unansweredPings = 0;
       for (const wallet of this.watched.keys()) this.subscribe(wallet);
       // Let the engine catch up anything missed while we were down.
       for (const cb of this.reconnectCbs) cb();
@@ -97,6 +98,7 @@ export class HeliusSubscriber implements RpcSubscriber {
 
     this.ws.addEventListener('message', (ev) => {
       this.lastMessageAt = Date.now();
+      this.unansweredPings = 0; // any inbound frame (incl. a keepalive reply) proves the connection is alive
       this.handleMessage(typeof ev.data === 'string' ? ev.data : String(ev.data));
     });
 
@@ -119,22 +121,33 @@ export class HeliusSubscriber implements RpcSubscriber {
     this.reqToWallet.clear();
     if (this.heartbeat) clearInterval(this.heartbeat);
     if (this.stopped) return;
-    const jitter = Math.floor(this.backoffMs * 0.25 * ((this.nextReqId % 7) / 7));
-    const delay = Math.min(this.backoffMs, BACKOFF_MAX_MS) + jitter;
+    const delay = reconnectDelayMs(this.backoffMs, this.nextReqId);
     this.logger.debug({ delay }, 'Solana WS disconnected — reconnecting');
     setTimeout(() => this.connect(), delay);
-    this.backoffMs = Math.min(this.backoffMs * 2, BACKOFF_MAX_MS);
+    this.backoffMs = nextBackoffMs(this.backoffMs);
   }
 
   private startHeartbeat(): void {
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = setInterval(() => {
       if (this.watched.size === 0) return;
-      if (Date.now() - this.lastMessageAt > SILENCE_TIMEOUT_MS) {
-        this.logger.warn('Solana WS silent too long — forcing reconnect');
+      // Death by UNANSWERED keepalives (fast) or by a long silence backstop. A healthy idle connection replies to
+      // the keepalive, so unansweredPings resets and neither trips — no more churning healthy connections (#52).
+      if (isWsDead(this.unansweredPings) || isSilentTooLong(this.lastMessageAt, Date.now())) {
+        this.logger.warn('Solana WS keepalive unanswered / silent too long — forcing reconnect');
         this.ws?.close();
+        return;
       }
-    }, HEARTBEAT_MS);
+      this.sendKeepalive();
+    }, WS_PING_INTERVAL_MS);
+  }
+
+  /** Benign JSON-RPC frame to keep the connection alive (undici WS has no protocol ping). Its reply advances
+   *  liveness; counting it as unanswered until then lets a dead socket be detected within a couple of ticks. */
+  private sendKeepalive(): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    this.ws.send(JSON.stringify({ jsonrpc: '2.0', id: this.nextReqId++, method: 'ping' }));
+    this.unansweredPings += 1;
   }
 
   private subscribe(wallet: string): void {

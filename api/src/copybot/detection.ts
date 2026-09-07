@@ -1,0 +1,221 @@
+/**
+ * Copy-bot · Inc.2 — detection I/O adapters (listSignaturesSince + classify), WITHOUT the Meteora SDK.
+ * Provides the `DetectorDeps` for the `LeaderDetector` (pure no-miss core). The tx building (SDK) is elsewhere
+ * (brain). Pagination/no-miss-guardrail logic taken from the P1 CLI (proven).
+ */
+import { DLMM_PROGRAM_ID } from '@binsight/shared';
+import type { Connection, ParsedTransactionWithMeta, PublicKey } from '@solana/web3.js';
+import {
+  buildDetectedEvents,
+  hasUnresolvedDepositLeg,
+  type PoolMetaLookup,
+  poolsOf,
+} from '../domain/copybot/classify-dlmm-tx';
+import type { DetectedEvent } from '../domain/copybot/events';
+import type { ClassifyResult, DetectorDeps, SigInfo } from '../domain/copybot/leader-detector';
+import type { LoadedPoolMeta } from '../domain/dlmm';
+import { dlmmTxCodec } from '../infrastructure/solana/dlmm/dlmm-tx-codec';
+import type { OnchainPoolMetaReader } from '../infrastructure/solana/dlmm/pool-meta';
+import type { HeliusTokenMetadataGateway } from '../infrastructure/solana/token-metadata-gateway';
+
+const REPLAY_LIMIT = 25;
+const SIG_PAGE = 1000;
+const MAX_POLL_PAGES = 25;
+const TX_FETCH_RETRIES = 3; // a WS notification can outrun tx availability at the RPC read replica
+const TX_FETCH_RETRY_MS = 350; // short backoff between null-tx refetches (fast-close path)
+// A null pool-meta read (the WS outran the LbPair account's availability at the RPC replica, or a brand-new pool the
+// leader opened seconds after creation) must NEVER be cached forever: a permanently-cached null blinds the bot to
+// EVERY subsequent event on that pool — each is built with amounts 0 / nonSolMint null → routed to 'ignore'. Cache
+// the null for only this SHORT TTL so a later successful read values the pool. A value-bearing OPEN read while the
+// meta is null is NOT committed as a degraded (depositSol=0 → 'ignore') event: classify surfaces it as UNRESOLVED so
+// the detector holds the cursor and re-lists it until the meta resolves (finding #162). The on-chain reconcile is NOT
+// a backstop for that open — it only CLOSES positions, it can never re-open a missed open — so holding the open until
+// it can be valued is the only no-miss path (a close needs no meta and still fast-paths, so it is never held).
+const POOL_META_NULL_TTL_MS = 15_000;
+// getParsedTransactions is NOT gated by the per-call RPC limiter, and one oversized batched call over a large
+// signature backlog can itself trip a provider 429 (degrading every process that shares the Helius key). Cap each
+// call so a huge backlog fans out into bounded requests instead of one giant one. 100 is Solana's documented
+// getParsedTransactions batch soft-limit and keeps a single call comfortably under provider payload/rate limits.
+const CLASSIFY_TX_BATCH = 100;
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/** Split into order-preserving chunks of at most `size` (pure; `size` must be > 0). */
+export function chunk<T>(items: readonly T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+/** getParsedTransactions in bounded batches (CLASSIFY_TX_BATCH), concatenating results in input order so the
+ *  returned array stays index-aligned with `signatures` (the no-miss backbone relies on that alignment). */
+async function getParsedTransactionsBatched(
+  conn: Connection,
+  signatures: string[],
+  opts: Parameters<Connection['getParsedTransactions']>[1],
+): Promise<Awaited<ReturnType<Connection['getParsedTransactions']>>> {
+  const out: Awaited<ReturnType<Connection['getParsedTransactions']>> = [];
+  for (const batch of chunk(signatures, CLASSIFY_TX_BATCH)) {
+    const res = await conn.getParsedTransactions(batch, opts);
+    // NO-MISS: getParsedTransactions returns exactly one slot per input sig (null when not-found). A provider that
+    // returns a SHORT/misaligned array would silently shift every later slot onto the wrong signature — a middle
+    // drop attributes tx[n+1] to sig[n], committing the wrong tx for sig[n] AND missing sig[n]'s real event. Fail
+    // loud so the detector rolls back and the next poll retries, never advancing the cursor over a mis-fetched sig.
+    if (res.length !== batch.length) {
+      throw new Error(
+        `getParsedTransactions returned ${res.length} txs for ${batch.length} signatures — misaligned, retrying.`,
+      );
+    }
+    for (const tx of res) out.push(tx);
+  }
+  return out;
+}
+
+export function makeDetectionDeps(args: {
+  conn: Connection;
+  pk: PublicKey;
+  poolReader: OnchainPoolMetaReader;
+  tokenMeta: HeliusTokenMetadataGateway;
+  onEvent: DetectorDeps['onEvent'];
+  persist?: DetectorDeps['persist'];
+  onGap?: DetectorDeps['onGap'];
+  onEmitError?: DetectorDeps['onEmitError'];
+  /** Optional SHARED pool-meta cache (Inc.3b: one deps object per watched leader — leaders sharing a pool must
+   *  not each pay the meta read). Defaults to a per-deps private cache (the single-leader behavior). Holds only
+   *  RESOLVED (non-null) metas — a null read is tracked separately under a short TTL (never cached permanently). */
+  poolMetaCache?: Map<string, LoadedPoolMeta | null>;
+  /** Observability: called with the pool address each time a DLMM pool's meta read returns null during classify, i.e.
+   *  the pool's events are valued DEGRADED (amounts 0 / nonSolMint null) until the meta resolves. */
+  onPoolMetaUnavailable?: (lbPair: string) => void;
+  /** Injectable clock (the null-meta TTL). Defaults to `Date.now`; overridden in tests for deterministic expiry. */
+  now?: () => number;
+}): DetectorDeps {
+  const { conn, pk, poolReader, tokenMeta, onEvent, persist, onGap, onEmitError } = args;
+  const now = args.now ?? Date.now;
+  const poolMetaCache = args.poolMetaCache ?? new Map<string, LoadedPoolMeta | null>();
+  const nullMetaAt = new Map<string, number>(); // lbPair → ms of the last null read (short-TTL negative cache, per-deps)
+  const getPoolMeta = async (lbPair: string): Promise<LoadedPoolMeta | null> => {
+    const cached = poolMetaCache.get(lbPair);
+    if (cached) return cached; // a resolved pool meta is immutable → cache forever (shared across leaders on this pool)
+    const nulledAt = nullMetaAt.get(lbPair);
+    if (nulledAt !== undefined && now() - nulledAt < POOL_META_NULL_TTL_MS) return null; // negative cache still warm — don't re-hammer RPC
+    const meta = await poolReader.loadPoolMeta(lbPair);
+    if (meta) {
+      poolMetaCache.set(lbPair, meta);
+      nullMetaAt.delete(lbPair);
+      return meta;
+    }
+    nullMetaAt.set(lbPair, now()); // remember the null for the SHORT TTL only — a later read re-resolves the pool
+    args.onPoolMetaUnavailable?.(lbPair);
+    return meta;
+  };
+
+  return {
+    async listSignaturesSince(until: string | undefined): Promise<SigInfo[]> {
+      // Cold start: bounded recent history (we don't replay the whole wallet).
+      if (until === undefined) {
+        const page = await conn.getSignaturesForAddress(pk, { limit: REPLAY_LIMIT });
+        return page.filter((s) => s.err === null).map((s) => ({ signature: s.signature }));
+      }
+      // Poll: COMPLETE pagination of everything newer than `until` (contiguous sweep, no-miss).
+      const out: SigInfo[] = [];
+      let before: string | undefined;
+      for (let p = 1; ; p++) {
+        const batch = await conn.getSignaturesForAddress(pk, { until, before, limit: SIG_PAGE });
+        if (batch.length === 0) break;
+        for (const s of batch) if (s.err === null) out.push({ signature: s.signature });
+        before = batch[batch.length - 1]?.signature;
+        if (batch.length < SIG_PAGE) break;
+        if (p >= MAX_POLL_PAGES) {
+          throw new Error(
+            `poll: ${MAX_POLL_PAGES} full pages without reaching the cursor — retry on the next poll.`,
+          );
+        }
+      }
+      return out;
+    },
+
+    async classify(
+      signatures: string[],
+      prefetched?: ReadonlyMap<string, ParsedTransactionWithMeta>,
+    ): Promise<ClassifyResult> {
+      const opts = { maxSupportedTransactionVersion: 0 as const, commitment: 'confirmed' as const };
+      // WS fast-path (#32): seed each slot from the tx the WS already delivered — those bytes carry the
+      // innerInstructions classify decodes (#117), so we skip the RPC round-trip AND its up-to-~1s null-retry
+      // sleeps. Only the sigs WITHOUT a delivered tx are fetched; the cursor poll passes none → a full re-fetch.
+      let txs: Awaited<ReturnType<Connection['getParsedTransactions']>> = signatures.map(
+        (s) => prefetched?.get(s) ?? null,
+      );
+      const toFetch = signatures.filter((_, i) => txs[i] === null);
+      if (toFetch.length > 0) {
+        const fetched = await getParsedTransactionsBatched(conn, toFetch, opts);
+        let f = 0;
+        txs = txs.map((t) => (t === null ? (fetched[f++] ?? null) : t));
+      }
+      // Refetch ONLY the still-null slots (WS outran RPC availability). Keeps the poll cheap; makes the live
+      // WS close/open path resolve in ~1s instead of waiting for the next cursor poll.
+      for (let attempt = 0; attempt < TX_FETCH_RETRIES && txs.some((t) => t === null); attempt++) {
+        await sleep(TX_FETCH_RETRY_MS);
+        const missing = signatures.filter((_, i) => txs[i] === null);
+        const refetched = await getParsedTransactionsBatched(conn, missing, opts);
+        let m = 0;
+        txs = txs.map((t) => (t === null ? (refetched[m++] ?? null) : t));
+      }
+      // Any slot STILL null after the retry loop is UNRESOLVED (not "resolved non-DLMM"): the detector must
+      // NOT advance the cursor past it — it re-lists and retries until it resolves or a LOUD gap is accepted.
+      const unresolved = new Set<string>();
+      for (let i = 0; i < signatures.length; i++) {
+        const sig = signatures[i];
+        if (sig && txs[i] === null) unresolved.add(sig);
+      }
+      const pools = new Set<string>();
+      for (const tx of txs) for (const pl of poolsOf(tx, dlmmTxCodec)) pools.add(pl);
+      await Promise.all([...pools].map((pl) => getPoolMeta(pl)));
+      const poolMeta: PoolMetaLookup = (lbPair) => poolMetaCache.get(lbPair) ?? null;
+      // A pool whose lookup is null is UNRESOLVED, not "resolved non-SOL": `poolMetaCache` holds ONLY resolved metas
+      // (SOL and non-SOL alike), so a null means the on-chain read is not yet available. (#162)
+      const isPoolUnresolved = (lbPair: string): boolean => poolMeta(lbPair) === null;
+      // Happy-path fast-out: with every touched pool resolved, no sig can be held → skip the per-tx leg re-decode.
+      const anyPoolUnresolved = [...pools].some(isPoolUnresolved);
+
+      // ONE entry per signature (the no-miss backbone stays keyed BY SIGNATURE); its payload is the 1..N
+      // position-events the tx produced (finding #37: a multi-position tx no longer collapses to one event).
+      const map = new Map<string, DetectedEvent[]>();
+      for (let i = 0; i < signatures.length; i++) {
+        const sig = signatures[i];
+        if (!sig) continue;
+        const tx = txs[i] ?? null;
+        // #162: a tx that opens/adds into an UNRESOLVED pool is surfaced as UNRESOLVED (exactly like a null tx), NOT
+        // committed as a depositSol=0 event — so the detector holds the cursor and re-lists it until the pool meta
+        // resolves, then emits the correctly-valued open. Without this the open routes to 'ignore', its position is
+        // never tracked, and its eventual close is never mirrored (a forbidden missed open). A pure close carries no
+        // deposit leg → `hasUnresolvedDepositLeg` is false → it is never held: `closed` routes value-independently,
+        // so a leader's exit still fast-paths. The reconcile can only CLOSE, so it can never recover a missed open.
+        if (anyPoolUnresolved && hasUnresolvedDepositLeg(tx, isPoolUnresolved, dlmmTxCodec)) {
+          unresolved.add(sig);
+          continue;
+        }
+        const evs = buildDetectedEvents(sig, tx, poolMeta, dlmmTxCodec);
+        if (evs.length > 0) map.set(sig, evs);
+      }
+      // Symbol resolution: one batched call over EVERY position-event across all signatures.
+      const allEvents = [...map.values()].flat();
+      const mints = [
+        ...new Set(allEvents.map((e) => e.nonSolMint).filter((m): m is string => !!m)),
+      ];
+      if (mints.length > 0) {
+        const metas = await tokenMeta.resolve(mints);
+        for (const e of allEvents) {
+          if (e.nonSolMint) e.nonSolSymbol = metas.get(e.nonSolMint)?.symbol ?? null;
+        }
+      }
+      return { events: map, unresolved };
+    },
+
+    onEvent,
+    persist,
+    onGap,
+    onEmitError,
+  };
+}
+
+export const DLMM_LOG_MARKER = DLMM_PROGRAM_ID;

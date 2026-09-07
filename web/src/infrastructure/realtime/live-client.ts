@@ -14,9 +14,10 @@ const BACKOFF_MS = [1000, 2000, 4000, 8000, 15000];
 const PING_MS = 25000;
 
 /**
- * Live WebSocket client. Fetches a short-lived ticket from the BFF, connects to the API's `/live`
- * feed, and reconnects with capped backoff. Mirrors the server protocol (state/health/event/
- * notify/closed_changed). One instance per session, owned by the portfolio store.
+ * Live WebSocket client. Fetches a short-lived ticket from the API (authenticated by the Privy
+ * token), connects to the API's `/live` feed, and reconnects with capped backoff. Mirrors the
+ * server protocol (state/health/event/notify/closed_changed). One instance per session, owned by
+ * the portfolio store.
  */
 export class LiveClient {
   private socket: WebSocket | null = null;
@@ -49,12 +50,19 @@ export class LiveClient {
     if (this.stopped) return;
     try {
       const ticket = await authApi.wsTicket();
-      if (!ticket) {
+      if (ticket === null) {
         this.scheduleReconnect();
         return;
       }
+      if ('unauthorized' in ticket) {
+        // The Privy session is dead: reconnecting can only loop 401s. Stop for good — the API
+        // client has already surfaced the session-expired state (logout + login redirect).
+        this.stopped = true;
+        this.handlers.onConnectionChange(false);
+        return;
+      }
 
-      const socket = new WebSocket(`${WS_BASE}/live?token=${encodeURIComponent(ticket)}`);
+      const socket = new WebSocket(`${WS_BASE}/live?token=${encodeURIComponent(ticket.token)}`);
       this.socket = socket;
 
       socket.onopen = () => {

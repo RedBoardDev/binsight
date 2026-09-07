@@ -1,0 +1,1092 @@
+import { DLMM_PROGRAM_ID } from '@binsight/shared';
+import { PGlite } from '@electric-sql/pglite';
+import {
+  type Connection,
+  Keypair,
+  PublicKey,
+  type SignatureStatus,
+  SystemProgram,
+  Transaction,
+  TransactionInstruction,
+} from '@solana/web3.js';
+import { eq } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/pglite';
+import { migrate } from 'drizzle-orm/pglite/migrator';
+import { pino } from 'pino';
+import { describe, expect, it, vi } from 'vitest';
+import { deriveCommandId } from '@/copybot/command-id';
+import { derivePositionKeypair } from '@/copybot/ephemeral-position';
+import type { CopyEvents } from '@/copybot/observability/copy-events';
+import type { RedisBus } from '@/infrastructure/bus/redis-bus';
+import type { Database } from '@/infrastructure/persistence/database';
+import { PositionLedgerRepository } from '@/infrastructure/persistence/position-ledger-repository';
+import * as schema from '@/infrastructure/persistence/schema';
+import { copyPositions, executions } from '@/infrastructure/persistence/schema';
+import type { BlockhashCache } from '@/infrastructure/solana/blockhash-cache';
+import { ConfirmWorker } from './confirm-worker';
+import { type Ctx, classifyByHeightThenStatus, classifyPriorTx, process1 } from './process-command';
+import { DryRunSigner, LocalKeypairSigner, PrivyOutageError, type Signer } from './signer';
+
+// Fresh in-memory Postgres (PGlite) with the real Drizzle migrations applied — exercises the multi-tenant
+// executions PK (user_id, command_id) exactly as production creates it.
+const db = await (async () => {
+  const d = drizzle(new PGlite(), { schema });
+  await migrate(d, { migrationsFolder: './drizzle' });
+  return d as unknown as Database;
+})();
+const log = pino({ level: 'silent' });
+const copier = Keypair.generate();
+const DLMM = new PublicKey(DLMM_PROGRAM_ID);
+const pool = Keypair.generate().publicKey;
+const position = Keypair.generate().publicKey;
+const USER = 'test-user-1'; // the SIGNED tenant every request carries (SPEC §11)
+const usedCommandIds: string[] = []; // uniqueness counter for per-request event keys
+
+/** A close tx that PASSES Wall B: feePayer = owner (copier), a DLMM ix touching the pool + position, no foreign dest. */
+function closeTxBase64(): string {
+  const t = new Transaction();
+  t.feePayer = copier.publicKey;
+  t.recentBlockhash = Keypair.generate().publicKey.toBase58();
+  t.add(
+    new TransactionInstruction({
+      programId: DLMM,
+      keys: [
+        { pubkey: copier.publicKey, isSigner: true, isWritable: true },
+        { pubkey: position, isSigner: false, isWritable: true },
+        { pubkey: pool, isSigner: false, isWritable: true },
+      ],
+      data: Buffer.alloc(0),
+    }),
+  );
+  return t.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64');
+}
+
+function closeReq(): Record<string, unknown> {
+  const eventKey = `test:${pool.toBase58()}:close:${copier.publicKey.toBase58()}:${usedCommandIds.length}:${process.hrtime.bigint()}`;
+  const commandId = deriveCommandId(USER, eventKey);
+  usedCommandIds.push(commandId);
+  return {
+    userId: USER,
+    commandId,
+    eventKey,
+    kind: 'close',
+    pool: pool.toBase58(),
+    positionPubkey: position.toBase58(),
+    owner: copier.publicKey.toBase58(),
+    txBase64: closeTxBase64(),
+    sizeSol: 0.1,
+    targetBinRange: { lower: -1, upper: 1 },
+    issuedAtSlot: 100,
+    deadlineSlot: 1_000_000,
+    issuedAtMs: Date.now(),
+  };
+}
+
+type Status = { value: { err?: unknown; confirmationStatus?: string } | null };
+function fakeConn(status: () => Status): Connection {
+  return {
+    getSlot: async () => 200,
+    getLatestBlockhash: async () => ({
+      blockhash: Keypair.generate().publicKey.toBase58(),
+      lastValidBlockHeight: 1_000,
+    }),
+    getBlockHeight: async () => 500,
+    sendRawTransaction: async () => `SIG_${Math.floor(Math.random() * 1e9)}`,
+    getSignatureStatus: async () => status(),
+  } as unknown as Connection;
+}
+const blockhashCache = {
+  get: () => ({ blockhash: Keypair.generate().publicKey.toBase58(), lastValidBlockHeight: 1_000 }),
+  // Fresh cache → attempt 0 uses it (no live RTT), matching the happy-path behavior these tests exercise.
+  getFresh: () => ({
+    blockhash: Keypair.generate().publicKey.toBase58(),
+    lastValidBlockHeight: 1_000,
+  }),
+} as unknown as BlockhashCache;
+// Typed observability emitter (P2): process1 emits codes through `events.emit`. A no-op fake here keeps the test
+// focused on the verdict + the executions idempotency state (the observability rows are covered by their own suites).
+const events = { emit: () => {} } as unknown as CopyEvents;
+
+function ctxFor(conn: Connection, bus: RedisBus): Ctx {
+  return {
+    conn,
+    db,
+    bus,
+    // SYSTEM/bench path: the resolved signer is a LocalKeypairSigner over the SAME `copier` keypair the pre-Inc.4
+    // Ctx.copier held — so every existing assertion stays byte-identical (LocalKeypairSigner reproduces the old
+    // `fresh.sign(copier, ...co)` exactly). Dedicated tests below override `signerFor` to exercise the new branches.
+    signerFor: async () => new LocalKeypairSigner(copier),
+    blockhashCache,
+    events,
+    // Per-user sign-time policy (SPEC §11): the default fixture serves ONE flat cap for any user; the dedicated
+    // per-user tests below override it to prove the coffre reads the REQUEST's user row.
+    policyFor: async () => ({ maxTradeSol: 1.0 }),
+    signingEnabled: true,
+    operatorFeeAddress: '', // Inc.4d — default fixture has no fee sink (the dedicated fee tests set one)
+    hmacKey: 'k',
+    retryMax: 0,
+    retryDelayMs: 0,
+    onSubmitted: vi.fn(), // lane → confirm-worker hand-off (3c); a fresh spy per ctx so tests can assert it
+    log,
+  };
+}
+
+describe('process1 — 3c: the lane ends at the BROADCAST (a returned signature is NOT execution)', () => {
+  it('a successful broadcast → verdict "submitted", row state=submitted, hand-off to the worker — NO ev:executed yet', async () => {
+    // WHY (ULTRACODE #22/#31 + the no-dormant-position rule): the lane must free at the broadcast — an in-lane
+    // confirm wait would head-of-line-block other users — and a signature alone is NOT execution: publishing
+    // ev:executed here would let the brain markClosed a tx that may still drop. Only the confirm worker, on an
+    // on-chain confirmation, may finalize 'landed' + publish (see confirm-worker.test.ts).
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const conn = fakeConn(() => ({ value: { confirmationStatus: 'confirmed' } }));
+    const sr = closeReq();
+    const ctx = ctxFor(conn, bus);
+    const verdict = await process1(sr, ctx);
+    expect(verdict).toEqual({ ok: true, reason: 'submitted', kind: 'close' });
+    expect(bus.publish).not.toHaveBeenCalled(); // ev:executed belongs to the worker, on confirmation ONLY
+    const row = (
+      await db
+        .select()
+        .from(executions)
+        .where(eq(executions.commandId, sr.commandId as string))
+    )[0];
+    expect(row?.state).toBe('submitted');
+    // The hand-off carries the exact broadcast + the publish context — and the SAME context is durable on the row,
+    // so a worker restarted after a crash can still publish a faithful ev:executed.
+    expect(ctx.onSubmitted).toHaveBeenCalledTimes(1);
+    const tracked = vi.mocked(ctx.onSubmitted).mock.calls[0]?.[0];
+    expect(tracked).toMatchObject({
+      userId: USER,
+      commandId: sr.commandId,
+      lastValidBlockHeight: 1_000,
+      publish: {
+        kind: 'close',
+        pool: pool.toBase58(),
+        positionPubkey: position.toBase58(),
+        owner: copier.publicKey.toBase58(),
+        sizeSol: 0.1,
+      },
+    });
+    expect(tracked?.signature).toBeTruthy();
+    expect(row?.publishCtx).toEqual(tracked?.publish);
+  });
+
+  it('an in-flight (submitted) command is a DUPLICATE on replay — no double-broadcast while the worker confirms', async () => {
+    // WHY: between the broadcast and the worker's confirmation the command is neither landed nor failed; a
+    // re-delivered copy must NOT re-sign (a 2nd broadcast of an add/buy/sell has no on-chain idempotency).
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const conn = fakeConn(() => ({ value: { confirmationStatus: 'finalized' } }));
+    const sr = closeReq();
+    const ctx = ctxFor(conn, bus);
+    expect((await process1(sr, ctx)).ok).toBe(true);
+    const again = await process1(sr, ctx); // same commandId, now 'submitted' → not re-claimable in normal flow
+    expect(again).toMatchObject({ ok: false, reason: 'duplicate' });
+    expect(ctx.onSubmitted).toHaveBeenCalledTimes(1); // one broadcast, one hand-off
+  });
+
+  it('dry-run (signing disabled) short-circuits to skipped (nothing broadcast, nothing handed to the worker)', async () => {
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const conn = fakeConn(() => ({ value: { err: 'should-not-be-checked' } }));
+    const sr = closeReq();
+    const ctx = { ...ctxFor(conn, bus), signingEnabled: false };
+    const verdict = await process1(sr, ctx);
+    expect(verdict).toMatchObject({ ok: true, reason: 'dry-run' });
+    expect(bus.publish).not.toHaveBeenCalled();
+    expect(ctx.onSubmitted).not.toHaveBeenCalled();
+  });
+});
+
+describe('process1 — multi-tenant identity (SPEC §11: the SIGNED userId drives derivation + policy)', () => {
+  it('a request WITHOUT a userId is rejected bad_schema (the tenant is a required bus-contract field)', async () => {
+    // WHY: without a mandatory tenant the coffre would have to fall back to a hardcoded user — the exact
+    // ambiguity the v2 contract removes.
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const conn = fakeConn(() => ({ value: { confirmationStatus: 'confirmed' } }));
+    const { userId, ...withoutUser } = closeReq();
+    const verdict = await process1(withoutUser, ctxFor(conn, bus));
+    expect(verdict).toMatchObject({ ok: false, reason: 'bad_schema' });
+    expect(bus.publish).not.toHaveBeenCalled();
+  });
+
+  it('★ a CROSS-TENANT replay (user B re-sends user A commandId) is rejected commandId_mismatch, never signed', async () => {
+    // WHY (check #7 v2): the coffre re-derives commandId from the SIGNED (userId, eventKey). Re-labelling user
+    // A's command with user B's identity would bind B's config/idempotency slot to A's tx — the re-derivation
+    // makes that impossible: derive(B, eventKey) ≠ derive(A, eventKey) = sr.commandId.
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const conn = fakeConn(() => ({ value: { confirmationStatus: 'confirmed' } }));
+    const sr = closeReq(); // commandId = derive(USER, eventKey)
+    const verdict = await process1({ ...sr, userId: 'other-user' }, ctxFor(conn, bus));
+    expect(verdict).toMatchObject({ ok: false, reason: 'commandId_mismatch' });
+    expect(bus.publish).not.toHaveBeenCalled();
+  });
+
+  it("★ the re-clamp uses the REQUEST user's own cap — user B small cap rejects what user A cap allows", async () => {
+    // WHY: the coffre must select the caps/config row of the SIGNED userId (per-user config store), not a
+    // hardcoded SYSTEM row — else every tenant would trade under one user's ceiling.
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const conn = fakeConn(() => ({ value: { confirmationStatus: 'confirmed' } }));
+    const caps: Record<string, number> = { [USER]: 1.0, 'small-user': 0.05 };
+    const perUserCtx: Ctx = {
+      ...ctxFor(conn, bus),
+      policyFor: async (userId) => ({ maxTradeSol: caps[userId] ?? 0 }),
+    };
+    // user A (cap 1.0): a 0.1 SOL close passes the re-clamp and broadcasts.
+    expect((await process1(closeReq(), perUserCtx)).ok).toBe(true);
+    // user B (cap 0.05): the SAME 0.1 SOL size is over ITS cap → rejected before any signature.
+    const eventKey = `test:${pool.toBase58()}:close:small:${process.hrtime.bigint()}`;
+    const smallUserReq = {
+      ...closeReq(),
+      userId: 'small-user',
+      eventKey,
+      commandId: deriveCommandId('small-user', eventKey),
+    };
+    const verdict = await process1(smallUserReq, perUserCtx);
+    expect(verdict).toMatchObject({ ok: false, reason: 'over_max_trade' });
+  });
+
+  it('★ the SAME eventKey copied for TWO users signs TWICE (independent idempotency slots — ULTRACODE #25/#27)', async () => {
+    // WHY (the user-#2-duplicate-rejection bug class): pre-v2, both users' commands for one leader event shared
+    // one commandId → the second was rejected 'duplicate' and that user silently missed the copy. With
+    // derive(userId, eventKey) + the (user_id, command_id) claim, both broadcast.
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const conn = fakeConn(() => ({ value: { confirmationStatus: 'confirmed' } }));
+    const sharedEventKey = `test:${pool.toBase58()}:close:shared:${process.hrtime.bigint()}`;
+    const forUser = (userId: string): Record<string, unknown> => ({
+      ...closeReq(),
+      userId,
+      eventKey: sharedEventKey,
+      commandId: deriveCommandId(userId, sharedEventKey),
+    });
+    expect((await process1(forUser('user-a'), ctxFor(conn, bus))).ok).toBe(true);
+    const second = await process1(forUser('user-b'), ctxFor(conn, bus));
+    expect(second).toEqual({ ok: true, reason: 'submitted', kind: 'close' }); // NOT { ok:false, reason:'duplicate' }
+    // …while the same user replaying the same event stays a duplicate (idempotency intact):
+    expect(await process1(forUser('user-a'), ctxFor(conn, bus))).toMatchObject({
+      ok: false,
+      reason: 'duplicate',
+    });
+  });
+});
+
+describe('process1 — #3: a successful broadcast is TERMINAL for the lane (nothing after it can re-sign/re-land)', () => {
+  it('a hand-off after the broadcast never re-enters the retry scope (one land, retryMax=1)', async () => {
+    // WHY (the money-path bug class): once the tx is on the wire the on-chain action may apply and is then
+    // IRREVERSIBLE. If anything after the broadcast (hand-off, logging) threw INSIDE the retry scope, the loop
+    // would re-sign the SAME tx with a fresh blockhash and RE-LAND it — a real-money double add/buy/sell/remove
+    // (no on-chain idempotency). The hand-off runs OUTSIDE the try: land is called exactly once.
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const land = vi.fn(async () => `SIG_${Math.floor(Math.random() * 1e9)}`); // one land == one sendRawTransaction
+    const conn = {
+      getSlot: async () => 200,
+      getLatestBlockhash: async () => ({ blockhash: Keypair.generate().publicKey.toBase58() }),
+      sendRawTransaction: land,
+    } as unknown as Connection;
+    const sr = closeReq();
+    const verdict = await process1(sr, { ...ctxFor(conn, bus), retryMax: 1 });
+    expect(land).toHaveBeenCalledTimes(1); // no double-land
+    expect(verdict).toEqual({ ok: true, reason: 'submitted', kind: 'close' });
+  });
+
+  // NOTE: the post-CONFIRM terminal guarantee (a publish failure after a confirmed land never re-lands) now lives
+  // with its owner: confirm-worker.test.ts ("a publish failure after a confirmed land stays landed").
+});
+
+describe('process1 — #133: an AMBIGUOUS land() failure hands the LIVE sig to the confirm worker (no blind re-land)', () => {
+  // finding #133 (CRITICAL): once markSubmitted persists the signature the tx MAY be on the wire — a land()/RPC error
+  // AFTER a successful forward (a 502) is ambiguous. The pre-fix loop re-signed with a FRESH blockhash and re-broadcast
+  // ~1.5s later with NO on-chain check of the prior sig → BOTH could land in the same blockhash window = a real-money
+  // DOUBLE deposit/buy/sell/remove (no on-chain idempotency). The fix records the live sig and hands it to the confirm
+  // worker; retries are reserved for PRE-broadcast failures where nothing is on the wire.
+  const AMBIGUOUS_LVBH = 1_000; // lastValidBlockHeight the (ambiguous) broadcast is stamped with
+
+  /** A signer delegating to the SYSTEM LocalKeypairSigner but COUNTING sign() calls — lets a test assert that an
+   *  ambiguous land() failure produces NO second signature (the core #133 guard). */
+  function countingSignerOf(): { signer: Signer; calls: { count: number } } {
+    const calls = { count: 0 };
+    const base = new LocalKeypairSigner(copier);
+    const signer: Signer = {
+      publicKey: base.publicKey,
+      sign: async (tx: Transaction, co: Keypair[]) => {
+        calls.count += 1;
+        return base.sign(tx, co);
+      },
+    };
+    return { signer, calls };
+  }
+
+  /** A conn whose sendRawTransaction (the ONLY land primitive, landing.ts) throws — the ambiguous transport error a
+   *  502 gives AFTER the tx was forwarded. `status` scripts the confirm worker's LATER view of the same sig. */
+  function ambiguousLandConn(land: () => Promise<string>, status: () => Status): Connection {
+    return {
+      getSlot: async () => 200,
+      getLatestBlockhash: async () => ({
+        blockhash: Keypair.generate().publicKey.toBase58(),
+        lastValidBlockHeight: AMBIGUOUS_LVBH,
+      }),
+      getBlockHeight: async () => 500,
+      getSignatureStatus: async () => status(),
+      getSignatureStatuses: async (sigs: string[]) => ({ value: sigs.map(() => status().value) }),
+      getTransaction: async () => null, // position-ledger bookkeeping is off the money path (no row is fine)
+      sendRawTransaction: land,
+    } as unknown as Connection;
+  }
+
+  it('a land() throw AFTER markSubmitted → ONE sign, ONE broadcast attempt, sig handed to the worker, row stays "submitted"', async () => {
+    // WHY: the exactly-once guard. retryMax=3 would let the pre-fix loop re-sign + re-broadcast up to 4 times; the fix
+    // must produce EXACTLY one signature and one broadcast attempt, then hand the live sig off. The row must NOT be
+    // finalized 'failed' (that would strand a possibly-landed tx as a re-claimable row) — the worker owns the verdict.
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const { signer, calls } = countingSignerOf();
+    const land = vi.fn(async (): Promise<string> => {
+      throw new Error('502 Bad Gateway (ambiguous — the tx may already be forwarded)');
+    });
+    const conn = ambiguousLandConn(land, () => ({ value: null }));
+    const sr = closeReq();
+    const ctx: Ctx = { ...ctxFor(conn, bus), retryMax: 3, signerFor: async () => signer };
+    const verdict = await process1(sr, ctx);
+    expect(verdict).toEqual({ ok: true, reason: 'submitted', kind: 'close' });
+    expect(calls.count).toBe(1); // ← NO second signature (the double-land guard)
+    expect(land).toHaveBeenCalledTimes(1); // ← NO second broadcast racing the first
+    expect(ctx.onSubmitted).toHaveBeenCalledTimes(1); // the live sig is handed to the worker to confirm/expire
+    const tracked = vi.mocked(ctx.onSubmitted).mock.calls[0]?.[0];
+    expect(tracked?.signature).toBeTruthy();
+    expect(tracked?.lastValidBlockHeight).toBe(AMBIGUOUS_LVBH); // the worker declares it dead/alive by THIS expiry
+    expect(bus.publish).not.toHaveBeenCalled(); // no premature ev:executed — the worker publishes on confirmation only
+    const row = (
+      await db
+        .select()
+        .from(executions)
+        .where(eq(executions.commandId, sr.commandId as string))
+    )[0];
+    expect(row?.state).toBe('submitted'); // NOT 'failed' — the worker drives the terminal state
+    expect(row?.signature).toBe(tracked?.signature); // the persisted sig IS the one handed off (the worker's pin)
+  });
+
+  it('★ the handed-off sig that ACTUALLY LANDED is finalized "landed" by the REAL worker — never re-signed, never "failed"', async () => {
+    // WHY (the tail the fix closes, end-to-end): the ambiguous case where land() FORWARDED the tx (it WILL land) but
+    // returned a 502. Wiring the REAL ConfirmWorker to the lane's hand-off proves the full exactly-once path composes:
+    // one broadcast attempt, then the worker sees the sig confirmed → finalize 'landed' + ev:executed ONCE, and the
+    // command is NEVER re-signed and NEVER finalized 'failed' (which would be a re-claimable row for landed money).
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const events2 = { emit: vi.fn() } as unknown as CopyEvents;
+    const { signer, calls } = countingSignerOf();
+    const land = vi.fn(async (): Promise<string> => {
+      throw new Error('502 — forwarded then ambiguous');
+    });
+    // The forward actually landed: the worker's later status read sees the same sig confirmed.
+    const conn = ambiguousLandConn(land, () => ({ value: { confirmationStatus: 'confirmed' } }));
+    const worker = new ConfirmWorker({
+      conn,
+      db,
+      bus,
+      events: events2,
+      ledger: new PositionLedgerRepository(db),
+      hmacKey: 'k',
+      log,
+    });
+    const sr = closeReq();
+    const ctx: Ctx = {
+      ...ctxFor(conn, bus),
+      events: events2,
+      retryMax: 3,
+      signerFor: async () => signer,
+      onSubmitted: (t) => worker.track(t), // the REAL lane→worker hand-off (coffre-main wiring)
+    };
+    const verdict = await process1(sr, ctx);
+    expect(verdict).toEqual({ ok: true, reason: 'submitted', kind: 'close' });
+    expect(calls.count).toBe(1);
+    expect(land).toHaveBeenCalledTimes(1);
+    expect(worker.inflightCount).toBe(1); // the worker now owns the live sig
+    await worker.tick(); // the forwarded tx is observed confirmed
+    const row = (
+      await db
+        .select()
+        .from(executions)
+        .where(eq(executions.commandId, sr.commandId as string))
+    )[0];
+    expect(row?.state).toBe('landed'); // ← finalized landed by the worker; never 'failed', never re-signed
+    expect(calls.count).toBe(1); // still one — the worker confirms, it does not re-sign
+    expect(bus.publish).toHaveBeenCalledTimes(1); // ev:executed published EXACTLY once, on confirmation
+    expect(worker.inflightCount).toBe(0);
+  });
+
+  it('every attempt throws BEFORE the signature goes live (blockhash fetch fails) → "failed", nothing broadcast, nothing handed off', async () => {
+    // WHY (the tail invariant the fix relies on): a failure BEFORE markSubmitted never reached land() — no tx is on
+    // the wire — so exhausting the retries is a genuine inline 'failed' (re-claimable), with NO hand-off and NO
+    // signature persisted. This is the ONLY path that may finalize 'failed' inline; a POST-broadcast ambiguous failure
+    // is handed to the worker instead (above). It also proves a pre-broadcast transient DOES still retry.
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const land = vi.fn(async (): Promise<string> => 'SHOULD_NOT_BE_CALLED');
+    let blockhashCalls = 0;
+    const conn = {
+      getSlot: async () => 200,
+      getLatestBlockhash: async () => {
+        blockhashCalls += 1;
+        throw new Error('RPC down (pre-broadcast, transient)'); // classifies 'other' → the bounded retry
+      },
+      getBlockHeight: async () => 500,
+      getSignatureStatus: async () => ({ value: null }),
+      sendRawTransaction: land,
+    } as unknown as Connection;
+    // A stale cache (getFresh miss) so attempt 0 ALSO falls back to the live getLatestBlockhash — every attempt fails
+    // before the signature goes live.
+    const staleCache = { get: () => null, getFresh: () => undefined } as unknown as BlockhashCache;
+    const sr = closeReq();
+    const ctx: Ctx = { ...ctxFor(conn, bus), retryMax: 2, blockhashCache: staleCache };
+    const verdict = await process1(sr, ctx);
+    expect(verdict).toMatchObject({ ok: false, reason: 'sign_land_failed', kind: 'close' });
+    expect(land).not.toHaveBeenCalled(); // never reached the wire
+    expect(ctx.onSubmitted).not.toHaveBeenCalled(); // nothing handed to the worker
+    expect(blockhashCalls).toBe(3); // retryMax=2 → 3 attempts, each failing before the signature goes live
+    const row = (
+      await db
+        .select()
+        .from(executions)
+        .where(eq(executions.commandId, sr.commandId as string))
+    )[0];
+    expect(row?.state).toBe('failed');
+    expect(row?.signature).toBeFalsy(); // no signature ever persisted (markSubmitted never ran)
+  });
+});
+
+// --- OPEN with a WSOL wrap: exercises the position-signer path + the #3 Wall-B SOL-spend cap, END-TO-END in process1.
+const ATA_PROGRAM = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
+const TOKEN_PROGRAM = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+const WSOL = new PublicKey('So11111111111111111111111111111111111111112');
+const ownerWsolAta = (owner: PublicKey): PublicKey =>
+  PublicKey.findProgramAddressSync(
+    [owner.toBuffer(), TOKEN_PROGRAM.toBuffer(), WSOL.toBuffer()],
+    ATA_PROGRAM,
+  )[0];
+
+/** A valid OPEN that WRAPS `wrapLamports` SOL into the copier's WSOL ATA (the real capital deployed). The ephemeral
+ *  position (derived from commandId, as the coffre will) is a required signer so Wall B's open check passes. */
+function openReq(wrapLamports: number, sizeSol = 0.1): Record<string, unknown> {
+  const eventKey = `test:${pool.toBase58()}:open:${copier.publicKey.toBase58()}:${usedCommandIds.length}:${process.hrtime.bigint()}`;
+  const commandId = deriveCommandId(USER, eventKey);
+  usedCommandIds.push(commandId);
+  const ephemeral = derivePositionKeypair(commandId).publicKey;
+  const t = new Transaction();
+  t.feePayer = copier.publicKey;
+  t.recentBlockhash = Keypair.generate().publicKey.toBase58();
+  t.add(
+    new TransactionInstruction({
+      programId: DLMM,
+      keys: [
+        { pubkey: copier.publicKey, isSigner: true, isWritable: true },
+        { pubkey: ephemeral, isSigner: true, isWritable: true },
+        { pubkey: pool, isSigner: false, isWritable: true },
+      ],
+      data: Buffer.alloc(0),
+    }),
+    SystemProgram.transfer({
+      fromPubkey: copier.publicKey,
+      toPubkey: ownerWsolAta(copier.publicKey),
+      lamports: wrapLamports,
+    }),
+  );
+  return {
+    userId: USER,
+    commandId,
+    eventKey,
+    kind: 'open',
+    pool: pool.toBase58(),
+    positionPubkey: ephemeral.toBase58(),
+    owner: copier.publicKey.toBase58(),
+    txBase64: t
+      .serialize({ requireAllSignatures: false, verifySignatures: false })
+      .toString('base64'),
+    sizeSol,
+    targetBinRange: { lower: -1, upper: 1 },
+    issuedAtSlot: 100,
+    deadlineSlot: 1_000_000,
+    issuedAtMs: Date.now(),
+  };
+}
+
+describe('process1 — OPEN: position-signer + the #3 Wall-B SOL-spend cap end-to-end', () => {
+  it('an open whose wrap is UNDER the cap (sized at maxTradeSol) broadcasts', async () => {
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const conn = fakeConn(() => ({ value: { confirmationStatus: 'confirmed' } }));
+    const sr = openReq(900_000_000, 0.9); // wrap 0.9 SOL ≤ cap (maxTradeSol 1.0 × 1.1 + 0.005)
+    const ctx = ctxFor(conn, bus);
+    const verdict = await process1(sr, ctx);
+    expect(verdict).toEqual({ ok: true, reason: 'submitted', kind: 'open' });
+    expect(ctx.onSubmitted).toHaveBeenCalledTimes(1); // handed to the confirm worker
+  });
+
+  it('an open that UNDER-REPORTS sizeSol but WRAPS far more than the cap → rejected wallb:sol_spend_over_cap (no sign)', async () => {
+    // WHY: the #3 fix — the re-clamp only bounds the self-reported sizeSol (0.1, under maxTradeSol so it passes the
+    // size check); Wall B must catch that the tx actually wraps 5 SOL, far over the cap, and refuse to sign.
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const conn = fakeConn(() => ({ value: { confirmationStatus: 'confirmed' } }));
+    const sr = openReq(5_000_000_000, 0.1); // reports 0.1 SOL but wraps 5 SOL
+    const ctx = ctxFor(conn, bus);
+    const verdict = await process1(sr, ctx);
+    expect(verdict).toMatchObject({ ok: false, reason: 'wallb:sol_spend_over_cap', kind: 'open' });
+    expect(ctx.onSubmitted).not.toHaveBeenCalled(); // never signed/broadcast
+    const row = await db
+      .select()
+      .from(executions)
+      .where(eq(executions.commandId, sr.commandId as string));
+    expect(row[0]?.state).toBe('failed');
+  });
+});
+
+// --- BUY (Jupiter SOL→token, funds a two-sided open): validates the #4 fix — a buy that doesn't confirm must NOT
+// publish ev:executed (else the dependent two-sided open builds tokenless and fails).
+const JUP = new PublicKey('JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4');
+function buyReq(outputMint: PublicKey): Record<string, unknown> {
+  const eventKey = `test:${pool.toBase58()}:buy:${copier.publicKey.toBase58()}:${usedCommandIds.length}:${process.hrtime.bigint()}`;
+  const commandId = deriveCommandId(USER, eventKey);
+  usedCommandIds.push(commandId);
+  const t = new Transaction();
+  t.feePayer = copier.publicKey;
+  t.recentBlockhash = Keypair.generate().publicKey.toBase58();
+  t.add(
+    new TransactionInstruction({
+      programId: JUP,
+      keys: [
+        { pubkey: copier.publicKey, isSigner: true, isWritable: true },
+        {
+          pubkey: PublicKey.findProgramAddressSync(
+            [copier.publicKey.toBuffer(), TOKEN_PROGRAM.toBuffer(), outputMint.toBuffer()],
+            ATA_PROGRAM,
+          )[0],
+          isSigner: false,
+          isWritable: true,
+        },
+      ],
+      data: Buffer.alloc(0),
+    }),
+  );
+  return {
+    userId: USER,
+    commandId,
+    eventKey,
+    kind: 'buy',
+    pool: pool.toBase58(),
+    positionPubkey: copier.publicKey.toBase58(),
+    owner: copier.publicKey.toBase58(),
+    txBase64: t
+      .serialize({ requireAllSignatures: false, verifySignatures: false })
+      .toString('base64'),
+    sizeSol: 0.1,
+    targetBinRange: { lower: 0, upper: 0 },
+    issuedAtSlot: 100,
+    deadlineSlot: 1_000_000,
+    issuedAtMs: Date.now(),
+    buy: {
+      outputMint: outputMint.toBase58(),
+      exactOutAmountRaw: '1000',
+      maxInLamports: '100000000',
+    },
+  };
+}
+
+describe('process1 — BUY confirm gate (#4: ev:executed for a buy comes ONLY from the confirm worker)', () => {
+  it('a buy broadcast publishes NOTHING from the lane — the dependent two-sided open must wait for the confirmation', async () => {
+    // WHY (#4): the brain builds the dependent open only on the buy's ev:executed. If the lane published at
+    // broadcast time, an unconfirmed/dropped buy would trigger a TOKENLESS two-sided open downstream. The worker
+    // publishes only on an on-chain confirmation (confirm-worker.test.ts covers the confirm/expiry outcomes).
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const conn = fakeConn(() => ({ value: { confirmationStatus: 'confirmed' } }));
+    const ctx = ctxFor(conn, bus);
+    const verdict = await process1(buyReq(Keypair.generate().publicKey), ctx);
+    expect(verdict).toEqual({ ok: true, reason: 'submitted', kind: 'buy' });
+    expect(bus.publish).not.toHaveBeenCalled(); // no premature ev:executed for a mere broadcast
+    expect(vi.mocked(ctx.onSubmitted).mock.calls[0]?.[0]?.publish).toMatchObject({ kind: 'buy' });
+  });
+});
+
+// --- #7 EXACTLY-ONCE money-path: persist the signature + blockhash expiry BEFORE broadcast, then on recovery only
+// re-sign a PROVABLY-dead tx. Without this, a vault crash after land() but before finalize('landed') re-signs on boot
+// → the first tx AND the recovery tx both confirm → a real-money DOUBLE add/buy/sell/remove (no on-chain idempotency).
+const PRIOR_SIG = 'PriorBroadcastSignature111111111111111111111';
+const LVBH = 1_000; // lastValidBlockHeight stored with the submitted tx
+
+/** Seed an already-broadcast executions row (state 'submitted' with a signature+expiry) as a crashed prior attempt. */
+async function seedSubmitted(
+  sr: Record<string, unknown>,
+  signature: string | null,
+  lastValidBlockHeight: number,
+): Promise<void> {
+  await db.insert(executions).values({
+    userId: sr.userId as string,
+    commandId: sr.commandId as string,
+    eventKey: sr.eventKey as string,
+    state: signature ? 'submitted' : 'claimed',
+    deadlineSlot: 1_000_000,
+    signature,
+    lastValidBlockHeight,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+}
+
+/** A conn whose getSignatureStatus/getBlockHeight are stubbed to drive the recovery pre-check outcome. */
+function recoveryConn(opts: {
+  priorStatus: Status;
+  blockHeight: number;
+  land: (raw: unknown) => Promise<string>;
+}): Connection {
+  return {
+    getSlot: async () => 200,
+    getLatestBlockhash: async () => ({
+      blockhash: Keypair.generate().publicKey.toBase58(),
+      lastValidBlockHeight: LVBH,
+    }),
+    getBlockHeight: async () => opts.blockHeight,
+    // The seeded PRIOR_SIG is classified per opts.priorStatus; any OTHER (freshly re-signed) sig confirms so a
+    // legitimately-dead retry can complete.
+    getSignatureStatus: async (s: string) =>
+      s === PRIOR_SIG
+        ? opts.priorStatus
+        : ({ value: { confirmationStatus: 'confirmed' } } as Status),
+    sendRawTransaction: opts.land,
+  } as unknown as Connection;
+}
+
+describe('process1 — #7: markSubmitted persists sig+expiry BEFORE the tx hits the wire', () => {
+  it('the executions row is already "submitted" with signature+lastValidBlockHeight when land() is called', async () => {
+    // WHY (the money-path bug): the crash-recoverable state (signature + blockhash expiry) MUST exist on-chain-side
+    // BEFORE the tx is broadcast — otherwise a crash between land() and finalize() leaves recovery blind and it
+    // re-broadcasts. We observe the DB row at the exact moment sendRawTransaction fires.
+    const sr = closeReq();
+    let stateAtLand: string | undefined;
+    let sigAtLand: string | null | undefined;
+    let lvbhAtLand: number | null | undefined;
+    let publishCtxAtLand: unknown;
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const conn = {
+      getSlot: async () => 200,
+      getLatestBlockhash: async () => ({
+        blockhash: Keypair.generate().publicKey.toBase58(),
+        lastValidBlockHeight: LVBH,
+      }),
+      getBlockHeight: async () => 500,
+      getSignatureStatus: async () => ({ value: { confirmationStatus: 'confirmed' } }),
+      sendRawTransaction: async () => {
+        const row = (
+          await db
+            .select()
+            .from(executions)
+            .where(eq(executions.commandId, sr.commandId as string))
+        )[0];
+        stateAtLand = row?.state;
+        sigAtLand = row?.signature;
+        lvbhAtLand = row?.lastValidBlockHeight;
+        publishCtxAtLand = row?.publishCtx;
+        return `SIG_${Math.floor(Math.random() * 1e9)}`;
+      },
+    } as unknown as Connection;
+    const verdict = await process1(sr, ctxFor(conn, bus));
+    expect(verdict.ok).toBe(true);
+    expect(stateAtLand).toBe('submitted'); // markSubmitted ran BEFORE land
+    expect(sigAtLand).toBeTruthy();
+    expect(lvbhAtLand).toBe(LVBH);
+    // 3c: the worker's publish context is durable BEFORE the wire too — a crash right after land still leaves a
+    // row the restarted worker can both finalize AND publish from.
+    expect(publishCtxAtLand).toMatchObject({ kind: 'close', pool: pool.toBase58() });
+  });
+});
+
+describe('process1 — #7: recovery pre-check re-signs ONLY a provably-dead tx (exactly-once)', () => {
+  it('case 1 (LANDED): a submitted row whose sig is confirmed → finalize landed + publish, NEVER re-signs', async () => {
+    // WHY: this is the double-execution guard. The prior tx already confirmed (money moved). Boot recovery MUST NOT
+    // re-broadcast. Against the pre-#7 code (recovering re-claims a stranded row and re-signs) `land` is called → a
+    // double add/buy. With the fix the on-chain check sees 'confirmed' and finalizes without signing.
+    const sr = closeReq();
+    await seedSubmitted(sr, PRIOR_SIG, LVBH);
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const land = vi.fn(async () => 'SHOULD_NOT_BE_CALLED');
+    const conn = recoveryConn({
+      priorStatus: { value: { confirmationStatus: 'confirmed' } },
+      blockHeight: 500,
+      land,
+    });
+    const verdict = await process1(sr, ctxFor(conn, bus), true); // recovering
+    expect(land).not.toHaveBeenCalled(); // ← FAILS on the pre-#7 code (it re-signs the landed tx)
+    expect(verdict).toEqual({ ok: true, kind: 'close' });
+    expect(bus.publish).toHaveBeenCalledTimes(1); // ev:executed re-published (idempotent downstream)
+    // The recovery RE-publish carries the tenant too (3b fan-out): a confirm replayed after a coffre restart must
+    // still route to the owning user's runtime, exactly like a fresh land.
+    expect(vi.mocked(bus.publish).mock.calls[0]?.[3]).toMatchObject({
+      commandId: sr.commandId,
+      sig: PRIOR_SIG,
+      userId: USER,
+    });
+    const row = await db
+      .select()
+      .from(executions)
+      .where(eq(executions.commandId, sr.commandId as string));
+    expect(row[0]?.state).toBe('landed');
+  });
+
+  it('case 2 (DEAD): sig not found + blockhash expired (getBlockHeight > lastValidBlockHeight) → re-signs exactly once', async () => {
+    // WHY: a tx whose blockhash has expired and that the chain has never seen is provably dead — the copy would be
+    // MISSED if we did not re-drive it. The recovery re-signs and broadcasts EXACTLY one new tx, whose row carries
+    // a FRESH signature (the stale one is cleared by the re-claim — the worker's signature-pinned finalize relies
+    // on it) and goes back to the worker as a normal 'submitted'.
+    const sr = closeReq();
+    await seedSubmitted(sr, PRIOR_SIG, LVBH);
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const land = vi.fn(async () => `SIG_${Math.floor(Math.random() * 1e9)}`);
+    const conn = recoveryConn({ priorStatus: { value: null }, blockHeight: LVBH + 1_000, land }); // not found + expired
+    const ctx = ctxFor(conn, bus);
+    const verdict = await process1(sr, ctx, true);
+    expect(land).toHaveBeenCalledTimes(1); // one — and only one — new land
+    expect(verdict).toEqual({ ok: true, reason: 'submitted', kind: 'close' });
+    const row = await db
+      .select()
+      .from(executions)
+      .where(eq(executions.commandId, sr.commandId as string));
+    expect(row[0]?.state).toBe('submitted');
+    expect(row[0]?.signature).not.toBe(PRIOR_SIG); // the dead broadcast's sig is gone — a fresh attempt owns the row
+    expect(ctx.onSubmitted).toHaveBeenCalledTimes(1); // …and the worker now watches the NEW signature
+  });
+
+  it('case 3 (IN-FLIGHT): sig not found but blockhash still valid → does NOT re-sign this pass (retryLater, unACKed)', async () => {
+    // WHY: the tx may still land under a live blockhash. Re-signing now risks a double execution; ACKing now would
+    // strand it. We leave it for a later recovery pass (retryLater → the loop does not ACK).
+    const sr = closeReq();
+    await seedSubmitted(sr, PRIOR_SIG, LVBH);
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const land = vi.fn(async () => 'SHOULD_NOT_BE_CALLED');
+    const conn = recoveryConn({ priorStatus: { value: null }, blockHeight: LVBH - 100, land }); // not found + still valid
+    const verdict = await process1(sr, ctxFor(conn, bus), true);
+    expect(land).not.toHaveBeenCalled(); // no re-sign while the blockhash lives
+    expect(verdict).toMatchObject({ ok: false, reason: 'recover_in_flight', retryLater: true });
+    expect(bus.publish).not.toHaveBeenCalled();
+    const row = await db
+      .select()
+      .from(executions)
+      .where(eq(executions.commandId, sr.commandId as string));
+    expect(row[0]?.state).toBe('submitted'); // untouched — awaits a later pass
+  });
+
+  it("a 'claimed' row with NO signature (crashed BEFORE broadcast) → nothing landed → re-signs safely", async () => {
+    // WHY: markSubmitted had not run, so no tx ever hit the wire. Re-signing cannot double-execute.
+    const sr = closeReq();
+    await seedSubmitted(sr, null, 0); // signature null → state 'claimed'
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const land = vi.fn(async () => `SIG_${Math.floor(Math.random() * 1e9)}`);
+    const conn = recoveryConn({ priorStatus: { value: null }, blockHeight: 500, land });
+    const verdict = await process1(sr, ctxFor(conn, bus), true);
+    expect(land).toHaveBeenCalledTimes(1); // safe re-sign (nothing was broadcast)
+    expect(verdict).toEqual({ ok: true, reason: 'submitted', kind: 'close' });
+  });
+});
+
+// --- #157: the exactly-once read ORDER (block height BEFORE the signature status) is now the SINGLE shared classifier
+// used by BOTH classifyPriorTx (recovery pre-check) and confirm-worker.tick, so the two can never drift.
+/** Build a minimal SignatureStatus fixture carrying only the fields the classifier reads. */
+const statusOf = (s: { err?: unknown; confirmationStatus?: string }): SignatureStatus =>
+  s as unknown as SignatureStatus;
+
+describe('classifyByHeightThenStatus — the shared exactly-once classifier (height read BEFORE status)', () => {
+  const LVBH = 1_000; // a REAL lastValidBlockHeight
+
+  it('an on-chain error → dead (atomic revert: nothing applied → re-signable)', () => {
+    expect(classifyByHeightThenStatus(500, statusOf({ err: 'InstructionError' }), LVBH)).toBe(
+      'dead',
+    );
+  });
+
+  it('confirmed / finalized → landed (the money moved; never re-sign), regardless of height', () => {
+    expect(
+      classifyByHeightThenStatus(9_999, statusOf({ confirmationStatus: 'confirmed' }), LVBH),
+    ).toBe('landed');
+    expect(
+      classifyByHeightThenStatus(9_999, statusOf({ confirmationStatus: 'finalized' }), LVBH),
+    ).toBe('landed');
+  });
+
+  it('only "processed" (not durable) → in-flight even past expiry (a status was seen → never dead on height)', () => {
+    expect(
+      classifyByHeightThenStatus(LVBH + 1, statusOf({ confirmationStatus: 'processed' }), LVBH),
+    ).toBe('in-flight');
+  });
+
+  it('not found AND height (read before status) > a REAL lvbh → dead (provably can never land)', () => {
+    expect(classifyByHeightThenStatus(LVBH + 1, null, LVBH)).toBe('dead');
+  });
+
+  it('★ not found but height == lvbh (the last valid block — not yet expired) → in-flight (may still land)', () => {
+    // WHY (#157 boundary): at height == lvbh the tx can STILL be included in block lvbh, so declaring it dead here is
+    // the double-execution bug. Only a height STRICTLY greater than lvbh is proof of death.
+    expect(classifyByHeightThenStatus(LVBH, null, LVBH)).toBe('in-flight');
+  });
+
+  it('not found + an UNKNOWN_LVBH (legacy) row → in-flight regardless of height (never dies on height alone)', () => {
+    // WHY (no-miss): a legacy row has no real expiry; `height > 0` is not proof, so height alone must never kill it.
+    expect(classifyByHeightThenStatus(9_999_999, null, 0)).toBe('in-flight');
+  });
+});
+
+describe('classifyPriorTx — #157: block height is read BEFORE the status (the exactly-once ordering)', () => {
+  const CLASSIFY_LVBH = 1_000; // the prior tx's lastValidBlockHeight under test
+
+  it('★ the race — height ≤ lvbh at the height read + not-found status → NOT dead, even as the chain ticks past lvbh between the reads', async () => {
+    // WHY (#157, the double-execution guard): classifyPriorTx must read block height BEFORE the signature status and
+    // declare 'dead' only when THAT height (taken before the status) already passed lvbh. A chain clock ticking on
+    // every read models the race: the height read observes exactly lvbh (still valid — the tx can land in block lvbh)
+    // while the later status read sees the chain at lvbh+2 with the tx not-yet-indexed. The reverse order (status→
+    // height) would read not-found then height>lvbh = 'dead' and RE-SIGN an in-flight move about to land → BOTH txs
+    // execute. Height-first keeps it 'in-flight' (no re-claim, no re-sign). The read-order assertion locks the fix so
+    // a regression to status-first FAILS this test (it would classify dead here).
+    const reads: string[] = [];
+    let clock = CLASSIFY_LVBH; // first read observes exactly lvbh → `height > lvbh` is false (not expired)
+    const conn = {
+      getBlockHeight: async () => {
+        reads.push('height');
+        const h = clock;
+        clock += 1; // a slot ticks between the two reads
+        return h;
+      },
+      getSignatureStatus: async () => {
+        reads.push('status');
+        clock += 1;
+        return { value: null }; // not-yet-indexed at the AFTER-read (the tx is about to land)
+      },
+    } as unknown as Connection;
+    const fate = await classifyPriorTx(conn, PRIOR_SIG, CLASSIFY_LVBH);
+    expect(fate).not.toBe('dead'); // ← the tx-lands-between-the-reads race can no longer double-execute
+    expect(fate).toBe('in-flight');
+    expect(reads).toEqual(['height', 'status']); // block height is read FIRST — the ordering that makes it safe
+  });
+
+  it('a genuinely-dead tx (height already past lvbh AND not-found even with history search) still returns "dead"', async () => {
+    // WHY: the fix must not weaken the death path — a tx the chain never saw past a REAL expired blockhash is still
+    // provably dead and MUST be re-driven (else the copy is silently missed). And the death read searches full history
+    // (#148), so an aged-but-landed tx is not mistaken for dead.
+    let searchedHistory = false;
+    const conn = {
+      getBlockHeight: async () => CLASSIFY_LVBH + 5, // read FIRST, already past expiry
+      getSignatureStatus: async (_s: string, opts?: { searchTransactionHistory?: boolean }) => {
+        searchedHistory = opts?.searchTransactionHistory === true;
+        return { value: null }; // not found even with full history search
+      },
+    } as unknown as Connection;
+    const fate = await classifyPriorTx(conn, PRIOR_SIG, CLASSIFY_LVBH);
+    expect(fate).toBe('dead');
+    expect(searchedHistory).toBe(true); // #148 co-exists with the ordering fix: the status read searches full history
+  });
+});
+
+// --- Inc.4a: the SIGNER port. process1 no longer holds a static keypair — it resolves `signerFor(userId)` and both
+// the Wall B owner check and the sign step go through it. The SYSTEM path (LocalKeypairSigner over `copier`) stays
+// byte-identical (every test above uses it); these prove the NEW branches.
+describe('process1 — Inc.4a: the SIGNER port (signerFor drives owner + sign)', () => {
+  it('the Wall B owner check uses the RESOLVED signer pubkey — a signer for a DIFFERENT wallet → owner_mismatch', async () => {
+    // WHY: post-Inc.4 `ourOwner` is the wallet we will ACTUALLY sign for (signerFor), not a static copier. A request
+    // whose `owner` ≠ the resolved signer must be rejected BEFORE any signature — a forged owner/userId can never
+    // route the tx to another wallet.
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const conn = fakeConn(() => ({ value: { confirmationStatus: 'confirmed' } }));
+    const other = Keypair.generate(); // resolved signer signs for `other`, but the request claims `copier` as owner
+    const ctx: Ctx = { ...ctxFor(conn, bus), signerFor: async () => new LocalKeypairSigner(other) };
+    const verdict = await process1(closeReq(), ctx); // sr.owner = copier.publicKey ≠ other.publicKey
+    expect(verdict).toMatchObject({ ok: false, reason: 'owner_mismatch', kind: 'close' });
+    expect(ctx.onSubmitted).not.toHaveBeenCalled();
+  });
+
+  it('a DryRunSigner (real user, live flag OFF) → finalizes skipped: pipeline runs end-to-end, nothing broadcast', async () => {
+    // WHY: with PRIVY_SIGNING_ENABLED off a real user's pipeline must run end-to-end (claim → Wall B → sign step) but
+    // NEVER sign — the signer throws DryRunSkip, which process1 turns into a benign 'skipped' (the lane ACKs it, the
+    // confirm worker never sees it). This exercises real-user detection/execution without funds at risk.
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const conn = fakeConn(() => ({ value: { confirmationStatus: 'confirmed' } }));
+    // The DryRunSigner exposes copier.publicKey so the owner check passes; signingEnabled stays true (the COFFRE signs
+    // for SYSTEM) — the per-user dry-run is the DryRunSigner, distinct from the coffre-wide signingEnabled flag.
+    const ctx: Ctx = {
+      ...ctxFor(conn, bus),
+      signerFor: async () => new DryRunSigner(copier.publicKey, log),
+    };
+    const sr = closeReq();
+    const verdict = await process1(sr, ctx);
+    expect(verdict).toMatchObject({ ok: true, reason: 'dry-run', kind: 'close' });
+    expect(ctx.onSubmitted).not.toHaveBeenCalled(); // nothing on the wire
+    expect(bus.publish).not.toHaveBeenCalled();
+    const row = (
+      await db
+        .select()
+        .from(executions)
+        .where(eq(executions.commandId, sr.commandId as string))
+    )[0];
+    expect(row?.state).toBe('skipped'); // benign terminal — NOT 'submitted' (worker ignores) and NOT 'failed'
+  });
+
+  it('signerFor THROWS (user not provisioned) → finalize failed (signer_unavailable), per-user isolation, never signs', async () => {
+    // WHY (SPEC §17.4): a per-user resolution failure (no activation row / signing disabled) is isolated to THAT user
+    // — finalize 'failed' (re-claimable) and skip — never a global stop and never a signature. The claim ran first,
+    // so the row EXISTS for the finalize.
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const conn = fakeConn(() => ({ value: { confirmationStatus: 'confirmed' } }));
+    const ctx: Ctx = {
+      ...ctxFor(conn, bus),
+      signerFor: async () => {
+        throw new Error('not activated');
+      },
+    };
+    const sr = closeReq();
+    const verdict = await process1(sr, ctx);
+    expect(verdict).toMatchObject({ ok: false, reason: 'signer_unavailable', kind: 'close' });
+    expect(ctx.onSubmitted).not.toHaveBeenCalled();
+    const row = (
+      await db
+        .select()
+        .from(executions)
+        .where(eq(executions.commandId, sr.commandId as string))
+    )[0];
+    expect(row?.state).toBe('failed');
+  });
+});
+
+describe('process1 — Inc.4d: a kind:fee performance-fee transfer signs+lands with the operator-sink allowlist', () => {
+  const operator = Keypair.generate().publicKey;
+
+  function feeTxBase64(to: PublicKey, lamports = 25_000_000): string {
+    const t = new Transaction();
+    t.feePayer = copier.publicKey;
+    t.recentBlockhash = Keypair.generate().publicKey.toBase58();
+    t.add(SystemProgram.transfer({ fromPubkey: copier.publicKey, toPubkey: to, lamports }));
+    return t.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64');
+  }
+  function feeReq(to: PublicKey, lamports = 25_000_000): Record<string, unknown> {
+    const eventKey = `fee:pos_${usedCommandIds.length}_${process.hrtime.bigint()}`;
+    const commandId = deriveCommandId(USER, eventKey);
+    usedCommandIds.push(commandId);
+    return {
+      userId: USER,
+      commandId,
+      eventKey,
+      kind: 'fee',
+      pool: position.toBase58(),
+      positionPubkey: position.toBase58(),
+      owner: copier.publicKey.toBase58(),
+      txBase64: feeTxBase64(to, lamports),
+      sizeSol: 0,
+      targetBinRange: { lower: 0, upper: 0 },
+      issuedAtSlot: 100,
+      deadlineSlot: 1_000_000,
+      issuedAtMs: Date.now(),
+      fee: { toAddress: to.toBase58(), lamports: String(lamports) },
+    };
+  }
+
+  it('a fee → the CONFIGURED operator sink signs+lands (broadcast, hand-off to the worker as kind=fee)', async () => {
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const conn = fakeConn(() => ({ value: { confirmationStatus: 'confirmed' } }));
+    const ctx = { ...ctxFor(conn, bus), operatorFeeAddress: operator.toBase58() };
+    const verdict = await process1(feeReq(operator), ctx);
+    expect(verdict).toEqual({ ok: true, reason: 'submitted', kind: 'fee' });
+    expect(ctx.onSubmitted).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(ctx.onSubmitted).mock.calls[0]?.[0]?.publish?.kind).toBe('fee');
+  });
+
+  it('a fee → a DESTINATION ≠ the coffre sink is REJECTED (a forged fee.toAddress cannot redirect the fee)', async () => {
+    const attacker = Keypair.generate().publicKey;
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const conn = fakeConn(() => ({ value: null }));
+    // The coffre's OWN sink is `operator`; the tx (and forged payload) pay `attacker` → Wall B rejects.
+    const ctx = { ...ctxFor(conn, bus), operatorFeeAddress: operator.toBase58() };
+    const verdict = await process1(feeReq(attacker), ctx);
+    expect(verdict).toMatchObject({
+      ok: false,
+      reason: 'wallb:foreign_sol_destination',
+      kind: 'fee',
+    });
+    expect(bus.publish).not.toHaveBeenCalled();
+  });
+});
+
+// --- Inc.4e: per-user Privy CUSTODY sign failures (outage #20 / revoked #21). The failure is thrown by the resolved
+// signer BEFORE markSubmitted (nothing on the wire); process1 classifies it, emits the pinned alert, runs the injected
+// per-user side effect, and finalizes 'failed' (re-claimable → the reconcile re-publishes the close = never-miss).
+describe('process1 — Inc.4e: per-user Privy custody sign failures (outage / revoked)', () => {
+  /** A ctx whose resolved signer ALWAYS throws `err` from `sign`, with spy `events.emit` + `onSignError`. */
+  function throwingSignerCtx(conn: Connection, bus: RedisBus, err: unknown) {
+    const signCalls = { count: 0 };
+    const signer: Signer = {
+      publicKey: copier.publicKey, // matches sr.owner → the Wall B owner check passes; the sign step then throws
+      sign: async () => {
+        signCalls.count += 1;
+        throw err;
+      },
+    };
+    const emit = vi.fn();
+    // Typed with the port's param so `.mock.calls[0][0]` narrows to the { class, userId, owner } side-effect payload.
+    const onSignError = vi.fn(async (_e: Parameters<NonNullable<Ctx['onSignError']>>[0]) => {});
+    const ctx: Ctx = {
+      ...ctxFor(conn, bus),
+      events: { emit } as unknown as CopyEvents,
+      signerFor: async () => signer,
+      onSignError,
+      retryMax: 2, // prove a CUSTODY failure short-circuits the sign/land retry loop (does not burn the retries)
+    };
+    return { ctx, signCalls, emit, onSignError };
+  }
+
+  it("a Privy OUTAGE → onSignError('outage') ONCE, pinned system.signing_unavailable, failed, no retry, nothing broadcast", async () => {
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const conn = fakeConn(() => ({ value: null }));
+    const { ctx, signCalls, emit, onSignError } = throwingSignerCtx(
+      conn,
+      bus,
+      new PrivyOutageError('wallet-x', 4, new Error('503')),
+    );
+    const sr = closeReq();
+    const verdict = await process1(sr, ctx);
+    expect(verdict).toMatchObject({ ok: false, reason: 'sign_outage', kind: 'close' });
+    expect(signCalls.count).toBe(1); // a custody failure does NOT re-attempt sign/land (no automatism)
+    expect(ctx.onSubmitted).not.toHaveBeenCalled(); // thrown before markSubmitted → nothing on the wire
+    expect(bus.publish).not.toHaveBeenCalled();
+    expect(onSignError).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(onSignError).mock.calls[0]?.[0]).toMatchObject({
+      class: 'outage',
+      userId: USER,
+    });
+    expect(vi.mocked(emit).mock.calls.some(([c]) => c === 'system.signing_unavailable')).toBe(true);
+    const row = (
+      await db
+        .select()
+        .from(executions)
+        .where(eq(executions.commandId, sr.commandId as string))
+    )[0];
+    expect(row?.state).toBe('failed'); // re-claimable — the reconcile re-publishes the close (never-miss)
+  });
+
+  it("a REVOKED delegation → onSignError('revoked'), pinned system.delegation_revoked, and KEEPS the user's open mirrors", async () => {
+    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
+    const conn = fakeConn(() => ({ value: null }));
+    // Seed an OPEN mirror for USER — the revoked branch must NOT drop it (the reconcile keeps trying to close it).
+    const ourPos = `ours_${process.hrtime.bigint()}`;
+    await db.insert(copyPositions).values({
+      userId: USER,
+      leaderPosition: `L_${ourPos}`,
+      ourPosition: ourPos,
+      pool: pool.toBase58(),
+      sizeSol: 0.1,
+      lowerBin: -1,
+      upperBin: 1,
+      status: 'open',
+      openedAt: Date.now(),
+    });
+    const { ctx, onSignError, emit } = throwingSignerCtx(conn, bus, {
+      status: 403,
+      message: 'session signer not authorized',
+    });
+    const sr = closeReq();
+    const verdict = await process1(sr, ctx);
+    expect(verdict).toMatchObject({ ok: false, reason: 'sign_revoked', kind: 'close' });
+    expect(vi.mocked(onSignError).mock.calls[0]?.[0]).toMatchObject({
+      class: 'revoked',
+      userId: USER,
+    });
+    expect(vi.mocked(emit).mock.calls.some(([c]) => c === 'system.delegation_revoked')).toBe(true);
+    // never-miss: the user's open mirror is STILL present (the coffre never drops mirrors on a revoked delegation).
+    const mirrors = await db.select().from(copyPositions).where(eq(copyPositions.userId, USER));
+    expect(mirrors.filter((m) => m.status === 'open' && m.ourPosition === ourPos)).toHaveLength(1);
+  });
+});

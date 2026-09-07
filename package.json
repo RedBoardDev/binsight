@@ -28,6 +28,7 @@
     "test": "turbo run test",
     "check": "biome check .",
     "check:fix": "biome check --write .",
+    "guard:web-security": "node web/scripts/security-guard.mjs",
     "dev:api": "yarn workspace @binsight/api dev"
   },
   "devDependencies": {

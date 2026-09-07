@@ -1,0 +1,414 @@
+import Redis from 'ioredis';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { encodeEnvelope, HMAC_HEX_LEN } from './envelope';
+import { MAX_BUS_ENVELOPE_BYTES, MAX_BUS_STREAM_LEN, RedisBus } from './redis-bus';
+
+// Integration test: requires the local Redis container (docker compose up -d redis → :6385).
+const URL = process.env.REDIS_URL ?? 'redis://localhost:6385';
+const STREAM = 'test:copybot:cmd:sign';
+const GROUP = 'test-coffre';
+const KEY = 'k_sign_test';
+
+let bus: RedisBus;
+
+beforeAll(async () => {
+  bus = RedisBus.connect(URL);
+  await bus.del(STREAM, `${STREAM}.DLQ`); // clean slate
+  await bus.ensureGroup(STREAM, GROUP);
+});
+
+afterAll(async () => {
+  await bus.del(STREAM, `${STREAM}.DLQ`);
+  await bus.quit();
+});
+
+describe('RedisBus — Redis Streams + HMAC (integration)', () => {
+  it('publish → consume: authenticated round-trip', async () => {
+    const payload = { commandId: 'c1', kind: 'open', sizeSol: 0.5 };
+    await bus.publish(STREAM, 'cmd:sign', KEY, payload);
+    const msgs = await bus.consume(STREAM, GROUP, 'consumer-1', 'cmd:sign', KEY, 10, 2000);
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]?.payload).toEqual(payload);
+    const id = msgs[0]?.id;
+    if (id) await bus.ack(STREAM, GROUP, id);
+  });
+
+  it('different hop on publish → rejected on consume (payload null, not parsed)', async () => {
+    await bus.publish(STREAM, 'cmd:execute', KEY, { x: 1 }); // wrong hop → incompatible MAC
+    const msgs = await bus.consume(STREAM, GROUP, 'consumer-1', 'cmd:sign', KEY, 10, 2000);
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]?.payload).toBeNull();
+    const id = msgs[0]?.id;
+    if (id) await bus.ack(STREAM, GROUP, id);
+  });
+
+  it('consume exposes the EXACT raw fields → deadLetter(raw) quarantines a poison message verbatim (no silent drop)', async () => {
+    // WHY: a rejected/poison cmd:sign must be preserved for forensics, not ACKed-and-forgotten. The consumer now
+    // carries the raw body/hmac so the coffre can dead-letter it verbatim (the durable trace FIX A adds).
+    await bus.publish(STREAM, 'cmd:sign', KEY, { commandId: 'poison1', kind: 'open' });
+    const msgs = await bus.consume(STREAM, GROUP, 'consumer-dlq', 'cmd:sign', KEY, 10, 2000);
+    expect(msgs).toHaveLength(1);
+    const msg = msgs[0];
+    expect(msg?.raw).toHaveProperty('body'); // raw fields surfaced
+    expect(msg?.raw).toHaveProperty('hmac');
+    if (msg) await bus.deadLetter(STREAM, GROUP, msg.id, msg.raw);
+    // The exact raw fields landed on the DLQ stream, byte-for-byte.
+    const raw = new Redis(URL, { maxRetriesPerRequest: null, lazyConnect: false });
+    const dlq = await raw.xrange(`${STREAM}.DLQ`, '-', '+');
+    expect(dlq).toHaveLength(1);
+    const fields = dlq[0]?.[1] ?? [];
+    expect(fields).toEqual(['body', msg?.raw.body, 'hmac', msg?.raw.hmac]);
+    // ...and it is no longer pending in the main group (ACKed by deadLetter → never redelivered).
+    const pending = await bus.consumePending(STREAM, GROUP, 'consumer-dlq', 'cmd:sign', KEY);
+    expect(pending).toHaveLength(0);
+    await raw.quit();
+  });
+
+  it('consumePending recovers a delivered-but-unACKed cmd:sign (crash recovery — NEVER strands an in-flight close)', async () => {
+    // WHY: a vault that read a cmd:sign then crashed before ACK must re-process it on boot, or a close could be lost.
+    // consumePending re-reads THIS consumer's PEL (XREADGROUP id '0'); the executions table makes the replay safe.
+    const payload = { commandId: 'pend1', kind: 'close', sizeSol: 1 };
+    const consumer = 'consumer-crash';
+    await bus.publish(STREAM, 'cmd:sign', KEY, payload);
+    const first = await bus.consume(STREAM, GROUP, consumer, 'cmd:sign', KEY, 10, 2000);
+    expect(first).toHaveLength(1); // delivered to this consumer, but we deliberately DON'T ack (the "crash")
+
+    const pending = await bus.consumePending(STREAM, GROUP, consumer, 'cmd:sign', KEY);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.payload).toEqual(payload); // recovered AND HMAC-authenticated, not lost
+    const id = pending[0]?.id;
+    if (id) await bus.ack(STREAM, GROUP, id); // now ack → cleared from the PEL
+    const afterAck = await bus.consumePending(STREAM, GROUP, consumer, 'cmd:sign', KEY);
+    expect(afterAck).toHaveLength(0); // once ACKed, no longer pending (not re-processed forever)
+  });
+});
+
+// Group-creation + DLQ semantics, tested deterministically against a fake ioredis (no container needed): idempotent
+// group creation must SWALLOW BUSYGROUP (re-running the vault is normal) but RETHROW a real failure (fail-loud), and
+// the DLQ must copy the exact raw fields then ACK the original (so a rejected message is preserved AND not redelivered).
+describe('RedisBus — ensureGroup idempotency + deadLetter (fake redis)', () => {
+  it('ensureGroup SWALLOWS BUSYGROUP — re-creating an existing group is a no-op', async () => {
+    const xgroup = vi.fn(async () => {
+      throw new Error('BUSYGROUP Consumer Group name already exists');
+    });
+    const bus = new RedisBus({ xgroup } as never);
+    await expect(bus.ensureGroup('cmd:sign', 'coffre')).resolves.toBeUndefined();
+  });
+
+  it('ensureGroup RETHROWS a non-BUSYGROUP error — a real Redis failure must surface, not be hidden', async () => {
+    const xgroup = vi.fn(async () => {
+      throw new Error('NOAUTH Authentication required');
+    });
+    const bus = new RedisBus({ xgroup } as never);
+    await expect(bus.ensureGroup('cmd:sign', 'coffre')).rejects.toThrow('NOAUTH');
+  });
+
+  it('deadLetter copies the EXACT raw fields onto <stream>.DLQ (MAXLEN-bounded), then ACKs the original', async () => {
+    const xadd = vi.fn(async () => '1-0');
+    const xack = vi.fn(async () => 1);
+    const bus = new RedisBus({ xadd, xack } as never);
+    await bus.deadLetter('cmd:sign', 'coffre', '42-0', { body: 'RAW_BODY', hmac: 'RAW_HMAC' });
+    // #166 — the DLQ is capped like the primary streams (a forged-frame flood each gets dead-lettered): the raw fields
+    // still land verbatim, but behind a MAXLEN ~ bound so the DLQ cannot grow unboundedly.
+    expect(xadd).toHaveBeenCalledWith(
+      'cmd:sign.DLQ',
+      'MAXLEN',
+      '~',
+      MAX_BUS_STREAM_LEN,
+      '*',
+      'body',
+      'RAW_BODY',
+      'hmac',
+      'RAW_HMAC',
+    );
+    expect(xack).toHaveBeenCalledWith('cmd:sign', 'coffre', '42-0'); // original ACKed → never redelivered
+  });
+
+  it('publish bounds the stream with XADD MAXLEN ~ (a flood cannot grow cmd:sign/ev:executed unboundedly)', async () => {
+    // WHY: an unbounded stream is a memory-DoS surface; every write trims to ~MAX_BUS_STREAM_LEN. Assert the trim
+    // directive precedes the id/fields — the payload itself is signed by the real encodeEnvelope (not mocked here).
+    const xadd = vi.fn(async () => '1-0');
+    const bus = new RedisBus({ xadd } as never);
+    await bus.publish('cmd:sign', 'cmd:sign', 'k', { commandId: 'c', kind: 'open' });
+    const prefix = (xadd.mock.calls[0] ?? []).slice(0, 5);
+    expect(prefix).toEqual(['cmd:sign', 'MAXLEN', '~', MAX_BUS_STREAM_LEN, '*']);
+  });
+});
+
+// Stream-loss / NOGROUP resilience (deterministic, fake ioredis — no container). The group must anchor at '0'
+// (no-miss: catch pre-group + post-flush messages) and a read that throws NOGROUP (Redis dropped the group) must
+// re-create it and retry ONCE instead of wedging the consumer's outer backoff loop forever. Replay is safe because
+// consumers dedup (executions table / idempotent ev:executed handlers). A NON-NOGROUP error must still surface so
+// the caller's connection-backoff keeps working — we don't turn every read failure into a group re-create.
+describe("RedisBus — NOGROUP self-heal + '0' anchor (fake redis)", () => {
+  const KEY = 'k_sign_test';
+
+  it("ensureGroup anchors the group at '0' (replay-safe no-miss), NOT '$'", async () => {
+    const xgroup = vi.fn(async () => 'OK');
+    const bus = new RedisBus({ xgroup } as never);
+    await bus.ensureGroup('cmd:sign', 'coffre');
+    expect(xgroup).toHaveBeenCalledWith('CREATE', 'cmd:sign', 'coffre', '0', 'MKSTREAM');
+  });
+
+  it('consume re-creates the group and retries ONCE on NOGROUP (self-heal, not wedged)', async () => {
+    let calls = 0;
+    const xreadgroup = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) throw new Error('NOGROUP No such key or consumer group in XREADGROUP');
+      return null; // retry after the heal → empty read, no throw
+    });
+    const xgroup = vi.fn(async () => 'OK');
+    const bus = new RedisBus({ xreadgroup, xgroup } as never);
+    const msgs = await bus.consume('cmd:sign', 'coffre', 'c1', 'cmd:sign', KEY, 10, 100);
+    expect(msgs).toEqual([]); // recovered (old code would REJECT here → the consumer loop wedges)
+    expect(xgroup).toHaveBeenCalledWith('CREATE', 'cmd:sign', 'coffre', '0', 'MKSTREAM'); // group re-created
+    expect(xreadgroup).toHaveBeenCalledTimes(2); // original throw + one retry
+  });
+
+  it('consumePending ALSO self-heals on NOGROUP (a stranded in-flight close must never wedge)', async () => {
+    let calls = 0;
+    const xreadgroup = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) throw new Error('NOGROUP the consumer group was dropped');
+      return null;
+    });
+    const xgroup = vi.fn(async () => 'OK');
+    const bus = new RedisBus({ xreadgroup, xgroup } as never);
+    const msgs = await bus.consumePending('cmd:sign', 'coffre', 'c1', 'cmd:sign', KEY);
+    expect(msgs).toEqual([]);
+    expect(xgroup).toHaveBeenCalledTimes(1); // re-created exactly once
+    expect(xreadgroup).toHaveBeenCalledTimes(2);
+  });
+
+  it('a NON-NOGROUP read error rethrows WITHOUT re-creating the group (keeps the connection-backoff intact)', async () => {
+    const xreadgroup = vi.fn(async () => {
+      throw new Error('ECONNRESET socket hang up');
+    });
+    const xgroup = vi.fn(async () => 'OK');
+    const bus = new RedisBus({ xreadgroup, xgroup } as never);
+    await expect(bus.consume('cmd:sign', 'coffre', 'c1', 'cmd:sign', KEY, 10, 100)).rejects.toThrow(
+      'ECONNRESET',
+    );
+    expect(xgroup).not.toHaveBeenCalled(); // a genuine connection error is NOT a group loss → no re-create
+    expect(xreadgroup).toHaveBeenCalledTimes(1); // and NO retry
+  });
+});
+
+// XTRIM tombstone (deterministic, fake ioredis — no container). Once ops deploy the documented `XTRIM MAXLEN` on the
+// command stream, a cmd:sign still in the PEL (unconfirmed → retryLater) can be trimmed OUT of the stream; Redis then
+// returns null (or empty) fields for that PEL entry on an XREADGROUP-of-pending. FAIL-AGAINST-OLD: the old
+// fieldsToRecord dereferenced `null.length` → threw → the consume loop backed off and hit the SAME ghost entry every
+// iteration forever (vault alive/heartbeat green, signing NOTHING, every later close missed). parse must surface a
+// TOMBSTONE the caller can ACK-and-skip — and it must stay DISTINCT from a bad-MAC reject (which keeps its raw bytes).
+describe('RedisBus — a trimmed PEL entry parses as a TOMBSTONE, never throws (fake redis, #147)', () => {
+  const KEY = 'k_sign_test';
+
+  it('consumePending on a NULL-fields PEL entry → a tombstone, does NOT throw (old code threw TypeError)', async () => {
+    const xreadgroup = vi.fn(async () => [['cmd:sign', [['5-0', null]]]]); // Redis reply for a trimmed-out PEL entry
+    const bus = new RedisBus({ xreadgroup } as never);
+    await expect(bus.consumePending('cmd:sign', 'coffre', 'c1', 'cmd:sign', KEY)).resolves.toEqual([
+      { id: '5-0', payload: null, raw: {}, tombstone: true },
+    ]);
+  });
+
+  it('EMPTY ([]) fields ALSO parse as a tombstone (nothing to authenticate or dead-letter verbatim)', async () => {
+    const xreadgroup = vi.fn(async () => [['cmd:sign', [['6-0', []]]]]);
+    const bus = new RedisBus({ xreadgroup } as never);
+    const [msg] = await bus.consumePending('cmd:sign', 'coffre', 'c1', 'cmd:sign', KEY);
+    expect(msg).toEqual({ id: '6-0', payload: null, raw: {}, tombstone: true });
+  });
+
+  it('★ a tombstone is DISTINGUISHABLE from a bad-MAC reject — only the reject keeps raw body/hmac for the DLQ', async () => {
+    // Both surface payload:null, so the discriminator is `tombstone` (+ an empty `raw`). A tombstone must NEVER take
+    // the reject→deadLetter path: deadLetter(raw={}) would xadd with no fields and throw, re-wedging the loop. Proving
+    // one ghost in a batch does not blow up the neighbouring (genuine, here rejected) entry — parse maps each safely.
+    const xreadgroup = vi.fn(async () => [
+      [
+        'cmd:sign',
+        [
+          ['7-0', null], // trimmed-out → tombstone
+          ['7-1', ['body', 'B', 'hmac', '00']], // '00' = valid hex, wrong MAC → verifyEnvelope returns null (reject)
+        ],
+      ],
+    ]);
+    const bus = new RedisBus({ xreadgroup } as never);
+    const [tomb, reject] = await bus.consumePending('cmd:sign', 'coffre', 'c1', 'cmd:sign', KEY);
+    expect(tomb).toEqual({ id: '7-0', payload: null, raw: {}, tombstone: true });
+    expect(reject?.payload).toBeNull(); // a reject ALSO has a null payload…
+    expect(reject?.tombstone).toBeUndefined(); // …but it is NOT a tombstone…
+    expect(reject?.raw).toEqual({ body: 'B', hmac: '00' }); // …and it KEEPS its bytes for a verbatim DLQ
+  });
+});
+
+// #24 — a 64 KiB envelope cap. An over-cap body is rejected in parse BEFORE verifyEnvelope/JSON.parse so a crafted
+// giant frame cannot DoS the consume loop. FAIL-AGAINST-OLD: the body is signed CORRECTLY, so without the cap
+// verifyEnvelope would ACCEPT it and return a payload — the cap makes it a REJECT (payload null, raw kept for the DLQ).
+describe('RedisBus — oversized envelope rejected before HMAC/parse (fake redis, #24)', () => {
+  const KEY = 'k_sign_test';
+
+  it('★ an over-cap body with a VALID MAC → REJECT (payload null), never parsed — DoS guard', async () => {
+    // A body strictly larger than the cap, signed CORRECTLY for the hop. Without the cap verifyEnvelope would
+    // authenticate it and return the parsed object; the cap short-circuits to a reject before any HMAC/parse work.
+    const big = { commandId: 'x', blob: 'a'.repeat(MAX_BUS_ENVELOPE_BYTES) };
+    const env = encodeEnvelope('cmd:sign', KEY, big);
+    expect(Buffer.byteLength(env.body, 'utf8')).toBeGreaterThan(MAX_BUS_ENVELOPE_BYTES); // genuinely over-cap
+    const xreadgroup = vi.fn(async () => [
+      ['cmd:sign', [['9-0', ['body', env.body, 'hmac', env.hmac]]]],
+    ]);
+    const bus = new RedisBus({ xreadgroup } as never);
+    const [msg] = await bus.consumePending('cmd:sign', 'coffre', 'c1', 'cmd:sign', KEY);
+    expect(msg?.payload).toBeNull(); // rejected: the huge body never reached verifyEnvelope / JSON.parse
+    expect(msg?.tombstone).toBeUndefined(); // NOT a tombstone — the bytes are present
+    expect(msg?.raw).toEqual({ body: env.body, hmac: env.hmac }); // kept verbatim → caller dead-letters it (loud)
+  });
+
+  it('a body under the cap with a valid MAC still verifies (the guard rejects ONLY oversized frames)', async () => {
+    // Under the cap → the envelope authenticates and parses as before: the cap must not over-reject real traffic.
+    const ok = { commandId: 'y', blob: 'a'.repeat(MAX_BUS_ENVELOPE_BYTES - 100) };
+    const env = encodeEnvelope('cmd:sign', KEY, ok);
+    expect(Buffer.byteLength(env.body, 'utf8')).toBeLessThanOrEqual(MAX_BUS_ENVELOPE_BYTES);
+    const xreadgroup = vi.fn(async () => [
+      ['cmd:sign', [['9-1', ['body', env.body, 'hmac', env.hmac]]]],
+    ]);
+    const bus = new RedisBus({ xreadgroup } as never);
+    const [msg] = await bus.consumePending('cmd:sign', 'coffre', 'c1', 'cmd:sign', KEY);
+    expect(msg?.payload).toEqual(ok); // authenticated + parsed
+  });
+});
+
+// #166 — a malformed-length `hmac` is rejected in parse BEFORE verifyEnvelope's `Buffer.from(hmac,'hex')`. #24 caps
+// only the body; an adversary who can XADD (threat model: anyone reaching Redis, bus-key-guard) can send a small
+// (<cap) body that passes the size guard AND an `hmac` field up to Redis's 512MB proto-max-bulk-len. FAIL-AGAINST-OLD:
+// the old parse handed that field to verifyEnvelope, which does Buffer.from over the WHOLE field, per message, across
+// a COUNT-sized batch, retained via `raw` until the batch ends → tens of GB → the SOLE coffre OOMs → no leader close
+// gets signed during the attack. A genuine sha256 MAC is exactly HMAC_HEX_LEN hex chars; any other length is forged.
+describe('RedisBus — malformed hmac rejected before Buffer.from (fake redis, #166 DoS)', () => {
+  const KEY = 'k_sign_test';
+
+  it('★ a small body + a GIANT hmac → REJECT before verifyEnvelope, NO Buffer.from of the giant field, no throw', async () => {
+    const giantHmac = 'a'.repeat(600_000); // far beyond 64 — decoding it is exactly the allocation we must NOT do
+    const fromSpy = vi.spyOn(Buffer, 'from');
+    const xreadgroup = vi.fn(async () => [
+      ['cmd:sign', [['166-0', ['body', '{"commandId":"x"}', 'hmac', giantHmac]]]],
+    ]);
+    const bus = new RedisBus({ xreadgroup } as never);
+    const [msg] = await bus.consumePending('cmd:sign', 'coffre', 'c1', 'cmd:sign', KEY);
+    expect(msg?.payload).toBeNull(); // rejected: the giant hmac never reached verifyEnvelope / JSON.parse
+    expect(msg?.tombstone).toBeUndefined(); // NOT a tombstone — the bytes are present
+    expect(msg?.raw).toEqual({ body: '{"commandId":"x"}', hmac: giantHmac }); // kept verbatim → dead-lettered (loud)
+    // The load-bearing assertion: the old code called Buffer.from(giantHmac,'hex'); the guard must short-circuit first.
+    expect(fromSpy.mock.calls.some(([arg]) => arg === giantHmac)).toBe(false);
+    fromSpy.mockRestore();
+  });
+
+  it('a valid 64-hex hmac still verifies (the guard rejects ONLY a wrong-length MAC, never real traffic)', async () => {
+    const payload = { commandId: 'ok166', kind: 'open' };
+    const env = encodeEnvelope('cmd:sign', KEY, payload);
+    expect(env.hmac).toHaveLength(HMAC_HEX_LEN); // a genuine sha256 MAC is exactly 64 hex chars
+    const xreadgroup = vi.fn(async () => [
+      ['cmd:sign', [['166-1', ['body', env.body, 'hmac', env.hmac]]]],
+    ]);
+    const bus = new RedisBus({ xreadgroup } as never);
+    const [msg] = await bus.consumePending('cmd:sign', 'coffre', 'c1', 'cmd:sign', KEY);
+    expect(msg?.payload).toEqual(payload); // authenticated + parsed as before
+  });
+
+  it('an hmac off by even ONE char (63 or 65) → REJECT (exact-length guard, not a range)', async () => {
+    const xreadgroup = vi.fn(async () => [
+      [
+        'cmd:sign',
+        [
+          ['166-2', ['body', '{"a":1}', 'hmac', 'a'.repeat(HMAC_HEX_LEN - 1)]],
+          ['166-3', ['body', '{"a":1}', 'hmac', 'a'.repeat(HMAC_HEX_LEN + 1)]],
+        ],
+      ],
+    ]);
+    const bus = new RedisBus({ xreadgroup } as never);
+    const msgs = await bus.consumePending('cmd:sign', 'coffre', 'c1', 'cmd:sign', KEY);
+    expect(msgs.map((m) => m.payload)).toEqual([null, null]); // both rejected
+    expect(msgs.every((m) => m.tombstone === undefined)).toBe(true); // rejects, not tombstones (bytes present)
+  });
+});
+
+// End-to-end resilience against a live Redis (:6385). Proves the two no-miss guarantees on the real server:
+// (1) '0' catches a message published BEFORE the group existed; (2) after the group is DESTROYED (Redis eviction /
+// restart-empty), consume self-heals and still delivers the backlog instead of throwing NOGROUP forever.
+describe('RedisBus — stream-loss resilience (integration)', () => {
+  it("'0' anchor: a group created AFTER a publish still sees the pre-existing message ('$' would miss it)", async () => {
+    const stream = 'test:copybot:zero-anchor';
+    const group = 'late-group';
+    const admin = RedisBus.connect(URL);
+    await admin.del(stream);
+    await admin.publish(stream, 'cmd:sign', KEY, { commandId: 'pre1', kind: 'open' }); // BEFORE any group exists
+    await admin.ensureGroup(stream, group); // group created LATE → '0' replays from the stream head
+    const msgs = await admin.consume(stream, group, 'c1', 'cmd:sign', KEY, 10, 2000);
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]?.payload).toEqual({ commandId: 'pre1', kind: 'open' });
+    await admin.del(stream);
+    await admin.quit();
+  });
+
+  it('consume self-heals after XGROUP DESTROY (Redis dropped the group → NOGROUP) and re-delivers the backlog', async () => {
+    const stream = 'test:copybot:nogroup';
+    const group = 'heal-group';
+    const raw = new Redis(URL, { maxRetriesPerRequest: null, lazyConnect: false });
+    const bus2 = RedisBus.connect(URL);
+    await bus2.del(stream);
+    await bus2.ensureGroup(stream, group);
+    await bus2.publish(stream, 'cmd:sign', KEY, { commandId: 'heal1', kind: 'close' });
+    await raw.xgroup('DESTROY', stream, group); // simulate the group being lost (eviction / restart-empty)
+    // old code: xreadgroup throws NOGROUP, the caller backs off forever. new code: ensureGroup re-runs + retry.
+    const msgs = await bus2.consume(stream, group, 'c1', 'cmd:sign', KEY, 10, 2000);
+    expect(msgs).toHaveLength(1); // re-created at '0' → the close is re-delivered, not lost
+    expect(msgs[0]?.payload).toEqual({ commandId: 'heal1', kind: 'close' });
+    await bus2.del(stream);
+    await raw.quit();
+    await bus2.quit();
+  });
+});
+
+// Singleton lease (integration, :6385). The boot guard that stops a 2nd coffre from double-signing the shared PEL.
+// Each `it` starts from a clean key. The double-acquire test is the fail-against-old proof: WITHOUT the lease a 2nd
+// instance would boot and re-sign in-flight commands.
+describe('RedisBus — singleton lease (integration)', () => {
+  const LEASE = 'test:copybot:coffre:lease';
+
+  beforeEach(async () => {
+    await bus.del(LEASE);
+  });
+  afterAll(async () => {
+    await bus.del(LEASE);
+  });
+
+  it('first acquire succeeds; a second instance while held is REFUSED (prevents a double-sign on boot)', async () => {
+    expect(await bus.acquireLease(LEASE, 'inst-A', 5000)).toBe(true);
+    // FAIL-AGAINST-OLD: with no lease, inst-B would have booted and re-signed in-flight cmd:sign → double execution.
+    expect(await bus.acquireLease(LEASE, 'inst-B', 5000)).toBe(false);
+    await bus.releaseLease(LEASE, 'inst-A');
+  });
+
+  it('after release the lease is re-acquirable (a clean restart takes over)', async () => {
+    expect(await bus.acquireLease(LEASE, 'inst-A', 5000)).toBe(true);
+    await bus.releaseLease(LEASE, 'inst-A');
+    expect(await bus.acquireLease(LEASE, 'inst-B', 5000)).toBe(true);
+    await bus.releaseLease(LEASE, 'inst-B');
+  });
+
+  it("after TTL expiry a crashed holder's lease is re-acquirable (no manual cleanup)", async () => {
+    expect(await bus.acquireLease(LEASE, 'inst-crashed', 200)).toBe(true);
+    await new Promise((r) => setTimeout(r, 350)); // let the short TTL lapse (simulates a crashed holder)
+    expect(await bus.acquireLease(LEASE, 'inst-restart', 5000)).toBe(true);
+    await bus.releaseLease(LEASE, 'inst-restart');
+  });
+
+  it('renew extends OUR lease; a non-holder can neither renew nor release it (CAS-guarded)', async () => {
+    expect(await bus.acquireLease(LEASE, 'inst-A', 400)).toBe(true);
+    expect(await bus.renewLease(LEASE, 'inst-B', 5000)).toBe(false); // not the holder → cannot renew
+    expect(await bus.renewLease(LEASE, 'inst-A', 5000)).toBe(true); // holder → TTL extended to 5s
+    await new Promise((r) => setTimeout(r, 450)); // past the ORIGINAL 400ms ttl — only the renew keeps it alive
+    expect(await bus.acquireLease(LEASE, 'inst-B', 5000)).toBe(false); // still held → renew genuinely extended it
+    await bus.releaseLease(LEASE, 'inst-B'); // non-holder release is a no-op (must not free A's lease)
+    expect(await bus.acquireLease(LEASE, 'inst-B', 5000)).toBe(false); // A still holds it
+    await bus.releaseLease(LEASE, 'inst-A');
+  });
+});

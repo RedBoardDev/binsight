@@ -1,0 +1,104 @@
+/**
+ * Copy-bot · P3/Inc.1 — typed bus contract (= a simplified `@repo/intent`, single-user). The brain publishes a
+ * `SignRequest` on `cmd:sign`; the coffre re-validates it (strict Zod) then "intent-binds" it against the
+ * decoded tx (Wall B). `.strict()` = rejection of any unexpected field (anti-injection).
+ */
+import { z } from 'zod';
+
+export const SignRequestSchema = z
+  .object({
+    /** Tenant this command executes FOR (SPEC §11) — SIGNED (inside the HMAC envelope body). The coffre selects
+     *  this user's caps/config row, keys the executions claim by (userId, commandId), and re-derives the
+     *  commandId from it (v2) so a cross-tenant replay can never pass check #7. */
+    userId: z.string().min(1),
+    /** = derive(userId, eventKey); the coffre's per-user idempotency key (executions (user_id, command_id)). */
+    commandId: z.string().min(1),
+    /** leader:pool:action:position:signature — the originating leader event. */
+    eventKey: z.string().min(1),
+    kind: z.enum(['open', 'close', 'claim', 'sell', 'add', 'remove', 'buy', 'fee']),
+    pool: z.string().min(1),
+    /** pubkey of OUR position (ephemeral for an open). For a 'sell'/'fee', the closed position (provenance). */
+    positionPubkey: z.string().min(1),
+    /** our owner (copy-test); the coffre checks destination == owner. */
+    owner: z.string().min(1),
+    /** UNSIGNED DLMM tx, base64-serialized. */
+    txBase64: z.string().min(1),
+    /** SOL size we deploy (re-clamped by the coffre against the local config). */
+    sizeSol: z.number().nonnegative(),
+    /** re-anchored bin range — Wall B checks that the tx only touches this range. */
+    targetBinRange: z.object({ lower: z.number().int(), upper: z.number().int() }),
+    /** freshness bounds (anti-replay): the coffre requires currentSlot ≤ deadlineSlot. */
+    issuedAtSlot: z.number().int().nonnegative(),
+    deadlineSlot: z.number().int().nonnegative(),
+    /** wall-clock ms of publication (bus→coffre latency measurement, speed pillar). */
+    issuedAtMs: z.number().int().nonnegative(),
+    /** present ONLY for a 'sell': the residual token→SOL swap parameters (Jupiter). bigints are strings. */
+    sell: z
+      .object({
+        inputMint: z.string().min(1), // residual token being sold (Wall B binds the swap to owner's ATA of it)
+        inputAmountRaw: z.string().min(1), // residual amount, raw token units
+        minOutLamports: z.string().min(1), // slippage floor in lamports (traceability/telemetry)
+      })
+      .optional(),
+    /** present ONLY for a 'buy': the SOL→token pre-swap that funds a two-sided copy's token leg (Jupiter, ExactOut). */
+    buy: z
+      .object({
+        outputMint: z.string().min(1), // token being bought (Wall B binds the swap to owner's ATA of it)
+        exactOutAmountRaw: z.string().min(1), // EXACT token amount to receive, raw token units
+        maxInLamports: z.string().min(1), // SOL spend cap (slippage-bounded; Wall B re-clamps against the local cap)
+      })
+      .optional(),
+    /** present ONLY for a 'fee': the 5% performance-fee transfer (owner → operator sink, SPEC §9). The coffre does
+     *  NOT trust `toAddress` (a compromised brain could forge it) — Wall B re-verifies the tx's transfer goes to
+     *  the coffre's OWN configured OPERATOR_FEE_ADDRESS; this payload is traceability/telemetry only. */
+    fee: z
+      .object({
+        toAddress: z.string().min(1), // the operator fee sink the brain built the transfer toward (re-checked by Wall B)
+        lamports: z.string().min(1), // the fee amount (raw lamports, string like the sell/buy amounts)
+      })
+      .optional(),
+  })
+  .strict()
+  .superRefine((v, ctx) => {
+    // kind 'sell' ⟺ the sell payload is present (no ambiguous half-formed sell intents).
+    if (v.kind === 'sell' && !v.sell)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'sell payload required for kind=sell',
+        path: ['sell'],
+      });
+    if (v.kind !== 'sell' && v.sell)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'sell payload only allowed for kind=sell',
+        path: ['sell'],
+      });
+    // kind 'buy' ⟺ the buy payload is present (symmetric to sell).
+    if (v.kind === 'buy' && !v.buy)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'buy payload required for kind=buy',
+        path: ['buy'],
+      });
+    if (v.kind !== 'buy' && v.buy)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'buy payload only allowed for kind=buy',
+        path: ['buy'],
+      });
+    // kind 'fee' ⟺ the fee payload is present (symmetric to sell/buy — no ambiguous half-formed fee intents).
+    if (v.kind === 'fee' && !v.fee)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'fee payload required for kind=fee',
+        path: ['fee'],
+      });
+    if (v.kind !== 'fee' && v.fee)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'fee payload only allowed for kind=fee',
+        path: ['fee'],
+      });
+  });
+
+export type SignRequest = z.infer<typeof SignRequestSchema>;

@@ -1,5 +1,4 @@
 import type {
-  AccessEntry,
   ClosedPosition,
   LiveEvent,
   NotifRule,
@@ -188,14 +187,15 @@ export interface ConfigRepository {
   saveNotifRule(rule: NotifRule): Promise<void>;
 }
 
-/** A public-web account (or the seeded owner). */
+/** A public-web account. Identity is the Privy DID; sessions are 100% Privy (no local state). */
 export interface AccountUser {
   id: string;
-  /** The Solana wallet address = identity / username. */
-  address: string;
+  /** The Privy user id (`did:privy:...`) — the `sub` of every verified access token. */
+  privyUserId: string;
+  /** The account's Privy embedded wallet address; null until the custody increment fills it. */
+  address: string | null;
   isOwner: boolean;
-  /** JWT generation counter; bumped on password reset to kill existing sessions. */
-  tokenVersion: number;
+  createdAt: number;
 }
 
 /** One wallet on a user's watchlist. */
@@ -206,75 +206,63 @@ export interface WatchedWallet {
   createdAt: number;
 }
 
-export interface WhitelistEntry {
-  address: string;
-  note: string;
-  addedBy: string;
-  createdAt: number;
-}
-
 export interface AccountSummary {
   id: string;
-  address: string;
+  privyUserId: string;
+  /** The account's Privy embedded wallet address (null until the custody increment fills it). */
+  address: string | null;
   isOwner: boolean;
   createdAt: number;
-  /** The wallets this account watches (the registration address first). */
+  /** The wallets this account watches. */
   wallets: string[];
 }
 
-// AccessEntry + WalletOverview are the api→web admin contract — canonical in @binsight/shared.
+/** One single-use invitation code (owner-generated; gates account creation). */
+export interface InviteEntry {
+  code: string;
+  note: string;
+  createdAt: number;
+  /** Epoch ms after which the code can no longer be redeemed; null = never expires. */
+  expiresAt: number | null;
+  /** The account that redeemed the code; null = still available. */
+  usedByUserId: string | null;
+  usedAt: number | null;
+}
+
+/** Why an invite redeem failed — typed so the API can answer with a precise client error. */
+export type InviteRedeemFailure = 'not_found' | 'used' | 'expired';
+
+// WalletOverview is the api→web admin contract — canonical in @binsight/shared.
 // Re-exported here so existing `@/domain/ports` importers keep their import path.
-export type { AccessEntry, WalletOverview };
+export type { WalletOverview };
 
 /** Users and their per-account wallet watchlists — the multi-tenant boundary. */
-/** What a signature nonce is for — binds a challenge to its intended action. */
-export type NoncePurpose = 'register' | 'reset';
-
 export interface AccountRepository {
-  /** Seed the owner allowlist entry (OWNER_ADDRESS) so the owner can register the bootstrap account. */
-  init(ownerAddress: string): Promise<void>;
-  createUser(p: { address: string; passwordHash: string; isOwner: boolean }): Promise<AccountUser>;
-  findByAddress(address: string): Promise<{ user: AccountUser; passwordHash: string } | null>;
+  createUser(p: { privyUserId: string; isOwner: boolean }): Promise<AccountUser>;
+  /** The account bound to a verified Privy DID — the per-request identity lookup. */
+  findByPrivyId(did: string): Promise<AccountUser | null>;
   findById(id: string): Promise<AccountUser | null>;
-  /** The account for `id` only if its `jti` session is still valid — one JOIN for the auth hot path. */
-  findByIdWithSession(id: string, jti: string): Promise<AccountUser | null>;
-  /** Replace a user's password hash AND bump tokenVersion (invalidates existing sessions). */
-  resetPassword(id: string, passwordHash: string): Promise<void>;
 
-  // ── Whitelist (owner-managed registration gate) ──
-  isWhitelisted(address: string): Promise<boolean>;
-  listWhitelist(): Promise<WhitelistEntry[]>;
-  addWhitelist(p: { address: string; note?: string; addedBy?: string }): Promise<void>;
-  removeWhitelist(address: string): Promise<void>;
-
-  // ── Signature nonces (single-use, purpose-bound) ──
-  issueNonce(
-    address: string,
-    nonce: string,
-    expiresAt: number,
-    purpose: NoncePurpose,
-  ): Promise<void>;
-  /** Atomically consume a nonce for an (address, purpose): true iff it existed, matched the purpose,
-   *  and was unexpired. The purpose binding stops a register challenge being used to reset (or vice versa). */
-  consumeNonce(address: string, nonce: string, purpose: NoncePurpose): Promise<boolean>;
-
-  // ── Session allowlist (one row per issued JWT jti) for real logout + revocation ──
-  createSession(jti: string, userId: string, expiresAt: number): Promise<void>;
-  /** True iff `jti` is a known, unexpired session — the per-request auth gate. */
-  isSessionValid(jti: string): Promise<boolean>;
-  /** Revoke one session (logout). */
-  deleteSession(jti: string): Promise<void>;
-  /** Revoke ALL of a user's sessions (on password reset). */
-  deleteUserSessions(userId: string): Promise<void>;
+  // ── Invite codes (owner-managed account-creation gate) ──
+  createInvite(p: { code: string; note?: string; expiresAt?: number | null }): Promise<void>;
+  listInvites(): Promise<InviteEntry[]>;
+  /** Delete an UNUSED invite; false when the code is unknown or already redeemed (audit trail kept). */
+  deleteInvite(code: string): Promise<boolean>;
+  /** Atomically claim `code` AND create the account in ONE transaction: of two concurrent redeems of
+   *  the same code, exactly one wins (the claim is an UPDATE guarded on used_by_user_id IS NULL). */
+  redeemInviteAndCreateUser(p: {
+    code: string;
+    privyUserId: string;
+    isOwner: boolean;
+    now: number;
+  }): Promise<{ ok: true; user: AccountUser } | { ok: false; reason: InviteRedeemFailure }>;
 
   // ── Admin: accounts ──
   listAccounts(): Promise<AccountSummary[]>;
-  /** Unified admin access list (invited + joined, merged by address). */
-  listAccess(): Promise<AccessEntry[]>;
   /** Per-monitored-wallet operational stats for the admin Wallets tab. */
   walletOverview(): Promise<WalletOverview[]>;
-  /** Delete an account + its watchlist + its sessions; returns the wallets left with no watcher (engine
-   *  stops LIVE monitoring them). Shared position/flow data is KEPT (keyed by address), never evicted. */
+  /** Delete an account + its watchlist; returns the wallets left with no watcher (engine stops LIVE
+   *  monitoring them). Shared position/flow data is KEPT (keyed by address), never evicted. */
   deleteAccount(id: string): Promise<string[]>;
 
   /** Distinct wallet addresses watched by anyone — the engine's monitored set. */

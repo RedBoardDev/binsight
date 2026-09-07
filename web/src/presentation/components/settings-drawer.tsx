@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useEffect } from 'react';
 import { useIdentity } from '@/application/stores/identity-store';
 import { shortAddr } from '@/domain/format';
+import { useSignOut } from '@/presentation/hooks/use-sign-out';
 import { Drawer } from '@/presentation/ui';
 import { useOpenAccess } from './open-access-context';
 import { PushToggle } from './push-toggle';
@@ -21,6 +22,7 @@ export function SettingsDrawer({ open, onClose, wallets, onChanged }: Props) {
   const identity = useIdentity((s) => s.identity);
   const loadIdentity = useIdentity((s) => s.load);
   const openAccess = useOpenAccess();
+  const signOut = useSignOut();
 
   useEffect(() => {
     void loadIdentity();
@@ -54,7 +56,21 @@ export function SettingsDrawer({ open, onClose, wallets, onChanged }: Props) {
             </Link>
           </section>
         )}
-        {identity && (
+        {/* Sign-out lives here so it is reachable on mobile too (the mobile app bar has no
+            dedicated button — SPEC UX #82). */}
+        <section>
+          <button
+            type="button"
+            onClick={() => void signOut()}
+            className="flex w-full items-center justify-between rounded-xl border border-border bg-base px-3.5 py-2.5 text-sm text-text transition-colors hover:border-text/30"
+          >
+            <span>Sign out</span>
+            <span aria-hidden className="text-muted">
+              →
+            </span>
+          </button>
+        </section>
+        {identity?.address && (
           <p className="text-center font-mono text-faint text-xs">
             Signed in as {shortAddr(identity.address)}
           </p>
