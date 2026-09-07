@@ -4,10 +4,9 @@
  * ONE pass reconciles the process to the DB configs; the SAME pass serves boot (empty runtime map) and the live
  * reload (control ping + CONFIG_POLL_MS backstop — reloading everyone per edit is O(users) DB reads, fine at this
  * scale):
- *  1. the boot/reload spawn set is the UNION of ACTIVE users, users still holding an OPEN mirror row, AND users still
- *     owing a PENDING performance fee: a user STOPPED while the brain was DOWN (enabled:false ⇒ absent from
- *     listActiveUserIds) is still spawned so their stranded positions can drain (finding #134) and any pending fee is
- *     collected (finding #3 — fee-sweep-only). Each is SPAWNED (config seed + persisted mirrors → registry +
+ *  1. the boot/reload spawn set is the UNION of ACTIVE users AND users still holding an OPEN mirror row: a user
+ *     STOPPED while the brain was DOWN (enabled:false ⇒ absent from listActiveUserIds) is still spawned so their
+ *     stranded positions can drain (finding #134). Each is SPAWNED (config seed + persisted mirrors → registry +
  *     rug sets, inside `spawn`) — per-user try/catch: one user's broken boot never blocks the others; then any
  *     seeded mirror the boot config no longer starts is force-closed on the spot (finding #135), because the
  *     phase-2 diff can't see a stop written during downtime (a fresh spawn has no prev≠next transition);
@@ -47,12 +46,6 @@ export interface ReloadDeps<R extends ReloadableRuntime> {
    *  drained (disabled config ⇒ out of the open fan-out) but reconciling + stop-closing + sweeping until their
    *  stranded mirrors force-close (the forbidden missed close, finding #134). */
   listUserIdsWithOpenMirrors(): Promise<string[]>;
-  /** fee_ledger projection: DISTINCT user_id WHERE state='pending'. Unioned into the boot/reload spawn set
-   *  (finding #3) so a user STOPPED with a pending performance fee — no open mirror ⇒ absent from BOTH
-   *  listActiveUserIds and listUserIdsWithOpenMirrors — is still spawned (drained / fee-sweep-only), so the
-   *  operator collects that fee. Makes bootable the users listPending's booted-only filter (#155) would otherwise
-   *  strand forever: #155 stops un-bootable fees from head-of-line-blocking the batch; this makes them bootable. */
-  listUserIdsWithPendingFees(): Promise<string[]>;
   /** ConfigStore.load — fail-safe AND fail-closed (a corrupt row parses to a stopped config, never throws). */
   loadConfig(userId: string): Promise<CopybotConfig>;
   /** createUserRuntime + durable seeding (persisted mirrors → registry + opens-window ring; rug sets inside).
@@ -74,16 +67,13 @@ export interface ReloadDeps<R extends ReloadableRuntime> {
 export async function reloadAllUsers<R extends ReloadableRuntime>(
   deps: ReloadDeps<R>,
 ): Promise<void> {
-  // 1. Spawn the boot/reload UNION: every ACTIVE user PLUS every user still holding an OPEN mirror row PLUS every
-  //    user still owing a PENDING fee. The open-mirror set is the never-miss-CLOSE backstop (finding #134): a user
-  //    STOPPED — or whose disabling was written — while the brain was DOWN is enabled:false (⇒ absent from
-  //    listActiveUserIds), yet their positions sit on-chain. The pending-fee set is the fee-COLLECTION backstop
-  //    (finding #3): a user who STOPPED after their last close left a pending fee has no open mirror either, so ONLY
-  //    this set boots them (fee-sweep-only) to collect it — without it, feeSweep's booted-only filter (#155) never
-  //    sees them and the fee is lost. All are spawned DRAINED: the disabled config keeps them OUT of the open fan-out
-  //    (userConfigs, step 3), while reconcile + stop-close + sweeps run on their wallet until the stranded mirrors
-  //    force-close. Each listing is guarded independently — a hiccup in one must neither block spawning from the
-  //    others nor the existing refresh.
+  // 1. Spawn the boot/reload UNION: every ACTIVE user PLUS every user still holding an OPEN mirror row. The
+  //    open-mirror set is the never-miss-CLOSE backstop (finding #134): a user STOPPED — or whose disabling was
+  //    written — while the brain was DOWN is enabled:false (⇒ absent from listActiveUserIds), yet their positions
+  //    sit on-chain. Both are spawned DRAINED: the disabled config keeps them OUT of the open fan-out (userConfigs,
+  //    step 3), while reconcile + stop-close + sweeps run on their wallet until the stranded mirrors force-close.
+  //    Each listing is guarded independently — a hiccup in one must neither block spawning from the others nor the
+  //    existing refresh.
   let activeIds: string[];
   try {
     activeIds = await deps.listActiveUserIds();
@@ -106,20 +96,8 @@ export async function reloadAllUsers<R extends ReloadableRuntime>(
     );
     openMirrorIds = [];
   }
-  let pendingFeeIds: string[];
-  try {
-    pendingFeeIds = await deps.listUserIdsWithPendingFees();
-  } catch (e) {
-    // The fee-collection backstop query hiccuped; existing runtimes still refresh and the next reload retries. A
-    // user stranded with ONLY a pending fee is re-spawned the moment this query succeeds again.
-    deps.log.error(
-      { e: (e as Error).message },
-      'reload: listUserIdsWithPendingFees failed → no fee-sweep-only spawns this pass',
-    );
-    pendingFeeIds = [];
-  }
   const spawnedNow = new Set<string>();
-  for (const userId of new Set([...activeIds, ...openMirrorIds, ...pendingFeeIds])) {
+  for (const userId of new Set([...activeIds, ...openMirrorIds])) {
     if (deps.runtimes.has(userId)) continue;
     try {
       const config = await deps.loadConfig(userId);

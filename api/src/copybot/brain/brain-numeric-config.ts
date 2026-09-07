@@ -1,5 +1,5 @@
 /**
- * Copy-bot · BRAIN — validated numeric env tunables (grace/cadence/batch/balance), finding #58. Split into its OWN module,
+ * Copy-bot · BRAIN — validated numeric env tunables (grace/cadence/balance), finding #58. Split into its OWN module,
  * PURE + SDK-free, so it is unit-testable in isolation: brain-main.ts transitively imports the DLMM SDK, which does
  * not load under vitest, so the parser could not be tested through brain-main.
  *
@@ -15,21 +15,14 @@
  */
 
 const MIN_TUNABLE_MS = 1; // a cadence/grace <= 0 (or NaN) busy-loops a setInterval / disables the open-grace check
-const MIN_FEE_SWEEP_BATCH = 1; // publish at least one pending fee transfer per sweep tick
-const DEFAULT_RECONCILE_OPEN_GRACE_MS = 30_000; // skip the 1st reconcile tick after an open (~1-2s unconfirmed) — anti false-close → no-dormant
+const DEFAULT_RECONCILE_OPEN_GRACE_MS = 90_000; // A6-01: time-based open-grace backstop, raised 30s→90s to cover the worst-case open-landing window (~60-75s, = OPEN_PENDING_TTL_MS); the event-driven isOpenInFlight grace (reconcile) is the primary guard — anti false-close → no-dormant
 const DEFAULT_SWEEP_MS = 60_000; // wallet token→SOL safety-sweep cadence (SYSTEM) — no-miss backstop behind the close-triggered sell
-const DEFAULT_FEE_SWEEP_MS = 60_000; // performance-fee sweep cadence (Inc.4d): retry each pending fee transfer until it lands
-const DEFAULT_FEE_SWEEP_BATCH = 25; // max pending fees published per sweep tick (bounds the per-tick publish burst)
-const DEFAULT_FEE_BACKSTOP_GRACE_MS = 300_000; // 5 min — a CLOSED position is only re-assessed by the backstop after this (the exact close-sell assess wins first)
 const DEFAULT_COPIER_BALANCE_SOL = 10; // SYSTEM/bench copy-wallet balance (SOL) used for sizing when COPIER_BALANCE_SOL is unset
 
-/** The brain's validated numeric env tunables (grace/cadence/batch). */
+/** The brain's validated numeric env tunables (grace/cadence). */
 export interface BrainNumericConfig {
   reconcileOpenGraceMs: number;
   sweepMs: number;
-  feeSweepMs: number;
-  feeSweepBatch: number;
-  feeBackstopGraceMs: number;
   copierBalanceSol: number;
 }
 
@@ -44,9 +37,6 @@ export interface BrainNumericTunableWarning {
 export function parseBrainNumericConfig(env: {
   RECONCILE_OPEN_GRACE_MS?: string;
   SWEEP_MS?: string;
-  FEE_SWEEP_MS?: string;
-  FEE_SWEEP_BATCH?: string;
-  FEE_BACKSTOP_GRACE_MS?: string;
   COPIER_BALANCE_SOL?: string;
 }): { config: BrainNumericConfig; warnings: BrainNumericTunableWarning[] } {
   const warnings: BrainNumericTunableWarning[] = [];
@@ -55,16 +45,6 @@ export function parseBrainNumericConfig(env: {
     if (raw === undefined) return fallback;
     const n = Number(raw);
     if (!Number.isFinite(n) || n < MIN_TUNABLE_MS) {
-      warnings.push({ name, raw, fallback });
-      return fallback;
-    }
-    return n;
-  };
-  // A positive INTEGER count (>= MIN_FEE_SWEEP_BATCH); a fractional / NaN / < 1 batch → default + a warning.
-  const positiveIntCount = (name: string, raw: string | undefined, fallback: number): number => {
-    if (raw === undefined) return fallback;
-    const n = Number(raw);
-    if (!Number.isInteger(n) || n < MIN_FEE_SWEEP_BATCH) {
       warnings.push({ name, raw, fallback });
       return fallback;
     }
@@ -88,17 +68,6 @@ export function parseBrainNumericConfig(env: {
       DEFAULT_RECONCILE_OPEN_GRACE_MS,
     ),
     sweepMs: durationMs('SWEEP_MS', env.SWEEP_MS, DEFAULT_SWEEP_MS),
-    feeSweepMs: durationMs('FEE_SWEEP_MS', env.FEE_SWEEP_MS, DEFAULT_FEE_SWEEP_MS),
-    feeSweepBatch: positiveIntCount(
-      'FEE_SWEEP_BATCH',
-      env.FEE_SWEEP_BATCH,
-      DEFAULT_FEE_SWEEP_BATCH,
-    ),
-    feeBackstopGraceMs: durationMs(
-      'FEE_BACKSTOP_GRACE_MS',
-      env.FEE_BACKSTOP_GRACE_MS,
-      DEFAULT_FEE_BACKSTOP_GRACE_MS,
-    ),
     copierBalanceSol: positiveFinite(
       'COPIER_BALANCE_SOL',
       env.COPIER_BALANCE_SOL,

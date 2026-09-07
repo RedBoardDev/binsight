@@ -303,12 +303,18 @@ describe('Wall B — verifyTx (sell / Jupiter token→SOL)', () => {
     expect(verifyTx(t, sellIntent())).toEqual({ ok: true });
   });
 
-  it('Token-2022 program is allowlisted (a sell instruction may invoke it) → not program_not_allowed', () => {
+  it('Token-2022 program is allowlisted; a whitelisted-content instruction (SyncNative) in a sell → ok', () => {
+    // Token-2022 is allowlisted AND its instruction content is now decoded (E1-01): a no-funds-move op like
+    // SyncNative (17) passes, while a foreign transfer/close would be rejected (covered by the E1-01 block below).
     const t = buildTx(owner, [
-      ix(TOKEN_2022_PROGRAM, [
-        { pubkey: owner, isSigner: true, isWritable: true },
-        { pubkey: ownerAtaFor(inputMint, TOKEN_2022_PROGRAM), isSigner: false, isWritable: true },
-      ]),
+      ix(
+        TOKEN_2022_PROGRAM,
+        [
+          { pubkey: owner, isSigner: true, isWritable: true },
+          { pubkey: ownerAtaFor(inputMint, TOKEN_2022_PROGRAM), isSigner: false, isWritable: true },
+        ],
+        Buffer.from([17]),
+      ),
     ]);
     expect(verifyTx(t, sellIntent())).toEqual({ ok: true });
   });
@@ -534,61 +540,150 @@ describe('Wall B — priority-fee cap (ComputeBudget price × CU-limit is bounde
   });
 });
 
-describe('Wall B — verifyTx (fee / operator sink: the ONE allowlisted non-owner outflow, Inc.4d SPEC §9)', () => {
-  const operator = pk();
-  const feeIntent = (over: Partial<WallBIntent> = {}): WallBIntent => ({
-    owner: owner.toBase58(),
-    pool: position.toBase58(), // a fee has no DLMM pool — Wall B ignores `pool` for a fee
-    kind: 'fee',
-    positionPubkey: position.toBase58(),
-    operatorFeeAddress: operator.toBase58(),
-    ...over,
-  });
-  const feeTransferTo = (to: PublicKey, lamports = 25_000_000) =>
-    buildTx(owner, [SystemProgram.transfer({ fromPubkey: owner, toPubkey: to, lamports })]);
+// E1-01: Wall B must decode SPL Token / Token-2022 instruction CONTENT. WHY it matters: both programs are
+// allowlisted, so a buggy/compromised brain could append ONE extra token instruction (a Transfer/closeAccount
+// draining the owner's token leg or WSOL lamports to an attacker) alongside a legitimate DLMM op and, before this
+// fix, verifyTx returned {ok:true}. Deny-by-default: only the discriminators our builders emit pass, and every
+// value-moving one MUST target the owner. These tests would FAIL if the content check were removed or weakened.
+describe('Wall B — verifyTx (SPL Token / Token-2022 instruction content, E1-01)', () => {
+  const tokenIx = (
+    program: PublicKey,
+    disc: number,
+    keys: { pubkey: PublicKey; isSigner: boolean; isWritable: boolean }[],
+  ) => ix(program, keys, Buffer.from([disc]));
+  // A legitimate DLMM open, with one extra token instruction appended — pool stays referenced, signers unchanged.
+  const openWithToken = (tokenInstruction: TransactionInstruction): Transaction =>
+    buildTx(owner, [
+      ix(DLMM, [
+        { pubkey: owner, isSigner: true, isWritable: true },
+        { pubkey: position, isSigner: true, isWritable: true },
+        { pubkey: pool, isSigner: false, isWritable: true },
+      ]),
+      tokenInstruction,
+    ]);
+  const anyKey = { pubkey: pk(), isSigner: false, isWritable: true };
 
-  it('fee → the configured operator sink is ALLOWED (the single amount-derived outflow exception)', () => {
-    expect(verifyTx(feeTransferTo(operator), feeIntent())).toEqual({ ok: true });
+  it('appended SyncNative (17, no funds move) → still ok', () => {
+    const t = openWithToken(
+      tokenIx(TOKEN_PROGRAM, 17, [
+        { pubkey: ownerAtaFor(WSOL, TOKEN_PROGRAM), isSigner: false, isWritable: true },
+      ]),
+    );
+    expect(verifyTx(t, openIntent())).toEqual({ ok: true });
   });
 
-  it('fee → a FOREIGN destination is rejected (a compromised brain cannot redirect the fee)', () => {
+  it('appended CloseAccount (9) reclaiming rent to the OWNER → ok', () => {
+    const t = openWithToken(
+      tokenIx(TOKEN_PROGRAM, 9, [
+        anyKey,
+        { pubkey: owner, isSigner: false, isWritable: true },
+        { pubkey: owner, isSigner: true, isWritable: false },
+      ]),
+    );
+    expect(verifyTx(t, openIntent())).toEqual({ ok: true });
+  });
+
+  it('appended CloseAccount (9) redirecting rent to an ATTACKER → reject token_close_foreign_destination', () => {
     const attacker = pk();
-    expect(verifyTx(feeTransferTo(attacker), feeIntent())).toMatchObject({
+    const t = openWithToken(
+      tokenIx(TOKEN_PROGRAM, 9, [
+        anyKey,
+        { pubkey: attacker, isSigner: false, isWritable: true },
+        { pubkey: owner, isSigner: true, isWritable: false },
+      ]),
+    );
+    expect(verifyTx(t, openIntent())).toMatchObject({
       ok: false,
-      reason: 'foreign_sol_destination',
+      reason: 'token_close_foreign_destination',
     });
   });
 
-  it('a NON-fee tx to the operator address is rejected (the exception is gated strictly to kind=fee)', () => {
-    // A 'close' tx transferring to the operator address must NOT get the fee exception → foreign_sol_destination.
-    expect(verifyTx(feeTransferTo(operator), feeIntent({ kind: 'close' }))).toMatchObject({
+  it('appended Token-2022 CloseAccount to an ATTACKER → reject (both token programs decoded)', () => {
+    const attacker = pk();
+    const t = openWithToken(
+      tokenIx(TOKEN_2022_PROGRAM, 9, [
+        anyKey,
+        { pubkey: attacker, isSigner: false, isWritable: true },
+        { pubkey: owner, isSigner: true, isWritable: false },
+      ]),
+    );
+    expect(verifyTx(t, openIntent())).toMatchObject({
       ok: false,
-      reason: 'foreign_sol_destination',
+      reason: 'token_close_foreign_destination',
     });
   });
 
-  it('fee with NO operator sink configured → fail-closed: a transfer to the would-be operator is foreign', () => {
-    // With no sink allowlisted, EVEN a transfer to the operator address is just a foreign destination → rejected
-    // in the instruction loop (the coffre never signs a fee it has no sink for).
-    expect(
-      verifyTx(feeTransferTo(operator), feeIntent({ operatorFeeAddress: undefined })),
-    ).toMatchObject({ ok: false, reason: 'foreign_sol_destination' });
-  });
-
-  it('a "fee" tx with no transfer AND no sink → reject fee_operator_unset (the degenerate fail-closed case)', () => {
-    const t = buildTx(owner, [ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 })]);
-    expect(verifyTx(t, feeIntent({ operatorFeeAddress: undefined }))).toMatchObject({
+  it('appended bare Transfer (3, no mint ⇒ destination unverifiable) → reject token_ix_not_allowed:3 (the exact E1-01 drain)', () => {
+    const attacker = pk();
+    const t = openWithToken(
+      tokenIx(TOKEN_PROGRAM, 3, [
+        anyKey,
+        { pubkey: attacker, isSigner: false, isWritable: true },
+        { pubkey: owner, isSigner: true, isWritable: false },
+      ]),
+    );
+    expect(verifyTx(t, openIntent())).toMatchObject({
       ok: false,
-      reason: 'fee_operator_unset',
+      reason: 'token_ix_not_allowed:3',
     });
   });
 
-  it('a "fee" tx that carries NO operator transfer → reject fee_missing_operator_transfer', () => {
-    // A ComputeBudget-only "fee" tx (no SystemProgram.transfer to the operator) must not pass as a fee.
-    const t = buildTx(owner, [ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 })]);
-    expect(verifyTx(t, feeIntent())).toMatchObject({
+  it('appended TransferChecked (12) to an owner ATA of the mint → ok', () => {
+    const mint = pk();
+    const t = openWithToken(
+      tokenIx(TOKEN_PROGRAM, 12, [
+        anyKey,
+        { pubkey: mint, isSigner: false, isWritable: false },
+        { pubkey: ownerAtaFor(mint, TOKEN_PROGRAM), isSigner: false, isWritable: true },
+        { pubkey: owner, isSigner: true, isWritable: false },
+      ]),
+    );
+    expect(verifyTx(t, openIntent())).toEqual({ ok: true });
+  });
+
+  it('appended TransferChecked (12) to an ATTACKER account → reject token_transfer_foreign_destination', () => {
+    const mint = pk();
+    const attacker = pk();
+    const t = openWithToken(
+      tokenIx(TOKEN_PROGRAM, 12, [
+        anyKey,
+        { pubkey: mint, isSigner: false, isWritable: false },
+        { pubkey: attacker, isSigner: false, isWritable: true },
+        { pubkey: owner, isSigner: true, isWritable: false },
+      ]),
+    );
+    expect(verifyTx(t, openIntent())).toMatchObject({
       ok: false,
-      reason: 'fee_missing_operator_transfer',
+      reason: 'token_transfer_foreign_destination',
+    });
+  });
+
+  it('appended Approve (4, a dangerous discriminator) → reject token_ix_not_allowed:4 (fail-closed)', () => {
+    const t = openWithToken(
+      tokenIx(TOKEN_PROGRAM, 4, [anyKey, { pubkey: pk(), isSigner: false, isWritable: false }]),
+    );
+    expect(verifyTx(t, openIntent())).toMatchObject({
+      ok: false,
+      reason: 'token_ix_not_allowed:4',
+    });
+  });
+
+  it('the drain is kind-agnostic: a valid sell + appended bare Transfer to an attacker → reject', () => {
+    const attacker = pk();
+    const t = buildTx(owner, [
+      ix(JUP, [
+        { pubkey: owner, isSigner: true, isWritable: true },
+        { pubkey: ownerAta(inputMint), isSigner: false, isWritable: true },
+      ]),
+      tokenIx(TOKEN_PROGRAM, 3, [
+        anyKey,
+        { pubkey: attacker, isSigner: false, isWritable: true },
+        { pubkey: owner, isSigner: true, isWritable: false },
+      ]),
+    ]);
+    expect(verifyTx(t, sellIntent())).toMatchObject({
+      ok: false,
+      reason: 'token_ix_not_allowed:3',
     });
   });
 });

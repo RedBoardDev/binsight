@@ -31,7 +31,6 @@ const EMOJI = {
   skippedAdd: '⏭️',
   claim: '💰',
   swap: '💱',
-  fee: '💸',
   insufficient: '⚠️',
   skipped: '🚫',
   noCopy: '🚫',
@@ -160,16 +159,6 @@ export function toUserMessage(e: CopyEvent): UserMessage | null {
         ? [...links, { label: 'close manually', url: meteoraUrl }]
         : links;
       return msg(EMOJI.alert, e, [pair, 'close manually'], failLinks);
-    }
-    case 'fee': {
-      // 💸 Performance Fee Assessed — 0.04 SOL fee on 0.85 SOL realized · tx: …   (SOL-only, D-2/D-6 honest)
-      const baseSol = readNumber(e.adminDetail, 'basePnlSol');
-      const feeSol = readNumber(e.adminDetail, 'feeSol');
-      const parts: string[] = [];
-      if (feeSol !== undefined && baseSol !== undefined)
-        parts.push(`${sol(feeSol)} fee on ${sol(baseSol)} realized`);
-      else if (feeSol !== undefined) parts.push(`${sol(feeSol)} fee`);
-      return msg(EMOJI.fee, e, parts, links);
     }
     case 'system-fatal': {
       // 🚨 Bot Stopped — Fatal Error · <reason>

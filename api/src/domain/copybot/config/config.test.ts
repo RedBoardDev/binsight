@@ -512,3 +512,35 @@ describe('config · effectiveFor · two-sided forces the transfer-fee guard (fin
     expect(sharedFilters.skipTransferFeeTokens).toBe(false); // ...but the source object is untouched
   });
 });
+
+// A3-01: slippageBps must be bounded to minOutWithSlippage's contract [0, 10000) integer. WHY it matters — an
+// unbounded / ≥100% / fractional value throws in minOutWithSlippage, WEDGING two-sided/reshape settlement AND
+// defeating the residual-sweep (which shares the calc). Rejected at parse (fail-CLOSED → STOPPED_CONFIG_DEFAULTS),
+// never silently accepted. These tests would FAIL if the schema bound were removed.
+describe('config · execution.slippageBps bound (A3-01)', () => {
+  it('the maximum in-range value (9999 bps, < 100%) is accepted', () => {
+    const cfg = parseConfig(JSON.stringify({ user: { execution: { slippageBps: 9999 } } }));
+    expect(cfg.user.execution.slippageBps).toBe(9999);
+  });
+
+  it('slippageBps ≥ 10000 (100%+) is REJECTED → fail-closed (would wedge settlement + defeat the residual-sweep)', () => {
+    expect(parseConfig(JSON.stringify({ user: { execution: { slippageBps: 10000 } } }))).toEqual(
+      STOPPED_CONFIG_DEFAULTS,
+    );
+    expect(parseConfig(JSON.stringify({ user: { execution: { slippageBps: 50000 } } }))).toEqual(
+      STOPPED_CONFIG_DEFAULTS,
+    );
+  });
+
+  it('a fractional slippageBps is REJECTED (BigInt(float) would throw in minOutWithSlippage)', () => {
+    expect(parseConfig(JSON.stringify({ user: { execution: { slippageBps: 500.5 } } }))).toEqual(
+      STOPPED_CONFIG_DEFAULTS,
+    );
+  });
+
+  it('a negative slippageBps is REJECTED', () => {
+    expect(parseConfig(JSON.stringify({ user: { execution: { slippageBps: -1 } } }))).toEqual(
+      STOPPED_CONFIG_DEFAULTS,
+    );
+  });
+});

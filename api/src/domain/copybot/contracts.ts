@@ -15,9 +15,9 @@ export const SignRequestSchema = z
     commandId: z.string().min(1),
     /** leader:pool:action:position:signature — the originating leader event. */
     eventKey: z.string().min(1),
-    kind: z.enum(['open', 'close', 'claim', 'sell', 'add', 'remove', 'buy', 'fee']),
+    kind: z.enum(['open', 'close', 'claim', 'sell', 'add', 'remove', 'buy']),
     pool: z.string().min(1),
-    /** pubkey of OUR position (ephemeral for an open). For a 'sell'/'fee', the closed position (provenance). */
+    /** pubkey of OUR position (ephemeral for an open). For a 'sell', the closed position (provenance). */
     positionPubkey: z.string().min(1),
     /** our owner (copy-test); the coffre checks destination == owner. */
     owner: z.string().min(1),
@@ -25,7 +25,9 @@ export const SignRequestSchema = z
     txBase64: z.string().min(1),
     /** SOL size we deploy (re-clamped by the coffre against the local config). */
     sizeSol: z.number().nonnegative(),
-    /** re-anchored bin range — Wall B checks that the tx only touches this range. */
+    /** re-anchored bin range — telemetry + the PLANNED fine-grained bin-intent-bind. NOTE (E1-05): Wall B does NOT
+     *  yet READ or enforce this range (the fine-grained bin check is later hardening, see the wall-b.ts header) — do
+     *  not rely on it as a live pre-sign gate. */
     targetBinRange: z.object({ lower: z.number().int(), upper: z.number().int() }),
     /** freshness bounds (anti-replay): the coffre requires currentSlot ≤ deadlineSlot. */
     issuedAtSlot: z.number().int().nonnegative(),
@@ -46,15 +48,6 @@ export const SignRequestSchema = z
         outputMint: z.string().min(1), // token being bought (Wall B binds the swap to owner's ATA of it)
         exactOutAmountRaw: z.string().min(1), // EXACT token amount to receive, raw token units
         maxInLamports: z.string().min(1), // SOL spend cap (slippage-bounded; Wall B re-clamps against the local cap)
-      })
-      .optional(),
-    /** present ONLY for a 'fee': the 5% performance-fee transfer (owner → operator sink, SPEC §9). The coffre does
-     *  NOT trust `toAddress` (a compromised brain could forge it) — Wall B re-verifies the tx's transfer goes to
-     *  the coffre's OWN configured OPERATOR_FEE_ADDRESS; this payload is traceability/telemetry only. */
-    fee: z
-      .object({
-        toAddress: z.string().min(1), // the operator fee sink the brain built the transfer toward (re-checked by Wall B)
-        lamports: z.string().min(1), // the fee amount (raw lamports, string like the sell/buy amounts)
       })
       .optional(),
   })
@@ -85,19 +78,6 @@ export const SignRequestSchema = z
         code: z.ZodIssueCode.custom,
         message: 'buy payload only allowed for kind=buy',
         path: ['buy'],
-      });
-    // kind 'fee' ⟺ the fee payload is present (symmetric to sell/buy — no ambiguous half-formed fee intents).
-    if (v.kind === 'fee' && !v.fee)
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'fee payload required for kind=fee',
-        path: ['fee'],
-      });
-    if (v.kind !== 'fee' && v.fee)
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'fee payload only allowed for kind=fee',
-        path: ['fee'],
       });
   });
 

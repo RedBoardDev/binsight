@@ -9,9 +9,8 @@ import type { CopyEvents } from '@/copybot/observability/copy-events';
 import type { SignRequest } from '@/domain/copybot/contracts';
 import type { RedisBus } from '@/infrastructure/bus/redis-bus';
 import type { Database } from '@/infrastructure/persistence/database';
-import { PositionLedgerRepository } from '@/infrastructure/persistence/position-ledger-repository';
 import * as schema from '@/infrastructure/persistence/schema';
-import { executions, positionLedger } from '@/infrastructure/persistence/schema';
+import { executions } from '@/infrastructure/persistence/schema';
 import { ConfirmWorker } from './confirm-worker';
 import { claimExecution } from './idempotency';
 import { type Ctx, recoveryPreCheck, type SubmittedPublishCtx } from './process-command';
@@ -82,27 +81,19 @@ const rowOf = async (userId: string, commandId: string) =>
 type Status = { err?: unknown; confirmationStatus?: string } | null;
 /** The optional second arg of getSignatureStatus(es); its `searchTransactionHistory` selects the history mock. */
 type StatusConfig = { searchTransactionHistory?: boolean };
-/** A minimal getTransaction response the ledger writer reads (owner delta from static keys + pre/post balances). */
-type TxResponse = {
-  meta: { preBalances: number[]; postBalances: number[] } | null;
-  transaction: { message: { staticAccountKeys?: Array<{ toBase58: () => string }> } };
-} | null;
 /** A conn whose batch status read + block height are scripted; `getSignatureStatus` serves the recovery path.
  *  `historyStatuses` is served instead of `statuses` when a caller passes `searchTransactionHistory: true` — this
  *  lets a test model a tx that is invisible to the recent-status cache but present in full history (#148).
  *  `onBlockHeight` fires inside `getBlockHeight` (called once at the START of a tick, before the status batch): the
- *  deterministic seam a test uses to inject a concurrent re-track at that await boundary (#149).
- *  `getTransaction` (Inc.4d) is scripted per-sig for the position-ledger writer — defaults to null (no row). */
+ *  deterministic seam a test uses to inject a concurrent re-track at that await boundary (#149). */
 function connOf(opts: {
   statuses: (sig: string) => Status;
   historyStatuses?: (sig: string) => Status;
   blockHeight: number;
   onBlockHeight?: () => void | Promise<void>;
-  transactions?: (sig: string) => TxResponse;
 }): {
   conn: Connection;
   getStatuses: ReturnType<typeof vi.fn>;
-  getTx: ReturnType<typeof vi.fn>;
 } {
   const statusOf = (sig: string, config?: StatusConfig): Status => {
     if (config?.searchTransactionHistory) return (opts.historyStatuses ?? opts.statuses)(sig);
@@ -111,7 +102,6 @@ function connOf(opts: {
   const getStatuses = vi.fn(async (sigs: string[], config?: StatusConfig) => ({
     value: sigs.map((s) => statusOf(s, config)),
   }));
-  const getTx = vi.fn(async (sig: string) => (opts.transactions ? opts.transactions(sig) : null));
   const conn = {
     getSignatureStatuses: getStatuses,
     getSignatureStatus: async (s: string, config?: StatusConfig) => ({
@@ -121,17 +111,8 @@ function connOf(opts: {
       await opts.onBlockHeight?.();
       return opts.blockHeight;
     },
-    getTransaction: getTx,
   } as unknown as Connection;
-  return { conn, getStatuses, getTx };
-}
-
-/** A synthetic getTransaction response placing `owner` at static index 0 with the given lamport delta. */
-function txWithOwnerDelta(owner: string, pre: number, post: number): TxResponse {
-  return {
-    meta: { preBalances: [pre, 1, 1], postBalances: [post, 1, 1] },
-    transaction: { message: { staticAccountKeys: [{ toBase58: () => owner }] } },
-  };
+  return { conn, getStatuses };
 }
 
 let bus: RedisBus;
@@ -147,16 +128,9 @@ const workerOf = (conn: Connection): ConfirmWorker =>
     db,
     bus,
     events,
-    ledger: new PositionLedgerRepository(db),
     hmacKey: 'k',
     log,
   });
-
-const ledgerRowsOf = async (userId: string, ourPosition: string) =>
-  db
-    .select()
-    .from(positionLedger)
-    .where(and(eq(positionLedger.userId, userId), eq(positionLedger.ourPosition, ourPosition)));
 
 const track = (w: ConfirmWorker, s: Awaited<ReturnType<typeof seedSubmitted>>): void =>
   w.track({
@@ -493,79 +467,5 @@ describe('ConfirmWorker ⇄ recovery — the exactly-once landing protocol under
     expect(verdict).toEqual({ ok: true, kind: 'close' }); // acknowledged as terminal — NOT re-signed
     expect((await rowOf(s.userId, s.commandId))?.state).toBe('landed');
     expect(bus.publish).toHaveBeenCalledTimes(1); // the landed close is published once
-  });
-});
-
-describe('ConfirmWorker — Inc.4d position ledger (fee base, post-confirm bookkeeping)', () => {
-  it('a confirmed CLOSE appends a lamport-exact ledger row from the owner balance delta, BEFORE ev:executed', async () => {
-    // WHY: the base = Σin − Σout must be exact; a CLOSE returns SOL (owner delta > 0) → lamports_in. The row is
-    // written before the ev:executed publish so the brain's close-confirm fee assessment reads a COMPLETE ledger.
-    const s = await seedSubmitted({ signature: 'SIG_CLOSE', publish: publishCtxOf('close') });
-    const owner = s.publish?.owner as string;
-    const { conn } = connOf({
-      statuses: () => ({ confirmationStatus: 'confirmed' }),
-      blockHeight: 500,
-      transactions: () => txWithOwnerDelta(owner, 100, 1_600_000_100), // +1.6 SOL returned to the owner
-    });
-    const w = workerOf(conn);
-    track(w, s);
-    await w.tick();
-    const rows = await ledgerRowsOf(s.userId, s.publish?.positionPubkey as string);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ kind: 'close', lamportsIn: 1_600_000_000, lamportsOut: 0 });
-    expect(bus.publish).toHaveBeenCalledTimes(1); // ev:executed still published (the close reaches the brain)
-  });
-
-  it('a confirmed OPEN records lamports_out (SOL deposited); a re-tick never double-counts', async () => {
-    const s = await seedSubmitted({ signature: 'SIG_OPEN', publish: publishCtxOf('open') });
-    const owner = s.publish?.owner as string;
-    const { conn } = connOf({
-      statuses: () => ({ confirmationStatus: 'confirmed' }),
-      blockHeight: 500,
-      transactions: () => txWithOwnerDelta(owner, 1_000_000_050, 50), // −1 SOL deposited (+ ~fee)
-    });
-    const w = workerOf(conn);
-    track(w, s);
-    await w.tick();
-    // Re-track + re-tick (a redelivery) must not append a second row — the ledger is idempotent on (user, sig, pos).
-    track(w, s);
-    await w.tick();
-    const rows = await ledgerRowsOf(s.userId, s.publish?.positionPubkey as string);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ kind: 'open', lamportsIn: 0, lamportsOut: 1_000_000_000 });
-  });
-
-  it('a SELL (wallet op) writes NO ledger row (only position legs contribute to the fee base)', async () => {
-    const s = await seedSubmitted({ signature: 'SIG_SELL', publish: publishCtxOf('sell') });
-    const owner = s.publish?.owner as string;
-    const { conn, getTx } = connOf({
-      statuses: () => ({ confirmationStatus: 'confirmed' }),
-      blockHeight: 500,
-      transactions: () => txWithOwnerDelta(owner, 1, 2),
-    });
-    const w = workerOf(conn);
-    track(w, s);
-    await w.tick();
-    expect(getTx).not.toHaveBeenCalled(); // a non-ledger kind never even fetches the tx
-    expect(await ledgerRowsOf(s.userId, s.publish?.positionPubkey as string)).toHaveLength(0);
-  });
-
-  it('a getTransaction failure NEVER blocks the land: the row stays landed + ev:executed is published', async () => {
-    // WHY: fee bookkeeping is off the money path — a tx-meta fetch blip must degrade to "no ledger row for this
-    // position", never corrupt the landed/finalize state nor drop the close confirm.
-    const s = await seedSubmitted({ signature: 'SIG_TXFAIL', publish: publishCtxOf('close') });
-    const { conn } = connOf({
-      statuses: () => ({ confirmationStatus: 'confirmed' }),
-      blockHeight: 500,
-      transactions: () => {
-        throw new Error('rpc blip');
-      },
-    });
-    const w = workerOf(conn);
-    track(w, s);
-    await expect(w.tick()).resolves.toBeUndefined(); // swallowed
-    expect((await rowOf(s.userId, s.commandId))?.state).toBe('landed');
-    expect(bus.publish).toHaveBeenCalledTimes(1);
-    expect(await ledgerRowsOf(s.userId, s.publish?.positionPubkey as string)).toHaveLength(0);
   });
 });

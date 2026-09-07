@@ -52,6 +52,17 @@ const MICRO_LAMPORTS_PER_LAMPORT = 1_000_000n;
 const PROTOCOL_MAX_CU = 1_400_000n; // Solana per-tx CU ceiling — the worst-case CU when a tx sets a price but no explicit limit (never under-bound the fee)
 const MAX_PRIORITY_FEE_LAMPORTS = 50_000_000n; // 0.05 SOL hard ceiling on the worst-case priority fee — ~10× the default 0.005 SOL maxCapSol budget (generous headroom for congestion), but bounds a compromised-brain fee-drain to a tiny amount per tx
 
+// SPL Token / Token-2022 instruction discriminators (first data byte). Wall B decodes these so a buggy/compromised
+// brain cannot append a foreign Token transfer/closeAccount alongside a legitimate DLMM op (E1-01): both programs are
+// allowlisted, so without a content check any signable kind could smuggle a drain of the owner's token leg or WSOL
+// lamports. Token-2022 shares these base discriminators; its extension instructions (discriminator 43) are rejected.
+const TOKEN_INITIALIZE_ACCOUNT = 1; // InitializeAccount — creates a token account, moves no funds
+const TOKEN_CLOSE_ACCOUNT = 9; // CloseAccount [account, destination, authority] — reclaims rent lamports to destination
+const TOKEN_TRANSFER_CHECKED = 12; // TransferChecked [source, mint, destination, authority, …] — the only decodable transfer (carries the mint)
+const TOKEN_INITIALIZE_ACCOUNT2 = 16; // InitializeAccount2 — moves no funds
+const TOKEN_SYNC_NATIVE = 17; // SyncNative — refreshes a WSOL ATA balance, moves no funds
+const TOKEN_INITIALIZE_ACCOUNT3 = 18; // InitializeAccount3 — moves no funds
+
 const ALLOWED_PROGRAMS = new Set([
   COMPUTE_BUDGET,
   SYSTEM,
@@ -65,14 +76,9 @@ const ALLOWED_PROGRAMS = new Set([
 export interface WallBIntent {
   owner: string;
   pool: string;
-  kind: 'open' | 'close' | 'claim' | 'sell' | 'add' | 'remove' | 'buy' | 'fee';
+  kind: 'open' | 'close' | 'claim' | 'sell' | 'add' | 'remove' | 'buy';
   /** pubkey of the expected ephemeral position (signer for an open). */
   positionPubkey: string;
-  /** The coffre's OWN configured operator fee sink (Inc.4d, SPEC §9). The ONE non-owner System.Transfer
-   *  destination allowed — and ONLY when `kind==='fee'`. Comes from the coffre's trusted env (NOT the request),
-   *  so a compromised brain cannot redirect the fee: a `kind:'fee'` tx to any other destination, or a non-fee tx
-   *  to this address, is rejected. Undefined ⇒ no sink configured ⇒ a fee tx is rejected (fail-closed). */
-  operatorFeeAddress?: string;
   /** for a Jupiter swap ('sell' or 'buy'): the swap's NON-SOL token mint (sell = input sold, buy = output bought)
    *  — the swap is bound to owner's ATA of it. */
   inputMint?: string;
@@ -102,9 +108,9 @@ export function verifyTx(tx: Transaction, intent: WallBIntent): WallBVerdict {
     return { ok: false, reason: 'missing_position_signer' };
   }
 
-  const ownerWsolAta = ownerAta(new PublicKey(intent.owner), WSOL, TOKEN_PROGRAM); // the SOL the tx wraps for deployment/swap
+  const ownerPk = new PublicKey(intent.owner);
+  const ownerWsolAta = ownerAta(ownerPk, WSOL, TOKEN_PROGRAM); // the SOL the tx wraps for deployment/swap
   let wrapLamports = 0n; // sum of owner→WSOL-ATA System-Transfers = the ACTUAL SOL this tx deploys
-  let feeToOperatorLamports = 0n; // sum of owner→operator System-Transfers (allowed ONLY for kind 'fee')
   let cbUnitLimit: bigint | null = null; // explicit ComputeBudget CU limit, if the tx sets one
   let cbUnitPriceMicro = 0n; // ComputeBudget CU price (microLamports/CU) → the priority fee
   const accountKeys = new Set<string>();
@@ -129,22 +135,50 @@ export function verifyTx(tx: Transaction, intent: WallBIntent): WallBVerdict {
       const lamports = ix.data.length >= 12 ? ix.data.readBigUInt64LE(4) : 0n;
       if (from === intent.owner && to === ownerWsolAta) wrapLamports += lamports; // capital wrapped for the deposit/swap
       if (from === intent.owner && to !== intent.owner && to !== ownerWsolAta) {
-        // The allowed non-owner SOL destinations are a CLOSED set, each machine-checked here (defense in depth):
-        //  · the operator fee sink — ONLY for kind 'fee', and only the coffre's OWN configured address (SPEC §9);
-        //  · a capped tip to a known Jito tip account (anti-sandwich);
-        //  · nothing else — any other destination is a drain vector and is rejected.
-        if (
-          intent.kind === 'fee' &&
-          intent.operatorFeeAddress !== undefined &&
-          to === intent.operatorFeeAddress
-        ) {
-          feeToOperatorLamports += lamports; // the ONE allowlisted outflow exception (amount-derived, no pool)
-        } else if (to !== undefined && JITO_TIP_SET.has(to)) {
+        // The only allowed non-owner SOL destination is a capped tip to a known Jito tip account (anti-sandwich);
+        // anything else is a drain vector and is rejected.
+        if (to !== undefined && JITO_TIP_SET.has(to)) {
           if (lamports > BigInt(MAX_JITO_TIP_LAMPORTS))
             return { ok: false, reason: 'jito_tip_too_large' };
         } else {
           return { ok: false, reason: 'foreign_sol_destination' };
         }
+      }
+    }
+
+    // INV-3b (E1-01): decode SPL Token / Token-2022 instruction CONTENT. Both programs are allowlisted, so without
+    // this a compromised/buggy brain could append a foreign token transfer or a closeAccount redirecting the owner's
+    // token leg / WSOL lamports to an attacker alongside an otherwise-valid DLMM op. Deny-by-default: only the
+    // discriminators our own builders emit pass, and the value-moving ones must target the OWNER. Everything else —
+    // bare Transfer (discriminator 3 carries no mint, so its destination cannot be owner-verified), Approve,
+    // SetAuthority, Burn, MintTo, Token-2022 extension instructions — is rejected. (Whitelist completeness vs real
+    // builder output is a go-live gate via the copybot-onchain-test matrix; safe to ship now — signing is gated OFF.)
+    if (prog === TOKEN || prog === TOKEN_2022) {
+      const disc = ix.data.length > 0 ? ix.data[0] : -1;
+      if (
+        disc === TOKEN_SYNC_NATIVE ||
+        disc === TOKEN_INITIALIZE_ACCOUNT ||
+        disc === TOKEN_INITIALIZE_ACCOUNT2 ||
+        disc === TOKEN_INITIALIZE_ACCOUNT3
+      ) {
+        // Balance refresh / account creation — moves no existing funds, safe to accept.
+      } else if (disc === TOKEN_CLOSE_ACCOUNT) {
+        // CloseAccount reclaims the closed account's rent lamports to keys[1]; it MUST be the owner (the exact
+        // WSOL-unwrap drain vector acknowledged in c724e56). A foreign lamport destination is rejected.
+        const to = ix.keys[1]?.pubkey.toBase58();
+        if (to !== intent.owner) return { ok: false, reason: 'token_close_foreign_destination' };
+      } else if (disc === TOKEN_TRANSFER_CHECKED) {
+        // TransferChecked [source, mint, destination, authority]: the destination MUST be an owner-derived ATA of the
+        // mint under either token program, else it drains the owner's token leg to a foreign account.
+        const mintKey = ix.keys[1]?.pubkey;
+        const to = ix.keys[2]?.pubkey.toBase58();
+        if (mintKey === undefined || to === undefined)
+          return { ok: false, reason: 'token_transfer_malformed' };
+        const ownerAtas = TOKEN_PROGRAMS.map((tp) => ownerAta(ownerPk, mintKey, tp));
+        if (!ownerAtas.includes(to))
+          return { ok: false, reason: 'token_transfer_foreign_destination' };
+      } else {
+        return { ok: false, reason: `token_ix_not_allowed:${disc}` };
       }
     }
   }
@@ -163,27 +197,17 @@ export function verifyTx(tx: Transaction, intent: WallBIntent): WallBVerdict {
   if (intent.maxLamports !== undefined && wrapLamports > BigInt(intent.maxLamports))
     return { ok: false, reason: 'sol_spend_over_cap' };
 
-  // A 'fee' is a plain SystemProgram.transfer of the 5% performance fee to the operator sink — no DLMM pool, no
-  // swap (SPEC §9). It is bound purely by its destination: the tx MUST move SOL owner→operator (the single
-  // allowlisted outflow, gated to kind 'fee' in the loop above) and NOTHING else foreign (any other destination
-  // already rejected as `foreign_sol_destination`). Fail-closed with no sink configured, and reject a "fee" tx
-  // that carries no operator transfer at all (a mislabeled/empty tx must never pass as a fee).
-  if (intent.kind === 'fee') {
-    if (intent.operatorFeeAddress === undefined) return { ok: false, reason: 'fee_operator_unset' };
-    if (feeToOperatorLamports <= 0n) return { ok: false, reason: 'fee_missing_operator_transfer' };
-    return { ok: true };
-  }
-
   // A 'sell' (token→SOL) or 'buy' (SOL→token) is a Jupiter swap: no DLMM pool is referenced. Bind it to owner's
   // ATA of the swap's non-SOL token (sell = the residual sold, buy = the token bought for a two-sided copy) —
   // proves the swap touches the intended token's account, not some other holding.
   if (intent.kind === 'sell' || intent.kind === 'buy') {
     if (!intent.inputMint) return { ok: false, reason: 'swap_missing_token_mint' };
-    const owner = new PublicKey(intent.owner);
     const mint = new PublicKey(intent.inputMint);
     // Accept the swap if it touches owner's ATA of the token under EITHER token program (the mint's program is
     // not known here without I/O; both derivations are owner-bound, so either is safe to accept).
-    const touchesOwnerAta = TOKEN_PROGRAMS.some((tp) => accountKeys.has(ownerAta(owner, mint, tp)));
+    const touchesOwnerAta = TOKEN_PROGRAMS.some((tp) =>
+      accountKeys.has(ownerAta(ownerPk, mint, tp)),
+    );
     if (!touchesOwnerAta) return { ok: false, reason: 'swap_token_not_owner_ata' };
     return { ok: true };
   }

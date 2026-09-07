@@ -9,6 +9,10 @@
  */
 
 const BPS_DENOMINATOR = 10_000n; // basis-points base (100% = 10000 bps)
+// A3-01: the config schema's inclusive upper bound for slippageBps. At/above BPS_DENOMINATOR (100%) minOutWithSlippage
+// zeroes or inverts the min-out floor (accept any output → a drain) and throws — which would WEDGE two-sided/reshape
+// settlement and defeat the residual-sweep. Bounding here (single source) rejects such a config at parse (fail-closed).
+export const MAX_SLIPPAGE_BPS = Number(BPS_DENOMINATOR) - 1; // 9999 (< 100%)
 
 export interface ResidualSellDecision {
   sell: boolean;

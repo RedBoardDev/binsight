@@ -16,9 +16,7 @@ import {
   copyJournal,
   copyPositions,
   executions,
-  feeLedger,
   inviteCodes,
-  positionLedger,
   positions as positionsTable,
   pushSubscriptions,
   rugExitPendings,
@@ -213,8 +211,6 @@ export class PostgresAccountRepository implements AccountRepository {
       await tx.delete(copyJournal).where(eq(copyJournal.userId, id));
       await tx.delete(rugExits).where(eq(rugExits.userId, id));
       await tx.delete(rugExitPendings).where(eq(rugExitPendings.userId, id));
-      await tx.delete(positionLedger).where(eq(positionLedger.userId, id));
-      await tx.delete(feeLedger).where(eq(feeLedger.userId, id));
       await tx.delete(copybotActivation).where(eq(copybotActivation.userId, id));
       // User-scoped notification state (NOT copy-bot state, NOT shared): drop this account's push
       // subscriptions so a removed user stops receiving web-push (finding #102). The FK cascade backs

@@ -92,7 +92,16 @@ describe('shouldRetainLeader — a draining leader entry survives while any mirr
   const holdings = (over: Partial<LeaderHoldings>): LeaderHoldings => ({
     openMirrorLeaders: [],
     rugExitPendingLeaders: [],
+    inFlightOpenLeaders: [],
     ...over,
+  });
+
+  it('A6-03: retained while an OPEN is still IN FLIGHT (mirror not yet recorded) — a stop mid-open must not delete its detector', () => {
+    // WHY: a leader stop/removal landing during a multi-tx open would otherwise prune the leader's detector before the
+    // funded mirror registers, leaving the position un-managed (no close channel). The in-flight reservation retains it.
+    const hs = [holdings({ inFlightOpenLeaders: [LEADER_A] })];
+    expect(shouldRetainLeader(LEADER_A, hs)).toBe(true);
+    expect(shouldRetainLeader(LEADER_B, hs)).toBe(false);
   });
 
   it('retained while ANY runtime holds an open mirror for it (its close must stay detectable)', () => {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   buildJupiterSwapTx,
   getJupiterBuyQuote,
@@ -203,5 +203,25 @@ describe('buildJupiterSwapTx', () => {
   it('throws when the response carries no swapTransaction', async () => {
     const { fetch } = fakeFetch({ body: { error: 'nope' } });
     await expect(buildJupiterSwapTx(BASE, quote, 'OWNER', fetch)).rejects.toThrow();
+  });
+});
+
+// D1-03/D3-04: the PRODUCTION fetch (defaultFetch, used when no fetchFn is injected) must bound every Jupiter call with
+// an AbortSignal timeout — the residual-sell quote runs inline on the sequential ev:executed consumer, so an unbounded
+// fetch would freeze every user's confirmations. This test would FAIL if the timeout signal were dropped.
+describe('defaultFetch — Jupiter fetches are timeout-bounded (D1-03/D3-04)', () => {
+  it('attaches an AbortSignal to the production fetch so a hung Jupiter call fails-fast instead of hanging forever', async () => {
+    let capturedInit: { signal?: unknown } | undefined;
+    vi.stubGlobal('fetch', async (_url: string, init: { signal?: unknown }) => {
+      capturedInit = init;
+      return { ok: true, status: 200, json: async () => ({ inAmount: '1', outAmount: '2' }) };
+    });
+    try {
+      await getJupiterQuote(BASE, MINT, 1n, 50); // NO fetchFn → the production defaultFetch path
+      expect(capturedInit?.signal).toBeInstanceOf(AbortSignal);
+      expect((capturedInit?.signal as AbortSignal).aborted).toBe(false); // fresh per call, not pre-aborted
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

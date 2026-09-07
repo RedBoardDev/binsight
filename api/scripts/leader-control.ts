@@ -6,13 +6,43 @@
  *   yarn bot:build → node --env-file=../.env dist/copybot/scripts/leader-control.cjs <pools|status|open|close|claim> [--pool=P] [--sol=0.1]
  */
 import { readFileSync } from 'node:fs';
-import { ComputeBudgetProgram, Connection, Keypair, PublicKey, type Signer, Transaction, TransactionInstruction } from '@solana/web3.js';
-import { planWalletSweep } from '../src/domain/copybot/residual-sell';
+import {
+  ComputeBudgetProgram,
+  Connection,
+  Keypair,
+  PublicKey,
+  type Signer,
+  Transaction,
+  TransactionInstruction,
+} from '@solana/web3.js';
 import { reanchorShape } from '../src/domain/copybot/reanchor';
-import { type WeightBin, buildAddByStrategy, buildAddByStrategyTwoSided, buildAddByWeight, buildClaimTx, buildCloseTx, buildOpenByStrategy, buildOpenByStrategyTwoSided, buildOpenByWeight, buildRemovePartial, createDlmmPair, strategyTypeFromName } from '../src/infrastructure/solana/dlmm/dlmm-tx-builder';
-import { readLeaderPositionShape, readUserPositions } from '../src/infrastructure/solana/dlmm/leader-position-reader';
+import { planWalletSweep } from '../src/domain/copybot/residual-sell';
+import {
+  buildAddByStrategy,
+  buildAddByStrategyTwoSided,
+  buildAddByWeight,
+  buildClaimTx,
+  buildCloseTx,
+  buildOpenByStrategy,
+  buildOpenByStrategyTwoSided,
+  buildOpenByWeight,
+  buildRemovePartial,
+  createDlmmPair,
+  strategyTypeFromName,
+  type WeightBin,
+} from '../src/infrastructure/solana/dlmm/dlmm-tx-builder';
+import {
+  readLeaderPositionShape,
+  readUserPositions,
+} from '../src/infrastructure/solana/dlmm/leader-position-reader';
 import { OnchainPoolMetaReader } from '../src/infrastructure/solana/dlmm/pool-meta';
-import { DEFAULT_JUPITER_BASE_URL, WSOL_MINT, buildJupiterSwapTx, getJupiterBuyQuoteExactIn, getJupiterQuote } from '../src/infrastructure/solana/jupiter/jupiter-swap-builder';
+import {
+  buildJupiterSwapTx,
+  DEFAULT_JUPITER_BASE_URL,
+  getJupiterBuyQuoteExactIn,
+  getJupiterQuote,
+  WSOL_MINT,
+} from '../src/infrastructure/solana/jupiter/jupiter-swap-builder';
 import { readAllOwnerTokenBalances } from '../src/infrastructure/solana/token-balance-reader';
 
 const JUPITER_BASE = process.env.JUPITER_BASE_URL ?? DEFAULT_JUPITER_BASE_URL;
@@ -23,13 +53,17 @@ const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const WIDTH_BINS = 8;
 
 const conn = new Connection(process.env.SOLANA_HTTP_URL ?? '', 'confirmed');
-const leader = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(readFileSync('.wallets/leader-test.json', 'utf8'))));
+const leader = Keypair.fromSecretKey(
+  Uint8Array.from(JSON.parse(readFileSync('.wallets/leader-test.json', 'utf8'))),
+);
 const arg = (name: string): string | undefined => {
   const a = process.argv.find((x) => x.startsWith(`--${name}=`));
   return a?.slice(name.length + 3);
 };
 
-const ownerTokenRaw = async (mint: string): Promise<bigint> => (await readAllOwnerTokenBalances(conn, leader.publicKey)).find((b) => b.mint === mint)?.amountRaw ?? 0n;
+const ownerTokenRaw = async (mint: string): Promise<bigint> =>
+  (await readAllOwnerTokenBalances(conn, leader.publicKey)).find((b) => b.mint === mint)
+    ?.amountRaw ?? 0n;
 
 /** Buy ~`tokenRaw` of `tokenMint` with SOL via ExactIn, returning the ACTUAL amount acquired. ExactOut has NO Jupiter
  *  route for most Token-2022 memecoins (NO_ROUTES_FOUND → http 400), so we price the target via the SELL direction
@@ -37,7 +71,12 @@ const ownerTokenRaw = async (mint: string): Promise<bigint> => (await readAllOwn
 async function buyTokenExactIn(tokenMint: string, tokenRaw: bigint): Promise<bigint> {
   const before = await ownerTokenRaw(tokenMint);
   const priceQ = await getJupiterQuote(JUPITER_BASE, tokenMint, tokenRaw, SWEEP_SLIPPAGE_BPS); // value tokenRaw in SOL
-  const q = await getJupiterBuyQuoteExactIn(JUPITER_BASE, tokenMint, BigInt(priceQ.outAmount), SWEEP_SLIPPAGE_BPS);
+  const q = await getJupiterBuyQuoteExactIn(
+    JUPITER_BASE,
+    tokenMint,
+    BigInt(priceQ.outAmount),
+    SWEEP_SLIPPAGE_BPS,
+  );
   const buyTx = await buildJupiterSwapTx(JUPITER_BASE, q, leader.publicKey.toBase58());
   await signLandConfirm(Transaction.from(Buffer.from(buyTx, 'base64')));
   // The post-swap balance read can LAG the swap's settlement (RPC read-after-write) → a stale `after - before = 0`
@@ -52,14 +91,22 @@ async function buyTokenExactIn(tokenMint: string, tokenRaw: bigint): Promise<big
   return bought;
 }
 
-async function signLandConfirm(txOrArr: Transaction | Transaction[], extra: Signer[] = []): Promise<string[]> {
+async function signLandConfirm(
+  txOrArr: Transaction | Transaction[],
+  extra: Signer[] = [],
+): Promise<string[]> {
   const txs = Array.isArray(txOrArr) ? txOrArr : [txOrArr];
   const sigs: string[] = [];
   for (const tx of txs) {
     // Force an explicit CU limit: wide positions (e.g. a 17-bin two-sided open/close) exceed the 200k default and
-    // the tx silently fails on-chain → never confirms → "block height exceeded". 400k covers them.
-    tx.instructions = tx.instructions.filter((ix) => ix.programId.toBase58() !== 'ComputeBudget111111111111111111111111111111');
-    tx.instructions.unshift(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }), ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50_000 }));
+    // the tx silently fails on-chain → never confirms → "block height exceeded". 1.4M (the per-tx CU max) covers them.
+    tx.instructions = tx.instructions.filter(
+      (ix) => ix.programId.toBase58() !== 'ComputeBudget111111111111111111111111111111',
+    );
+    tx.instructions.unshift(
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }),
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50_000 }),
+    );
     const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash();
     tx.feePayer = leader.publicKey;
     tx.recentBlockhash = blockhash;
@@ -68,7 +115,9 @@ async function signLandConfirm(txOrArr: Transaction | Transaction[], extra: Sign
     // (where it isn't required) makes web3.js throw "unknown signer". Filter [leader, ...extra] to each tx's required
     // signers (the first numRequiredSignatures account keys) so the multi-tx wide-open path signs correctly.
     const msg = tx.compileMessage();
-    const required = new Set(msg.accountKeys.slice(0, msg.header.numRequiredSignatures).map((k) => k.toBase58()));
+    const required = new Set(
+      msg.accountKeys.slice(0, msg.header.numRequiredSignatures).map((k) => k.toBase58()),
+    );
     tx.sign(...[leader, ...extra].filter((s) => required.has(s.publicKey.toBase58())));
     const sig = await conn.sendRawTransaction(tx.serialize());
     await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
@@ -90,21 +139,37 @@ const WEIGHT_SCALE = 1_000_000; // scale CLI weights to raw synthetic amounts fo
  * bin #3). Bins are laid on the SOL side, anchored at the active bin. Reuses the tested `reanchorShape` BPS
  * math → no new fidelity-critical logic. Lets us drive COMPLEX leader shapes (more SOL on some bins).
  */
-function customDistribution(spec: string, activeBin: number, solSide: 'X' | 'Y', ascendFrom?: number): WeightBin[] {
+function customDistribution(
+  spec: string,
+  activeBin: number,
+  solSide: 'X' | 'Y',
+  ascendFrom?: number,
+): WeightBin[] {
   const weights = spec.split(',').map((s) => Number(s.trim()));
   // Allow 0 weights (skip that bin → place SOL on specific bins, e.g. --dist=0,0,0,5); reject negatives/NaN.
-  if (weights.length === 0 || weights.some((w) => !Number.isFinite(w) || w < 0) || !weights.some((w) => w > 0))
+  if (
+    weights.length === 0 ||
+    weights.some((w) => !Number.isFinite(w) || w < 0) ||
+    !weights.some((w) => w > 0)
+  )
     throw new Error(`--dist needs non-negative weights with at least one > 0, got "${spec}"`);
   // Default: anchor at the active bin, laid on the SOL side. `ascendFrom` instead lays bins ASCENDING from a
   // given bin (used by `add` to target an EXISTING position's fixed range, since the active bin may have drifted
   // out of it). Either way the layout is contiguous + ascending after the sort below.
   const base = ascendFrom ?? activeBin;
   const dir = ascendFrom !== undefined ? 1 : solSide === 'X' ? 1 : -1;
-  const synthetic = weights.map((w, i) => ({ binId: base + dir * i, amount: BigInt(Math.round(w * WEIGHT_SCALE)) }));
+  const synthetic = weights.map((w, i) => ({
+    binId: base + dir * i,
+    amount: BigInt(Math.round(w * WEIGHT_SCALE)),
+  }));
   const reanchored = reanchorShape(base, base, synthetic);
   // SDK by-weight wants bins in ascending, contiguous order (our descending SOL-Y layout would read as gaps).
   return reanchored.weights
-    .map((wt) => ({ binId: wt.binId, xBps: solSide === 'X' ? wt.bps : 0, yBps: solSide === 'Y' ? wt.bps : 0 }))
+    .map((wt) => ({
+      binId: wt.binId,
+      xBps: solSide === 'X' ? wt.bps : 0,
+      yBps: solSide === 'Y' ? wt.bps : 0,
+    }))
     .sort((a, b) => a.binId - b.binId);
 }
 
@@ -115,16 +180,30 @@ async function main(): Promise<void> {
   if (cmd === 'pools') {
     try {
       const res = await fetch('https://dlmm-api.meteora.ag/pair/all');
-      const all = (await res.json()) as Array<{ address: string; name: string; mint_x: string; mint_y: string; bin_step: number; liquidity: string }>;
+      const all = (await res.json()) as Array<{
+        address: string;
+        name: string;
+        mint_x: string;
+        mint_y: string;
+        bin_step: number;
+        liquidity: string;
+      }>;
       const solUsdc = all
-        .filter((p) => (p.mint_x === SOL && p.mint_y === USDC) || (p.mint_x === USDC && p.mint_y === SOL))
+        .filter(
+          (p) => (p.mint_x === SOL && p.mint_y === USDC) || (p.mint_x === USDC && p.mint_y === SOL),
+        )
         .sort((a, b) => Number(b.liquidity) - Number(a.liquidity))
         .slice(0, 8);
       if (solUsdc.length === 0) throw new Error('no SOL/USDC pool in the response');
       console.log('SOL/USDC pools (by liquidity):');
-      for (const p of solUsdc) console.log(`  ${p.address}  binStep=${p.bin_step}  liq=$${Math.round(Number(p.liquidity))}  ${p.name}`);
+      for (const p of solUsdc)
+        console.log(
+          `  ${p.address}  binStep=${p.bin_step}  liq=$${Math.round(Number(p.liquidity))}  ${p.name}`,
+        );
     } catch (e) {
-      console.log(`Meteora API unreachable (${(e as Error).message}). Grab a SOL/USDC pool on app.meteora.ag,`);
+      console.log(
+        `Meteora API unreachable (${(e as Error).message}). Grab a SOL/USDC pool on app.meteora.ag,`,
+      );
       console.log('then: leader-control open --pool=<address> --sol=0.1');
     }
     return;
@@ -137,7 +216,10 @@ async function main(): Promise<void> {
     // appears to drain on every close (the SOL is wrapped, not lost).
     const TOKEN_PROGRAM = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
     const ATA_PROGRAM = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
-    const wsolAta = PublicKey.findProgramAddressSync([leader.publicKey.toBuffer(), TOKEN_PROGRAM.toBuffer(), new PublicKey(WSOL_MINT).toBuffer()], ATA_PROGRAM)[0];
+    const wsolAta = PublicKey.findProgramAddressSync(
+      [leader.publicKey.toBuffer(), TOKEN_PROGRAM.toBuffer(), new PublicKey(WSOL_MINT).toBuffer()],
+      ATA_PROGRAM,
+    )[0];
     if ((await conn.getAccountInfo(wsolAta)) !== null) {
       // SPL Token CloseAccount (discriminator 9): close the WSOL ATA → all lamports (wrapped SOL + rent) to the owner.
       const closeIx = new TransactionInstruction({
@@ -166,7 +248,9 @@ async function main(): Promise<void> {
         const quote = await getJupiterQuote(JUPITER_BASE, b.mint, b.amountRaw, SWEEP_SLIPPAGE_BPS);
         const txB64 = await buildJupiterSwapTx(JUPITER_BASE, quote, leader.publicKey.toBase58());
         const sigs = await signLandConfirm(Transaction.from(Buffer.from(txB64, 'base64')));
-        console.log(`🧹 SWEEP ${b.mint} ${b.amountRaw} → ${Number(quote.outAmount) / 1e9} SOL sigs=${sigs.join(',')}`);
+        console.log(
+          `🧹 SWEEP ${b.mint} ${b.amountRaw} → ${Number(quote.outAmount) / 1e9} SOL sigs=${sigs.join(',')}`,
+        );
       } catch (e) {
         console.log(`⚠️ sweep failed for ${b.mint}: ${(e as Error).message}`);
       }
@@ -179,7 +263,10 @@ async function main(): Promise<void> {
     // shows free/native SOL; liquidity deposited in a position is locked → wallet UIs show the higher total.
     const positions = await readUserPositions(conn, leader.publicKey);
     if (positions.length === 0) console.log('no positions on any pool');
-    for (const p of positions) console.log(`  pool=${p.pool} position=${p.position} range=[${p.lowerBinId},${p.upperBinId}]`);
+    for (const p of positions)
+      console.log(
+        `  pool=${p.pool} position=${p.position} range=[${p.lowerBinId},${p.upperBinId}]`,
+      );
     return;
   }
 
@@ -189,7 +276,11 @@ async function main(): Promise<void> {
 
   if (cmd === 'status') {
     const shape = await readLeaderPositionShape(conn, pk, leader.publicKey);
-    console.log(shape ? `position ${shape.positionPubkey} range=[${shape.lowerBinId},${shape.upperBinId}] bins=${shape.perBin.length}` : 'no position');
+    console.log(
+      shape
+        ? `position ${shape.positionPubkey} range=[${shape.lowerBinId},${shape.upperBinId}] bins=${shape.perBin.length}`
+        : 'no position',
+    );
     return;
   }
 
@@ -215,7 +306,9 @@ async function main(): Promise<void> {
           await signLandConfirm(tx);
           console.log(`💥 closed EMPTY ${p.publicKey.toBase58()} [${lower},${upper}]`);
         } catch (e2) {
-          console.warn(`close-all: ${p.publicKey.toBase58()} → ${(e as Error).message} | empty: ${(e2 as Error).message}`);
+          console.warn(
+            `close-all: ${p.publicKey.toBase58()} → ${(e as Error).message} | empty: ${(e2 as Error).message}`,
+          );
         }
       }
     }
@@ -234,9 +327,21 @@ async function main(): Promise<void> {
       const tokenMint = solSide === 'Y' ? meta.mintX : meta.mintY;
       const tokenRaw = BigInt(arg('token') ?? '5000000');
       const bought = await buyTokenExactIn(tokenMint, tokenRaw);
-      const built = await buildOpenByStrategyTwoSided(conn, pk, leader.publicKey, position.publicKey, solSide, sol, bought, WIDTH_BINS, strategyTypeFromName(arg('strategy') ?? 'spot'));
+      const built = await buildOpenByStrategyTwoSided(
+        conn,
+        pk,
+        leader.publicKey,
+        position.publicKey,
+        solSide,
+        sol,
+        bought,
+        WIDTH_BINS,
+        strategyTypeFromName(arg('strategy') ?? 'spot'),
+      );
       const sigs = await signLandConfirm(built, [position]);
-      console.log(`🟢🟢 OPEN [two-sided ${arg('strategy') ?? 'spot'}] position=${position.publicKey.toBase58()} sol=${Number(sol) / 1e9} token=${tokenRaw} sigs=${sigs.join(',')}`);
+      console.log(
+        `🟢🟢 OPEN [two-sided ${arg('strategy') ?? 'spot'}] position=${position.publicKey.toBase58()} sol=${Number(sol) / 1e9} token=${tokenRaw} sigs=${sigs.join(',')}`,
+      );
       return;
     }
     const dist = arg('dist'); // custom per-bin weights, e.g. --dist=1,1,8,1,1,1,5,1
@@ -244,15 +349,38 @@ async function main(): Promise<void> {
       const pair = await createDlmmPair(conn, pk);
       const active = (await pair.getActiveBin()).binId;
       const w = customDistribution(dist, active, solSide);
-      const built = await buildOpenByWeight(conn, pk, leader.publicKey, position.publicKey, solSide === 'X' ? sol : 0n, solSide === 'Y' ? sol : 0n, w, 1, pair); // 1 = active-bin slippage percent (test driver)
+      const built = await buildOpenByWeight(
+        conn,
+        pk,
+        leader.publicKey,
+        position.publicKey,
+        solSide === 'X' ? sol : 0n,
+        solSide === 'Y' ? sol : 0n,
+        w,
+        1,
+        pair,
+      ); // 1 = active-bin slippage percent (test driver)
       const sigs = await signLandConfirm(built, [position]);
-      console.log(`🟢 OPEN [custom ${dist}] position=${position.publicKey.toBase58()} range=[${Math.min(...w.map((b) => b.binId))},${Math.max(...w.map((b) => b.binId))}] sigs=${sigs.join(',')}`);
+      console.log(
+        `🟢 OPEN [custom ${dist}] position=${position.publicKey.toBase58()} range=[${Math.min(...w.map((b) => b.binId))},${Math.max(...w.map((b) => b.binId))}] sigs=${sigs.join(',')}`,
+      );
       return;
     }
     const strategyName = arg('strategy') ?? 'spot'; // spot | bidask | curve
-    const built = await buildOpenByStrategy(conn, pk, leader.publicKey, position.publicKey, solSide, sol, WIDTH_BINS, strategyTypeFromName(strategyName));
+    const built = await buildOpenByStrategy(
+      conn,
+      pk,
+      leader.publicKey,
+      position.publicKey,
+      solSide,
+      sol,
+      WIDTH_BINS,
+      strategyTypeFromName(strategyName),
+    );
     const sigs = await signLandConfirm(built, [position]);
-    console.log(`🟢 OPEN [${strategyName}] position=${position.publicKey.toBase58()} sigs=${sigs.join(',')}`);
+    console.log(
+      `🟢 OPEN [${strategyName}] position=${position.publicKey.toBase58()} sigs=${sigs.join(',')}`,
+    );
     return;
   }
 
@@ -260,7 +388,14 @@ async function main(): Promise<void> {
   if (!shape) throw new Error('no leader-test position on this pool');
 
   if (cmd === 'close') {
-    const built = await buildCloseTx(conn, pk, leader.publicKey, new PublicKey(shape.positionPubkey), shape.lowerBinId, shape.upperBinId);
+    const built = await buildCloseTx(
+      conn,
+      pk,
+      leader.publicKey,
+      new PublicKey(shape.positionPubkey),
+      shape.lowerBinId,
+      shape.upperBinId,
+    );
     console.log(`🔴 CLOSE sigs=${(await signLandConfirm(built)).join(',')}`);
     return;
   }
@@ -273,8 +408,21 @@ async function main(): Promise<void> {
       const tokenMint = solSide === 'Y' ? meta.mintX : meta.mintY;
       const tokenRaw = BigInt(arg('token') ?? '2000000');
       const bought = await buyTokenExactIn(tokenMint, tokenRaw);
-      const built = await buildAddByStrategyTwoSided(conn, pk, leader.publicKey, new PublicKey(shape.positionPubkey), solSide, sol, bought, shape.lowerBinId, shape.upperBinId, strategyTypeFromName(arg('strategy') ?? 'spot'));
-      console.log(`➕➕ ADD [two-sided] sol=${Number(sol) / 1e9} token=${tokenRaw} sigs=${(await signLandConfirm(built)).join(',')}`);
+      const built = await buildAddByStrategyTwoSided(
+        conn,
+        pk,
+        leader.publicKey,
+        new PublicKey(shape.positionPubkey),
+        solSide,
+        sol,
+        bought,
+        shape.lowerBinId,
+        shape.upperBinId,
+        strategyTypeFromName(arg('strategy') ?? 'spot'),
+      );
+      console.log(
+        `➕➕ ADD [two-sided] sol=${Number(sol) / 1e9} token=${tokenRaw} sigs=${(await signLandConfirm(built)).join(',')}`,
+      );
       return;
     }
     const dist = arg('dist'); // custom per-bin add, e.g. --dist=0,0,5,0,0 = add only on bin #3
@@ -284,11 +432,32 @@ async function main(): Promise<void> {
       // Anchor the add ASCENDING from the position's lower bin so it always lands INSIDE the existing fixed range
       // (the active bin may have drifted out of it since the open → an active-anchored add would be out-of-range).
       const w = customDistribution(dist, active, solSide, shape.lowerBinId);
-      const built = await buildAddByWeight(conn, pk, leader.publicKey, new PublicKey(shape.positionPubkey), solSide === 'X' ? sol : 0n, solSide === 'Y' ? sol : 0n, w, 1, pair); // 1 = active-bin slippage percent (test driver)
-      console.log(`➕ ADD [custom ${dist}] ${arg('sol') ?? '0.05'} range=[${Math.min(...w.map((b) => b.binId))},${Math.max(...w.map((b) => b.binId))}] sigs=${(await signLandConfirm(built)).join(',')}`);
+      const built = await buildAddByWeight(
+        conn,
+        pk,
+        leader.publicKey,
+        new PublicKey(shape.positionPubkey),
+        solSide === 'X' ? sol : 0n,
+        solSide === 'Y' ? sol : 0n,
+        w,
+        1,
+        pair,
+      ); // 1 = active-bin slippage percent (test driver)
+      console.log(
+        `➕ ADD [custom ${dist}] ${arg('sol') ?? '0.05'} range=[${Math.min(...w.map((b) => b.binId))},${Math.max(...w.map((b) => b.binId))}] sigs=${(await signLandConfirm(built)).join(',')}`,
+      );
       return;
     }
-    const built = await buildAddByStrategy(conn, pk, leader.publicKey, new PublicKey(shape.positionPubkey), solSide, sol, WIDTH_BINS, strategyTypeFromName(arg('strategy') ?? 'spot'));
+    const built = await buildAddByStrategy(
+      conn,
+      pk,
+      leader.publicKey,
+      new PublicKey(shape.positionPubkey),
+      solSide,
+      sol,
+      WIDTH_BINS,
+      strategyTypeFromName(arg('strategy') ?? 'spot'),
+    );
     console.log(`➕ ADD ${arg('sol') ?? '0.05'} sigs=${(await signLandConfirm(built)).join(',')}`);
     return;
   }
@@ -296,8 +465,18 @@ async function main(): Promise<void> {
     const bps = Number(arg('bps') ?? '3000');
     const fromBin = arg('frombin') ? Number(arg('frombin')) : shape.lowerBinId; // sub-range remove → tests per-bin trims
     const toBin = arg('tobin') ? Number(arg('tobin')) : shape.upperBinId;
-    const built = await buildRemovePartial(conn, pk, leader.publicKey, new PublicKey(shape.positionPubkey), fromBin, toBin, bps);
-    console.log(`➖ REMOVE ${bps}bps [${fromBin},${toBin}] sigs=${(await signLandConfirm(built)).join(',')}`);
+    const built = await buildRemovePartial(
+      conn,
+      pk,
+      leader.publicKey,
+      new PublicKey(shape.positionPubkey),
+      fromBin,
+      toBin,
+      bps,
+    );
+    console.log(
+      `➖ REMOVE ${bps}bps [${fromBin},${toBin}] sigs=${(await signLandConfirm(built)).join(',')}`,
+    );
     return;
   }
   if (cmd === 'claim') {

@@ -44,6 +44,9 @@ export interface ReconcileRuntime {
   closeConfirmedKey(leader: string, pool: string, ourPosition: string): string;
   cancelPendingOpen(leaderPosition: string, pool: string): void;
   pendingOpenMapsView(): PendingOpenMaps;
+  /** A6-01: true while this leader position's open is still in flight (buy landed / deposit pending, mirror not yet
+   *  finally recorded) — an EVENT-DRIVEN open-grace so the reconcile never false-closes a live, still-landing open. */
+  isOpenInFlight(leaderPosition: string): boolean;
 }
 
 export interface ReconcileSweepDeps {
@@ -99,10 +102,15 @@ async function reconcileUser(
     }),
   );
 
-  // Open-grace: a copy opened < openGraceMs ago isn't reliably confirmable on-chain yet → exclude it from close
-  // decisions so a fresh open is never mistaken for "gone" (anti-dormant regression).
+  // Open-grace (A6-01): a copy is excluded from close decisions while its open cannot be reliably confirmed on-chain,
+  // so a fresh/still-landing open is never mistaken for "gone" (anti-dormant regression). TWO signals, either grants
+  // the grace: (1) EVENT-DRIVEN — the open is still in flight (its multi-tx continuation hasn't finally recorded the
+  // mirror), robust even past any time bound under congestion; (2) TIME-BASED — opened < openGraceMs ago, the backstop
+  // for the simple one-tx open that has no in-flight reservation once recorded (openGraceMs covers the ~60-75s landing).
   const recentlyOpened = new Set(
-    tracked.filter((m) => now - m.openedAt < deps.openGraceMs).map((m) => m.ourPosition),
+    tracked
+      .filter((m) => rt.isOpenInFlight(m.leaderPosition) || now - m.openedAt < deps.openGraceMs)
+      .map((m) => m.ourPosition),
   );
   const trackedOurs = new Set(tracked.map((m) => m.ourPosition));
 

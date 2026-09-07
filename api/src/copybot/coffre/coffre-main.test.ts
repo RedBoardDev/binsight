@@ -5,6 +5,7 @@ import { SYSTEM_USER_ID } from '@/copybot/journal-store';
 import { CODE_REGISTRY } from '@/domain/copybot/observability/codes';
 import type { ConsumedMessage } from '@/infrastructure/bus/redis-bus';
 import {
+  assertPrivySigningConfig,
   createMessageHandler,
   createSignerResolver,
   deadLetterCode,
@@ -587,5 +588,45 @@ describe('coffre parseCoffreNumericConfig — fail-closed numeric env validation
     expect(parseCoffreNumericConfig({ SIGN_RETRY_DELAY_MS: '0' })).toMatchObject({
       retryDelayMs: 0,
     });
+  });
+});
+
+// E1-02: the coffre must refuse to boot with PRIVY_SIGNING_ENABLED=true but missing credentials. WHY it matters — a
+// live sign would then 401, the sign-error classifier would mistake that global config error for a per-user
+// REVOCATION, and that user's CLOSEs would be stickily blocked forever (never-miss-close violation). Fail-closed at
+// boot instead. These tests would FAIL if the guard were removed or stopped requiring a credential.
+describe('assertPrivySigningConfig — fail-closed Privy signing credentials (E1-02)', () => {
+  const CREDS = {
+    PRIVY_SIGNING_ENABLED: 'true',
+    PRIVY_APP_ID: 'app',
+    PRIVY_APP_SECRET: 'secret',
+    PRIVY_AUTHORIZATION_KEY: 'authkey',
+  };
+
+  it('signing OFF → ok, no credentials required (dry-run uses a DryRunSigner)', () => {
+    expect(assertPrivySigningConfig({})).toEqual({ ok: true });
+    expect(assertPrivySigningConfig({ PRIVY_SIGNING_ENABLED: 'false' })).toEqual({ ok: true });
+  });
+
+  it('signing ON + all three credentials present → ok', () => {
+    expect(assertPrivySigningConfig(CREDS)).toEqual({ ok: true });
+  });
+
+  it('signing ON but a credential missing → error naming the missing one (refuse to boot)', () => {
+    const r = assertPrivySigningConfig({ ...CREDS, PRIVY_APP_ID: '' });
+    expect(r).toMatchObject({ error: expect.stringContaining('PRIVY_APP_ID') });
+    expect('ok' in r).toBe(false);
+  });
+
+  it('signing ON with the authorization key missing → error (the exact E1-02 sticky-block precondition)', () => {
+    const r = assertPrivySigningConfig({ ...CREDS, PRIVY_AUTHORIZATION_KEY: undefined });
+    expect(r).toMatchObject({ error: expect.stringContaining('PRIVY_AUTHORIZATION_KEY') });
+  });
+
+  it('signing ON with NOTHING set → error naming all three', () => {
+    const r = assertPrivySigningConfig({ PRIVY_SIGNING_ENABLED: 'true' }) as { error: string };
+    expect(r.error).toContain('PRIVY_APP_ID');
+    expect(r.error).toContain('PRIVY_APP_SECRET');
+    expect(r.error).toContain('PRIVY_AUTHORIZATION_KEY');
   });
 });

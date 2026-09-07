@@ -11,38 +11,66 @@
  * cause a missed close or a permanent block, and NEVER a double open. The TTL must exceed the longest multi-tx open
  * window (buy/create land + deposit land) so the reservation stays live until `registry.open` clears it.
  */
+/** Sizing/scoping of a caps-gated in-flight open — folded by `capsState` into the wallet-level cap totals so a
+ *  burst of concurrent opens can't each pass against a stale registry-only snapshot (A1-01/A1-02). */
+export interface OpenReservationMeta {
+  /** the leader whose position this open copies — scope of the per-leader exposure cap. */
+  leader: string;
+  /** the candidate's non-SOL mint (per-token concurrency cap), or null for a SOL-only / non-token open. */
+  mint: string | null;
+  /** the SOL this open will deploy — the exposure caps. */
+  sizeSol: number;
+}
+
 export interface PendingOpenReservations {
-  /** Mark `pos` as having an open in flight (called right before the open handler runs). */
-  reserve(pos: string): void;
+  /** Mark `pos` as having an open in flight (called at dispatch, before the open handler runs). Pass `meta` ONCE
+   *  the open has PASSED its caps gate so a concurrent open counts it against the wallet-level caps; a later call
+   *  WITHOUT `meta` (a continuation hop) refreshes the TTL and PRESERVES the existing meta. */
+  reserve(pos: string, meta?: OpenReservationMeta): void;
   /** True iff `pos` has a non-stale reservation. Deletes the entry lazily if stale (self-healing). */
   isPending(pos: string): boolean;
   /** Clear `pos`'s reservation (called at each `registry.open` site, keyed by the leader position). */
   clear(pos: string): void;
   /** Number of live entries (test/observability only). */
   size(): number;
+  /** Non-stale, caps-GATED reservations (those given `meta`), EXCLUDING `exceptPos` — `capsState` folds these into
+   *  the wallet-level totals so a burst of concurrent opens can't each pass against a stale registry-only snapshot. */
+  activeOpens(exceptPos?: string): OpenReservationMeta[];
 }
 
 export function createPendingOpenReservations(
   ttlMs: number,
   now: () => number = Date.now,
 ): PendingOpenReservations {
-  const reservedAt = new Map<string, number>();
+  const reserved = new Map<string, { at: number; meta?: OpenReservationMeta }>();
   return {
-    reserve: (pos) => {
-      reservedAt.set(pos, now());
+    reserve: (pos, meta) => {
+      const prev = reserved.get(pos);
+      // A continuation hop re-reserves without meta: refresh the TTL, keep the meta stamped at the caps gate.
+      reserved.set(pos, { at: now(), meta: meta ?? prev?.meta });
     },
     isPending: (pos) => {
-      const ts = reservedAt.get(pos);
-      if (ts === undefined) return false;
-      if (now() - ts >= ttlMs) {
-        reservedAt.delete(pos); // stale → self-heal (a leaked reservation clears itself after the TTL)
+      const e = reserved.get(pos);
+      if (e === undefined) return false;
+      if (now() - e.at >= ttlMs) {
+        reserved.delete(pos); // stale → self-heal (a leaked reservation clears itself after the TTL)
         return false;
       }
       return true;
     },
     clear: (pos) => {
-      reservedAt.delete(pos);
+      reserved.delete(pos);
     },
-    size: () => reservedAt.size,
+    size: () => reserved.size,
+    activeOpens: (exceptPos) => {
+      const cutoff = now() - ttlMs;
+      const out: OpenReservationMeta[] = [];
+      for (const [pos, e] of reserved) {
+        if (pos === exceptPos) continue;
+        if (e.at <= cutoff) continue; // stale (lazy read — not deleted here; isPending self-heals)
+        if (e.meta !== undefined) out.push(e.meta);
+      }
+      return out;
+    },
   };
 }

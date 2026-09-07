@@ -286,8 +286,8 @@ export function compose(config: AppConfig): App {
 
   // Copy-bot custody activation (Inc.4b). The Privy provisioning touch points are wired ONLY when configured:
   //  - the embedded-wallet resolver needs the app secret (else provisioning surfaces a clear error);
-  //  - the Wall A policy admin needs the off-host governance key + operator fee sink (else provisioning proceeds
-  //    policy-less — Wall B stays authoritative — until the devnet 4f wiring). Neither is exercised until the flag
+  //  - the Wall A policy admin needs the off-host governance key (else provisioning proceeds policy-less —
+  //    Wall B stays authoritative — until the devnet 4f wiring). Neither is exercised until the flag
   //    flips; the DB/state/gate logic is proven by tests. resolveUserWallet in the coffre reads the SAME rows via the
   //    Privy-free repository (firewall F1b/F1c).
   const copybotActivationRepo = new CopybotActivationRepository(db);
@@ -301,15 +301,11 @@ export function compose(config: AppConfig): App {
     },
   };
   const policyAdmin =
-    config.PRIVY_APP_ID &&
-    config.PRIVY_APP_SECRET &&
-    config.PRIVY_POLICY_GOVERNANCE_KEY &&
-    config.OPERATOR_FEE_ADDRESS
+    config.PRIVY_APP_ID && config.PRIVY_APP_SECRET && config.PRIVY_POLICY_GOVERNANCE_KEY
       ? new PolicyAdmin({
           appId: config.PRIVY_APP_ID,
           appSecret: config.PRIVY_APP_SECRET,
           governanceKey: config.PRIVY_POLICY_GOVERNANCE_KEY,
-          operatorFeeAddress: config.OPERATOR_FEE_ADDRESS,
           maxTransferLamports: WALL_A_MAX_TRANSFER_LAMPORTS,
         })
       : undefined;

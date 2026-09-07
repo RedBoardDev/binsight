@@ -22,9 +22,7 @@ export interface PolicyAdminConfig {
   appSecret: string;
   /** The single off-host governance key (P-256, base64 PKCS8) that owns + authorizes per-user policy mutations. */
   governanceKey: string;
-  /** The 5%-fee sink allowed as a System.Transfer destination in every user's Wall A policy. */
-  operatorFeeAddress: string;
-  /** Hard per-transfer lamport cap baked into the policy (defense in depth against an inflated wrap/tip/fee). */
+  /** Hard per-transfer lamport cap baked into the policy (defense in depth against an inflated wrap/tip). */
   maxTransferLamports: number;
 }
 
@@ -52,7 +50,6 @@ export class PolicyAdmin {
     const doc = buildWallAPolicy({
       userWallet: input.walletAddress,
       userOwnedDestinations: ownedDestinations,
-      operatorFeeAddress: this.cfg.operatorFeeAddress,
       maxTransferLamports: this.cfg.maxTransferLamports,
     });
     const params = {

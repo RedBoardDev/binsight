@@ -48,6 +48,10 @@ export interface LeaderHoldings {
   /** `leaderAddress` of each pending rug-SL/stop close (retry-until-confirmed-gone); `null` when the pending
    *  entry can't be attributed to a leader (e.g. restored after a restart with its mirror row gone). */
   rugExitPendingLeaders: ReadonlyArray<string | null>;
+  /** A6-03: `leaderAddress` of each OPEN still IN FLIGHT (its multi-tx continuation hasn't recorded the mirror yet).
+   *  Retains the leader's detector so a stop/removal landing mid-open can't delete its only close channel before the
+   *  funded mirror even registers — the forbidden un-managed position. */
+  inFlightOpenLeaders: ReadonlyArray<string>;
 }
 
 /**
@@ -63,6 +67,7 @@ export function shouldRetainLeader(
   return holdings.some(
     (h) =>
       h.openMirrorLeaders.includes(leader) ||
+      h.inFlightOpenLeaders.includes(leader) || // A6-03: an open still landing keeps its detector alive
       h.rugExitPendingLeaders.some((l) => l === leader || l === null),
   );
 }

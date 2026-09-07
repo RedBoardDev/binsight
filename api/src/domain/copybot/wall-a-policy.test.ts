@@ -22,13 +22,11 @@ import {
 // compromised process could make the wallet sign an out-of-policy tx. These tests pin exactly WHAT it permits.
 const USER = 'ownerWa11etAddress1111111111111111111111111';
 const USER_WSOL_ATA = 'userWso1Ata2222222222222222222222222222222';
-const OPERATOR_FEE = 'operatorFeeSink333333333333333333333333333';
 const CAP = 100_000_000_000; // 100 SOL coarse per-transfer ceiling
 
 const input: WallAPolicyInput = {
   userWallet: USER,
   userOwnedDestinations: [USER_WSOL_ATA],
-  operatorFeeAddress: OPERATOR_FEE,
   maxTransferLamports: CAP,
 };
 
@@ -66,21 +64,16 @@ describe('buildWallAPolicy', () => {
     expect(value).not.toContain(SYSTEM_PROGRAM_ID);
   });
 
-  it('permits System.Transfer ONLY to the own-set ∪ the 8 Jito tips ∪ the operator fee sink, capped', () => {
+  it('permits System.Transfer ONLY to the own-set ∪ the 8 Jito tips, capped', () => {
     const transfers = ruleByName(WALL_A_RULE_ALLOW_TRANSFERS);
     expect(transfers?.action).toBe('ALLOW');
     const dest = transfers?.conditions.find((c) => c.field === 'Transfer.to');
     const lamports = transfers?.conditions.find((c) => c.field === 'Transfer.lamports');
 
-    const expected = [
-      USER,
-      USER_WSOL_ATA,
-      OPERATOR_FEE,
-      ...JITO_TIP_ACCOUNTS.map((a) => a.toBase58()),
-    ].sort();
+    const expected = [USER, USER_WSOL_ATA, ...JITO_TIP_ACCOUNTS.map((a) => a.toBase58())].sort();
     expect(dest?.operator).toBe('in');
     expect([...(dest?.value as string[])].sort()).toEqual(expected);
-    // The lamport ceiling is enforced (defense in depth vs an inflated wrap/tip/fee).
+    // The lamport ceiling is enforced (defense in depth vs an inflated wrap/tip).
     expect(lamports?.operator).toBe('lte');
     expect(lamports?.value).toBe(String(CAP));
   });

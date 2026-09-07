@@ -29,14 +29,8 @@ import {
   UNKNOWN_LVBH,
 } from '@/copybot/coffre/process-command';
 import type { CopyEvents } from '@/copybot/observability/copy-events';
-import {
-  accountKeysOf,
-  isLedgerKind,
-  ledgerRowFromMeta,
-} from '@/domain/copybot/fee/position-ledger';
 import type { RedisBus } from '@/infrastructure/bus/redis-bus';
 import type { openDatabase } from '@/infrastructure/persistence/database';
-import type { PositionLedgerRepository } from '@/infrastructure/persistence/position-ledger-repository';
 import { executions } from '@/infrastructure/persistence/schema';
 
 type Db = ReturnType<typeof openDatabase>;
@@ -59,8 +53,6 @@ export interface ConfirmWorkerDeps {
   db: Db;
   bus: RedisBus;
   events: CopyEvents;
-  /** Inc.4d — the position execution ledger the worker appends to as post-confirm bookkeeping (fee base source). */
-  ledger: PositionLedgerRepository;
   hmacKey: string;
   log: Logger;
 }
@@ -225,18 +217,6 @@ export class ConfirmWorker {
     const won = await finalizeSubmitted(db, t.userId, t.commandId, t.signature, 'landed');
     this.dropIfCurrent(t);
     if (!won) return; // recovery won — it publishes
-    // Inc.4d — append the fee-base ledger row NOW, before publishing ev:executed: the brain's close-confirm fee
-    // assessment (triggered by ev:executed) then reads a COMPLETE ledger, since a CLOSE's row is the position's
-    // final movement. Post-confirm bookkeeping OFF the exactly-once path — the finalize above already committed, so
-    // a fetch/write failure is swallowed (logged) and NEVER blocks/delays the publish or the money-critical close.
-    try {
-      await this.writeLedgerRow(t);
-    } catch (e) {
-      log.warn(
-        { sig: t.signature, error: (e as Error).message },
-        'position ledger write failed — fee bookkeeping only, land/close unaffected',
-      );
-    }
     if (!t.publish) {
       // Pre-3c legacy row (no persisted publish context): the landing is recorded; the brain's reconcile/orphan
       // backstop picks up the position change since ev:executed cannot be reconstructed faithfully.
@@ -272,51 +252,6 @@ export class ConfirmWorker {
       { kind: p.kind, sig: t.signature, totalMs: Date.now() - p.issuedAtMs },
       '🚀 signed + landed (confirmed)',
     );
-  }
-
-  /**
-   * Inc.4d — append the lamport-exact `position_ledger` row for a confirmed POSITION tx (open/add/remove/close/
-   * claim), derived from the OWNER's balance delta in the tx meta. One `getTransaction` per confirmed position tx
-   * (the confirm loop only reads cheap statuses). A missing owner / unavailable meta yields NO row (never a
-   * fabricated delta). Idempotent via the repository's unique key, so a re-confirm never double-counts.
-   */
-  private async writeLedgerRow(t: TrackedSubmission): Promise<void> {
-    const p = t.publish;
-    if (!p || !isLedgerKind(p.kind)) return; // sell/buy/fee are wallet ops, not position legs — no ledger row
-    const tx = await this.deps.conn.getTransaction(t.signature, {
-      maxSupportedTransactionVersion: 0,
-    });
-    if (!tx?.meta) {
-      this.deps.log.warn(
-        { sig: t.signature, kind: p.kind },
-        'position ledger: tx meta unavailable — fee bookkeeping skipped for this tx (will not retry)',
-      );
-      return;
-    }
-    const accountKeys = accountKeysOf(tx.transaction.message);
-    const row = ledgerRowFromMeta(
-      p.owner,
-      p.kind,
-      { preBalances: tx.meta.preBalances, postBalances: tx.meta.postBalances },
-      accountKeys,
-      t.signature,
-    );
-    if (!row) {
-      this.deps.log.warn(
-        { sig: t.signature, owner: p.owner },
-        'position ledger: owner not found in tx account keys — no row',
-      );
-      return;
-    }
-    await this.deps.ledger.append({
-      userId: t.userId,
-      ourPosition: p.positionPubkey,
-      kind: row.kind,
-      lamportsIn: row.lamportsIn,
-      lamportsOut: row.lamportsOut,
-      sig: row.sig,
-      confirmedAt: Date.now(),
-    });
   }
 
   /** Provably dead (on-chain error / blockhash expired) → finalize 'failed' (re-claimable) + the pinned alert pair. */

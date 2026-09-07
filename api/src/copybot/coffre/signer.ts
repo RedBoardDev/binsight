@@ -74,6 +74,23 @@ export class PrivyOutageError extends Error {
 
 const MAX_SIGN_RETRIES = 3; // bounded retries on a TRANSIENT Privy failure before declaring an outage (ULTRACODE #22)
 const SIGN_RETRY_BASE_DELAY_MS = 250; // exponential backoff base (250→500→1000ms): sub-second so a live sign is not stalled
+// D3-01: a hung Privy TEE sign must never freeze the coffre consume loop — a single serialized batch barrier would
+// otherwise stall EVERY user's opens AND closes indefinitely. Bound each attempt so a black-holed sign becomes a
+// retryable timeout instead of a permanent hang. Generous (a real TEE sign is sub-second to a few seconds) so it
+// never false-times-out a slow-but-alive sign; re-baseline after the devnet sign p95 measurement (SPEC §2.5.7).
+const PRIVY_SIGN_TIMEOUT_MS = 10_000;
+
+/** A Privy sign that exceeded PRIVY_SIGN_TIMEOUT_MS — retryable (transient congestion may clear); if EVERY attempt
+ *  times out it rolls up to PrivyOutageError, so the coffre loop advances and the reconcile re-drives a close. */
+export class PrivySignTimeoutError extends Error {
+  constructor(
+    readonly walletId: string,
+    readonly ms: number,
+  ) {
+    super(`Privy sign timed out after ${ms}ms for wallet ${walletId}`);
+    this.name = 'PrivySignTimeoutError';
+  }
+}
 
 /**
  * A TRANSIENT Privy failure worth a bounded retry: a rate-limit (429), a server-side 5xx, or a network/timeout
@@ -120,16 +137,33 @@ export class PrivySessionSigner implements Signer {
   private async signWithBackoff(transactionBase64: string): Promise<string> {
     let lastError: unknown;
     for (let attempt = 0; attempt <= MAX_SIGN_RETRIES; attempt++) {
+      // D3-01: bound the TEE sign so a hung call fails-fast (a distinct, RETRYABLE timeout) instead of freezing the
+      // coffre consume loop for every user. A Promise.race preserves the sign's REAL rejection (a deterministic 4xx
+      // still surfaces immediately in the catch below) — unlike a swallow-all timeout, which would mask it.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const signP = this.privy.signTransaction(
+        this.walletId,
+        transactionBase64,
+        this.authorizationKey,
+      );
+      signP.catch(() => {}); // if the timeout wins the race, the abandoned call's later rejection must not crash the process
       try {
-        return await this.privy.signTransaction(
-          this.walletId,
-          transactionBase64,
-          this.authorizationKey,
-        );
+        return await Promise.race([
+          signP,
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new PrivySignTimeoutError(this.walletId, PRIVY_SIGN_TIMEOUT_MS)),
+              PRIVY_SIGN_TIMEOUT_MS,
+            );
+          }),
+        ]);
       } catch (e) {
-        if (!isRetryablePrivyError(e)) throw e; // deterministic reject → surface now (it is not an outage)
+        // A timeout is retryable (transient congestion may clear); a deterministic 4xx still surfaces immediately.
+        if (!(e instanceof PrivySignTimeoutError) && !isRetryablePrivyError(e)) throw e;
         lastError = e;
         if (attempt < MAX_SIGN_RETRIES) await sleep(SIGN_RETRY_BASE_DELAY_MS * 2 ** attempt);
+      } finally {
+        clearTimeout(timer);
       }
     }
     throw new PrivyOutageError(this.walletId, MAX_SIGN_RETRIES + 1, lastError);

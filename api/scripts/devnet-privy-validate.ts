@@ -21,7 +21,6 @@
  *   DEVNET_RPC_URL                            — e.g. https://api.devnet.solana.com
  *   DEVNET_TEST_WALLET_ID (optional)          — a pre-created Privy embedded wallet id to reuse; else the script
  *                                               creates one and prints its id/address for you to fund via a faucet
- *   DEVNET_OPERATOR_FEE_ADDRESS (optional)    — to exercise the Wall A fee-destination ALLOW
  */
 
 import { PrivyClient } from '@privy-io/node';
@@ -96,11 +95,9 @@ async function main(): Promise<void> {
   }
 
   // Build the per-user Wall A policy doc (pure) — then create it + attach it to the coffre signer.
-  const feeAddr = process.env.DEVNET_OPERATOR_FEE_ADDRESS ?? walletAddress;
   const policyDoc = buildWallAPolicy({
     userWallet: walletAddress,
-    userOwnedDestinations: [], // devnet: exercise the own-wallet + fee dest; ATAs added when a token leg is tested
-    operatorFeeAddress: feeAddr,
+    userOwnedDestinations: [], // devnet: exercise the own-wallet dest; ATAs added when a token leg is tested
     maxTransferLamports: LAMPORTS_PER_SOL, // 1 SOL/transfer cap for the probe
   });
   let policyId = '';

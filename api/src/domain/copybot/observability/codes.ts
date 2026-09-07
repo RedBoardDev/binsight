@@ -39,7 +39,6 @@ export type RenderKind =
   | 'skipped-eligibility'
   | 'failsafe-activated'
   | 'failsafe-failed'
-  | 'fee'
   | 'system-fatal';
 
 export interface CodeMeta {
@@ -479,22 +478,6 @@ const RAW_CODE_REGISTRY = {
   'sign.landed': { category: 'SIGN', severity: 'info', audience: 'internal' },
   'sign.land_failed': { category: 'SIGN', severity: 'error', audience: 'internal' },
 
-  // ── fee (FEE, Inc.4d) — the 5% performance fee, transparent in the feed (SPEC §9) ──────────────────────────
-  'fee.assessed': {
-    category: 'FEE',
-    severity: 'info',
-    audience: 'feed',
-    title: 'Performance Fee Assessed',
-    render: 'fee',
-  },
-  'fee.landed': {
-    category: 'FEE',
-    severity: 'info',
-    audience: 'feed',
-    title: 'Performance Fee Collected',
-    render: 'fee',
-  },
-
   // ── wallb (WALLB) — compromised-brain signal; internal (program_not_allowed carries `${prog}`→adminDetail) ─
   'wallb.signer_not_owner': { category: 'WALLB', severity: 'error', audience: 'internal' },
   'wallb.missing_position_signer': { category: 'WALLB', severity: 'error', audience: 'internal' },
@@ -505,13 +488,6 @@ const RAW_CODE_REGISTRY = {
   'wallb.swap_missing_token_mint': { category: 'WALLB', severity: 'error', audience: 'internal' },
   'wallb.swap_token_not_owner_ata': { category: 'WALLB', severity: 'error', audience: 'internal' },
   'wallb.sol_spend_over_cap': { category: 'WALLB', severity: 'error', audience: 'internal' },
-  // Inc.4d fee-outflow guards: a 'fee' tx with no configured operator sink, or none carrying the operator transfer.
-  'wallb.fee_operator_unset': { category: 'WALLB', severity: 'error', audience: 'internal' },
-  'wallb.fee_missing_operator_transfer': {
-    category: 'WALLB',
-    severity: 'error',
-    audience: 'internal',
-  },
   'wallb.program_not_allowed': { category: 'WALLB', severity: 'error', audience: 'internal' },
 
   // ── failsafe (FAILSAFE) — all reach the user, all pinned ───────────────────────────────────────────────────

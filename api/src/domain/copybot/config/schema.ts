@@ -12,6 +12,7 @@ import { z } from 'zod';
 import type { CapsConfig } from '../caps';
 import type { FilterConfig } from '../filters';
 import { PRIORITY_FEE_TIERS, type PriorityFeeConfig } from '../priority-fee';
+import { MAX_SLIPPAGE_BPS } from '../residual-sell';
 import { RUG_SL_MAX_WINDOW_SECONDS, type RugSlConfig } from '../rug-sl';
 import type { SizingConfig } from '../sizing';
 import {
@@ -73,7 +74,9 @@ const FilterConfigSchema = z.object({
 }) satisfies z.ZodType<FilterConfig>;
 
 const ExecutionSchema = z.object({
-  slippageBps: z.number().nonnegative(),
+  // A3-01: bound to minOutWithSlippage's exact contract [0, 10000) integer — an unbounded/≥100%/fractional value
+  // throws there and WEDGES two-sided/reshape settlement + the residual-sweep. Rejected at parse (fail-closed).
+  slippageBps: z.number().int().min(0).max(MAX_SLIPPAGE_BPS),
   dustTokenRaw: z.number().int().nonnegative(),
   minSellOutLamports: z.number().int().nonnegative(),
   reshapeBinDeadbandSol: z.number().nonnegative(),

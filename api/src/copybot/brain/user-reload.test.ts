@@ -40,13 +40,8 @@ function makeRt(userId: string, initial: CopybotConfig) {
 }
 
 /** Harness around reloadAllUsers with scripted DB rows; records spawns / leader-set applications / reconciles.
- *  `openMirrorUserIds` = the copy_positions DISTINCT-open projection (a DB fact, independent of config enabled).
- *  `pendingFeeUserIds` = the fee_ledger DISTINCT-pending projection (finding #3, likewise config-independent). */
-function makeHarness(
-  rows: Map<string, CopybotConfig>,
-  openMirrorUserIds: string[] = [],
-  pendingFeeUserIds: string[] = [],
-) {
+ *  `openMirrorUserIds` = the copy_positions DISTINCT-open projection (a DB fact, independent of config enabled). */
+function makeHarness(rows: Map<string, CopybotConfig>, openMirrorUserIds: string[] = []) {
   const runtimes = new Map<string, ReloadableRuntime>();
   const userConfigs = new Map<string, CopybotConfig>();
   const spawned: string[] = [];
@@ -58,7 +53,6 @@ function makeHarness(
     listActiveUserIds: async () =>
       [...rows.entries()].filter(([, c]) => c.user.enabled).map(([uid]) => uid),
     listUserIdsWithOpenMirrors: async () => openMirrorUserIds,
-    listUserIdsWithPendingFees: async () => pendingFeeUserIds,
     loadConfig: async (uid) => {
       const row = rows.get(uid);
       if (!row) throw new Error(`no config row for ${uid}`);
@@ -150,42 +144,6 @@ describe('reloadAllUsers — boot + live reload (Inc.3b S7)', () => {
     await reloadAllUsers(h.deps);
     expect(h.spawned).toEqual(['u1']);
     expect(h.perRt.get('u1')?.bootStopConfigs).toHaveLength(1);
-  });
-
-  it('a user STOPPED with a PENDING fee but NO open mirror is spawned fee-sweep-only so the operator collects it (#3)', async () => {
-    // WHY (operator-fee no-loss): a user whose LAST position closed with a pending performance fee, then STOPPED, is
-    // enabled:false (absent from listActiveUserIds) AND holds no open mirror (absent from listUserIdsWithOpenMirrors).
-    // Without the pending-fee union NOTHING boots them → feeSweep (booted-only, #155) never sees them → the fee is
-    // NEVER collected. The union boots them DRAINED: the feeSweep can collect it, yet they are never an OPEN target.
-    const rows = new Map([['u1', cfg(false, [LEADER_A])]]); // STOPPED on disk
-    const h = makeHarness(rows, [], ['u1']); // no open mirror; only a pending fee row
-    await reloadAllUsers(h.deps);
-    expect(h.spawned).toEqual(['u1']); // booted SOLELY by the pending-fee union
-    expect(h.runtimes.has('u1')).toBe(true); // retained so the feeSweep (booted-only) can now see + collect it
-    expect(usersCopying(LEADER_A, h.userConfigs)).toEqual([]); // drained: NEVER an open fan-out target
-    expect(h.appliedLeaderSets.at(-1)).toEqual(new Set()); // and its leader is not watched for opens
-  });
-
-  it('a user in ALL THREE sets (active + open mirror + pending fee) is spawned exactly ONCE (union dedup)', async () => {
-    // WHY: the three projections overlap for a normally-running user; dedup must yield a single runtime (a double
-    // spawn would clobber the first with a half-entry).
-    const rows = new Map([['u1', cfg(true, [LEADER_A])]]);
-    const h = makeHarness(rows, ['u1'], ['u1']);
-    await reloadAllUsers(h.deps);
-    expect(h.spawned).toEqual(['u1']);
-    expect(h.perRt.get('u1')?.bootStopConfigs).toHaveLength(1);
-  });
-
-  it('listUserIdsWithPendingFees failure degrades to "no fee-sweep-only spawns this pass" — active spawns still run', async () => {
-    // WHY: the fee-collection backstop is best-effort like the open-mirror one — a hiccup in it must NEVER block the
-    // active spawns or the existing refresh; the stranded-fee user is re-spawned the moment the query recovers.
-    const rows = new Map([['u1', cfg(true, [LEADER_A])]]);
-    const h = makeHarness(rows);
-    h.deps.listUserIdsWithPendingFees = async () => {
-      throw new Error('fee listing down');
-    };
-    await expect(reloadAllUsers(h.deps)).resolves.toBeUndefined(); // the reload loop never rejects
-    expect(h.runtimes.has('u1')).toBe(true); // the active spawn survived the fee-query failure
   });
 
   it('live ADD: only the new user is spawned; existing runtimes are diffed, not respawned', async () => {

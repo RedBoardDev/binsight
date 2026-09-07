@@ -76,17 +76,6 @@ exports[`render-user · SOL-only feed templates (SPEC §3.2) > failsafe-failed (
 }
 `;
 
-exports[`render-user · SOL-only feed templates (SPEC §3.2) > fee (SOL-only base + fee, transparent — SPEC §9) 1`] = `
-{
-  "emoji": "💸",
-  "lineParts": [
-    "0.04 SOL fee on 0.85 SOL realized",
-  ],
-  "links": [],
-  "titleKey": "fee.assessed",
-}
-`;
-
 exports[`render-user · SOL-only feed templates (SPEC §3.2) > insufficient-balance (CONFIGURED value, D-2 labelled) 1`] = `
 {
   "emoji": "⚠️",

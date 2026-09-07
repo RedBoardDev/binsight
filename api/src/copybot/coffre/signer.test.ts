@@ -1,6 +1,6 @@
 import { Keypair, type PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js';
 import { pino } from 'pino';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   bs58,
   DryRunSigner,
@@ -193,6 +193,39 @@ describe('PrivySessionSigner — bounded backoff / outage classification (ULTRAC
     expect(err).toBeInstanceOf(PrivyOutageError);
     expect((err as PrivyOutageError).walletId).toBe('wallet-x');
     expect(calls).toBe(4); // MAX_SIGN_RETRIES (3) + the initial attempt
+  });
+
+  it('a HUNG sign (never resolves) TIMES OUT per attempt → never freezes the loop, rolls up to a PrivyOutageError (D3-01)', async () => {
+    // WHY: signing runs on the coffre's serialized consume-loop batch barrier — a single black-holed Privy TEE call
+    // would otherwise stall EVERY user's opens AND closes indefinitely (the forbidden never-miss-close freeze). Each
+    // attempt is bounded by PRIVY_SIGN_TIMEOUT_MS so the loop always advances; the reconcile then re-drives the close.
+    vi.useFakeTimers();
+    try {
+      let calls = 0;
+      const backend: TransactionSigningBackend = {
+        signTransaction: () => {
+          calls++;
+          return new Promise<string>(() => {}); // black-holed TEE call — never resolves
+        },
+      };
+      const signer = new PrivySessionSigner(
+        backend,
+        'wallet-hung',
+        Keypair.generate().publicKey.toBase58(),
+      );
+      const settled = signer
+        .sign(buildTx(Keypair.generate().publicKey, Keypair.generate().publicKey.toBase58()), [])
+        .catch((e) => e);
+      // Drive past 4 attempts × (10s timeout) + the 250/500/1000ms backoffs. If the sign truly hung, this would never
+      // settle; because each attempt times out, the promise RESOLVES to a typed outage — proof the loop is unblocked.
+      await vi.advanceTimersByTimeAsync(4 * 10_000 + 250 + 500 + 1000 + 50);
+      const err = await settled;
+      expect(err).toBeInstanceOf(PrivyOutageError); // every attempt timed out → an outage, not a permanent freeze
+      expect((err as PrivyOutageError).walletId).toBe('wallet-hung');
+      expect(calls).toBe(4); // MAX_SIGN_RETRIES(3) + initial — each attempt bounded by the timeout, none hung forever
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

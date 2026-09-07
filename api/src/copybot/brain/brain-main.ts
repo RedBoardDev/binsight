@@ -14,6 +14,8 @@
  * wiring and the ev:executed consumer (routed per runtime via executed-router). The SYSTEM runtime is ALWAYS
  * booted: it is the WALLET context (orphan closes / sweep sells / --once publish as SYSTEM, INC3B-PLAN §4).
  */
+
+import { randomUUID } from 'node:crypto';
 import { DLMM_PROGRAM_ID } from '@binsight/shared';
 import { type Connection, PublicKey } from '@solana/web3.js';
 import { pino } from 'pino';
@@ -27,6 +29,7 @@ import { SYSTEM_USER_ID } from '@/copybot/journal-store';
 import { CopyEvents } from '@/copybot/observability/copy-events';
 import { EventStore } from '@/copybot/observability/event-store';
 import { PRUNE_INTERVAL_MS, pruneOldRows } from '@/copybot/observability/retention';
+import { LEASE_TTL_MS, startLeaseRenewLoop } from '@/copybot/singleton-lease';
 import type { CopybotConfig } from '@/domain/copybot/config';
 import type { DetectedEvent } from '@/domain/copybot/events';
 import { computeLeaderSet, shouldRetainLeader } from '@/domain/copybot/fan-out';
@@ -48,8 +51,6 @@ import { JupiterTokenGateway } from '@/infrastructure/jupiter/jupiter-token-gate
 import { CopybotActivationRepository } from '@/infrastructure/persistence/copybot-activation-repository';
 import { CopybotPositionsRepository } from '@/infrastructure/persistence/copybot-positions-repository';
 import { openDatabase } from '@/infrastructure/persistence/database';
-import { FeeLedgerRepository } from '@/infrastructure/persistence/fee-ledger-repository';
-import { PositionLedgerRepository } from '@/infrastructure/persistence/position-ledger-repository';
 import { BlockhashCache } from '@/infrastructure/solana/blockhash-cache';
 import { readActiveTokenPrice } from '@/infrastructure/solana/dlmm/active-bin-price';
 import { decodeDlmmLegs } from '@/infrastructure/solana/dlmm/dlmm-event-decoder';
@@ -82,7 +83,6 @@ import {
   settleContinuationFailure,
 } from './dispatch-executed';
 import { resolveExecutedTarget } from './executed-router';
-import { runClosedFeeBackstop, runFeeSweep } from './fee-sweep';
 import { LeaderHub } from './leader-hub';
 import { resolveUserWallet } from './spawn-wallet';
 import { reloadAllUsers } from './user-reload';
@@ -108,10 +108,8 @@ const { config: brainNumericConfig, warnings: brainNumericWarnings } = parseBrai
 );
 const RECONCILE_OPEN_GRACE_MS = brainNumericConfig.reconcileOpenGraceMs;
 const SWEEP_MS = brainNumericConfig.sweepMs;
-const FEE_SWEEP_MS = brainNumericConfig.feeSweepMs;
-const FEE_SWEEP_BATCH = brainNumericConfig.feeSweepBatch;
-const FEE_BACKSTOP_GRACE_MS = brainNumericConfig.feeBackstopGraceMs;
 const EV_EXECUTED_STREAM = 'copybot:ev:executed';
+const BRAIN_LEASE_KEY = 'copybot:brain:lease'; // A6-04: the exclusive Redis key guarding the brain singleton (ev:executed consumer + in-memory continuations)
 const RUG_SL_POLL_MS = 15_000; // rug-SL price-poll cadence: ~4 samples per a 60s window — fast enough to catch a crash, one lbPair read per open pool (economical)
 const CONFIG_POLL_MS = 5_000; // re-read the DB-backed runtime config (sizing/caps/two-sided) so web edits apply live
 const SNAPSHOT_TTL_MS = 30_000; // per-mint filter-snapshot cache TTL (short; pre-warm makes repeat opens free)
@@ -221,6 +219,25 @@ async function main(): Promise<void> {
   const poolReader = new OnchainPoolMetaReader(conn);
   const tokenMeta = new HeliusTokenMetadataGateway(cfg.httpUrl, log);
   const bus = RedisBus.connect(cfg.redisUrl);
+  // A6-04 — SINGLETON GUARD (before ANY processing): only ONE brain may own the ev:executed consumer + the in-memory
+  // multi-tx open continuations. A 2nd brain booting during a rolling redeploy would split the ev:executed stream and
+  // SILENTLY strand open continuations (the coffre had a lease; the brain had none). Refuse to boot while a live brain
+  // holds the lease; it auto-expires (TTL) if the holder crashes. Same #150 split-brain guard the coffre uses.
+  const brainInstanceId = `brain:${process.pid}:${randomUUID()}`;
+  if (!(await bus.acquireLease(BRAIN_LEASE_KEY, brainInstanceId, LEASE_TTL_MS))) {
+    log.error(
+      { key: BRAIN_LEASE_KEY, instanceId: brainInstanceId },
+      '🔒 another brain instance holds the singleton lease — refusing to boot (would split ev:executed + strand open continuations)',
+    );
+    process.exit(1);
+  }
+  startLeaseRenewLoop({
+    bus,
+    key: BRAIN_LEASE_KEY,
+    instanceId: brainInstanceId,
+    role: 'brain',
+    log,
+  });
   const db = openDatabase(cfg.dbUrl);
   const configStore = new ConfigStore(db, log);
   const control = ControlChannel.connect(cfg.redisUrl); // instant config-reload pings (kill-switch applies in <100ms)
@@ -258,16 +275,6 @@ async function main(): Promise<void> {
   const activationRepo = new CopybotActivationRepository(db);
   const resolveOwner = (uid: string): Promise<PublicKey | null> =>
     activationRepo.resolveSignableWallet(uid).then((w) => (w ? new PublicKey(w.address) : null));
-  // Inc.4d — performance-fee collection (SPEC §9). The fee sink is trusted brain/coffre config, NEVER the request.
-  // Unset ⇒ fees are still ASSESSED + recorded (state 'skipped') for auditability, but never transferred — logged
-  // ONCE here at boot so an operator who forgot to configure the sink learns immediately.
-  const operatorFeeAddress = process.env.OPERATOR_FEE_ADDRESS ?? '';
-  if (!operatorFeeAddress)
-    log.warn(
-      'OPERATOR_FEE_ADDRESS unset — performance-fee collection disabled: fees are still recorded (state=skipped) but never transferred (SPEC §9)',
-    );
-  const positionLedgerRepo = new PositionLedgerRepository(db); // fee-base source (read at close; written by the coffre)
-  const feeLedgerRepo = new FeeLedgerRepository(db); // per-position fee ledger (assessed at close, swept by the feeSweep)
   // Cross-tenant open-mirror projection: the boot/reload spawn UNION (finding #134) so a user STOPPED while the
   // brain was down is still (re)spawned to drain + force-close their stranded mirrors — never a missed close.
   const copybotPositionsRepo = new CopybotPositionsRepository(db);
@@ -297,9 +304,6 @@ async function main(): Promise<void> {
     // ONE process-wide Discord sink shared by every runtime + the detection emitter (process-wide rate-limit
     // + dedup, SPEC §10). No-op (with one boot log) when DISCORD_WEBHOOK_URL is unset.
     alertSink: createDiscordAlertSink(process.env.DISCORD_WEBHOOK_URL, log),
-    operatorFeeAddress, // Inc.4d fee sink (SPEC §9)
-    positionLedger: positionLedgerRepo,
-    feeLedger: feeLedgerRepo,
   };
   // The brain's runtime/config views (3b): the fan-out, status, sweeps and reload all read these LIVE maps —
   // one entry per booted user. A deactivated user's runtime is RETAINED (its stop-close diff force-closes; it
@@ -530,32 +534,6 @@ async function main(): Promise<void> {
       leaderLabel: cfg.leader,
     });
 
-  // Inc.4d (SPEC §9) — publish a transfer for each PENDING performance fee, via the OWNING user's runtime (its
-  // wallet + signer). Fully decoupled from the close: a fee failure NEVER blocks/delays a close, and each fee is
-  // retried every tick until its transfer lands. No-op when no operator sink is set (nothing is ever 'pending').
-  const feeSweep = async (): Promise<void> => {
-    // #140 no-miss backstop — FIRST assess any CLOSED position still lacking a fee row (the deferred-sell tail: a
-    // close-sell that failed/never confirmed → onSellConfirmed never assessed). Runs before the pending publish so a
-    // freshly-assessed 'pending' fee is picked up the SAME tick. Idempotent with the sell-confirm assess.
-    await runClosedFeeBackstop({
-      log,
-      listClosedWithoutFee: (bootedUserIds, limit, closedBeforeMs) =>
-        copybotPositionsRepo.listClosedWithoutFee(bootedUserIds, limit, closedBeforeMs),
-      batchLimit: FEE_SWEEP_BATCH,
-      graceMs: FEE_BACKSTOP_GRACE_MS,
-      bootedUserIds: () => [...runtimes.keys()],
-      runtimeFor: (userId) => runtimes.get(userId),
-    });
-    await runFeeSweep({
-      log,
-      listPending: (bootedUserIds, limit) => feeLedgerRepo.listPending(bootedUserIds, limit),
-      batchLimit: FEE_SWEEP_BATCH,
-      bootedUserIds: () => [...runtimes.keys()],
-      runtimeFor: (userId) => runtimes.get(userId),
-      bumpAttempts: (userId, ourPosition) => feeLedgerRepo.bumpAttempts(userId, ourPosition),
-    });
-  };
-
   await blockhashCache.start(); // prime + background-refresh so serializeUnsigned never pays a getLatestBlockhash RTT
   // Live priority-fee oracle: started once ANY booted runtime opts in (INC3B-PLAN §3) — env override or the
   // user's DB flag. Checked after every reload pass so a live opt-in starts it too; never stopped once started
@@ -579,9 +557,6 @@ async function main(): Promise<void> {
       log,
       listActiveUserIds: () => configStore.listActiveUserIds(),
       listUserIdsWithOpenMirrors: () => copybotPositionsRepo.listUserIdsWithOpenMirrors(),
-      // #3 — union users still owing a PENDING fee into the spawn set: a user who STOPPED after their last close left
-      // a pending fee has no open mirror either, so ONLY this boots them (drained / fee-sweep-only) to collect it.
-      listUserIdsWithPendingFees: () => feeLedgerRepo.listUserIdsWithPendingFees(),
       loadConfig: (uid) => configStore.load(uid),
       spawn: spawnRuntime,
       runtimes,
@@ -687,11 +662,6 @@ async function main(): Promise<void> {
   const rugSlTimer = setInterval(
     () => rugSlSweep().catch((e) => log.error({ e: (e as Error).message }, 'rug-sl')),
     RUG_SL_POLL_MS,
-  );
-  // Inc.4d — periodic performance-fee sweep (publishes each pending fee transfer; retried until it lands, SPEC §9).
-  const feeTimer = setInterval(
-    () => feeSweep().catch((e) => log.error({ e: (e as Error).message }, 'fee-sweep')),
-    FEE_SWEEP_MS,
   );
   // Live config reload — now the FULL multi-user pass (spawn new actives / per-user stop-close diffs / leader
   // set). A web config edit publishes a control ping → reload from the DB NOW (kill-switch in <100ms); the
@@ -876,15 +846,6 @@ async function main(): Promise<void> {
         ev,
       );
     },
-    // A landed fee transfer → the OWNING user's runtime flips its fee_ledger row 'landed' + emits the feed row.
-    // Route by userId, then by the position it was levied on (the ev carries positionPubkey = our_position).
-    onFeeConfirmed: async (ev) => {
-      const owner = resolveExecutedTarget(runtimes, {
-        userId: ev.userId,
-        positionPubkey: ev.positionPubkey,
-      });
-      if (owner) await owner.onFeeConfirmed(ev);
-    },
     ack: (id) => evBus.ack(EV_EXECUTED_STREAM, 'brain', id),
     onLoopError: (err, id) =>
       detectionEvents.system('system.loop_errored', err, {
@@ -965,7 +926,6 @@ async function main(): Promise<void> {
     clearInterval(reconTimer);
     clearInterval(sweepTimer);
     clearInterval(rugSlTimer);
-    clearInterval(feeTimer);
     clearInterval(configTimer);
     clearInterval(heartbeatTimer);
     clearInterval(pruneTimer);

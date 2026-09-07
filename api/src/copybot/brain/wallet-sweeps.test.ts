@@ -61,7 +61,7 @@ const emptyPendingMaps = (): PendingOpenMaps => ({
 function makeReconcileRt(
   userId: string,
   mirrors: Mirror[],
-  opts: { loadOpenThrows?: boolean; wallet?: string } = {},
+  opts: { loadOpenThrows?: boolean; wallet?: string; inFlight?: string[] } = {},
 ) {
   const calls = {
     markClosed: [] as string[],
@@ -108,6 +108,7 @@ function makeReconcileRt(
     closeConfirmedKey: (leader, pool, our) => `${leader}:${pool}:close-confirmed:${our}`,
     cancelPendingOpen: (lp) => calls.cancelled.push(lp),
     pendingOpenMapsView: emptyPendingMaps,
+    isOpenInFlight: (lp) => (opts.inFlight ?? []).includes(lp),
   };
   return { rt, calls };
 }
@@ -984,5 +985,34 @@ describe('runResidualSweep — per-distinct-wallet residual safety sweep (Inc.4c
     expect(a.swapFailedKeys).toEqual([`${LEADER}:sweep:${WALLET_A}:${NOW}:SAME_MINT`]);
     expect(b.swapFailedKeys).toEqual([`${LEADER}:sweep:${WALLET_B}:${NOW}:SAME_MINT`]);
     expect(a.swapFailedKeys[0]).not.toBe(b.swapFailedKeys[0]); // same mint on two wallets ⇒ still distinct rows
+  });
+});
+
+// A6-01: the reconcile must never false-close an open that is still LANDING. An open landing between openGraceMs and
+// its ~60-75s deadline reads as "gone" on-chain; without an event-driven grace the reconcile markCloses it and the
+// orphan pass force-closes the live open (a missed copy + fee round-trip). isOpenInFlight (the pending-open
+// reservation) protects it regardless of elapsed time; the raised time-grace is the backstop for the simple one-tx open.
+describe('runReconcileSweep — A6-01 event-driven open-grace (a still-landing open is never false-closed)', () => {
+  it('gone on-chain + PAST the time-grace but still IN FLIGHT → NOT markClosed (event-driven grace)', async () => {
+    const { rt, calls } = makeReconcileRt(
+      'u',
+      [mirror({ ourPosition: 'OUR', leaderPosition: LP })],
+      {
+        inFlight: [LP],
+      },
+    );
+    const { deps } = makeDeps([rt], [], { OUR: null, [LP]: {} }); // our open not yet confirmed; leader still holds it
+    await runReconcileSweep(deps);
+    expect(calls.markClosed).toEqual([]); // protected by the event-driven in-flight grace
+    expect(calls.reClosed).toEqual([]);
+  });
+
+  it('control — the SAME mirror NOT in flight and past the time-grace → markClosed (proves the grace is what protects it)', async () => {
+    const { rt, calls } = makeReconcileRt('u', [
+      mirror({ ourPosition: 'OUR', leaderPosition: LP }),
+    ]); // not in flight
+    const { deps } = makeDeps([rt], [], { OUR: null, [LP]: {} });
+    await runReconcileSweep(deps);
+    expect(calls.markClosed).toEqual([LP]); // no grace → a still-landing open WOULD be false-closed
   });
 });

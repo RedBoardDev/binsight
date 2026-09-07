@@ -68,9 +68,10 @@ describe('checkCaps — caps + kill-switch envelope', () => {
         reason: 'max_concurrent_per_token',
       });
     });
-    it('the DEFAULT (1, finding #161) blocks a SECOND concurrent same-mint position', () => {
-      // WHY (#161): the close-path residual sell reads the WHOLE wallet balance, so two concurrent same-mint
-      // positions commingle proceeds → the performance fee over-charges (up to 2x). The default cap of 1 forbids it.
+    it('the DEFAULT (1) blocks a SECOND concurrent same-mint position', () => {
+      // WHY: the close-path residual sell reads the WHOLE wallet balance, so two concurrent same-mint positions
+      // would commingle — the first to close would sell (and account for) the other's token leg too. The default
+      // cap of 1 forbids that overlap.
       expect(CAPS_DEFAULTS.maxConcurrentPerToken).toBe(1);
       expect(checkCaps(CAPS_DEFAULTS, state({ tokenOpenCount: 1 }), 1, NOW)).toEqual({
         action: 'block',
@@ -171,12 +172,12 @@ describe('checkCaps — caps + kill-switch envelope', () => {
     });
   });
 
-  it('CAPS_DEFAULTS = expected envelope (maxOpen 8, 10/10min, kill OFF, per-token 1 for #161, exposure OFF)', () => {
+  it('CAPS_DEFAULTS = expected envelope (maxOpen 8, 10/10min, kill OFF, per-token 1, exposure OFF)', () => {
     expect(CAPS_DEFAULTS).toEqual({
       killSwitchGlobal: false,
       killSwitchLeader: false,
       maxOpenPositions: 8,
-      maxConcurrentPerToken: 1, // #161 — one open position per token mint (fee-attribution safety)
+      maxConcurrentPerToken: 1, // one open position per token mint (residual-sell correctness)
       maxOpensPerWindow: 10,
       windowMinutes: 10,
       maxTotalExposureSol: null,

@@ -25,7 +25,12 @@ export type HttpFetch = (
   init?: { method?: string; headers?: Record<string, string>; body?: string },
 ) => Promise<HttpResponse>;
 
-const defaultFetch: HttpFetch = (url, init) => fetch(url, init);
+// D1-03/D3-04: bound EACH Jupiter fetch (quote + swap-build) so a black-holed call fails-fast into the retry loop's
+// network-error path instead of hanging forever. The residual-sell quote runs INLINE on the brain's sequential
+// ev:executed consumer, so an unbounded fetch would stall EVERY user's confirmations. A fresh signal per attempt.
+const JUPITER_FETCH_TIMEOUT_MS = 8_000; // generous — a live quote/swap responds in <1-2s; a true hang aborts here
+const defaultFetch: HttpFetch = (url, init) =>
+  fetch(url, { ...init, signal: AbortSignal.timeout(JUPITER_FETCH_TIMEOUT_MS) });
 
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]); // rate-limit / transient server / gateway
 const RETRY_ATTEMPTS = 4;

@@ -32,13 +32,19 @@ import { HeartbeatStore } from '@/copybot/heartbeat-store';
 import { SYSTEM_USER_ID } from '@/copybot/journal-store';
 import { CopyEvents } from '@/copybot/observability/copy-events';
 import { EventStore } from '@/copybot/observability/event-store';
+import {
+  LEASE_RENEW_MS,
+  LEASE_TTL_MS,
+  type LeaseRenewAction,
+  type LeaseRenewOutcome,
+  planLeaseRenew,
+} from '@/copybot/singleton-lease';
 import type { CopyCode } from '@/domain/copybot/observability/codes';
 import { HEARTBEAT_INTERVAL_MS } from '@/domain/copybot/status';
 import { ControlChannel } from '@/infrastructure/bus/control-channel';
 import { type ConsumedMessage, RedisBus } from '@/infrastructure/bus/redis-bus';
 import { CopybotActivationRepository } from '@/infrastructure/persistence/copybot-activation-repository';
 import { openDatabase } from '@/infrastructure/persistence/database';
-import { PositionLedgerRepository } from '@/infrastructure/persistence/position-ledger-repository';
 import { PrivyServer } from '@/infrastructure/privy/privy-server';
 import { BlockhashCache } from '@/infrastructure/solana/blockhash-cache';
 import {
@@ -54,9 +60,7 @@ const CONFIG_POLL_MS = 5_000; // re-read the DB-backed runtime config (the maxTr
 
 // Singleton lease: only ONE coffre may own the shared consumer/PEL. A 2nd instance booting would re-claim/re-sign
 // in-flight cmd:sign from the PEL and DOUBLE-execute → it must refuse to boot while a live instance holds the lease.
-const LEASE_KEY = 'copybot:coffre:lease'; // the exclusive Redis key guarding the coffre singleton
-const LEASE_TTL_MS = 30_000; // a crashed holder's lease auto-expires within this window so a restart can re-acquire
-const LEASE_RENEW_MS = LEASE_TTL_MS / 2; // renew well before expiry so a live holder never spuriously loses the lease
+const LEASE_KEY = 'copybot:coffre:lease'; // the exclusive Redis key guarding the coffre singleton (LEASE_TTL_MS/RENEW shared)
 
 // --drain parity with the old inline-confirm flow: after the batch, wait (bounded) for the async confirms so the
 // validation run still ends with ev:executed published. Past the ceiling (≈ a blockhash lifetime) an unconfirmed tx
@@ -103,35 +107,11 @@ export function routeVerdict(verdict: {
   return { action: 'deadLetter', code: deadLetterCode(verdict.reason) };
 }
 
-/** A single lease-renew tick's outcome: the CAS renew either RESOLVED (ok true = still ours / false = lost or taken)
- *  or THREW (`error` — Redis unreachable, e.g. an outage). */
-export type LeaseRenewOutcome = { ok: boolean } | { error: string };
-
-/** What a lease-renew tick must do next. */
-export type LeaseRenewAction =
-  | { action: 'renewed' } // the lease is still ours → refresh the last-success clock, keep signing
-  | { action: 'exit'; reason: 'lost' | 'expired' } // exclusivity provably gone → exit (split-brain guard, #150)
-  | { action: 'retry' }; // a TRANSIENT renew error, still within the TTL → log and retry next tick
-
-/**
- * PURE (#150): decide a lease-renew tick. The split-brain guard must fire not only when Redis EXPLICITLY reports the
- * lease lost (`ok=false`) but ALSO when a renew merely keeps ERRORING: once `nowMs - lastSuccessMs > ttlMs`, a renew
- * has not SUCCEEDED within the TTL, so the lease has provably EXPIRED at Redis — a second coffre can now acquire it
- * and DOUBLE-SIGN — regardless of WHY the renews failed. Only a transient error still inside the TTL is safe to
- * retry; without this an outage longer than the TTL silently loses exclusivity forever (the old `.catch` just logged).
- */
-export function planLeaseRenew(
-  outcome: LeaseRenewOutcome,
-  nowMs: number,
-  lastSuccessMs: number,
-  ttlMs: number,
-): LeaseRenewAction {
-  if ('error' in outcome)
-    return nowMs - lastSuccessMs > ttlMs
-      ? { action: 'exit', reason: 'expired' }
-      : { action: 'retry' };
-  return outcome.ok ? { action: 'renewed' } : { action: 'exit', reason: 'lost' };
-}
+// The singleton-lease split-brain guard is SHARED with the brain (A6-04) via a firewall-safe module (no signing
+// authority), so both processes use the SAME #150-proven decision. Re-exported (local bindings imported at the top)
+// so existing importers of `./coffre-main` (the tests) are unchanged.
+export { LEASE_RENEW_MS, LEASE_TTL_MS, planLeaseRenew };
+export type { LeaseRenewAction, LeaseRenewOutcome };
 
 /**
  * PURE (Inc.4e): does a broadcast just handed to the confirm worker prove Privy custody RECOVERED — i.e. should it
@@ -390,6 +370,31 @@ export function parseCoffreNumericConfig(env: {
   return { maxTradeSol, retryMax, retryDelayMs };
 }
 
+/**
+ * E1-02 — fail-closed on the Privy signing credentials. If `PRIVY_SIGNING_ENABLED=true` but any required credential
+ * is missing, the coffre would boot, every live sign would 401, and the sign-error classifier would mistake that
+ * global config error for a per-user REVOCATION — stickily blocking that user's CLOSEs forever (a never-miss-close
+ * violation). Refuse to boot instead, consistent with the other boot guards (bus key, numeric envs, copier wallet).
+ * Pure/testable; signing OFF ⇒ dry-run ⇒ no credentials needed (returns ok).
+ */
+export function assertPrivySigningConfig(env: {
+  PRIVY_SIGNING_ENABLED?: string;
+  PRIVY_APP_ID?: string;
+  PRIVY_APP_SECRET?: string;
+  PRIVY_AUTHORIZATION_KEY?: string;
+}): { error: string } | { ok: true } {
+  if (env.PRIVY_SIGNING_ENABLED !== 'true') return { ok: true }; // dry-run: DryRunSigner, no Privy credentials needed
+  const missing: string[] = [];
+  if (!env.PRIVY_APP_ID) missing.push('PRIVY_APP_ID');
+  if (!env.PRIVY_APP_SECRET) missing.push('PRIVY_APP_SECRET');
+  if (!env.PRIVY_AUTHORIZATION_KEY) missing.push('PRIVY_AUTHORIZATION_KEY');
+  if (missing.length > 0)
+    return {
+      error: `PRIVY_SIGNING_ENABLED=true but required Privy credential(s) missing: ${missing.join(', ')} — refusing to boot (a live sign would 401 and be misclassified as a per-user revocation, stickily blocking that user's CLOSEs; E1-02)`,
+    };
+  return { ok: true };
+}
+
 const cfg = {
   httpUrl: process.env.SOLANA_HTTP_URL ?? '',
   // Optional reads-only secondary RPC (#50): ONLY getSlot/getLatestBlockhash/getTransaction failover to it.
@@ -404,7 +409,6 @@ const cfg = {
   jitoBundleUrl: process.env.COPYBOT_JITO_BUNDLE_URL, // block-engine URL; absent ⇒ never bundle (plain RPC land)
   jitoEnabledEnv:
     process.env.COPYBOT_JITO !== undefined ? process.env.COPYBOT_JITO === 'true' : undefined, // env override of the DB jitoEnabled
-  operatorFeeAddress: process.env.OPERATOR_FEE_ADDRESS ?? '', // Inc.4d fee sink (SPEC §9); '' ⇒ Wall B rejects fee txs
 };
 
 // Inc.4a — per-user Privy signing (default OFF). While OFF, a real user's pipeline runs end-to-end via a DryRunSigner
@@ -482,6 +486,13 @@ async function main(): Promise<void> {
   const numeric = parseCoffreNumericConfig(process.env);
   if ('error' in numeric) {
     log.error(numeric.error);
+    process.exit(1);
+  }
+  // E1-02 — fail-closed if Privy signing is enabled without its credentials (else a live sign 401s and is
+  // misclassified as a per-user revocation, stickily blocking that user's CLOSEs). Never-miss-close.
+  const privyGuard = assertPrivySigningConfig(process.env);
+  if ('error' in privyGuard) {
+    log.error(privyGuard.error);
     process.exit(1);
   }
   // Fail-closed on the signing wallet identity (#24): both envs required — no silent bench `.wallets/copier-test.json`
@@ -598,15 +609,11 @@ async function main(): Promise<void> {
   // ASYNC CONFIRM WORKER (3c): the single owner of on-chain confirmation for every broadcast — no signing lane ever
   // waits on the chain. `loadPending` runs BEFORE the boot PEL drain: a 'submitted' row whose cmd:sign was already
   // ACKed by a prior instance (crash after broadcast) has NO PEL copy — the row is its only recovery state.
-  // Inc.4d — the confirm worker appends a lamport-exact position_ledger row per confirmed position tx (the fee
-  // base's source), as post-confirm bookkeeping OFF the exactly-once path (a write failure never affects finalize).
-  const positionLedger = new PositionLedgerRepository(db);
   const confirmWorker = new ConfirmWorker({
     conn,
     db,
     bus,
     events,
-    ledger: positionLedger,
     hmacKey: kEvt, // #24 — the confirm worker publishes ev:executed, so it signs with kEvt
     log,
   });
@@ -670,7 +677,6 @@ async function main(): Promise<void> {
     events,
     policyFor, // per-message, per-USER sign-time policy (reads the live per-user config cache — SPEC §11)
     signingEnabled: cfg.signingEnabled,
-    operatorFeeAddress: cfg.operatorFeeAddress, // Inc.4d Wall B fee-sink allowlist (coffre-trusted, not the request)
     hmacKey: kEvt, // #24 — process1 publishes ev:executed on a confirmed land, so it signs with kEvt
     retryMax: numeric.retryMax,
     retryDelayMs: numeric.retryDelayMs,

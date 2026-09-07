@@ -19,7 +19,6 @@ import { derivePositionKeypair } from '@/copybot/ephemeral-position';
 import type { CopyEvents } from '@/copybot/observability/copy-events';
 import type { RedisBus } from '@/infrastructure/bus/redis-bus';
 import type { Database } from '@/infrastructure/persistence/database';
-import { PositionLedgerRepository } from '@/infrastructure/persistence/position-ledger-repository';
 import * as schema from '@/infrastructure/persistence/schema';
 import { copyPositions, executions } from '@/infrastructure/persistence/schema';
 import type { BlockhashCache } from '@/infrastructure/solana/blockhash-cache';
@@ -122,7 +121,6 @@ function ctxFor(conn: Connection, bus: RedisBus): Ctx {
     // per-user tests below override it to prove the coffre reads the REQUEST's user row.
     policyFor: async () => ({ maxTradeSol: 1.0 }),
     signingEnabled: true,
-    operatorFeeAddress: '', // Inc.4d — default fixture has no fee sink (the dedicated fee tests set one)
     hmacKey: 'k',
     retryMax: 0,
     retryDelayMs: 0,
@@ -326,7 +324,7 @@ describe('process1 — #133: an AMBIGUOUS land() failure hands the LIVE sig to t
       getBlockHeight: async () => 500,
       getSignatureStatus: async () => status(),
       getSignatureStatuses: async (sigs: string[]) => ({ value: sigs.map(() => status().value) }),
-      getTransaction: async () => null, // position-ledger bookkeeping is off the money path (no row is fine)
+      getTransaction: async () => null, // not exercised by this scenario
       sendRawTransaction: land,
     } as unknown as Connection;
   }
@@ -380,7 +378,6 @@ describe('process1 — #133: an AMBIGUOUS land() failure hands the LIVE sig to t
       db,
       bus,
       events: events2,
-      ledger: new PositionLedgerRepository(db),
       hmacKey: 'k',
       log,
     });
@@ -940,64 +937,6 @@ describe('process1 — Inc.4a: the SIGNER port (signerFor drives owner + sign)',
         .where(eq(executions.commandId, sr.commandId as string))
     )[0];
     expect(row?.state).toBe('failed');
-  });
-});
-
-describe('process1 — Inc.4d: a kind:fee performance-fee transfer signs+lands with the operator-sink allowlist', () => {
-  const operator = Keypair.generate().publicKey;
-
-  function feeTxBase64(to: PublicKey, lamports = 25_000_000): string {
-    const t = new Transaction();
-    t.feePayer = copier.publicKey;
-    t.recentBlockhash = Keypair.generate().publicKey.toBase58();
-    t.add(SystemProgram.transfer({ fromPubkey: copier.publicKey, toPubkey: to, lamports }));
-    return t.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64');
-  }
-  function feeReq(to: PublicKey, lamports = 25_000_000): Record<string, unknown> {
-    const eventKey = `fee:pos_${usedCommandIds.length}_${process.hrtime.bigint()}`;
-    const commandId = deriveCommandId(USER, eventKey);
-    usedCommandIds.push(commandId);
-    return {
-      userId: USER,
-      commandId,
-      eventKey,
-      kind: 'fee',
-      pool: position.toBase58(),
-      positionPubkey: position.toBase58(),
-      owner: copier.publicKey.toBase58(),
-      txBase64: feeTxBase64(to, lamports),
-      sizeSol: 0,
-      targetBinRange: { lower: 0, upper: 0 },
-      issuedAtSlot: 100,
-      deadlineSlot: 1_000_000,
-      issuedAtMs: Date.now(),
-      fee: { toAddress: to.toBase58(), lamports: String(lamports) },
-    };
-  }
-
-  it('a fee → the CONFIGURED operator sink signs+lands (broadcast, hand-off to the worker as kind=fee)', async () => {
-    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
-    const conn = fakeConn(() => ({ value: { confirmationStatus: 'confirmed' } }));
-    const ctx = { ...ctxFor(conn, bus), operatorFeeAddress: operator.toBase58() };
-    const verdict = await process1(feeReq(operator), ctx);
-    expect(verdict).toEqual({ ok: true, reason: 'submitted', kind: 'fee' });
-    expect(ctx.onSubmitted).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(ctx.onSubmitted).mock.calls[0]?.[0]?.publish?.kind).toBe('fee');
-  });
-
-  it('a fee → a DESTINATION ≠ the coffre sink is REJECTED (a forged fee.toAddress cannot redirect the fee)', async () => {
-    const attacker = Keypair.generate().publicKey;
-    const bus = { publish: vi.fn(async () => 'sid') } as unknown as RedisBus;
-    const conn = fakeConn(() => ({ value: null }));
-    // The coffre's OWN sink is `operator`; the tx (and forged payload) pay `attacker` → Wall B rejects.
-    const ctx = { ...ctxFor(conn, bus), operatorFeeAddress: operator.toBase58() };
-    const verdict = await process1(feeReq(attacker), ctx);
-    expect(verdict).toMatchObject({
-      ok: false,
-      reason: 'wallb:foreign_sol_destination',
-      kind: 'fee',
-    });
-    expect(bus.publish).not.toHaveBeenCalled();
   });
 });
 

@@ -40,5 +40,13 @@ export function verifyEnvelope(hop: string, key: string, env: Envelope): unknown
   const got = Buffer.from(env.hmac, 'hex');
   const exp = Buffer.from(expected, 'hex');
   if (got.length !== exp.length || !timingSafeEqual(got, exp)) return null;
-  return JSON.parse(env.body);
+  // D2-02: the body is authenticated, but a producer bug (or a compromised hop key) could still hand us a MALFORMED
+  // JSON body. Parse defensively so a poison frame is REJECTED like a bad MAC (→ the caller DLQs + ACKs it) instead of
+  // THROWING out of `RedisBus.parse` and wedging the whole consume loop mid-batch (the heartbeat would stay green while
+  // nothing is consumed). A bad-JSON reject and a bad-MAC reject are indistinguishable to the caller — both are poison.
+  try {
+    return JSON.parse(env.body);
+  } catch {
+    return null;
+  }
 }

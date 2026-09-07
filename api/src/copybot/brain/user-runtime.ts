@@ -42,12 +42,6 @@ import { decideEntry } from '@/domain/copybot/decision';
 import { isCloseEvent, routeWithPending } from '@/domain/copybot/dispatch';
 import type { DetectedEvent } from '@/domain/copybot/events';
 import type { LeaderHoldings } from '@/domain/copybot/fan-out';
-import { computeFee } from '@/domain/copybot/fee/fee';
-import {
-  accountKeysOf,
-  ledgerRowFromMeta,
-  sumLedgerBase,
-} from '@/domain/copybot/fee/position-ledger';
 import {
   type FilterContext,
   filtersActive,
@@ -59,7 +53,6 @@ import {
 } from '@/domain/copybot/filters';
 import { jitoTipFor } from '@/domain/copybot/jito-tip';
 import { type JournalEntry, stageForKind } from '@/domain/copybot/journal';
-import { withTimeout } from '@/domain/copybot/latency';
 import type { EventSource } from '@/domain/copybot/leader-detector';
 import {
   type CopyCode,
@@ -104,8 +97,6 @@ import { classifyInstruction } from '@/domain/dlmm';
 import type { ControlChannel } from '@/infrastructure/bus/control-channel';
 import type { RedisBus } from '@/infrastructure/bus/redis-bus';
 import type { Database } from '@/infrastructure/persistence/database';
-import type { FeeLedgerRepository } from '@/infrastructure/persistence/fee-ledger-repository';
-import type { PositionLedgerRepository } from '@/infrastructure/persistence/position-ledger-repository';
 import type { BlockhashCache } from '@/infrastructure/solana/blockhash-cache';
 import {
   buildAddByWeight,
@@ -172,13 +163,6 @@ export const SELL_RESIDUAL_DUST_RAW = 0n;
 // re-attempt — keep the SAME commandId so the vault still dedups them. Sized to exceed one sell's on-chain deadline
 // (DEADLINE_SLOTS ≈ 60s): by the time the epoch rolls, the prior sell has landed or expired, so a re-sell is correct.
 export const SELL_COMMAND_EPOCH_MS = 60_000;
-// #164 — the sell-confirm's best-effort tx read (appendSellRowAndAssess) runs on the SEQUENTIAL ev:executed loop,
-// where web3.js exposes NO per-call timeout. A hung RPC on that read would stall EVERY queued message behind it —
-// including a close's markClosed (the #1 forbidden stall). Bound the read so an unresponsive node degrades to
-// "assess on the ledger as it stands" (a permanently-missing SELL row is covered by the periodic fee backstop)
-// rather than an unbounded stall. Generous vs a normal <1s getTransaction so a merely-slow node still CAPTURES the
-// SELL row (the fee base); finite so a truly-hung node cannot serialize behind close processing. Exported for tests.
-export const SELL_CONFIRM_TX_READ_TIMEOUT_MS = 5_000;
 // idx9 — a residual SELL for a mint is considered IN-FLIGHT for this long after `publishSell` stamps it on the shared
 // pendingSellMints stash (cleared on confirm). publishSell SKIPS a second sell of the SAME mint within this window so
 // a re-trigger straddling a SELL_COMMAND_EPOCH_MS boundary — which mints a FRESH, non-deduped commandId, defeating
@@ -315,9 +299,6 @@ export interface SharedBrainDeps {
       tokenMint: string;
       nonSolSymbol: string | null;
       pool: string;
-      /** #140 — set ONLY for a CLOSE-path sell (the position it liquidates); null for a wallet-sweep sell. The
-       *  sell-confirm writes the SELL ledger row + assesses the fee for this position (SPEC §9). */
-      ourPosition: string | null;
       /** idx9 — ms this sell was published (stamped by `publishSell`). Bounds the in-flight-sell guard: a same-mint
        *  re-trigger within SELL_INFLIGHT_GRACE_MS is skipped as a duplicate. Optional: a hand-built stash (tests) or
        *  a legacy entry with no stamp reads as "not in-flight" and never blocks. */
@@ -337,13 +318,6 @@ export interface SharedBrainDeps {
   /** Process-wide Discord operator-alert sink (pinned/operator events); undefined ⇒ no-op. Shared across
    *  every runtime + the detection emitter so the rate-limit + dedup are process-wide (SPEC §10). */
   alertSink: ((e: CopyEvent) => void) | undefined;
-  /** Inc.4d — the operator fee sink (SPEC §9). '' ⇒ no collection: fees are still recorded (state 'skipped') but
-   *  never swept. NOT read from the request — the coffre re-verifies the tx moves SOL to its OWN configured sink. */
-  operatorFeeAddress: string;
-  /** Inc.4d — the per-position execution ledger (the fee base source, written by the coffre confirm worker). */
-  positionLedger: PositionLedgerRepository;
-  /** Inc.4d — the per-position performance-fee ledger (assessed here at close, swept by the feeSweep). */
-  feeLedger: FeeLedgerRepository;
 }
 
 /** Per-user injection points (INC3B-PLAN §8): Inc.4c resolves these per user (spawn-wallet.ts). */
@@ -388,9 +362,6 @@ export async function createUserRuntime(
     jupiterBaseUrl,
     jitoEnabledEnv,
     priorityFeeOracleEnv,
-    operatorFeeAddress,
-    positionLedger,
-    feeLedger,
   } = shared;
   const { ownerPk, balanceOf, leader: bootLeader, initialConfig } = opts;
   const wallet = ownerPk.toBase58();
@@ -508,8 +479,8 @@ export async function createUserRuntime(
       /** COMBINED deployment (SOL leg + the SOL the buy spends) — recorded on the mirror so exposure counts BOTH
        *  legs (finding #94 §3). Distinct from `sizeSol` so a command re-clamp never folds in the separate buy. */
       recordedSizeSol: number;
-      /** #140 — the buy's ExactIn SOL input (`buyQuote.inAmount`, lamports) → the BUY ledger row's `lamportsOut`
-       *  once the open persists, so the fee base at close counts the SOL spent on the token leg (not just the SOL leg). */
+      /** The buy's ExactIn SOL input (`buyQuote.inAmount`, lamports). Currently unused post-fee-removal (was the
+       *  ledger attribution source for the performance fee); kept for now, see follow-up cleanup note. */
       buyInLamports: number;
       /** #33 — snapshot of the token balance BEFORE the buy was published (a pre-existing residual of the same mint
        *  must NOT be co-deposited); the quoted token output + buy slippage derive the settle floor the post-buy read
@@ -549,8 +520,8 @@ export async function createUserRuntime(
       dist?: WeightBin[];
       totalX?: bigint;
       totalY?: bigint;
-      /** #140 — the two-sided open's buy cost + sig, threaded create → deposit → mirror so `finalizeToken2022Open`
-       *  attributes the BUY ledger row to the funded position. Absent for a one-sided wide open (no buy). */
+      /** The two-sided open's buy cost + sig, threaded create → deposit → mirror. Currently unused post-fee-removal
+       *  (was the ledger attribution source for the performance fee). Absent for a one-sided wide open (no buy). */
       buyInLamports?: number;
       buySig?: string;
     }
@@ -573,8 +544,8 @@ export async function createUserRuntime(
       lower: number;
       upper: number;
       leaderSizeSol: number;
-      /** #140 — the two-sided open's buy cost + sig; `finalizeToken2022Open` writes the BUY ledger row from these
-       *  once the mirror persists. Absent for a one-sided wide open (no buy). */
+      /** The two-sided open's buy cost + sig. Currently unused post-fee-removal (was the ledger attribution source
+       *  for the performance fee). Absent for a one-sided wide open (no buy). */
       buyInLamports?: number;
       buySig?: string;
     }
@@ -598,8 +569,8 @@ export async function createUserRuntime(
       /** The mirror's leader (3b): the deferred add derives the same keys the reshape would have. */
       leader: string;
       signature: string;
-      /** #140 — the reshape buy's ExactIn SOL input (lamports) → the BUY ledger row's `lamportsOut`, attributed to
-       *  the existing `ourPosition` this add grows, so the fee base counts the SOL spent on the reshape token leg. */
+      /** The reshape buy's ExactIn SOL input (lamports). Currently unused post-fee-removal (was the ledger
+       *  attribution source for the performance fee). */
       buyInLamports: number;
       /** #33 — pre-buy token snapshot + quoted output + slippage: the post-buy read must clear the derived floor
        *  before the add deposits (read-after-write lag → never a short token leg), and only the BOUGHT delta deposits. */
@@ -662,7 +633,7 @@ export async function createUserRuntime(
   // publishReshapeAddAfterBuy applies the deferred size ONLY if no NEWER resync has recorded since (i.e. the stamp is
   // still the latest). Without this, a resync that de-risked the position between the grow-publish and the buy-confirm
   // (recording a SMALLER size) would be silently CLOBBERED back up to the stale grow target — exposure over-counted
-  // (up to ~4×), a wrong fee base and spurious open-blocking. In-memory like the pending maps above; a crash drops it
+  // (up to ~4×) and spurious open-blocking. In-memory like the pending maps above; a crash drops it
   // and the on-chain reconcile re-trues the size, so nothing is stuck. Cleared on close alongside inFlightReshapeTargets.
   const resyncRecordSeq = new Map<string, number>();
 
@@ -689,17 +660,34 @@ export async function createUserRuntime(
     return mirror;
   };
 
-  const capsState = (candidateLeader: string, candidateMint: string): CapsState => {
+  const capsState = (
+    candidateLeader: string,
+    candidateMint: string,
+    candidatePosition?: string,
+  ): CapsState => {
     const open = registry.openPositions();
+    // Fold in caps-GATED opens still in flight (buy landed / deposit pending, NOT yet in the registry). Without this
+    // (A1-01/A1-02) a burst of concurrent leader opens each pass the caps against the SAME stale registry-only
+    // snapshot and breach every wallet-level cap N-fold. Each entry is stamped right after it passes `checkCaps`
+    // (below) and cleared at `recordOpen` (so it never double-counts with the registry) / any skip-fail path / TTL.
+    // `candidatePosition` excludes THIS candidate's own reservation (belt-and-suspenders — its meta is only set
+    // AFTER its own gate, so it is not yet counted here anyway).
+    const pending = pendingOpens.activeOpens(candidatePosition);
     return {
-      openPositions: open.length,
-      totalExposureSol: open.reduce((s, m) => s + m.sizeSol, 0),
+      openPositions: open.length + pending.length,
+      totalExposureSol:
+        open.reduce((s, m) => s + m.sizeSol, 0) + pending.reduce((s, p) => s + p.sizeSol, 0),
       // Per-leader scope (3b): only the CANDIDATE leader's mirrors count toward its exposure cap — another
       // leader's open positions must never consume this leader's `maxTotalExposureSol` budget.
-      leaderExposureSol: exposureFor(open, candidateLeader),
+      leaderExposureSol:
+        exposureFor(open, candidateLeader) +
+        pending.reduce((s, p) => (p.leader === candidateLeader ? s + p.sizeSol : s), 0),
       // Per-token concurrency: count THIS user's open mirrors already in the candidate's token. An empty candidate
       // mint (a non-SOL pool, skipped later anyway) counts 0 — never matching a legacy '' mirror on either side.
-      tokenOpenCount: candidateMint ? open.filter((m) => m.nonSolMint === candidateMint).length : 0,
+      tokenOpenCount: candidateMint
+        ? open.filter((m) => m.nonSolMint === candidateMint).length +
+          pending.filter((p) => p.mint === candidateMint).length
+        : 0,
       openTimestampsMs: [...openTimestampsMs],
     };
   };
@@ -915,7 +903,7 @@ export async function createUserRuntime(
     }
     const cap = checkCaps(
       ec.caps,
-      capsState(leader, e.nonSolMint ?? ''), // candidate leader/mint = the EVENT's (3b fan-out; '' mint ⇒ per-token cap not counted)
+      capsState(leader, e.nonSolMint ?? '', e.position), // candidate leader/mint/position = the EVENT's (3b fan-out; '' mint ⇒ per-token cap not counted; position excludes self)
       decision.sizeSol,
       Date.now(),
       ec.leaderMaxTotalExposureSol, // per-leader exposure ceiling (SPEC §4.2/§12)
@@ -936,6 +924,16 @@ export async function createUserRuntime(
       });
       return;
     }
+
+    // A1-01: the open PASSED its caps gate — reserve a caps-COUNTED slot NOW (synchronously, before the async reads
+    // below) so a CONCURRENT open, whose `capsState` runs during this open's multi-tx landing window, counts it and
+    // cannot breach the wallet-level caps. Upgrades the dispatch-time duplicate-detection reservation with the sizing
+    // meta; cleared at `recordOpen` / any skip-fail path / the TTL self-heal.
+    pendingOpens.reserve(e.position, {
+      leader,
+      mint: e.nonSolMint ?? null,
+      sizeSol: decision.sizeSol,
+    });
 
     const poolPk = new PublicKey(e.pool);
     const leaderPk = new PublicKey(leader); // the EVENT's leader owns the shape we copy (3b)
@@ -1326,7 +1324,7 @@ export async function createUserRuntime(
       tokenMint,
       sizeSol,
       recordedSizeSol,
-      buyInLamports: Number(buyQuote.inAmount), // #140 — the SOL spent on the token leg → the BUY ledger row at open
+      buyInLamports: Number(buyQuote.inAmount), // the SOL spent on the token leg (unused post-fee-removal)
       preBuyTokenRaw,
       expectedTokenRaw: BigInt(buyQuote.outAmount),
       buySlippageBps: ec.execution.slippageBps,
@@ -1384,7 +1382,7 @@ export async function createUserRuntime(
       upper: number;
       sizeSol: number;
       recordedSizeSol: number;
-      /** #140 — the two-sided open's buy cost + sig, threaded to the mirror finalize for the BUY ledger row. */
+      /** The two-sided open's buy cost + sig, threaded to the mirror finalize (unused post-fee-removal). */
       buyInLamports?: number;
       buySig?: string;
     },
@@ -1413,7 +1411,7 @@ export async function createUserRuntime(
       upper,
       sizeSol,
       recordedSizeSol,
-      buyInLamports: args.buyInLamports, // #140 — carried to finalizeToken2022Open for the BUY ledger row
+      buyInLamports: args.buyInLamports, // carried to finalizeToken2022Open (unused post-fee-removal)
       buySig: args.buySig,
     });
     buildingToken2022Positions.set(posKp.publicKey.toBase58(), Date.now()); // orphan-close grace until the deposit lands
@@ -1475,7 +1473,7 @@ export async function createUserRuntime(
       sizeSol,
       recordedSizeSol,
       prebuiltDeposit: depositTx,
-      buyInLamports: args.buyInLamports, // #140 — carried to finalizeToken2022Open for the BUY ledger row
+      buyInLamports: args.buyInLamports, // carried to finalizeToken2022Open (unused post-fee-removal)
       buySig: args.buySig,
     });
     buildingToken2022Positions.set(posPubkey, Date.now()); // orphan-close grace until the deposit lands
@@ -1586,7 +1584,7 @@ export async function createUserRuntime(
           upper,
           sizeSol,
           recordedSizeSol,
-          buyInLamports: ctx.buyInLamports, // #140 — threaded create → deposit → mirror → the BUY ledger row
+          buyInLamports: ctx.buyInLamports, // threaded create → deposit → mirror (unused post-fee-removal)
           buySig,
         });
       }
@@ -1645,7 +1643,7 @@ export async function createUserRuntime(
           upper,
           sizeSol,
           recordedSizeSol,
-          buyInLamports: ctx.buyInLamports, // #140 — threaded create → deposit → mirror → the BUY ledger row
+          buyInLamports: ctx.buyInLamports, // threaded create → deposit → mirror (unused post-fee-removal)
           buySig,
         });
       }
@@ -1680,9 +1678,6 @@ export async function createUserRuntime(
       });
       pendingOpens.clear(e.position); // now tracked → lift the duplicate-open reservation for this leader position
       await store.saveOpen(mirror); // persist BEFORE publishing → never an untracked open
-      // #140 — attribute the token buy to THIS position now that it is persisted (narrow classic 1-tx open). Placed
-      // at the persist point (not at keypair derivation) so a cancelled/aborted open leaves NO dangling buy row.
-      await appendBuyRow(sr.positionPubkey, ctx.buyInLamports, buySig);
       await publish(sr, { leader, leaderPosition: e.position, leaderSizeSol: e.depositSol });
       log.info(
         { our: sr.positionPubkey, bins: dist.length },
@@ -1765,7 +1760,7 @@ export async function createUserRuntime(
         lower,
         upper,
         leaderSizeSol: e.depositSol,
-        buyInLamports: ctx.buyInLamports, // #140 — carried to finalizeToken2022Open for the BUY ledger row
+        buyInLamports: ctx.buyInLamports, // carried to finalizeToken2022Open (unused post-fee-removal)
         buySig: ctx.buySig,
       });
       await publish(
@@ -1824,8 +1819,6 @@ export async function createUserRuntime(
       });
       pendingOpens.clear(pend.leaderPosition); // now tracked → lift the duplicate-open reservation for this leader position
       await store.saveOpen(mirror); // tracked only NOW — a funded, deposited position
-      // #140 — attribute the token buy to THIS position now that it is persisted (Token-2022 + classic-wide open).
-      await appendBuyRow(pend.ourPosition, pend.buyInLamports, pend.buySig);
       buildingToken2022Positions.delete(pend.ourPosition);
       // Token-2022 open is COMPLETE (deposit landed → mirror persisted) → emit the FEED `lifecycle.open_confirmed`,
       // the SAME confirm a classic open fires in onOpenConfirmed (the classic branch's ev:executed 'open' carries the
@@ -1853,7 +1846,7 @@ export async function createUserRuntime(
 
   /** Build + publish a two-sided RESHAPE ADD once its token BUY (ExactIn) has landed — deposit the ACTUAL bought
    *  amount (variable). Keyed by the reshape buy's commandId; a no-op if there's no pending reshape add. */
-  async function publishReshapeAddAfterBuy(buyCommandId: string, buySig?: string): Promise<void> {
+  async function publishReshapeAddAfterBuy(buyCommandId: string, _buySig?: string): Promise<void> {
     const ctx = pendingReshapeAdds.get(buyCommandId);
     if (!ctx) return;
     await runContinuation(pendingReshapeAdds, buyCommandId, async () => {
@@ -1971,8 +1964,6 @@ export async function createUserRuntime(
         },
         { stage: 'reshape', leader, leaderPosition },
       );
-      // #140 — attribute the reshape token buy to the EXISTING position this add grows (the add published above).
-      await appendBuyRow(ourPosition, ctx.buyInLamports, buySig);
       // #145 — the DEFERRED two-sided grow is REAL now (the add published above): record the exposure target
       // handleResync stashed. Until this point the tracked size stayed at the pre-grow value, so the caps never
       // counted a grow whose add had not landed (a Jupiter blip / unsettled balance returns above, before the
@@ -1980,7 +1971,7 @@ export async function createUserRuntime(
       // #163 — but apply it ONLY if this stash is still the LATEST recorded resync (its stamped seq == the current
       // per-position record seq). A resync that de-risked this position while the buy was in flight already recorded
       // the current, SMALLER size; writing the stale grow target here would clobber it → exposure over-counted (up to
-      // ~4×), a wrong fee base and spurious open-blocking. The monotonic seq is correct under any interleave (a
+      // ~4×) and spurious open-blocking. The monotonic seq is correct under any interleave (a
       // raise-only reconcile would still clobber a de-risk). Superseded ⇒ skip; the newer size stands, the reconcile re-trues.
       if (ctx.deferredSizeSol !== undefined) {
         const latestSeq = resyncRecordSeq.get(leaderPosition);
@@ -2525,7 +2516,7 @@ export async function createUserRuntime(
           leaderPosition: m.leaderPosition,
           leader,
           signature: e.signature,
-          buyInLamports: Number(buyQuote.inAmount), // #140 — the SOL spent on the reshape token leg → the BUY ledger row
+          buyInLamports: Number(buyQuote.inAmount), // the SOL spent on the reshape token leg (unused post-fee-removal)
           preBuyTokenRaw,
           expectedTokenRaw: BigInt(buyQuote.outAmount),
           buySlippageBps: ec.execution.slippageBps,
@@ -2966,218 +2957,6 @@ export async function createUserRuntime(
       eventKey: closeConfirmedKey(leaderOf(m), m.pool, ourPosition),
       adminDetail: { nonSolSymbol: m.nonSolSymbol, via: 'ev_executed' },
     });
-    // #140 — the fee is NO LONGER assessed here. markClosed runs BEFORE the residual sell (onCloseExecuted), so the
-    // ledger at this point is missing the sell's proceeds row → assessing here undercounts a two-sided winner. The
-    // trigger moved to onCloseExecuted (no-sell paths) / onSellConfirmed (after the SELL row lands), backstopped by
-    // the periodic re-assess of any closed position still lacking a fee_ledger row (SPEC §9).
-  }
-
-  /**
-   * Assess the 5% performance fee for a just-closed position from its own execution ledger (SPEC §9): base =
-   * Σlamports_in − Σlamports_out; a base ≤ 0 owes nothing (per position, no loss offset, no high-water mark).
-   * Idempotent per position (the fee_ledger unique key), so a re-confirm never double-charges — the transparency
-   * feed row is emitted only on the FIRST insert. When no operator sink is configured the fee is still RECORDED
-   * (state 'skipped') so what would be owed is auditable, but it is never swept.
-   */
-  async function assessFee(ourPosition: string): Promise<void> {
-    const rows = await positionLedger.listForPosition(userId, ourPosition);
-    const base = sumLedgerBase(rows);
-    const fee = computeFee(base);
-    if (fee <= 0n) return; // a losing/flat position pays nothing (SPEC §9)
-    const state = operatorFeeAddress ? 'pending' : 'skipped';
-    const inserted = await feeLedger.assess(userId, ourPosition, Number(base), Number(fee), state);
-    if (!inserted) return; // a prior assessment already recorded (+ emitted) this position's fee (idempotent)
-    events.emit('fee.assessed', {
-      stage: 'sweep',
-      outcome: 'detected',
-      kind: 'fee',
-      pool: ourPosition,
-      ourPosition,
-      eventKey: `fee:${ourPosition}`,
-      adminDetail: {
-        basePnlSol: Number(base) / LAMPORTS_PER_SOL,
-        feeSol: Number(fee) / LAMPORTS_PER_SOL,
-        state,
-      },
-    });
-  }
-
-  /**
-   * Inc.4d (#140) — assess a closed position's fee, GUARDED: a missing `ourPosition` or a transient failure never
-   * blocks the close-executed ack nor the sell-confirm (fully decoupled from the money-critical close). The periodic
-   * backstop re-assesses anything that slips through. Shared by the no-sell close paths and the sell-confirm.
-   */
-  const assessFeeSafe = (ourPosition: string | undefined): Promise<void> =>
-    ourPosition
-      ? assessFee(ourPosition).catch((err) =>
-          log.warn(
-            { ourPosition, err: (err as Error).message },
-            'fee assessment failed — close is unaffected; the periodic backstop re-assesses',
-          ),
-        )
-      : Promise.resolve();
-
-  /**
-   * Inc.4d (finding #140) — append the two-sided open's/reshape's BUY as a ledger row attributed to `ourPosition`,
-   * so the fee base at close counts the SOL SPENT buying the token leg (not only the SOL leg). `lamportsOut` = the
-   * buy's ExactIn SOL input (`buyQuote.inAmount`), deterministic pre-land; the ~5000-lamport tx fee the buy also
-   * paid is a negligible approximation vs SPEC §9's lamport-exact ideal (the close/sell rows ARE exact via the owner
-   * delta). Idempotent on `(userId, buySig, ourPosition)`. A one-sided open funds no buy → `buyInLamports`/`buySig`
-   * are absent → no row.
-   * Best-effort (finding #140, LOW): a rare DB blip is swallowed + logged so it NEVER breaks the money-critical open
-   * publish (the position is already on-chain by here — making this throw could abort a live open). EXPOSURE: a
-   * swallowed append omits the buy's `lamportsOut`, so the close fee base is OVER-stated → a bounded, USER-unfavorable
-   * OVER-charge. Unlike the coffre confirm-worker's row write (which its tick RE-PROCESSES on a throw), this append
-   * has NO backstop: the periodic fee backstop re-assesses a MISSING fee but cannot reconstruct a MISSING buy row —
-   * the buy cost is not persisted durably (it lives only in the transient continuation ctx). The durable fix (persist
-   * the buy cost atomically with the position, or reconstruct it in the fee backstop) is cross-file (mirror-store /
-   * repo / fee-sweep) + disproportionate for a bounded LOW; an in-line retry is avoided — it would add latency to the
-   * open publish that awaits this append (open speed is a #1 priority) and diverge from the swallow convention.
-   */
-  async function appendBuyRow(
-    ourPosition: string,
-    buyInLamports: number | undefined,
-    buySig: string | undefined,
-  ): Promise<void> {
-    if (buyInLamports === undefined || buySig === undefined) return; // one-sided open (no token buy) → no row
-    try {
-      await positionLedger.append({
-        userId,
-        ourPosition,
-        kind: 'buy', // a free kind the repo accepts and `sumLedgerBase` folds into the base (Σin − Σout)
-        lamportsIn: 0,
-        lamportsOut: buyInLamports,
-        sig: buySig,
-        confirmedAt: Date.now(),
-      });
-    } catch (err) {
-      log.warn(
-        { ourPosition, buySig, err: (err as Error).message },
-        'buy ledger row append failed — fee bookkeeping only, the open is unaffected (a rare over-charge)',
-      );
-    }
-  }
-
-  /**
-   * Inc.4d (finding #140) — a CLOSE-path residual sell CONFIRMED: append its SELL as a ledger row (lamportsIn = the
-   * owner's NET SOL delta on the sell tx, via `ledgerRowFromMeta`) attributed to `ourPosition`, THEN assess the fee.
-   * The base now counts the token-leg proceeds returned to SOL, so a two-sided position that recovers its token value
-   * is charged on the TRUE net (SPEC §9), not on the SOL leg alone.
-   * #140 (fee-base imprecision, LOW): that owner NET delta is NOT exactly the Jupiter SOL output — it folds in the
-   * priority fee (−, under-states proceeds) and, when the swap unwraps + closes the WSOL ATA, the ~0.00204-SOL rent
-   * reclaim (+, over-states). The two partly offset and the residue is small; the exact source would be the swap's
-   * own SOL output (the quote / the WSOL token-balance delta), but isolating it here — `ledgerRowFromMeta` is a
-   * shared domain helper — is disproportionate for a bounded LOW, and the deviation is further bounded by
-   * maxConcurrentPerToken. One
-   * getTransaction per confirmed close-sell (reuses the pure `ledgerRowFromMeta` + shared `accountKeysOf`). Idempotent:
-   * append is keyed `(userId, sellSig, ourPosition)` and `assessFee` is keyed `(userId, ourPosition)`, so a PEL re-run
-   * — and the periodic backstop — can never double-count nor double-charge. Best-effort: a getTransaction/DB blip is
-   * swallowed + logged and the backstop re-assesses; the sell-confirm ack is never blocked.
-   * SHARED-WALLET note (finding #161): `publishSell` sells the WHOLE wallet balance of the mint, so if two same-mint
-   * positions were ever open at once the FIRST to close would be booked BOTH positions' proceeds (its base over-stated)
-   * while the second closes on ~0 residual and its base floors at 0 — the per-position floor (computeFee returns 0 for
-   * base <= 0) means these do NOT net, so the pair would be OVER-charged (up to 2x). This is NOT net-neutral.
-   * `maxConcurrentPerToken` defaults to 1 (see CAPS_DEFAULTS) precisely to forbid that overlap: the whole-balance read
-   * then equals THIS position's own token leg and its base counts only its own proceeds.
-   */
-  async function appendSellRowAndAssess(ourPosition: string, sig: string): Promise<void> {
-    try {
-      // #164 — BOUND this read: it sits on the SEQUENTIAL ev:executed loop, so a hung RPC (web3.js has NO per-call
-      // timeout) would stall every queued message behind it — including a close's markClosed (the #1 forbidden stall).
-      // `withTimeout` degrades a hung/slow read to `undefined`, which the `tx?.meta` guard already treats as "no row"
-      // → we still assess on the ledger as it stands (a permanently-missing SELL row is covered by the fee backstop).
-      const tx = await withTimeout(
-        conn.getTransaction(sig, { maxSupportedTransactionVersion: 0 }),
-        SELL_CONFIRM_TX_READ_TIMEOUT_MS,
-      );
-      const row = tx?.meta
-        ? ledgerRowFromMeta(
-            ownerPk.toBase58(),
-            'sell',
-            { preBalances: tx.meta.preBalances, postBalances: tx.meta.postBalances },
-            accountKeysOf(tx.transaction.message),
-            sig,
-          )
-        : null;
-      if (row)
-        await positionLedger.append({
-          userId,
-          ourPosition,
-          kind: row.kind,
-          lamportsIn: row.lamportsIn,
-          lamportsOut: row.lamportsOut,
-          sig: row.sig,
-          confirmedAt: Date.now(),
-        });
-    } catch (err) {
-      log.warn(
-        { ourPosition, sig, err: (err as Error).message },
-        'sell ledger row append failed — the fee backstop re-assesses (never blocks the sell-confirm)',
-      );
-    }
-    await assessFeeSafe(ourPosition);
-  }
-
-  /**
-   * Build + publish the 5% performance-fee transfer (owner → operator sink) as a `kind:'fee'` SignRequest (Inc.4d)
-   * — the coffre signs+lands it like any other kind, and Wall B re-checks the destination is the coffre's OWN
-   * configured sink. Idempotent per (user, position): commandId = derive(userId, `fee:${ourPosition}`). A plain
-   * transfer (no priority fee / tip) keeps the fee tx minimal + trivially Wall-B-verifiable. Skips when no sink is
-   * configured (such rows were assessed 'skipped' and never reach the sweep — this is belt-and-suspenders).
-   */
-  async function publishFee(ourPosition: string, feeLamports: number): Promise<void> {
-    if (!operatorFeeAddress) return;
-    const operatorPk = new PublicKey(operatorFeeAddress);
-    const eventKey = `fee:${ourPosition}`;
-    const tx = new Transaction().add(
-      SystemProgram.transfer({ fromPubkey: ownerPk, toPubkey: operatorPk, lamports: feeLamports }),
-    );
-    tx.feePayer = ownerPk;
-    tx.recentBlockhash = blockhashCache.get().blockhash; // placeholder — the coffre re-sets a fresh blockhash before signing
-    const txBase64 = tx
-      .serialize({ requireAllSignatures: false, verifySignatures: false })
-      .toString('base64');
-    const { issuedAtSlot, deadlineSlot } = await slots();
-    await publish(
-      {
-        commandId: commandIdFor(eventKey),
-        eventKey,
-        kind: 'fee',
-        pool: ourPosition, // a fee has no DLMM pool — carry the position for correlation (Wall B ignores it for a fee)
-        positionPubkey: ourPosition, // provenance: the closed position this fee is levied on
-        owner: ownerPk.toBase58(),
-        txBase64,
-        sizeSol: 0, // a fee deploys no position SOL (it transfers the fee out)
-        targetBinRange: { lower: 0, upper: 0 }, // n/a for a fee
-        issuedAtSlot,
-        deadlineSlot,
-        fee: { toAddress: operatorFeeAddress, lamports: feeLamports.toString() },
-      },
-      { leaderPosition: ourPosition },
-    );
-    log.info({ ourPosition, feeLamports }, '💸 fee published');
-  }
-
-  /**
-   * ev:executed(fee) → the performance-fee transfer LANDED → flip the fee 'pending' → 'landed' and emit the
-   * transparency feed row. Idempotent (markLanded transitions only a still-'pending' row → a duplicate confirm
-   * emits nothing). Observability + a bounded DB write; never blocks the close.
-   */
-  async function onFeeConfirmed(ev: { positionPubkey?: string; sig?: string }): Promise<void> {
-    const ourPosition = ev.positionPubkey;
-    if (!ourPosition) return;
-    const feeLamports = await feeLedger.markLanded(userId, ourPosition, ev.sig ?? '');
-    if (feeLamports === null) return; // already landed / unknown → no duplicate feed row
-    events.emit('fee.landed', {
-      stage: 'sweep',
-      outcome: 'confirmed',
-      kind: 'fee',
-      pool: ourPosition,
-      ourPosition,
-      signature: ev.sig,
-      eventKey: `fee:${ourPosition}`,
-      adminDetail: { feeSol: feeLamports / LAMPORTS_PER_SOL },
-    });
   }
 
   // ev:executed(sell) → a residual token→SOL SELL (close-triggered OR safety-sweep) LANDED → emit the FEED
@@ -3209,10 +2988,6 @@ export async function createUserRuntime(
         pool: ev.pool ?? stash.pool,
       },
     });
-    // #140 — a CLOSE-path sell (ourPosition set) completes the position's ledger → write its SELL row + assess the
-    // fee NOW (the assessment DEFERRED by onCloseExecuted). A wallet-sweep sell (ourPosition null) is not a position
-    // leg → no row, no assess. Best-effort inside; a sell that never confirms is picked up by the periodic backstop.
-    if (stash.ourPosition && ev.sig) await appendSellRowAndAssess(stash.ourPosition, ev.sig);
   }
 
   // ev:executed feedback → fast residual sell. Once the vault confirms a CLOSE landed, the close returned SOL +
@@ -3222,17 +2997,14 @@ export async function createUserRuntime(
    *  triggered residual sell and the wallet safety sweep). `source` only labels the event/log. `nonSolSymbol`
    *  (resolvable only on the close path, via the Mirror) names the token in the sell-confirm FEED line; null on
    *  the sweep path falls back to the truncated mint. Returns `false` ONLY when NO sell will occur (the quote is
-   *  below the SOL-out floor) so the caller must finalize/assess NOW; `true` means a sell was published OR one for
-   *  this mint is already in-flight (idx9 dedup), so the caller DEFERS to that sell's confirm (or the fee backstop). */
+   *  below the SOL-out floor); `true` means a sell was published OR one for this mint is already in-flight
+   *  (idx9 dedup), so the caller DEFERS to that sell's confirm. */
   async function publishSell(
     tokenMint: string,
     residualRaw: bigint,
     pool: string,
     source: 'close' | 'sweep',
     nonSolSymbol: string | null = null,
-    /** #140 — the CLOSE-path position this sell liquidates (null for a wallet-sweep sell). Carried on the stash so
-     *  the sell-confirm writes the SELL ledger row + assesses the fee for it (SPEC §9). */
-    ourPosition: string | null = null,
   ): Promise<boolean> {
     const t0 = Date.now();
     const ec = eff(); // wallet-level economics = the publishing runtime's config (SYSTEM for sweeps — documented wallet-context path)
@@ -3241,10 +3013,9 @@ export async function createUserRuntime(
     // redundant — and a re-trigger straddling a SELL_COMMAND_EPOCH_MS boundary mints a FRESH, non-deduped commandId
     // the vault would NOT catch, so this guard does. Scans the SHARED stash, so a close-sell and the wallet sweep dedup
     // against EACH OTHER too. Returns `true` (NOT `false`): a sell for this residual exists, so the caller must DEFER
-    // to that sell's confirm (or the fee backstop) — returning `false` would make onCloseExecuted finalize the fee NOW
-    // on a base still missing the in-flight proceeds (a re-delivered close would lock an under-charge). Past the grace
-    // the prior sell has landed/expired → a genuine re-sell proceeds. (A sub-second race — two calls interleaving
-    // before either stamps the stash — is out of scope: the realistic double-publish is triggers seconds apart.)
+    // to that sell's confirm. Past the grace the prior sell has landed/expired → a genuine re-sell proceeds. (A
+    // sub-second race — two calls interleaving before either stamps the stash — is out of scope: the realistic
+    // double-publish is triggers seconds apart.)
     for (const inFlight of pendingSellMints.values())
       if (
         inFlight.tokenMint === tokenMint &&
@@ -3292,7 +3063,6 @@ export async function createUserRuntime(
       tokenMint,
       nonSolSymbol,
       pool,
-      ourPosition,
       publishedAt: Date.now(),
     });
     const { issuedAtSlot, deadlineSlot } = await slots();
@@ -3330,9 +3100,8 @@ export async function createUserRuntime(
 
   async function onCloseExecuted(ev: { pool: string; positionPubkey?: string }): Promise<void> {
     const meta = await poolReader.loadPoolMeta(ev.pool);
-    // #140 — a non-SOL pool has no residual to sell → the ledger (open/adds/removes/claims/close) is already
-    // COMPLETE for this position → assess the fee NOW (no deferral). markClosed already ran in onCloseConfirmed.
-    if (!meta?.solSide) return assessFeeSafe(ev.positionPubkey); // non-SOL pool → nothing to re-swap into SOL
+    // A non-SOL pool has no residual to sell — nothing further to do (markClosed already ran in onCloseConfirmed).
+    if (!meta?.solSide) return;
     const tokenMint = meta.solSide === 'X' ? meta.mintY : meta.mintX; // the non-SOL leg = residual to sell
     // SHARED-WALLET guard (3b step 6): this sell reads (and would sell) the WHOLE wallet balance of the mint.
     // If ANY runtime's two-sided open of this mint is in flight (buy landed, deposit pending), selling now would
@@ -3344,17 +3113,7 @@ export async function createUserRuntime(
         { mint: tokenMint, pool: ev.pool },
         '💤 close-sell deferred: mint has an in-flight two-sided buy (sweep backstop sells the residue)',
       );
-      // #140 — no close-sell will be attributed to THIS position (the sweep sell that eventually clears the residue
-      // is a wallet-level, UNATTRIBUTED sell) → its ledger is as complete as it will get → assess NOW.
-      // #140 (incomplete-ledger assess, LOW): this base is MISSING the residual-sell proceeds (they land at the wallet
-      // level via the unattributed sweep, never as a SELL row for this position). Since proceeds ≥ 0, the base is a
-      // LOWER bound → the fee can only UNDER-charge (operator-unfavorable; never over-charges the user). Deferring the
-      // assess (skip here, let the backstop pick it up later) would be behavior-NEUTRAL — the sweep is unattributed,
-      // so the backstop would re-compute the SAME incomplete base — so we assess now rather than delay a fee for no
-      // gain. The exact fix (attribute the sweep proceeds, or make the fee row revisable) is cross-file (the residual
-      // sweep) + disproportionate for a bounded LOW; the deviation only arises on a rare cross-user same-mint overlap
-      // (maxConcurrentPerToken defaults to 1) and is bounded by it.
-      return assessFeeSafe(ev.positionPubkey);
+      return;
     }
     const residual = await readOwnerTokenBalance(conn, ownerPk, new PublicKey(tokenMint));
     const decision = decideResidualSell(residual, SELL_RESIDUAL_DUST_RAW); // sell ANY residual; minSellOutLamports gates economics post-quote
@@ -3370,25 +3129,14 @@ export async function createUserRuntime(
         eventKey: `${bootLeader}:${ev.pool}:close-sell:${ev.positionPubkey ?? tokenMint}`,
         adminDetail: { mint: tokenMint },
       });
-      return assessFeeSafe(ev.positionPubkey); // #140 — no residual to sell → ledger complete → assess NOW
+      return;
     }
     // Resolve the token symbol from the (now-closed) Mirror so the sell-confirm FEED line can name it (null → the
     // renderer truncates the mint). The Mirror still exists at close-confirm time (markClosed flips status, not the row).
     const closedMirror = ev.positionPubkey
       ? registry.getByOurPosition(ev.positionPubkey)
       : undefined;
-    // #140 — thread ourPosition so the sell-confirm attributes the SELL ledger row to THIS position. The fee is
-    // DEFERRED to onSellConfirmed (assessed once the SELL row lands → the base counts the token-leg proceeds). If
-    // the sell is NOT published (below-min-sell-out inside publishSell), no sell-confirm will fire → assess NOW.
-    const sold = await publishSell(
-      tokenMint,
-      residual,
-      ev.pool,
-      'close',
-      closedMirror?.nonSolSymbol ?? null,
-      ev.positionPubkey ?? null,
-    );
-    if (!sold) await assessFeeSafe(ev.positionPubkey);
+    await publishSell(tokenMint, residual, ev.pool, 'close', closedMirror?.nonSolSymbol ?? null);
   }
 
   // Fan-out entry point (3b step 5): the LeaderHub already applied the per-leader tracker, dropped replay/
@@ -3514,6 +3262,10 @@ export async function createUserRuntime(
     rugExited,
     rugExitPending,
     buildingToken2022Positions,
+    // A6-01: an OPEN still in flight (its multi-tx continuation hasn't landed the mirror's final `recordOpen` yet) —
+    // the reconcile uses this as an EVENT-DRIVEN open-grace so it never false-closes a live, still-landing open even
+    // if the time-based `openGraceMs` has elapsed under congestion. Keyed by leader position (the reservation key).
+    isOpenInFlight: (leaderPosition: string): boolean => pendingOpens.isPending(leaderPosition),
     getConfig: (): CopybotConfig => runtimeConfig,
     setConfig: (next: CopybotConfig): void => {
       runtimeConfig = next;
@@ -3533,11 +3285,6 @@ export async function createUserRuntime(
     onCloseConfirmed,
     onSellConfirmed,
     onCloseExecuted,
-    publishFee,
-    /** #140 — assess (idempotently) the 5% fee for a CLOSED position from its ledger; driven by the periodic fee
-     *  backstop (runClosedFeeBackstop) for the deferred-sell tail. Rejects on a DB failure (the backstop catches). */
-    assessFee,
-    onFeeConfirmed,
     hasPendingReshapeAdd: (commandId: string): boolean => pendingReshapeAdds.has(commandId),
     hasPendingToken2022Deposit: (commandId: string): boolean =>
       pendingToken2022Deposits.has(commandId),
@@ -3591,6 +3338,9 @@ export async function createUserRuntime(
       rugExitPendingLeaders: [...rugExitPending].map(
         (our) => registry.getByOurPosition(our)?.leaderAddress ?? null,
       ),
+      // A6-03: caps-gated opens still in flight (buy landed / deposit pending, not yet a recorded mirror) keep their
+      // leader's detector so a stop/removal landing mid-open can't strand the funded position.
+      inFlightOpenLeaders: pendingOpens.activeOpens().map((p) => p.leader),
     }),
   };
 }

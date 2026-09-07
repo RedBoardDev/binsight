@@ -13,8 +13,6 @@ import {
   copyJournal,
   copyPositions,
   executions,
-  feeLedger,
-  positionLedger,
   positions as positionsTable,
   pushSubscriptions,
   rugExitPendings,
@@ -262,7 +260,7 @@ describe('PostgresAccountRepository — admin', () => {
 
   it('deleteAccount CASCADES every user-scoped copy-bot table (teardown completeness — SPEC §2.4)', async () => {
     // WHY (#56): account deletion is irreversible; a user-scoped row that escapes the cascade would leak the deleted
-    // account's copy-bot state (config/positions/ledgers/journal) into a future account or the operator surface. Seed
+    // account's copy-bot state (config/positions/executions/journal) into a future account or the operator surface. Seed
     // a row in EVERY user-scoped copy-bot table for BOTH users, delete A, and assert A is fully gone while B survives.
     const { db, accounts } = await setup();
     const a = await accounts.createUser({ privyUserId: did('a'), isOwner: false });
@@ -306,21 +304,6 @@ describe('PostgresAccountRepository — admin', () => {
       });
       await db.insert(rugExits).values({ userId, leaderPosition: `L-${userId}`, exitedAt: 1 });
       await db.insert(rugExitPendings).values({ userId, ourPosition: `O-${userId}`, createdAt: 1 });
-      await db.insert(positionLedger).values({
-        userId,
-        ourPosition: `O-${userId}`,
-        kind: 'close',
-        sig: `s-${userId}`,
-        confirmedAt: 1,
-      });
-      await db.insert(feeLedger).values({
-        userId,
-        ourPosition: `O-${userId}`,
-        basePnlLamports: 100,
-        feeLamports: 5,
-        createdAt: 1,
-        updatedAt: 1,
-      });
       await db
         .insert(copybotActivation)
         .values({ userId, privyWalletId: `w-${userId}`, createdAt: 1, updatedAt: 1 });
@@ -347,10 +330,6 @@ describe('PostgresAccountRepository — admin', () => {
         (await db.select().from(rugExits).where(eq(rugExits.userId, u))).length,
       rug_exit_pending: async (u) =>
         (await db.select().from(rugExitPendings).where(eq(rugExitPendings.userId, u))).length,
-      position_ledger: async (u) =>
-        (await db.select().from(positionLedger).where(eq(positionLedger.userId, u))).length,
-      fee_ledger: async (u) =>
-        (await db.select().from(feeLedger).where(eq(feeLedger.userId, u))).length,
       copybot_activation: async (u) =>
         (await db.select().from(copybotActivation).where(eq(copybotActivation.userId, u))).length,
     };

@@ -27,7 +27,6 @@ function makeDeps(over: Partial<ExecutedBatchDeps> = {}): ExecutedBatchDeps {
     onAddConfirmed: vi.fn(() => {}),
     onClaimConfirmed: vi.fn(() => {}),
     onSellConfirmed: vi.fn(async () => {}),
-    onFeeConfirmed: vi.fn(async () => {}),
     ack: vi.fn(async () => {}),
     onLoopError: vi.fn(() => {}),
     onUndispatched: vi.fn(() => {}),
@@ -50,22 +49,6 @@ describe('dispatchExecuted — routes each ev:executed kind to its handler', () 
       pool: 'P',
       positionPubkey: 'OUR',
       commandId: 'C',
-      userId: 'U1',
-    });
-  });
-
-  it('fee → onFeeConfirmed (mark the fee landed + emit the transparency row), routed by the position', async () => {
-    // WHY: a landed performance-fee transfer must flip its fee_ledger row 'landed' and surface the feed row; the
-    // ev carries positionPubkey = our_position so the brain routes it to the levied position's owning runtime.
-    const deps = makeDeps();
-    await dispatchExecuted(
-      { kind: 'fee', positionPubkey: 'OUR', sig: 'FEESIG', userId: 'U1' },
-      deps,
-    );
-    expect(deps.onFeeConfirmed).toHaveBeenCalledWith({
-      kind: 'fee',
-      positionPubkey: 'OUR',
-      sig: 'FEESIG',
       userId: 'U1',
     });
   });

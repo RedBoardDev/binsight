@@ -24,7 +24,6 @@ export type CopyCategory =
   | 'WALLB'
   | 'FAILSAFE'
   | 'SWEEP'
-  | 'FEE' // Inc.4d — the 5% performance fee (assessed at close, collected by the sweep) (SPEC §9)
   | 'SYSTEM';
 
 /** Who sees the event. `'feed'` = visible to the user (the persisted `audience='feed'` rows ARE the feed). */
