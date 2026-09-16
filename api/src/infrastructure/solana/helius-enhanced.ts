@@ -40,6 +40,21 @@ export interface PositionFlow {
 
 const PAGE_SIZE = 100;
 const INTER_PAGE_MS = 120; // gentle on the free-tier Enhanced endpoint
+/**
+ * Page cap for a TOP-UP (a run that carries an `untilSig`), far below the backfill cap.
+ *
+ * A top-up is supposed to stop the moment it reaches the previously-ingested top. When that signature
+ * is NOT found — the listing no longer returns it, or the stored cursor went stale — the run silently
+ * degrades into a full-history re-page at 100 credits per page. Measured in production: a wallet with a
+ * COMPLETE cursor paged 399 times for zero parsed swaps and was still going, heading for the 5000-page
+ * cap, i.e. 500 000 credits for no data.
+ *
+ * `limit` is applied BEFORE the type filter, so one page covers ~100 transactions regardless of how few
+ * match. Twenty pages therefore span the newest ~2000 transactions — far more than any top-up between
+ * two polls legitimately needs. Past that we are chasing a stale cursor, not catching up, so stop and
+ * say so: the cursor is left untouched exactly as before, only the bill is bounded.
+ */
+const TOPUP_MAX_PAGES = 20;
 
 /** Per-call-site counters for the Enhanced REST endpoint (getEnhancedTransactionsByAddress). */
 export interface EnhancedCallCounts {
@@ -321,7 +336,8 @@ export class HeliusEnhancedGateway implements EnhancedTxGateway {
     let complete = false;
     let hitKnownTop = false;
     let page = 0;
-    for (; page < this.maxPages; page++) {
+    const cap = stopSig ? Math.min(this.maxPages, TOPUP_MAX_PAGES) : this.maxPages;
+    for (; page < cap; page++) {
       const url =
         `https://api.helius.xyz/v0/addresses/${wallet}/transactions` +
         `?api-key=${this.apiKey}&limit=${PAGE_SIZE}${before ? `&before=${before}` : ''}`;
@@ -356,8 +372,14 @@ export class HeliusEnhancedGateway implements EnhancedTxGateway {
       // tail (it cost ~15 SOL of older losses in testing). Only a truly EMPTY page marks genesis.
       if (INTER_PAGE_MS) await new Promise((r) => setTimeout(r, INTER_PAGE_MS));
     }
-    if (page >= this.maxPages && !complete) {
-      this.logger.warn({ wallet, maxPages: this.maxPages }, 'pageFlows hit maxPages — INCOMPLETE');
+    if (page >= cap && !complete) {
+      // See pageSwaps: a bounded top-up that never met its known top means a stale cursor, kept as-is.
+      this.logger.warn(
+        { wallet, pages: page, cap, toppingUp: stopSig != null },
+        stopSig != null
+          ? 'pageFlows: top-up never reached its known top within the page cap — stale cursor'
+          : 'pageFlows hit maxPages — INCOMPLETE',
+      );
     }
     this.logger.info({ wallet, added, complete, hitKnownTop }, 'enhanced: wallet flows paged');
     return { added, complete, hitKnownTop, newestSig, oldestSig };
@@ -400,7 +422,8 @@ export class HeliusEnhancedGateway implements EnhancedTxGateway {
     let complete = false;
     let hitKnownTop = false;
     let page = 0;
-    for (; page < this.maxPages; page++) {
+    const cap = stopSig ? Math.min(this.maxPages, TOPUP_MAX_PAGES) : this.maxPages;
+    for (; page < cap; page++) {
       const url =
         `https://api.helius.xyz/v0/addresses/${wallet}/transactions` +
         `?api-key=${this.apiKey}&type=SWAP&limit=${PAGE_SIZE}${before ? `&before=${before}` : ''}`;
@@ -449,8 +472,16 @@ export class HeliusEnhancedGateway implements EnhancedTxGateway {
       // EMPTY page is. Stopping on a short page would silently drop the older swap tail.
       if (INTER_PAGE_MS) await new Promise((r) => setTimeout(r, INTER_PAGE_MS));
     }
-    if (page >= this.maxPages && !complete) {
-      this.logger.warn({ wallet, maxPages: this.maxPages }, 'pageSwaps hit maxPages — INCOMPLETE');
+    if (page >= cap && !complete) {
+      // A bounded top-up that never reached its known top means the stored cursor is stale: it will be
+      // kept (no data is dropped) and the next run retries, but say it loudly — silently re-paging the
+      // whole history every time is what made this path the dominant credit cost.
+      this.logger.warn(
+        { wallet, pages: page, cap, toppingUp: stopSig != null },
+        stopSig != null
+          ? 'pageSwaps: top-up never reached its known top within the page cap — stale cursor'
+          : 'pageSwaps hit maxPages — INCOMPLETE',
+      );
     }
     this.logger.info({ wallet, added, complete, hitKnownTop }, 'enhanced: swap flows paged');
     return { added, complete, hitKnownTop, newestSig, oldestSig };

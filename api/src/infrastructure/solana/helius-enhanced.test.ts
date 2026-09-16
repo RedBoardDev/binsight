@@ -209,6 +209,50 @@ describe('accumulatePositionFlow — on-chain SOL-leg + NET residual', () => {
   });
 });
 
+describe('HeliusEnhancedGateway — a top-up that cannot find its known top is bounded', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** A page of SWAP txs that never contains the caller's stop signature. */
+  const pageOf = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      timestamp: 100 + i,
+      signature: `sig-${Math.random()}`,
+      type: 'SWAP',
+      tokenTransfers: [],
+    }));
+
+  it('stops a swap top-up at the page cap instead of re-paging the whole history', async () => {
+    // WHY: measured in production — a wallet with a COMPLETE cursor paged 399 times for ZERO parsed
+    // swaps and was still climbing toward the 5000-page cap, i.e. 500 000 credits for no data. The
+    // stop signature was simply never returned by the listing, so the "anti-re-seed" top-up degraded
+    // into a full-history sweep at 100 credits a page.
+    const gw = new HeliusEnhancedGateway('https://rpc.test/?api-key=k', silentLogger, 5000, 1000);
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => pageOf(100) }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await gw.pageSwaps(W, { untilSig: 'never-returned', onPage: async () => {} });
+
+    expect(fetchMock.mock.calls.length).toBe(20); // bounded, not 5000
+    expect(res.hitKnownTop).toBe(false);
+    expect(res.complete).toBe(false); // so the caller keeps the old cursor — no silent data loss
+  });
+
+  it('leaves a FULL backfill free to page far beyond the top-up cap', async () => {
+    const gw = new HeliusEnhancedGateway('https://rpc.test/?api-key=k', silentLogger, 40, 1000);
+    let calls = 0;
+    const fetchMock = vi.fn(async () => {
+      calls++;
+      return { ok: true, json: async () => (calls <= 30 ? pageOf(100) : []) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await gw.pageSwaps(W, { untilSig: null, onPage: async () => {} });
+
+    expect(fetchMock.mock.calls.length).toBe(31); // 30 data pages + the empty one
+    expect(res.complete).toBe(true);
+  });
+});
+
 describe('HeliusEnhancedGateway — Enhanced API call telemetry (stats)', () => {
   afterEach(() => vi.unstubAllGlobals());
 
