@@ -2,7 +2,10 @@ import { SOL_MINT } from '@binsight/shared';
 import type { Logger } from 'pino';
 import type { HealthReporter, PriceGateway } from '@/domain/ports';
 
-const MAX_IDS = 50; // Jupiter Price API v3 caps ids per request
+// Jupiter caps the WHOLE `ids` list at 50. Every token batch also appends SOL to derive the SOL quote,
+// so only 49 non-SOL mints fit. Sending 50 + SOL makes Jupiter omit SOL; the old code then discarded the
+// entire chunk (including USDC) because it could not derive a SOL price.
+const MAX_TOKEN_IDS = 49;
 
 /**
  * Token prices in SOL via Jupiter Price API v3 (the v2 API is deprecated).
@@ -21,8 +24,8 @@ export class JupiterPriceGateway implements PriceGateway {
     const unique = [...new Set(mints.filter((m) => m && m !== SOL_MINT))];
     if (unique.length === 0) return out;
 
-    for (let i = 0; i < unique.length; i += MAX_IDS) {
-      const chunk = unique.slice(i, i + MAX_IDS);
+    for (let i = 0; i < unique.length; i += MAX_TOKEN_IDS) {
+      const chunk = unique.slice(i, i + MAX_TOKEN_IDS);
       try {
         const res = await fetch(`${this.baseUrl}?ids=${[...chunk, SOL_MINT].join(',')}`, {
           signal: AbortSignal.timeout(10_000),
