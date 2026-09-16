@@ -250,9 +250,71 @@ describe('PostgresPositionRepository — statsAggregate (SQL, no row transfer)',
     expect(s.avgDurationSeconds).toBeCloseTo(200);
     // best→worst by pnl: BBB/SOL (+5, 1) then AAA/SOL (+2−1=+1, 2)
     expect(s.byPair).toEqual([
-      { pair: 'BBB/SOL', pnlSol: 5, count: 1 },
-      { pair: 'AAA/SOL', pnlSol: 1, count: 2 },
+      { pair: 'BBB/SOL', pnlSol: 5, pnlQuote: 5, quoteSymbol: 'SOL', count: 1 },
+      { pair: 'AAA/SOL', pnlSol: 1, pnlQuote: 1, quoteSymbol: 'SOL', count: 2 },
     ]);
+  });
+
+  it('uses native-quote sign for win/loss, excludes shells, and keeps SOL totals SOL-only', async () => {
+    const repo = await newRepo();
+    await repo.upsertClosed([
+      {
+        ...base,
+        positionAddress: 'SOL-WIN',
+        pnlSol: 2,
+        pnlQuote: 2,
+        quoteSymbol: 'SOL',
+        depositQuote: 10,
+        economicStatus: 'funded',
+        pnlSource: 'pool',
+      },
+      {
+        // A USDC loss whose SOL columns are all zero: only the native quote can decide win/loss, and
+        // its magnitude must never be added to a SOL total.
+        ...base,
+        positionAddress: 'USDC-LOSS',
+        tokenY: 'USDC',
+        pnlSol: 0,
+        depositSol: 0,
+        withdrawSol: 0,
+        pnlQuote: -22.298172993001714,
+        pnlPctQuote: -2.688659,
+        depositQuote: 829.3420988217779,
+        withdrawQuote: 807.0439258287761,
+        quoteSymbol: 'USDC',
+        economicStatus: 'funded',
+        pnlSource: 'pool',
+      },
+      {
+        // A position that never held liquidity is not a trade and must not dilute the win rate.
+        ...base,
+        positionAddress: 'SHELL',
+        pnlSol: 0,
+        pnlQuote: 0,
+        depositSol: 0,
+        depositQuote: 0,
+        quoteSymbol: 'USDC',
+        economicStatus: 'empty_shell',
+        pnlSource: 'pool',
+      },
+    ]);
+    const s = await repo.statsAggregate(['w'], 0);
+    expect(s.closedCount).toBe(2);
+    expect(s.wins).toBe(1);
+    expect(s.losses).toBe(1);
+    expect(s.winRate).toBe(50);
+    expect(s.totalPnlSol).toBe(2); // the USDC loss is NOT subtracted from a SOL figure
+    expect(s.totalVolumeSol).toBe(10);
+    expect(s.byPair).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          pair: 'MEME/USDC',
+          pnlQuote: -22.298172993001714,
+          quoteSymbol: 'USDC',
+          count: 1,
+        }),
+      ]),
+    );
   });
 
   it('buckets todayPnl by UTC midnight, not the server-local day (regression: R08)', async () => {

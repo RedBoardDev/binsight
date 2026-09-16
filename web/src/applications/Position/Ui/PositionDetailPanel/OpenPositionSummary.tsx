@@ -22,7 +22,7 @@ export const OpenPositionSummary = ({ position }: OpenPositionSummaryProps) => {
     (s) => s.portfolio?.open.reduce((sum, open) => sum + open.sizeSol, 0) ?? 0,
   );
   const heldSeconds = position.raw.openedAt ? (Date.now() - position.raw.openedAt) / 1000 : 0;
-  const apr = feeApr(position.totalFeesSol, position.sizeSol, heldSeconds);
+  const apr = feeApr(position.displayTotalFees, position.displaySize, heldSeconds);
   const share = walletTotal > 0 ? (position.sizeSol / walletTotal) * 100 : null;
   const openedFor = position.raw.openedAt ? fmtDuration(heldSeconds) : '—';
 
@@ -30,11 +30,16 @@ export const OpenPositionSummary = ({ position }: OpenPositionSummaryProps) => {
     <section className="flex flex-col gap-3">
       <SectionLabel>Position</SectionLabel>
       <div className="grid grid-cols-2 gap-x-4 gap-y-4 md:gap-x-6">
-        <StatTile label="Value" value={<MoneyValue value={position.sizeSol} />} />
+        <StatTile
+          label="Value"
+          value={<MoneyValue value={position.displaySize} quoteSymbol={position.quoteSymbol} />}
+        />
         <StatTile
           label="Unrealized PnL"
           tone={position.tone}
-          value={<MoneyValue value={position.pnlSol} signed />}
+          value={
+            <MoneyValue value={position.displayPnl} quoteSymbol={position.quoteSymbol} signed />
+          }
           sub={money.pct(position.pnlPct)}
         />
         <StatTile
@@ -43,11 +48,24 @@ export const OpenPositionSummary = ({ position }: OpenPositionSummaryProps) => {
           sub={`${position.feeYieldPct.toFixed(2)}% earned`}
         />
         <StatTile label="Share of wallet" value={share == null ? '—' : `${share.toFixed(1)}%`} />
-        <StatTile label="Claimed fees" value={<MoneyValue value={position.raw.claimedFeesSol} />} />
+        <StatTile
+          label="Claimed fees"
+          value={
+            <MoneyValue
+              value={position.raw.claimedFeesQuote ?? position.raw.claimedFeesSol}
+              quoteSymbol={position.quoteSymbol}
+            />
+          }
+        />
         <StatTile
           label="Unclaimed fees"
           tone={position.raw.unclaimedFeesSol > 0 ? 'profit' : 'neutral'}
-          value={<MoneyValue value={position.raw.unclaimedFeesSol} />}
+          value={
+            <MoneyValue
+              value={position.raw.unclaimedFeesQuote ?? position.raw.unclaimedFeesSol}
+              quoteSymbol={position.quoteSymbol}
+            />
+          }
         />
         <StatTile label="Open for" value={openedFor} />
         <StatTile

@@ -50,8 +50,9 @@ export const OpenPositionCard = ({ position, now }: OpenPositionCardProps) => {
           </Chip.Root>
         </div>
         <PnlCell
-          sol={position.pnlSol}
+          sol={position.displayPnl}
           pct={position.pnlPct}
+          quoteSymbol={position.quoteSymbol}
           tone={position.tone}
           className="shrink-0 whitespace-nowrap text-right"
         />
@@ -60,11 +61,11 @@ export const OpenPositionCard = ({ position, now }: OpenPositionCardProps) => {
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1 leading-snug">
           <div className="tabular text-muted text-xs">
-            Size {money.sol(position.sizeSol)} · {age}
+            Size {money.quote(position.displaySize, position.quoteSymbol)} · {age}
           </div>
           <div className="tabular text-muted text-xs">
-            Fees {money.sol(position.totalFeesSol)} ·{' '}
-            {position.sizeSol > 0 ? `${position.feeYieldPct.toFixed(2)}%` : '—'}
+            Fees {money.quote(position.displayTotalFees, position.quoteSymbol)} ·{' '}
+            {position.displaySize > 0 ? `${position.feeYieldPct.toFixed(2)}%` : '—'}
           </div>
         </div>
         <div className="w-28 shrink-0">

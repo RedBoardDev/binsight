@@ -62,7 +62,9 @@ export const OpenPositionRow = ({
         />
       </Table.Cell>
       <Table.Cell className="tabular text-right text-muted">{age}</Table.Cell>
-      <Table.Cell className="tabular text-right">{money.sol(position.sizeSol)}</Table.Cell>
+      <Table.Cell className="tabular text-right">
+        {money.quote(position.displaySize, position.quoteSymbol)}
+      </Table.Cell>
       <Table.Cell className="tabular text-right">
         <div
           className="inline-flex items-baseline gap-1.5"
@@ -72,13 +74,18 @@ export const OpenPositionRow = ({
           <span className="text-faint">·</span>
           <span className="text-profit">{money.sol(position.raw.unclaimedFeesSol)}</span>
           <span className="text-faint text-xs">
-            {position.sizeSol > 0 ? `${position.feeYieldPct.toFixed(2)}%` : '—'}
+            {position.displaySize > 0 ? `${position.feeYieldPct.toFixed(2)}%` : '—'}
           </span>
         </div>
       </Table.Cell>
       <Table.Cell className="text-right">
-        <TickFlash value={position.pnlSol} className="inline-block">
-          <PnlCell sol={position.pnlSol} pct={position.pnlPct} tone={position.tone} />
+        <TickFlash value={position.displayPnl} className="inline-block">
+          <PnlCell
+            sol={position.displayPnl}
+            pct={position.pnlPct}
+            tone={position.tone}
+            quoteSymbol={position.quoteSymbol}
+          />
         </TickFlash>
       </Table.Cell>
       <Table.Cell>

@@ -382,18 +382,21 @@ export function registerRoutes(app: FastifyInstance, deps: RouteDeps): void {
     };
     const iso = (ms: number | null) => (ms ? new Date(ms).toISOString() : '');
     const lines = [
-      'Pair,Strategy,Invested SOL,Withdrawn SOL,Fees SOL,PnL SOL,PnL %,Opened,Closed,Duration s,Position',
+      'Pair,Strategy,Quote,Invested Quote,Withdrawn Quote,Fees Quote,PnL Quote,PnL %,Opened,Closed,Duration s,Position',
     ];
     for (const r of rows) {
       lines.push(
         [
           `${r.tokenX}/${r.tokenY}`,
           r.strategy ?? '',
-          r.depositSol,
-          r.withdrawSol,
-          r.feesSol,
-          r.pnlSol,
-          r.pnlPctSol,
+          // Every amount is in the position's OWN quote, named by the Quote column — a USDC pool must
+          // never be exported under a SOL header. Rows written before the quote sync fall back to SOL.
+          r.quoteSymbol ?? 'SOL',
+          r.depositQuote ?? r.depositSol,
+          r.withdrawQuote ?? r.withdrawSol,
+          r.feesQuote ?? r.feesSol,
+          r.pnlQuote ?? r.pnlSol,
+          r.pnlPctQuote ?? r.pnlPctSol,
           iso(r.openedAt),
           iso(r.closedAt),
           r.durationSeconds,

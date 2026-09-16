@@ -20,18 +20,37 @@ export class OpenPositionEntity {
   get pnlSol(): number {
     return this.raw.pnlSol;
   }
+  /**
+   * The unit this position's economics are actually denominated in. A USDC pool reports USDC; the
+   * SOL columns stay zero for it, so displaying them would read as a flat, and wrong, zero.
+   */
+  get quoteSymbol(): string {
+    return this.raw.quoteSymbol ?? 'SOL';
+  }
+  get displaySize(): number {
+    return this.raw.sizeQuote ?? this.raw.sizeSol;
+  }
+  get displayPnl(): number {
+    return this.raw.pnlQuote ?? this.raw.pnlSol;
+  }
   get pnlPct(): number {
-    return this.raw.pnlPctSol;
+    return this.raw.pnlPctQuote ?? this.raw.pnlPctSol;
   }
   get tone(): Tone {
-    return toneOf(this.raw.pnlSol);
+    return toneOf(this.displayPnl);
   }
   get totalFeesSol(): number {
     return this.raw.claimedFeesSol + this.raw.unclaimedFeesSol;
   }
+  get displayTotalFees(): number {
+    return (
+      (this.raw.claimedFeesQuote ?? this.raw.claimedFeesSol) +
+      (this.raw.unclaimedFeesQuote ?? this.raw.unclaimedFeesSol)
+    );
+  }
   /** Combined (claimed + unclaimed) fees as a percentage of the position's current value. */
   get feeYieldPct(): number {
-    return this.sizeSol > 0 ? (this.totalFeesSol / this.sizeSol) * 100 : 0;
+    return this.displaySize > 0 ? (this.displayTotalFees / this.displaySize) * 100 : 0;
   }
   get rangeStatus(): RangeStatus {
     return this.raw.rangeStatus;
@@ -57,14 +76,27 @@ export class ClosedPositionEntity {
   get pnlSol(): number {
     return this.raw.pnlSol;
   }
+  /** See {@link OpenPositionEntity.quoteSymbol}. */
+  get quoteSymbol(): string {
+    return this.raw.quoteSymbol ?? 'SOL';
+  }
+  get displayPnl(): number {
+    return this.raw.pnlQuote ?? this.raw.pnlSol;
+  }
   get pnlPct(): number {
-    return this.raw.pnlPctSol;
+    return this.raw.pnlPctQuote ?? this.raw.pnlPctSol;
   }
   get feesSol(): number {
     return this.raw.feesSol;
   }
+  get displayFees(): number {
+    return this.raw.feesQuote ?? this.raw.feesSol;
+  }
+  get displayDeposit(): number {
+    return this.raw.depositQuote ?? this.raw.depositSol;
+  }
   get tone(): Tone {
-    return toneOf(this.raw.pnlSol);
+    return toneOf(this.displayPnl);
   }
   get closedAt(): number | null {
     return this.raw.closedAt;

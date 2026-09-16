@@ -71,11 +71,14 @@ export const ClosedPositionRow = ({
       <Table.Cell className="tabular text-right text-muted">
         {money.sol(position.raw.depositSol)}
       </Table.Cell>
-      <Table.Cell className="tabular text-right">{money.sol(position.feesSol)}</Table.Cell>
+      <Table.Cell className="tabular text-right">
+        {money.quote(position.displayFees, position.quoteSymbol)}
+      </Table.Cell>
       <Table.Cell className="text-right">
         <PnlCell
-          sol={position.pnlSol}
+          sol={position.displayPnl}
           pct={position.pnlPct}
+          quoteSymbol={position.quoteSymbol}
           tone={position.tone}
           className="inline-block text-right"
         />

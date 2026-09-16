@@ -14,8 +14,10 @@ export interface DlmmLeg {
   lbPair: string;
   /** deposit = capital in (cost); withdraw = capital out; claim = fees out (income). */
   kind: 'deposit' | 'withdraw' | 'claim';
-  /** the pool's active bin at this tx → the historical price anchor. */
-  activeBinId: number;
+  /** Historical price anchor: the pool's active bin at this tx. null is valid for a legacy ClaimFee
+   * event with no sibling carrying a bin — the exact X/Y quantities are retained even though Meteora
+   * emitted no price anchor, so the quote-side amount survives and the rest is marked partial. */
+  activeBinId: number | null;
   /** raw token-X lamports moved in this leg. */
   amountX: bigint;
   /** raw token-Y lamports moved in this leg. */
@@ -100,6 +102,26 @@ export interface PoolMeta {
   solSide: 'X' | 'Y';
 }
 
+/** Native quote convention for a supported DLMM pool. Raw DLMM prices are always Y-base-units per
+ * X-base-unit; quoteSide selects the orientation and quoteDecimals converts raw quote units to UI. */
+export interface QuoteMeta {
+  binStep: number;
+  quoteSide: 'X' | 'Y';
+  quoteDecimals: number;
+}
+
+/** Per-position economics in the pool's native quote. Unlike PositionEconomics this is not assumed
+ * to be SOL: a USDC pool produces USDC values and a USDT pool produces USDT values. */
+export interface PositionEconomicsQuote {
+  depositQuote: number;
+  withdrawQuote: number;
+  claimedFeesQuote: number;
+  pnlQuote: number;
+  valuationStatus: 'complete' | 'partial';
+  /** Legs whose amounts are exact but carry no price anchor, so only the quote side could be counted. */
+  unpricedLegs: number;
+}
+
 /** Per-position SOL economics from decoded legs, mark-to-pool (single source for the PnL split). */
 export interface PositionEconomics {
   /** Σ deposit legs valued in SOL — the cost basis. */
@@ -118,7 +140,7 @@ export interface StoredLeg {
   position: string;
   lbPair: string;
   kind: 'deposit' | 'withdraw' | 'claim';
-  activeBinId: number;
+  activeBinId: number | null;
   amountX: bigint;
   amountY: bigint;
   blockTime: number | null;

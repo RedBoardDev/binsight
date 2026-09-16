@@ -24,7 +24,10 @@ export const SharePnlCardButton = ({ position, className }: SharePnlCardButtonPr
   const [isOpen, setOpen] = useState(false);
   const money = useMoney();
   const pair = `${position.tokenX}/${position.tokenY}`;
-  const tone = toneOf(position.pnlSol);
+  // Mirror the server-rendered card, which draws the position's native quote.
+  const quoteSymbol = position.quoteSymbol ?? 'SOL';
+  const pnl = position.pnlQuote ?? position.pnlSol;
+  const tone = toneOf(pnl);
   const strategy = strategyLabel(position.strategy);
   const filename = `pnl-${position.tokenX}-${position.tokenY}.png`.replace(/[^\w.-]+/g, '_');
 
@@ -60,9 +63,11 @@ export const SharePnlCardButton = ({ position, className }: SharePnlCardButtonPr
           <div className="flex items-start justify-between gap-3">
             <div className={cn('tabular leading-tight', toneTextClass[tone])}>
               <div className="font-semibold text-2xl">
-                {money.sol(position.pnlSol, { signed: true })}
+                {money.quote(pnl, quoteSymbol, { signed: true })}
               </div>
-              <div className="text-sm opacity-75">{money.pct(position.pnlPctSol)}</div>
+              <div className="text-sm opacity-75">
+                {money.pct(position.pnlPctQuote ?? position.pnlPctSol)}
+              </div>
             </div>
             <div className="flex flex-col items-end gap-1 text-faint text-xs">
               {strategy && (
@@ -71,7 +76,8 @@ export const SharePnlCardButton = ({ position, className }: SharePnlCardButtonPr
                 </Chip.Root>
               )}
               <span className="tabular">
-                Fees {money.sol(position.feesSol)} · Invested {money.sol(position.depositSol)}
+                Fees {money.quote(position.feesQuote ?? position.feesSol, quoteSymbol)} · Invested{' '}
+                {money.quote(position.depositQuote ?? position.depositSol, quoteSymbol)}
               </span>
               <span className="tabular">Held {fmtDuration(position.durationSeconds)}</span>
             </div>

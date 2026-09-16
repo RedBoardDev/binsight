@@ -121,6 +121,19 @@ describe('decodeDlmmLegs (IDL-driven)', () => {
     expect(claim.activeBinId).toBe(-429); // borrowed from the Remove event
   });
 
+  it('retains an isolated ClaimFee v1 with exact amounts and a null price anchor', () => {
+    // No sibling event carries a bin, so the claim cannot be converted — but its X/Y quantities are
+    // exact on-chain facts. Keeping them with a null anchor lets the quote-side amount still be counted.
+    const legs = decodeDlmmLegs(tx([claimFeeV1(896_784_000n, 112_397_677n)]));
+    expect(legs).toHaveLength(1);
+    expect(legs[0]).toMatchObject({
+      kind: 'claim',
+      amountX: 896_784_000n,
+      amountY: 112_397_677n,
+      activeBinId: null,
+    });
+  });
+
   it('ignores non-DLMM inner instructions and txs with no events', () => {
     expect(decodeDlmmLegs(tx([]))).toEqual([]);
   });

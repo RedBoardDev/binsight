@@ -1,3 +1,4 @@
+import { SOL_MINT, USDC_MINT, USDT_MINT } from '@binsight/shared';
 import { describe, expect, it } from 'vitest';
 import type { DlmmLeg, PoolMeta } from './dlmm';
 import {
@@ -5,13 +6,15 @@ import {
   legValueSol,
   openUnrealizedPnlSol,
   positionEconomics,
+  positionEconomicsQuote,
+  quoteConventionOf,
   solSideOf,
 } from './dlmm-pnl';
 
-const SOL = 'So11111111111111111111111111111111111111112';
+const SOL = SOL_MINT;
 const leg = (
   kind: DlmmLeg['kind'],
-  activeBinId: number,
+  activeBinId: number | null,
   amountX: bigint,
   amountY: bigint,
 ): DlmmLeg => ({
@@ -57,7 +60,7 @@ describe('positionPnlSol — validated against Meteora on real on-chain data', (
   });
 
   it('values the deposit leg = Meteora deposit_sol 6.0393', () => {
-    expect(legValueSol(legs[0]!, meta)).toBeCloseTo(6.0393, 3);
+    expect(legValueSol(legs[0]!, meta)!).toBeCloseTo(6.0393, 3);
   });
 
   it('values the withdraw leg = Meteora withdraw_sol 6.2343', () => {
@@ -91,7 +94,121 @@ describe('positionPnlSol — orientation + direction', () => {
     const meta: PoolMeta = { binStep: 100, solSide: 'X' };
     // bin 0 → price 1; X=SOL leg counts directly, Y leg divided by price.
     const v = legValueSol(leg('deposit', 0, 2_000_000_000n, 5_000_000_000n), meta);
-    expect(v).toBeCloseTo(7, 9); // (2e9 + 5e9/1) / 1e9
+    expect(v).not.toBeNull();
+    expect(v!).toBeCloseTo(7, 9); // (2e9 + 5e9/1) / 1e9
+  });
+});
+
+describe('positionEconomicsQuote — missing ClaimFee price anchor', () => {
+  it('keeps an exact quote-only claim complete even without a bin', () => {
+    const econ = positionEconomicsQuote([leg('claim', null, 0n, 112_397_677n)], {
+      binStep: 100,
+      quoteSide: 'Y',
+      quoteDecimals: 9,
+    });
+    expect(econ.claimedFeesQuote).toBeCloseTo(0.112397677, 12);
+    expect(econ.valuationStatus).toBe('complete');
+    expect(econ.unpricedLegs).toBe(0);
+  });
+
+  it('retains a mixed claim as partial instead of inventing a bin price', () => {
+    const econ = positionEconomicsQuote([leg('claim', null, 896_784_000n, 112_397_677n)], {
+      binStep: 100,
+      quoteSide: 'Y',
+      quoteDecimals: 9,
+    });
+    // The wSOL component is an exact on-chain quantity; only the base-token conversion is unknown.
+    expect(econ.claimedFeesQuote).toBeCloseTo(0.112397677, 12);
+    expect(econ.valuationStatus).toBe('partial');
+    expect(econ.unpricedLegs).toBe(1);
+  });
+});
+
+describe('positionEconomicsQuote — audited HX USDC fixtures', () => {
+  it('reproduces the USDC-as-X orientation fixture exactly', () => {
+    const legs = [
+      leg('deposit', -2, 27_873_767n, 0n),
+      leg('withdraw', -2, 27_873_798n, 0n),
+      leg('claim', -2, 25_228n, 25_343n),
+    ];
+    const econ = positionEconomicsQuote(legs, {
+      binStep: 1,
+      quoteSide: 'X',
+      quoteDecimals: 6,
+    });
+    expect(econ.depositQuote).toBeCloseTo(27.873767, 12);
+    expect(econ.withdrawQuote).toBeCloseTo(27.873798, 12);
+    expect(econ.claimedFeesQuote).toBeCloseTo(0.05057606885343, 12);
+    expect(econ.pnlQuote).toBeCloseTo(0.0506070688534308, 12);
+  });
+
+  it('counts the audited CATE/USDC claim once', () => {
+    const legs = [
+      leg('deposit', -1523, 0n, 910_844_060n),
+      leg('withdraw', -1523, 7_755_294n, 910_474_204n),
+      leg('claim', -1523, 39_434_180n, 1_852_714n),
+    ];
+    const econ = positionEconomicsQuote(legs, {
+      binStep: 20,
+      quoteSide: 'Y',
+      quoteDecimals: 6,
+    });
+    expect(econ.depositQuote).toBeCloseTo(910.84406, 9);
+    expect(econ.withdrawQuote).toBeCloseTo(910.8440818924138, 9);
+    expect(econ.claimedFeesQuote).toBeCloseTo(3.7334720199363214, 9);
+    expect(econ.pnlQuote).toBeCloseTo(3.733493912350127, 9);
+  });
+
+  it('reproduces all twenty audited MET/USDC legs instead of using only the last pair', () => {
+    const deposits = [
+      [184_445_461n, -240],
+      [212_133_125n, -240],
+      [243_977_072n, -240],
+      [280_601_194n, -240],
+      [322_723_086n, -240],
+      [14_341_516n, -245],
+      [16_494_369n, -245],
+      [18_970_400n, -245],
+      [21_818_102n, -245],
+      [25_093_289n, -245],
+    ] as const;
+    const withdrawals = [198_786_977n, 228_627_494n, 262_947_472n, 302_419_296n, 347_816_375n];
+    const legs = [
+      ...deposits.map(([amountX, activeBinId]) => leg('deposit', activeBinId, amountX, 0n)),
+      ...withdrawals.flatMap((amountX) => [
+        leg('withdraw', -254, amountX, 0n),
+        leg('claim', -254, 0n, 0n),
+      ]),
+    ];
+    const econ = positionEconomicsQuote(legs, {
+      binStep: 20,
+      quoteSide: 'Y',
+      quoteDecimals: 6,
+    });
+    expect(legs).toHaveLength(20);
+    expect(econ.depositQuote).toBeCloseTo(829.3420988217779, 9);
+    expect(econ.withdrawQuote).toBeCloseTo(807.0439258287761, 9);
+    expect(econ.claimedFeesQuote).toBe(0);
+    expect(econ.pnlQuote).toBeCloseTo(-22.298172993001714, 9);
+  });
+
+  it('selects SOL first, then USDC, then USDT without changing the pool orientation', () => {
+    expect(quoteConventionOf('BASE', SOL_MINT)).toMatchObject({
+      quoteMint: SOL_MINT,
+      quoteSide: 'Y',
+      quoteDecimals: 9,
+    });
+    expect(quoteConventionOf(USDC_MINT, USDT_MINT)).toMatchObject({
+      quoteMint: USDC_MINT,
+      baseMint: USDT_MINT,
+      quoteSide: 'X',
+      quoteDecimals: 6,
+    });
+    expect(quoteConventionOf('BASE', USDT_MINT)).toMatchObject({
+      quoteMint: USDT_MINT,
+      quoteSide: 'Y',
+    });
+    expect(quoteConventionOf('BASE', 'OTHER')).toBeNull();
   });
 });
 

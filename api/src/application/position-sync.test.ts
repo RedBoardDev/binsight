@@ -1,4 +1,4 @@
-import { type RangeStatus, SOL_MINT, type StrategyFamily } from '@binsight/shared';
+import { type RangeStatus, SOL_MINT, type StrategyFamily, USDC_MINT } from '@binsight/shared';
 import { describe, expect, it } from 'vitest';
 import type { OnchainPositionValue } from '@/domain/dlmm';
 import type { PositionPnl } from './dlmm-position-pnl';
@@ -10,7 +10,11 @@ import {
 } from './position-sync';
 
 const meta: TokenMetaResolver = (mint) =>
-  mint === SOL_MINT ? { symbol: 'SOL' } : { symbol: 'MEME', icon: 'http://icon' };
+  mint === SOL_MINT
+    ? { symbol: 'SOL' }
+    : mint === USDC_MINT
+      ? { symbol: 'USDC' }
+      : { symbol: 'MEME', icon: 'http://icon' };
 
 const proj = (over: Partial<PositionPnl>): PositionPnl => ({
   position: 'pos1',
@@ -19,8 +23,20 @@ const proj = (over: Partial<PositionPnl>): PositionPnl => ({
   depositSol: 0,
   withdrawSol: 0,
   claimedFeesSol: 0,
+  pnlQuote: 0,
+  depositQuote: 0,
+  withdrawQuote: 0,
+  claimedFeesQuote: 0,
+  quoteMint: SOL_MINT,
+  quoteSymbol: 'SOL',
+  quoteDecimals: 9,
+  quoteSide: 'Y',
+  valuationStatus: 'complete',
+  economicStatus: 'funded',
   legs: 1,
   tokenMint: 'MEMEmint',
+  mintX: 'MEMEmint',
+  mintY: SOL_MINT,
   solDenominated: true,
   openedAt: 1000,
   closedAt: 2000,
@@ -31,6 +47,9 @@ const proj = (over: Partial<PositionPnl>): PositionPnl => ({
 const live = (over: Partial<LivePositionValue>): LivePositionValue => ({
   sizeSol: 0,
   unclaimedFeesSol: 0,
+  sizeQuote: 0,
+  unclaimedFeesQuote: 0,
+  valuationStatus: 'complete',
   minPrice: 0,
   maxPrice: 0,
   poolPrice: 0,
@@ -158,13 +177,22 @@ describe('buildPositionRows — out-of-range clock is preserved across syncs', (
 });
 
 describe('buildPositionRows — robustness', () => {
-  it('surfaces a non-SOL-quote position (flagged) rather than dropping it', () => {
+  it('surfaces a USDC-quote position with its real quote and economics', () => {
     const p = proj({
       position: 'n1',
       solDenominated: false,
       pnlSol: 0,
       depositSol: 0,
       tokenMint: 'XmintBase',
+      mintX: 'XmintBase',
+      mintY: USDC_MINT,
+      quoteMint: USDC_MINT,
+      quoteSymbol: 'USDC',
+      quoteDecimals: 6,
+      depositQuote: 100,
+      withdrawQuote: 102,
+      claimedFeesQuote: 1,
+      pnlQuote: 3,
     });
     const r = buildPositionRows({
       ...base,
@@ -175,8 +203,53 @@ describe('buildPositionRows — robustness', () => {
     });
     expect(r.closed).toHaveLength(1);
     const c = r.closed[0]!;
-    expect(c.tokenY).toBe('?'); // quote not reconstructed for a non-SOL pool — honest, not a SOL label
-    expect(c.pnlSol).toBe(0);
+    expect(c.tokenY).toBe('USDC');
+    expect(c.quoteMint).toBe(USDC_MINT);
+    expect(c.pnlQuote).toBe(3);
+    expect(c.depositQuote).toBe(100);
+    expect(c.pnlPctQuote).toBe(3);
+    expect(c.pnlSol).toBe(0); // never relabelled as SOL
+  });
+
+  it('keeps an open USDC position in USDC and does not report its principal as SOL PnL', () => {
+    const p = proj({
+      position: 'u1',
+      solDenominated: false,
+      pnlSol: 0,
+      depositSol: 0,
+      tokenMint: 'METmint',
+      mintX: 'METmint',
+      mintY: USDC_MINT,
+      quoteMint: USDC_MINT,
+      quoteSymbol: 'USDC',
+      quoteDecimals: 6,
+      depositQuote: 829.3420988217779,
+      withdrawQuote: 0,
+      claimedFeesQuote: 0,
+      pnlQuote: -829.3420988217779,
+    });
+    const r = buildPositionRows({
+      ...base,
+      projection: [p],
+      live: new Map([
+        [
+          'u1',
+          live({
+            sizeSol: 10.25,
+            unclaimedFeesSol: 0.01,
+            sizeQuote: 807.0439258287761,
+            unclaimedFeesQuote: 0,
+          }),
+        ],
+      ]),
+      meta,
+      priorOorSince: new Map(),
+    });
+    const o = r.open[0]!;
+    expect(o.tokenY).toBe('USDC');
+    expect(o.sizeQuote).toBeCloseTo(807.0439258287761, 9);
+    expect(o.pnlQuote).toBeCloseTo(-22.298172993001714, 9);
+    expect(o.pnlSol).toBe(0);
   });
 
   it('maps the decoded strategy onto the row', () => {

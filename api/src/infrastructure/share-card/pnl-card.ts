@@ -33,14 +33,16 @@ function splitDuration(seconds: number): { hours: number; minutes: number } {
   return { hours: Math.floor(totalMinutes / 60), minutes: totalMinutes % 60 };
 }
 
-/** Renders the PnL share card for a closed position. `solUsd` null → USD figures are omitted. */
+/** Renders the PnL share card in the position's native quote. A live SOL/USD conversion is used only
+ * for SOL-quoted positions; USDC/USDT are never passed through a SOL conversion. */
 export async function renderClosedPnlCard(
   p: ClosedPosition,
   solUsd: number | null,
 ): Promise<Buffer> {
-  const pnlSol = p.pnlSol;
-  const pct = p.pnlPctSol;
-  const tvlSol = p.depositSol;
+  const quoteSymbol = p.quoteSymbol ?? 'SOL';
+  const pnl = p.pnlQuote ?? p.pnlSol;
+  const pct = p.pnlPctQuote ?? p.pnlPctSol;
+  const tvl = p.depositQuote ?? p.depositSol;
 
   const canvas = createCanvas(WIDTH, HEIGHT);
   const ctx = canvas.getContext('2d');
@@ -78,15 +80,14 @@ export async function renderClosedPnlCard(
   let primaryText: string;
   let primaryColor: string;
   let secondaryText: string;
-  if (solUsd != null) {
-    const usd = pnlSol * solUsd;
+  if (quoteSymbol === 'SOL' && solUsd != null) {
+    const usd = pnl * solUsd;
     primaryText = `${fmtValue(usd).sign}$${Math.abs(usd).toFixed(2)}`;
     primaryColor = fmtValue(usd).color;
-    secondaryText =
-      pnlSol !== 0 ? ` (${fmtValue(pnlSol).sign}${Math.abs(pnlSol).toFixed(2)} SOL)` : '';
+    secondaryText = pnl !== 0 ? ` (${fmtValue(pnl).sign}${Math.abs(pnl).toFixed(2)} SOL)` : '';
   } else {
-    primaryText = `${fmtValue(pnlSol).sign}${Math.abs(pnlSol).toFixed(2)} SOL`;
-    primaryColor = fmtValue(pnlSol).color;
+    primaryText = `${fmtValue(pnl).sign}${Math.abs(pnl).toFixed(2)} ${quoteSymbol}`;
+    primaryColor = fmtValue(pnl).color;
     secondaryText = '';
   }
   const wSecondary = ctx.measureText(secondaryText).width;
@@ -140,9 +141,9 @@ export async function renderClosedPnlCard(
 
   const tvlLabel = 'TVL: ';
   const tvlValue =
-    solUsd != null
-      ? `${tvlSol.toFixed(2)} SOL ($${(tvlSol * solUsd).toFixed(0)})`
-      : `${tvlSol.toFixed(2)} SOL`;
+    quoteSymbol === 'SOL' && solUsd != null
+      ? `${tvl.toFixed(2)} SOL ($${(tvl * solUsd).toFixed(0)})`
+      : `${tvl.toFixed(2)} ${quoteSymbol}`;
   const wTvlLabel = ctx.measureText(tvlLabel).width;
   const startXTvl = x - (wTvlLabel + ctx.measureText(tvlValue).width);
   ctx.fillStyle = GOLD;

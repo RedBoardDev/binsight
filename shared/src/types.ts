@@ -36,6 +36,14 @@ export type RangeStatus = z.infer<typeof RangeStatusSchema>;
 export const StrategyFamilySchema = z.enum(['Spot', 'Curve', 'BidAsk']);
 export type StrategyFamily = z.infer<typeof StrategyFamilySchema>;
 
+/** Which side of the pool is the QUOTE unit — the one a position's economics are denominated in. */
+export const QuoteSideSchema = z.enum(['X', 'Y']);
+export type QuoteSide = z.infer<typeof QuoteSideSchema>;
+
+/** How much of a position's economics could actually be valued: every leg, some, or none. */
+export const PositionValuationStatusSchema = z.enum(['complete', 'partial', 'unpriced']);
+export type PositionValuationStatus = z.infer<typeof PositionValuationStatusSchema>;
+
 /** An open position (live, mark-to-market in SOL). */
 export const OpenPositionSchema = z.object({
   positionAddress: z.string(),
@@ -44,6 +52,14 @@ export const OpenPositionSchema = z.object({
   tokenX: z.string(),
   tokenY: z.string(),
   tokenXMint: z.string(),
+  /** Display quote mint. Optional on the wire while older clients/rows migrate. */
+  tokenYMint: z.string().optional(),
+  quoteMint: z.string().optional(),
+  quoteSymbol: z.string().optional(),
+  quoteDecimals: z.number().int().nonnegative().optional(),
+  quoteSide: QuoteSideSchema.optional(),
+  valuationStatus: PositionValuationStatusSchema.optional(),
+  economicStatus: z.enum(['funded', 'empty_shell']).optional(),
   tokenXIcon: z.string().optional(),
   tokenYIcon: z.string().optional(),
   strategy: StrategyFamilySchema.nullable().default(null),
@@ -52,6 +68,12 @@ export const OpenPositionSchema = z.object({
   pnlPctSol: z.number(),
   claimedFeesSol: z.number(),
   unclaimedFeesSol: z.number(),
+  /** Native pool-quote values. They equal the SOL fields for SOL pools and are USDC for USDC pools. */
+  sizeQuote: z.number().optional(),
+  pnlQuote: z.number().optional(),
+  pnlPctQuote: z.number().optional(),
+  claimedFeesQuote: z.number().optional(),
+  unclaimedFeesQuote: z.number().optional(),
   rangeStatus: RangeStatusSchema,
   minPrice: z.number(),
   maxPrice: z.number(),
@@ -76,6 +98,14 @@ export const ClosedPositionSchema = z.object({
   tokenX: z.string(),
   tokenY: z.string(),
   tokenXMint: z.string(),
+  /** Display quote mint. Optional on the wire while older clients/rows migrate. */
+  tokenYMint: z.string().optional(),
+  quoteMint: z.string().optional(),
+  quoteSymbol: z.string().optional(),
+  quoteDecimals: z.number().int().nonnegative().optional(),
+  quoteSide: QuoteSideSchema.optional(),
+  valuationStatus: PositionValuationStatusSchema.optional(),
+  economicStatus: z.enum(['funded', 'empty_shell']).optional(),
   tokenXIcon: z.string().optional(),
   tokenYIcon: z.string().optional(),
   strategy: StrategyFamilySchema.nullable().default(null),
@@ -84,6 +114,12 @@ export const ClosedPositionSchema = z.object({
   feesSol: z.number(),
   depositSol: z.number(),
   withdrawSol: z.number(),
+  /** Native pool-quote values; win/loss and ROI must use these when present. */
+  pnlQuote: z.number().optional(),
+  pnlPctQuote: z.number().optional(),
+  feesQuote: z.number().optional(),
+  depositQuote: z.number().optional(),
+  withdrawQuote: z.number().optional(),
   openedAt: z.number().int().nullable(),
   closedAt: z.number().int().nullable(),
   durationSeconds: z.number().int().nullable(),
@@ -333,7 +369,17 @@ export const StatsSchema = z.object({
   profitFactor: z.number(),
   avgDurationSeconds: z.number(),
   /** PnL aggregated by pair, best→worst. */
-  byPair: z.array(z.object({ pair: z.string(), pnlSol: z.number(), count: z.number().int() })),
+  byPair: z.array(
+    z.object({
+      pair: z.string(),
+      /** Legacy SOL metric. Zero for non-SOL quotes; never summed across quote units. */
+      pnlSol: z.number(),
+      /** Native quote PnL for this pair. */
+      pnlQuote: z.number().optional(),
+      quoteSymbol: z.string().optional(),
+      count: z.number().int(),
+    }),
+  ),
 });
 export type Stats = z.infer<typeof StatsSchema>;
 

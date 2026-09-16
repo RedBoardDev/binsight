@@ -24,6 +24,15 @@ export const positions = pgTable(
     tokenX: text('token_x'),
     tokenY: text('token_y'),
     tokenXMint: text('token_x_mint'),
+    tokenYMint: text('token_y_mint'),
+    // Native reporting quote of the pool — SOL, USDC or USDT. Null on rows written before the
+    // quote-aware sync, which is why every reader falls back to the legacy SOL columns.
+    quoteMint: text('quote_mint'),
+    quoteSymbol: text('quote_symbol'),
+    quoteDecimals: integer('quote_decimals'),
+    quoteSide: text('quote_side'),
+    valuationStatus: text('valuation_status'),
+    economicStatus: text('economic_status'),
     tokenXIcon: text('token_x_icon'),
     tokenYIcon: text('token_y_icon'),
     status: text('status').notNull(), // 'open' | 'pending_close' | 'closed'
@@ -36,6 +45,15 @@ export const positions = pgTable(
     withdrawSol: doublePrecision('withdraw_sol'),
     claimedFeesSol: doublePrecision('claimed_fees_sol'),
     unclaimedFeesSol: doublePrecision('unclaimed_fees_sol'),
+    // The same economics in the pool's NATIVE quote. Equal to the SOL columns for a SOL pool; USDC for
+    // a USDC pool. Never summed across quote units without an explicit timestamped normalization.
+    pnlQuote: doublePrecision('pnl_quote'),
+    pnlPctQuote: doublePrecision('pnl_pct_quote'),
+    sizeQuote: doublePrecision('size_quote'),
+    depositQuote: doublePrecision('deposit_quote'),
+    withdrawQuote: doublePrecision('withdraw_quote'),
+    claimedFeesQuote: doublePrecision('claimed_fees_quote'),
+    unclaimedFeesQuote: doublePrecision('unclaimed_fees_quote'),
     // Residual revalued at the live market (Jupiter) price at close; kept separate from pnl_sol so
     // the periodic pool-price resync never overwrites the market reprice.
     marketPnlSol: doublePrecision('market_pnl_sol'),
@@ -77,7 +95,8 @@ export const dlmmLegs = pgTable(
     position: text('position').notNull(),
     lbPair: text('lb_pair').notNull(),
     kind: text('kind').notNull(), // 'deposit' | 'withdraw' | 'claim'
-    activeBinId: integer('active_bin_id').notNull(),
+    // Nullable: a legacy ClaimFee event can carry exact amounts with no price anchor — see DlmmLeg.
+    activeBinId: integer('active_bin_id'),
     // raw u64 token lamports as decimal strings (can exceed JS/​int64 safe range for big memecoins).
     amountX: text('amount_x').notNull(),
     amountY: text('amount_y').notNull(),

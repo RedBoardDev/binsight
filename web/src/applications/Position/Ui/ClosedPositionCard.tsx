@@ -45,14 +45,16 @@ export const ClosedPositionCard = ({ position, now }: ClosedPositionCardProps) =
           />
         </div>
         <PnlCell
-          sol={position.pnlSol}
+          sol={position.displayPnl}
           pct={position.pnlPct}
+          quoteSymbol={position.quoteSymbol}
           tone={position.tone}
           className="shrink-0 whitespace-nowrap text-right"
         />
       </div>
       <div className="tabular text-muted text-xs leading-snug">
-        Fees {money.sol(position.feesSol)} · invested {money.sol(position.raw.depositSol)} ·{' '}
+        Fees {money.quote(position.displayFees, position.quoteSymbol)} · invested{' '}
+        {money.quote(position.displayDeposit, position.quoteSymbol)} ·{' '}
         {fmtRelative(position.closedAt, now)}
       </div>
     </Button>

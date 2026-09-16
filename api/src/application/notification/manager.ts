@@ -65,6 +65,9 @@ export class NotificationManager {
     // pnl/fees keys (and the oord:<addr>:<since> episode keys, which otherwise have no delete path) would
     // leak forever — unbounded Set growth. A targeted per-position delete is safe; a global sweep is not.
     this.forgetThresholdKeys(c.positionAddress);
+    const quoteSymbol = c.quoteSymbol ?? 'SOL';
+    const pnlQuote = c.pnlQuote ?? c.pnlSol;
+    const feesQuote = c.feesQuote ?? c.feesSol;
     this.bus.emit('event', {
       id: `${Date.now()}-${this.seq++}`,
       kind: 'position_close',
@@ -72,8 +75,14 @@ export class NotificationManager {
       positionAddress: c.positionAddress,
       pair: `${c.tokenX}/${c.tokenY}`,
       title: `${c.tokenX}/${c.tokenY} closed`,
-      body: `PnL ${fmt(c.pnlSol)} SOL · fees ${fmt(c.feesSol)} SOL`,
-      data: { pnlSol: c.pnlSol, feesSol: c.feesSol },
+      body: `PnL ${fmt(pnlQuote)} ${quoteSymbol} · fees ${fmt(feesQuote)} ${quoteSymbol}`,
+      data: {
+        pnlSol: c.pnlSol,
+        feesSol: c.feesSol,
+        pnlQuote,
+        feesQuote,
+        quoteSymbol,
+      },
       createdAt: Date.now(),
     });
   }
@@ -82,8 +91,11 @@ export class NotificationManager {
     if (state.scope === 'all') return;
     const now = Date.now();
     for (const p of state.openPositions) {
+      // Existing threshold settings are explicitly denominated in SOL. A USDC amount must never be
+      // compared to that numeric threshold; quote-specific rules will require an explicit unit field.
+      const thresholdCompatible = (p.quoteSymbol ?? 'SOL') === 'SOL';
       const pnlRule = this.ruleFor('pnl_threshold', p.wallet);
-      if (pnlRule?.enabled && pnlRule.threshold != null) {
+      if (thresholdCompatible && pnlRule?.enabled && pnlRule.threshold != null) {
         if (Math.abs(p.pnlSol) >= pnlRule.threshold) {
           this.once(`pnl:${p.positionAddress}`, () =>
             this.emitDerived(
@@ -100,7 +112,7 @@ export class NotificationManager {
         }
       }
       const feeRule = this.ruleFor('fees_threshold', p.wallet);
-      if (feeRule?.enabled && feeRule.threshold != null) {
+      if (thresholdCompatible && feeRule?.enabled && feeRule.threshold != null) {
         if (p.unclaimedFeesSol >= feeRule.threshold) {
           this.once(`fees:${p.positionAddress}`, () =>
             this.emitDerived(

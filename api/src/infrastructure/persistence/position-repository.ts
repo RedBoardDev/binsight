@@ -38,6 +38,18 @@ const INSERT_CHUNK = 500;
 
 // Effective realized PnL = market reprice when present, else the raw pool mark.
 const PNL = sql<number>`coalesce(${positionsTable.marketPnlSol}, ${positionsTable.pnlSol})`;
+const IS_SOL_QUOTE = sql`(${positionsTable.quoteSymbol} = 'SOL' OR ${positionsTable.quoteSymbol} IS NULL)`;
+// A SOL position may have an authoritative market reprice. Its native quote is SOL, so that override
+// must win over pnl_quote too. Non-SOL positions use only their own quote and are never relabelled SOL.
+const NATIVE_PNL = sql<number>`case when ${IS_SOL_QUOTE} then ${PNL} else coalesce(${positionsTable.pnlQuote}, 0) end`;
+const NATIVE_PNL_PCT = sql<number>`case
+  when ${IS_SOL_QUOTE} and ${positionsTable.depositSol} > 0
+    then (${PNL} / ${positionsTable.depositSol}) * 100
+  when ${IS_SOL_QUOTE} then ${positionsTable.pnlPctSol}
+  else coalesce(${positionsTable.pnlPctQuote}, 0)
+end`;
+const NATIVE_FEES = sql<number>`case when ${IS_SOL_QUOTE} then ${positionsTable.claimedFeesSol} else coalesce(${positionsTable.claimedFeesQuote}, 0) end`;
+const IS_ECONOMIC = sql`coalesce(${positionsTable.economicStatus}, 'funded') <> 'empty_shell'`;
 
 type Row = typeof positionsTable.$inferSelect;
 
@@ -53,6 +65,13 @@ export class PostgresPositionRepository implements PositionRepository {
       tokenX: p.tokenX,
       tokenY: p.tokenY,
       tokenXMint: p.tokenXMint,
+      tokenYMint: p.tokenYMint ?? null,
+      quoteMint: p.quoteMint ?? null,
+      quoteSymbol: p.quoteSymbol ?? null,
+      quoteDecimals: p.quoteDecimals ?? null,
+      quoteSide: p.quoteSide ?? null,
+      valuationStatus: p.valuationStatus ?? null,
+      economicStatus: p.economicStatus ?? null,
       tokenXIcon: p.tokenXIcon ?? null,
       tokenYIcon: p.tokenYIcon ?? null,
       status: 'open',
@@ -61,6 +80,11 @@ export class PostgresPositionRepository implements PositionRepository {
       sizeSol: p.sizeSol,
       claimedFeesSol: p.claimedFeesSol,
       unclaimedFeesSol: p.unclaimedFeesSol,
+      pnlQuote: p.pnlQuote ?? null,
+      pnlPctQuote: p.pnlPctQuote ?? null,
+      sizeQuote: p.sizeQuote ?? null,
+      claimedFeesQuote: p.claimedFeesQuote ?? null,
+      unclaimedFeesQuote: p.unclaimedFeesQuote ?? null,
       minPrice: p.minPrice,
       maxPrice: p.maxPrice,
       poolPrice: p.poolPrice,
@@ -81,6 +105,13 @@ export class PostgresPositionRepository implements PositionRepository {
       tokenX: p.tokenX,
       tokenY: p.tokenY,
       tokenXMint: p.tokenXMint,
+      tokenYMint: p.tokenYMint ?? null,
+      quoteMint: p.quoteMint ?? null,
+      quoteSymbol: p.quoteSymbol ?? null,
+      quoteDecimals: p.quoteDecimals ?? null,
+      quoteSide: p.quoteSide ?? null,
+      valuationStatus: p.valuationStatus ?? null,
+      economicStatus: p.economicStatus ?? null,
       tokenXIcon: p.tokenXIcon ?? null,
       tokenYIcon: p.tokenYIcon ?? null,
       status: 'closed',
@@ -89,38 +120,89 @@ export class PostgresPositionRepository implements PositionRepository {
       depositSol: p.depositSol,
       withdrawSol: p.withdrawSol,
       claimedFeesSol: p.feesSol,
+      pnlQuote: p.pnlQuote ?? null,
+      pnlPctQuote: p.pnlPctQuote ?? null,
+      depositQuote: p.depositQuote ?? null,
+      withdrawQuote: p.withdrawQuote ?? null,
+      claimedFeesQuote: p.feesQuote ?? null,
       marketPnlSol: p.pnlSource === 'market' ? p.pnlSol : null,
       openedAt: p.openedAt,
       closedAt: p.closedAt,
       durationSeconds: p.durationSeconds,
       updatedAt: now,
     }));
-    for (let i = 0; i < rows.length; i += INSERT_CHUNK)
-      await this.db
-        .insert(positionsTable)
-        .values(rows.slice(i, i + INSERT_CHUNK))
-        .onConflictDoUpdate({
-          target: positionsTable.positionAddress,
-          set: {
-            status: sql`'closed'`,
-            tokenXMint: sql`excluded.token_x_mint`,
-            tokenXIcon: sql`excluded.token_x_icon`,
-            tokenYIcon: sql`excluded.token_y_icon`,
-            pnlSol: sql`excluded.pnl_sol`,
-            pnlPctSol: sql`excluded.pnl_pct_sol`,
-            depositSol: sql`excluded.deposit_sol`,
-            withdrawSol: sql`excluded.withdraw_sol`,
-            claimedFeesSol: sql`excluded.claimed_fees_sol`,
-            closedAt: sql`excluded.closed_at`,
-            durationSeconds: sql`excluded.duration_seconds`,
-            updatedAt: sql`excluded.updated_at`,
-            // keep an existing market reprice; the periodic pool-price resync passes null here.
-            marketPnlSol: sql`coalesce(excluded.market_pnl_sol, ${positionsTable.marketPnlSol})`,
-          },
-          // Freeze the realized figures once the close has settled: allow the first close write
-          // (status still 'open'/'pending_close') and any re-mark within SETTLE_MS of closed_at.
-          setWhere: sql`${positionsTable.status} <> 'closed' OR excluded.updated_at - coalesce(${positionsTable.closedAt}, 0) < ${SETTLE_MS}`,
-        });
+    for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
+      const batch = rows.slice(i, i + INSERT_CHUNK);
+      await this.db.transaction(async (tx) => {
+        await tx
+          .insert(positionsTable)
+          .values(batch)
+          .onConflictDoUpdate({
+            target: positionsTable.positionAddress,
+            set: {
+              status: sql`'closed'`,
+              tokenXMint: sql`excluded.token_x_mint`,
+              tokenYMint: sql`excluded.token_y_mint`,
+              quoteMint: sql`excluded.quote_mint`,
+              quoteSymbol: sql`excluded.quote_symbol`,
+              quoteDecimals: sql`excluded.quote_decimals`,
+              quoteSide: sql`excluded.quote_side`,
+              valuationStatus: sql`excluded.valuation_status`,
+              economicStatus: sql`excluded.economic_status`,
+              tokenXIcon: sql`excluded.token_x_icon`,
+              tokenYIcon: sql`excluded.token_y_icon`,
+              pnlSol: sql`excluded.pnl_sol`,
+              pnlPctSol: sql`excluded.pnl_pct_sol`,
+              depositSol: sql`excluded.deposit_sol`,
+              withdrawSol: sql`excluded.withdraw_sol`,
+              claimedFeesSol: sql`excluded.claimed_fees_sol`,
+              pnlQuote: sql`excluded.pnl_quote`,
+              pnlPctQuote: sql`excluded.pnl_pct_quote`,
+              depositQuote: sql`excluded.deposit_quote`,
+              withdrawQuote: sql`excluded.withdraw_quote`,
+              claimedFeesQuote: sql`excluded.claimed_fees_quote`,
+              closedAt: sql`excluded.closed_at`,
+              durationSeconds: sql`excluded.duration_seconds`,
+              updatedAt: sql`excluded.updated_at`,
+              // keep an existing market reprice; the periodic pool-price resync passes null here.
+              marketPnlSol: sql`coalesce(excluded.market_pnl_sol, ${positionsTable.marketPnlSol})`,
+            },
+            // Freeze the realized figures once the close has settled: allow the first close write
+            // (status still 'open'/'pending_close') and any re-mark within SETTLE_MS of closed_at.
+            setWhere: sql`${positionsTable.status} <> 'closed' OR excluded.updated_at - coalesce(${positionsTable.closedAt}, 0) < ${SETTLE_MS}`,
+          });
+        // Historical SOL financials deliberately freeze after settlement, but quote identity and the
+        // native USDC/USDT projection are independently correctable facts. A second conflict pass in
+        // the same transaction lets the on-chain reprojector repair old rows without reopening the
+        // settled SOL figures or clobbering market_pnl_sol.
+        await tx
+          .insert(positionsTable)
+          .values(batch)
+          .onConflictDoUpdate({
+            target: positionsTable.positionAddress,
+            set: {
+              tokenX: sql`excluded.token_x`,
+              tokenY: sql`excluded.token_y`,
+              tokenXMint: sql`excluded.token_x_mint`,
+              tokenYMint: sql`excluded.token_y_mint`,
+              quoteMint: sql`excluded.quote_mint`,
+              quoteSymbol: sql`excluded.quote_symbol`,
+              quoteDecimals: sql`excluded.quote_decimals`,
+              quoteSide: sql`excluded.quote_side`,
+              valuationStatus: sql`excluded.valuation_status`,
+              economicStatus: sql`excluded.economic_status`,
+              tokenXIcon: sql`excluded.token_x_icon`,
+              tokenYIcon: sql`excluded.token_y_icon`,
+              pnlQuote: sql`excluded.pnl_quote`,
+              pnlPctQuote: sql`excluded.pnl_pct_quote`,
+              depositQuote: sql`excluded.deposit_quote`,
+              withdrawQuote: sql`excluded.withdraw_quote`,
+              claimedFeesQuote: sql`excluded.claimed_fees_quote`,
+              updatedAt: sql`excluded.updated_at`,
+            },
+          });
+      });
+    }
   }
 
   async replaceOpenForWallet(wallet: string, positions: OpenPosition[]): Promise<void> {
@@ -135,6 +217,13 @@ export class PostgresPositionRepository implements PositionRepository {
             set: {
               status: sql`'open'`,
               tokenXMint: sql`excluded.token_x_mint`,
+              tokenYMint: sql`excluded.token_y_mint`,
+              quoteMint: sql`excluded.quote_mint`,
+              quoteSymbol: sql`excluded.quote_symbol`,
+              quoteDecimals: sql`excluded.quote_decimals`,
+              quoteSide: sql`excluded.quote_side`,
+              valuationStatus: sql`excluded.valuation_status`,
+              economicStatus: sql`excluded.economic_status`,
               tokenXIcon: sql`excluded.token_x_icon`,
               tokenYIcon: sql`excluded.token_y_icon`,
               pnlSol: sql`excluded.pnl_sol`,
@@ -142,6 +231,11 @@ export class PostgresPositionRepository implements PositionRepository {
               sizeSol: sql`excluded.size_sol`,
               claimedFeesSol: sql`excluded.claimed_fees_sol`,
               unclaimedFeesSol: sql`excluded.unclaimed_fees_sol`,
+              pnlQuote: sql`excluded.pnl_quote`,
+              pnlPctQuote: sql`excluded.pnl_pct_quote`,
+              sizeQuote: sql`excluded.size_quote`,
+              claimedFeesQuote: sql`excluded.claimed_fees_quote`,
+              unclaimedFeesQuote: sql`excluded.unclaimed_fees_quote`,
               minPrice: sql`excluded.min_price`,
               maxPrice: sql`excluded.max_price`,
               poolPrice: sql`excluded.pool_price`,
@@ -227,14 +321,16 @@ export class PostgresPositionRepository implements PositionRepository {
       const match = or(ilike(positionsTable.tokenX, q), ilike(positionsTable.tokenY, q));
       if (match) conds.push(match);
     }
-    if (opts.result === 'win') conds.push(sql`${PNL} > 0`);
-    else if (opts.result === 'loss') conds.push(sql`${PNL} < 0`);
+    if (opts.result === 'win') conds.push(sql`${NATIVE_PNL} > 0`);
+    else if (opts.result === 'loss') conds.push(sql`${NATIVE_PNL} < 0`);
     const where = and(...conds);
 
     const sortCol = {
       recent: positionsTable.closedAt,
-      pnl: PNL,
-      fees: positionsTable.claimedFeesSol,
+      // Across different quotes an absolute amount is not comparable. The existing wire key stays
+      // stable, but the cross-quote order is the dimensionless native-quote ROI.
+      pnl: NATIVE_PNL_PCT,
+      fees: NATIVE_FEES,
       duration: positionsTable.durationSeconds,
     }[opts.sort ?? 'recent'];
     const order = opts.dir === 'asc' ? asc(sortCol) : desc(sortCol);
@@ -260,6 +356,7 @@ export class PostgresPositionRepository implements PositionRepository {
         tokenX: positionsTable.tokenX,
         tokenY: positionsTable.tokenY,
         tokenXMint: positionsTable.tokenXMint,
+        tokenYMint: positionsTable.tokenYMint,
         tokenXIcon: positionsTable.tokenXIcon,
         tokenYIcon: positionsTable.tokenYIcon,
       })
@@ -272,7 +369,7 @@ export class PostgresPositionRepository implements PositionRepository {
       tokenXMint: r.tokenXMint ?? '',
       tokenXIcon: r.tokenXIcon ?? undefined,
       tokenYIcon: r.tokenYIcon ?? undefined,
-      tokenYMint: '', // not stored; residual reprice for X/SOL pools uses tokenXMint anyway
+      tokenYMint: r.tokenYMint ?? '',
     }));
   }
 
@@ -293,6 +390,9 @@ export class PostgresPositionRepository implements PositionRepository {
     if (!opts.all) {
       conds.push(isNull(positionsTable.marketPnlSol), eq(positionsTable.pnlSol, 0));
     }
+    // This residual reprice path is SOL-denominated. USDC positions have their own authoritative
+    // native-quote projection and must not be misrouted through a token→SOL FIFO repair.
+    conds.push(IS_SOL_QUOTE);
     const rows = await this.db
       .select({
         a: positionsTable.positionAddress,
@@ -451,14 +551,14 @@ export class PostgresPositionRepository implements PositionRepository {
     };
     if (wallets.length === 0) return empty;
 
-    // UTC midnight — the curve, YTD and reconstructedCurve all bucket by UTC day, so "Today" must too
-    // (server-local midnight made the header disagree with the curve around midnight on non-UTC hosts).
+    // Position-close "today" uses UTC midnight, matching every server-side time bucket.
     const startOfToday = new Date();
     startOfToday.setUTCHours(0, 0, 0, 0);
     const todayStartMs = startOfToday.getTime();
     const where = and(
       eq(positionsTable.status, 'closed'),
       inArray(positionsTable.wallet, wallets),
+      IS_ECONOMIC,
       sinceMs > 0 ? gte(positionsTable.closedAt, sinceMs) : undefined,
     );
 
@@ -466,14 +566,15 @@ export class PostgresPositionRepository implements PositionRepository {
     const [agg] = await this.db
       .select({
         closedCount: sql<number>`count(*)::int`,
-        wins: sql<number>`count(*) filter (where ${PNL} > 0)::int`,
-        losses: sql<number>`count(*) filter (where ${PNL} < 0)::int`,
-        totalPnlSol: sql<number>`coalesce(sum(${PNL}), 0)::double precision`,
-        todayPnlSol: sql<number>`coalesce(sum(${PNL}) filter (where ${positionsTable.closedAt} >= ${todayStartMs}), 0)::double precision`,
-        totalFeesSol: sql<number>`coalesce(sum(${positionsTable.claimedFeesSol}), 0)::double precision`,
-        totalVolumeSol: sql<number>`coalesce(sum(${positionsTable.depositSol}), 0)::double precision`,
-        grossProfit: sql<number>`coalesce(sum(${PNL}) filter (where ${PNL} > 0), 0)::double precision`,
-        grossLoss: sql<number>`coalesce(sum(${PNL}) filter (where ${PNL} < 0), 0)::double precision`,
+        wins: sql<number>`count(*) filter (where ${NATIVE_PNL} > 0)::int`,
+        losses: sql<number>`count(*) filter (where ${NATIVE_PNL} < 0)::int`,
+        solClosedCount: sql<number>`count(*) filter (where ${IS_SOL_QUOTE})::int`,
+        totalPnlSol: sql<number>`coalesce(sum(${PNL}) filter (where ${IS_SOL_QUOTE}), 0)::double precision`,
+        todayPnlSol: sql<number>`coalesce(sum(${PNL}) filter (where ${IS_SOL_QUOTE} AND ${positionsTable.closedAt} >= ${todayStartMs}), 0)::double precision`,
+        totalFeesSol: sql<number>`coalesce(sum(${positionsTable.claimedFeesSol}) filter (where ${IS_SOL_QUOTE}), 0)::double precision`,
+        totalVolumeSol: sql<number>`coalesce(sum(${positionsTable.depositSol}) filter (where ${IS_SOL_QUOTE}), 0)::double precision`,
+        grossProfit: sql<number>`coalesce(sum(${PNL}) filter (where ${IS_SOL_QUOTE} AND ${PNL} > 0), 0)::double precision`,
+        grossLoss: sql<number>`coalesce(sum(${PNL}) filter (where ${IS_SOL_QUOTE} AND ${PNL} < 0), 0)::double precision`,
         avgDurationSeconds: sql<number>`coalesce(avg(${positionsTable.durationSeconds}), 0)::double precision`,
         minClosedAt: sql<number | null>`min(${positionsTable.closedAt})`,
         maxClosedAt: sql<number | null>`max(${positionsTable.closedAt})`,
@@ -487,6 +588,7 @@ export class PostgresPositionRepository implements PositionRepository {
     const losses = n(agg.losses);
     const totalPnl = n(agg.totalPnlSol);
     const totalVolume = n(agg.totalVolumeSol);
+    const solClosedCount = n(agg.solClosedCount);
     const span =
       agg.minClosedAt != null && agg.maxClosedAt != null && closedCount > 1
         ? n(agg.maxClosedAt) - n(agg.minClosedAt)
@@ -498,16 +600,20 @@ export class PostgresPositionRepository implements PositionRepository {
       .select({
         tokenX: positionsTable.tokenX,
         tokenY: positionsTable.tokenY,
-        pnlSol: sql<number>`coalesce(sum(${PNL}), 0)::double precision`,
+        quoteSymbol: positionsTable.quoteSymbol,
+        pnlQuote: sql<number>`coalesce(sum(${NATIVE_PNL}), 0)::double precision`,
+        pnlSol: sql<number>`coalesce(sum(${PNL}) filter (where ${IS_SOL_QUOTE}), 0)::double precision`,
         count: sql<number>`count(*)::int`,
       })
       .from(positionsTable)
       .where(where)
-      .groupBy(positionsTable.tokenX, positionsTable.tokenY)
-      .orderBy(desc(sql`coalesce(sum(${PNL}), 0)`));
+      .groupBy(positionsTable.tokenX, positionsTable.tokenY, positionsTable.quoteSymbol)
+      .orderBy(positionsTable.quoteSymbol, desc(sql`coalesce(sum(${NATIVE_PNL}), 0)`));
     const allPairs = pairRows.map((r) => ({
       pair: `${r.tokenX}/${r.tokenY}`,
       pnlSol: n(r.pnlSol),
+      pnlQuote: n(r.pnlQuote),
+      quoteSymbol: r.quoteSymbol ?? String(r.tokenY),
       count: n(r.count),
     }));
     // The UI shows only the best/worst handful; cap the payload to the extremes of the ranked list
@@ -526,9 +632,9 @@ export class PostgresPositionRepository implements PositionRepository {
       todayPnlSol: n(agg.todayPnlSol),
       totalFeesSol: n(agg.totalFeesSol),
       totalVolumeSol: totalVolume,
-      avgInvestedSol: totalVolume / closedCount,
+      avgInvestedSol: solClosedCount > 0 ? totalVolume / solClosedCount : 0,
       avgMonthlyProfitSol: totalPnl / months,
-      expectedValueSol: totalPnl / closedCount,
+      expectedValueSol: solClosedCount > 0 ? totalPnl / solClosedCount : 0,
       // gross profit ÷ gross loss; 0 when there are no losing trades (shown as "—").
       profitFactor: n(agg.grossLoss) < 0 ? n(agg.grossProfit) / Math.abs(n(agg.grossLoss)) : 0,
       avgDurationSeconds: n(agg.avgDurationSeconds),
@@ -552,6 +658,8 @@ export class PostgresPositionRepository implements PositionRepository {
           eq(positionsTable.status, 'closed'),
           inArray(positionsTable.wallet, wallets),
           isNotNull(positionsTable.closedAt),
+          IS_ECONOMIC,
+          IS_SOL_QUOTE,
         ),
       )
       .groupBy(sql`1`)
@@ -568,6 +676,13 @@ function rowToOpen(r: Row): OpenPosition {
     tokenX: String(r.tokenX),
     tokenY: String(r.tokenY),
     tokenXMint: r.tokenXMint ?? '',
+    tokenYMint: r.tokenYMint ?? undefined,
+    quoteMint: r.quoteMint ?? undefined,
+    quoteSymbol: r.quoteSymbol ?? String(r.tokenY),
+    quoteDecimals: r.quoteDecimals ?? undefined,
+    quoteSide: (r.quoteSide as 'X' | 'Y') ?? undefined,
+    valuationStatus: (r.valuationStatus as 'complete' | 'partial' | 'unpriced') ?? undefined,
+    economicStatus: (r.economicStatus as 'funded' | 'empty_shell') ?? undefined,
     tokenXIcon: r.tokenXIcon ?? undefined,
     tokenYIcon: r.tokenYIcon ?? undefined,
     strategy: (r.strategy as StrategyFamily) ?? null,
@@ -576,6 +691,12 @@ function rowToOpen(r: Row): OpenPosition {
     pnlPctSol: n(r.pnlPctSol),
     claimedFeesSol: n(r.claimedFeesSol),
     unclaimedFeesSol: n(r.unclaimedFeesSol),
+    sizeQuote: r.sizeQuote == null ? n(r.sizeSol) : n(r.sizeQuote),
+    pnlQuote: r.pnlQuote == null ? n(r.pnlSol) : n(r.pnlQuote),
+    pnlPctQuote: r.pnlPctQuote == null ? n(r.pnlPctSol) : n(r.pnlPctQuote),
+    claimedFeesQuote: r.claimedFeesQuote == null ? n(r.claimedFeesSol) : n(r.claimedFeesQuote),
+    unclaimedFeesQuote:
+      r.unclaimedFeesQuote == null ? n(r.unclaimedFeesSol) : n(r.unclaimedFeesQuote),
     rangeStatus: (r.rangeStatus as RangeStatus) ?? 'unknown',
     minPrice: n(r.minPrice),
     maxPrice: n(r.maxPrice),
@@ -592,6 +713,9 @@ function rowToClosed(r: Row): ClosedPosition {
   const market = r.marketPnlSol == null ? null : n(r.marketPnlSol);
   const pnlSol = market ?? n(r.pnlSol);
   const depositSol = n(r.depositSol);
+  const quoteIsSol = r.quoteSymbol == null || r.quoteSymbol === 'SOL';
+  const pnlQuote = quoteIsSol || r.pnlQuote == null ? pnlSol : n(r.pnlQuote);
+  const depositQuote = r.depositQuote == null ? depositSol : n(r.depositQuote);
   return {
     positionAddress: r.positionAddress,
     wallet: r.wallet,
@@ -599,6 +723,13 @@ function rowToClosed(r: Row): ClosedPosition {
     tokenX: String(r.tokenX),
     tokenY: String(r.tokenY),
     tokenXMint: r.tokenXMint ?? '',
+    tokenYMint: r.tokenYMint ?? undefined,
+    quoteMint: r.quoteMint ?? undefined,
+    quoteSymbol: r.quoteSymbol ?? String(r.tokenY),
+    quoteDecimals: r.quoteDecimals ?? undefined,
+    quoteSide: (r.quoteSide as 'X' | 'Y') ?? undefined,
+    valuationStatus: (r.valuationStatus as 'complete' | 'partial' | 'unpriced') ?? undefined,
+    economicStatus: (r.economicStatus as 'funded' | 'empty_shell') ?? undefined,
     tokenXIcon: r.tokenXIcon ?? undefined,
     tokenYIcon: r.tokenYIcon ?? undefined,
     strategy: (r.strategy as StrategyFamily) ?? null,
@@ -609,6 +740,16 @@ function rowToClosed(r: Row): ClosedPosition {
     feesSol: n(r.claimedFeesSol),
     depositSol,
     withdrawSol: n(r.withdrawSol),
+    pnlQuote,
+    pnlPctQuote:
+      depositQuote > 0
+        ? (pnlQuote / depositQuote) * 100
+        : r.pnlPctQuote == null
+          ? n(r.pnlPctSol)
+          : n(r.pnlPctQuote),
+    feesQuote: r.claimedFeesQuote == null ? n(r.claimedFeesSol) : n(r.claimedFeesQuote),
+    depositQuote,
+    withdrawQuote: r.withdrawQuote == null ? n(r.withdrawSol) : n(r.withdrawQuote),
     openedAt: r.openedAt == null ? null : n(r.openedAt),
     closedAt: r.closedAt == null ? null : n(r.closedAt),
     durationSeconds: r.durationSeconds == null ? null : n(r.durationSeconds),

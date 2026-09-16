@@ -86,8 +86,8 @@ function rawEvents(tx: ParsedTransactionWithMeta): RawEvent[] {
  * - Rebalancing → a withdraw leg (x/y_withdrawn) + a deposit leg (x/y_added) — it pulls liquidity
  *   from old bins and re-adds to new bins; Meteora counts both, so we do too.
  * - ClaimFee2 → one claim leg (fee_x, fee_y) at its own active bin.
- * - ClaimFee (v1) → claim leg, but the event carries NO bin id; we borrow the bin id from a sibling
- *   event in the SAME tx (a v1 claim is always alongside a Remove/Claim2 that has one).
+ * - ClaimFee (v1) → claim leg. If no sibling event supplies a bin, the exact X/Y quantities are kept
+ *   with a null price anchor; valuation then preserves the quote-side amount and marks the rest partial.
  */
 export function decodeDlmmLegs(tx: ParsedTransactionWithMeta): DlmmLeg[] {
   const events = rawEvents(tx);
@@ -113,10 +113,10 @@ export function decodeDlmmLegs(tx: ParsedTransactionWithMeta): DlmmLeg[] {
       lbPair: String(d.lb_pair ?? ''),
     };
     const bin = binOf(d) ?? txBin;
-    if (bin == null) continue; // no price anchor anywhere in the tx → cannot value; skip
 
     switch (e.name) {
       case 'AddLiquidity': {
+        if (bin == null) break; // liquidity legs mix both sides → unvaluable without a price anchor
         const a = d.amounts as unknown[];
         legs.push({
           ...base,
@@ -128,6 +128,7 @@ export function decodeDlmmLegs(tx: ParsedTransactionWithMeta): DlmmLeg[] {
         break;
       }
       case 'RemoveLiquidity': {
+        if (bin == null) break;
         const a = d.amounts as unknown[];
         legs.push({
           ...base,
@@ -139,6 +140,7 @@ export function decodeDlmmLegs(tx: ParsedTransactionWithMeta): DlmmLeg[] {
         break;
       }
       case 'Rebalancing': {
+        if (bin == null) break;
         const xWd = num(d.x_withdrawn_amount),
           yWd = num(d.y_withdrawn_amount);
         const xAdd = num(d.x_added_amount),

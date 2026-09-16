@@ -95,7 +95,8 @@ interface PosMeta {
   solIsY: boolean;
   status: string;
   closedAt: number | null;
-  lastBinId: number;
+  /** null when every leg seen so far carried exact amounts but no price anchor. */
+  lastBinId: number | null;
   lastBlockTime: number | null;
   binStep: number;
 }
@@ -227,7 +228,7 @@ export class RealizedPnlEngine {
           lastBlockTime: l.blockTime,
           binStep: pm.binStep,
         });
-      } else {
+      } else if (l.activeBinId != null) {
         existing.lastBinId = l.activeBinId; // rows are time-ordered → last seen = close-time bin
         existing.lastBlockTime = l.blockTime;
       }
@@ -421,6 +422,7 @@ export class RealizedPnlEngine {
       return tok > 0 ? sol / tok : 0;
     };
     const binMarkPerToken = (m: PosMeta): number => {
+      if (m.lastBinId == null) return 0; // no price anchor anywhere in the position's legs
       const price = binPriceRaw(m.lastBinId, m.binStep);
       const lamportsPerRaw = m.solIsY ? price : 1 / price;
       // raw→human cancels: (lamports/raw)*(10^dec) / 1e9 per human unit

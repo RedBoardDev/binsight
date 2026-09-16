@@ -8,6 +8,11 @@ interface MoneyValueProps {
   signed?: boolean;
   decimals?: number;
   /**
+   * The position's native quote symbol. Given anything other than SOL, the amount is rendered in that
+   * unit and left out of the SOL⇄USD switch — a USDC figure has no SOL rate to convert through.
+   */
+  quoteSymbol?: string;
+  /**
    * Show the ◎ unit mark. Off by default and on for hero figures only: the currency is stated once
    * at the top of a view (and in the currency toggle), so stamping a coloured glyph on every number
    * in a grid adds a third colour family fighting the P&L green/red for no information.
@@ -22,12 +27,16 @@ export const MoneyValue = ({
   value,
   signed,
   decimals,
+  quoteSymbol,
   withGlyph = false,
   glyphSize = 13,
 }: MoneyValueProps) => {
   const money = useMoney();
-  const glyph = withGlyph && money.showGlyph;
+  // A non-SOL quote carries its own unit in the string, so the ◎ mark would contradict it.
+  const nativeQuote = quoteSymbol != null && quoteSymbol !== 'SOL';
+  const glyph = withGlyph && money.showGlyph && !nativeQuote;
 
+  if (nativeQuote) return <>{money.quote(value, quoteSymbol, { signed, decimals })}</>;
   if (!glyph) return <>{money.sol(value, { signed, decimals })}</>;
 
   return (

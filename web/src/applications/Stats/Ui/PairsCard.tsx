@@ -17,6 +17,12 @@ interface PairsCardProps {
 }
 
 /** Best & worst pairs — a standalone module placed under the chart. Clicking a pair filters History. */
+/**
+ * Best/worst is decided on each pair's NATIVE quote: a USDC pair reports zero in the SOL column, so
+ * ranking on pnlSol would file every one of them as neither a win nor a loss.
+ */
+const pnlOf = (pair: Stats['byPair'][number]): number => pair.pnlQuote ?? pair.pnlSol;
+
 export const PairsCard = ({ now }: PairsCardProps) => {
   const scope = usePortfolioFeed((s) => s.scope);
   const closedVersion = usePortfolioFeed((s) => s.closedVersion);
@@ -27,10 +33,10 @@ export const PairsCard = ({ now }: PairsCardProps) => {
   if (!data && !stats.isError) return <PairsSkeleton />;
   if (data && data.byPair.length === 0) return null;
 
-  const top = data ? data.byPair.filter((p) => p.pnlSol > 0).slice(0, 5) : [];
+  const top = data ? data.byPair.filter((p) => pnlOf(p) > 0).slice(0, 5) : [];
   const worst = data
     ? data.byPair
-        .filter((p) => p.pnlSol < 0)
+        .filter((p) => pnlOf(p) < 0)
         .slice(-5)
         .reverse()
     : [];
@@ -91,8 +97,8 @@ const PairColumn = ({ title, pairs }: PairColumnProps) => {
                 <span className="truncate">{pair.pair}</span>
                 <span className="tabular shrink-0 text-faint text-xs">×{pair.count}</span>
               </span>
-              <span className={cn('tabular font-medium', toneTextClass[toneOf(pair.pnlSol)])}>
-                <MoneyValue value={pair.pnlSol} signed />
+              <span className={cn('tabular font-medium', toneTextClass[toneOf(pnlOf(pair))])}>
+                <MoneyValue value={pnlOf(pair)} quoteSymbol={pair.quoteSymbol} signed />
               </span>
             </Button>
           );

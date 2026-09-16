@@ -1,12 +1,12 @@
-import {
-  type ClosedPosition,
-  type OpenPosition,
-  type RangeStatus,
-  SOL_MINT,
-  type StrategyFamily,
-} from '@binsight/shared';
+import type { ClosedPosition, OpenPosition, RangeStatus, StrategyFamily } from '@binsight/shared';
 import type { OnchainPositionValue, OnchainValued } from '@/domain/dlmm';
-import { binPriceRaw, openUnrealizedPnlSol } from '@/domain/dlmm-pnl';
+import {
+  amountsValueQuote,
+  binPriceRaw,
+  openUnrealizedPnlQuote,
+  openUnrealizedPnlSol,
+  quoteConventionOf,
+} from '@/domain/dlmm-pnl';
 import type { TokenMeta } from '@/domain/ports';
 import { isOutOfRange, resolveRangeStatus } from '@/domain/position';
 import type { PositionPnl } from './dlmm-position-pnl';
@@ -27,6 +27,9 @@ import type { PositionPnl } from './dlmm-position-pnl';
 export interface LivePositionValue {
   sizeSol: number;
   unclaimedFeesSol: number;
+  sizeQuote: number;
+  unclaimedFeesQuote: number;
+  valuationStatus: 'complete' | 'unpriced';
   minPrice: number;
   maxPrice: number;
   poolPrice: number | null;
@@ -59,8 +62,7 @@ export function buildPositionRows(input: BuildPositionRowsInput): {
 
   for (const p of input.projection) {
     const baseMeta = input.meta(p.tokenMint);
-    // SOL pool → quote is SOL; non-SOL-quote pool → we don't reconstruct its quote mint here (flagged).
-    const quoteMeta = p.solDenominated ? input.meta(SOL_MINT) : { symbol: '?' };
+    const quoteMeta = input.meta(p.quoteMint);
     const tokenX = baseMeta.symbol;
     const tokenY = quoteMeta.symbol;
     const strategy = input.strategy.get(p.position) ?? null;
@@ -68,8 +70,10 @@ export function buildPositionRows(input: BuildPositionRowsInput): {
 
     if (liveVal) {
       // OPEN: snapshot ⊕ legs
-      const pnlSol = openUnrealizedPnlSol(p, liveVal);
+      const pnlSol = p.solDenominated ? openUnrealizedPnlSol(p, liveVal) : 0;
       const pnlPctSol = p.depositSol > 0 ? (pnlSol / p.depositSol) * 100 : 0;
+      const pnlQuote = openUnrealizedPnlQuote(p, liveVal);
+      const pnlPctQuote = p.depositQuote > 0 ? (pnlQuote / p.depositQuote) * 100 : 0;
       const prior = input.priorOorSince.get(p.position) ?? null;
       const outOfRangeSince = isOutOfRange(liveVal.rangeStatus) ? (prior ?? input.now) : null;
       open.push({
@@ -79,6 +83,16 @@ export function buildPositionRows(input: BuildPositionRowsInput): {
         tokenX,
         tokenY,
         tokenXMint: p.tokenMint,
+        tokenYMint: p.quoteMint,
+        quoteMint: p.quoteMint,
+        quoteSymbol: quoteMeta.symbol,
+        quoteDecimals: p.quoteDecimals ?? undefined,
+        quoteSide: p.quoteSide,
+        valuationStatus:
+          p.valuationStatus === 'complete' && liveVal.valuationStatus === 'complete'
+            ? 'complete'
+            : 'unpriced',
+        economicStatus: p.economicStatus,
         tokenXIcon: baseMeta.icon,
         tokenYIcon: quoteMeta.icon,
         strategy,
@@ -87,6 +101,11 @@ export function buildPositionRows(input: BuildPositionRowsInput): {
         pnlPctSol,
         claimedFeesSol: p.claimedFeesSol,
         unclaimedFeesSol: liveVal.unclaimedFeesSol,
+        sizeQuote: liveVal.sizeQuote,
+        pnlQuote,
+        pnlPctQuote,
+        claimedFeesQuote: p.claimedFeesQuote,
+        unclaimedFeesQuote: liveVal.unclaimedFeesQuote,
         rangeStatus: liveVal.rangeStatus,
         minPrice: liveVal.minPrice,
         maxPrice: liveVal.maxPrice,
@@ -98,6 +117,7 @@ export function buildPositionRows(input: BuildPositionRowsInput): {
     } else {
       // CLOSED: realized mark-to-pool from the legs
       const pnlPctSol = p.depositSol > 0 ? (p.pnlSol / p.depositSol) * 100 : 0;
+      const pnlPctQuote = p.depositQuote > 0 ? (p.pnlQuote / p.depositQuote) * 100 : 0;
       closed.push({
         positionAddress: p.position,
         wallet: input.wallet,
@@ -105,6 +125,13 @@ export function buildPositionRows(input: BuildPositionRowsInput): {
         tokenX,
         tokenY,
         tokenXMint: p.tokenMint,
+        tokenYMint: p.quoteMint,
+        quoteMint: p.quoteMint,
+        quoteSymbol: quoteMeta.symbol,
+        quoteDecimals: p.quoteDecimals ?? undefined,
+        quoteSide: p.quoteSide,
+        valuationStatus: p.valuationStatus,
+        economicStatus: p.economicStatus,
         tokenXIcon: baseMeta.icon,
         tokenYIcon: quoteMeta.icon,
         strategy,
@@ -113,6 +140,11 @@ export function buildPositionRows(input: BuildPositionRowsInput): {
         feesSol: p.claimedFeesSol,
         depositSol: p.depositSol,
         withdrawSol: p.withdrawSol,
+        pnlQuote: p.pnlQuote,
+        pnlPctQuote,
+        feesQuote: p.claimedFeesQuote,
+        depositQuote: p.depositQuote,
+        withdrawQuote: p.withdrawQuote,
         openedAt: p.openedAt || null,
         closedAt: p.closedAt || null,
         durationSeconds: p.durationSeconds || null,
@@ -146,9 +178,36 @@ export function snapshotToLive(
     const minPrice = humanPrice(p.lowerBinId, p.binStep, p.decimalsX, p.decimalsY);
     const maxPrice = humanPrice(p.upperBinId, p.binStep, p.decimalsX, p.decimalsY);
     const poolPrice = humanPrice(p.activeId, p.binStep, p.decimalsX, p.decimalsY);
+    const sizeSol = valued.sizeSolByPosition.get(p.positionAddress) ?? 0;
+    const unclaimedFeesSol = valued.feeSolByPosition.get(p.positionAddress) ?? 0;
+    const convention = quoteConventionOf(p.tokenXMint, p.tokenYMint);
+    const quoteMeta = convention
+      ? {
+          binStep: p.binStep,
+          quoteSide: convention.quoteSide,
+          quoteDecimals: convention.quoteDecimals,
+        }
+      : null;
+    // Preserve the established SOL live mark. Non-SOL pools are valued directly in their native quote
+    // at the same active bin as the range status, without requiring a current USD/SOL price.
+    const sizeQuote =
+      convention?.quoteSymbol === 'SOL'
+        ? sizeSol
+        : quoteMeta
+          ? amountsValueQuote(p.amountX, p.amountY, p.activeId, quoteMeta)
+          : 0;
+    const unclaimedFeesQuote =
+      convention?.quoteSymbol === 'SOL'
+        ? unclaimedFeesSol
+        : quoteMeta
+          ? amountsValueQuote(p.feeX, p.feeY, p.activeId, quoteMeta)
+          : 0;
     out.set(p.positionAddress, {
-      sizeSol: valued.sizeSolByPosition.get(p.positionAddress) ?? 0,
-      unclaimedFeesSol: valued.feeSolByPosition.get(p.positionAddress) ?? 0,
+      sizeSol,
+      unclaimedFeesSol,
+      sizeQuote,
+      unclaimedFeesQuote,
+      valuationStatus: convention ? 'complete' : 'unpriced',
       minPrice,
       maxPrice,
       poolPrice,

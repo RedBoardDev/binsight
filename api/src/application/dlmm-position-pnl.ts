@@ -1,6 +1,6 @@
 import type { Logger } from 'pino';
 import type { LoadedPoolMeta, StoredLeg } from '@/domain/dlmm';
-import { positionEconomics } from '@/domain/dlmm-pnl';
+import { positionEconomicsQuote, quoteConventionOf } from '@/domain/dlmm-pnl';
 import type { LegRepository, PoolMetaReader } from '@/domain/ports';
 
 export interface PositionPnl {
@@ -14,9 +14,24 @@ export interface PositionPnl {
   withdrawSol: number;
   /** Σ claim legs in SOL — realized fees (0 if !solDenominated). */
   claimedFeesSol: number;
+  /** Native pool-quote economics. For SOL pools these equal the legacy SOL fields; for USDC pools
+   * these are USDC and the legacy SOL fields remain zero until a historical normalization exists. */
+  pnlQuote: number;
+  depositQuote: number;
+  withdrawQuote: number;
+  claimedFeesQuote: number;
+  quoteMint: string;
+  quoteSymbol: string | null;
+  quoteDecimals: number | null;
+  quoteSide: 'X' | 'Y';
+  valuationStatus: 'complete' | 'partial' | 'unpriced';
+  economicStatus: 'funded' | 'empty_shell';
   legs: number;
-  /** the non-SOL token mint (for display/sync into the positions table). */
+  /** Display base mint (the side opposite the selected native quote). */
   tokenMint: string;
+  /** Canonical on-chain pool mint order, retained independently from display base/quote order. */
+  mintX: string;
+  mintY: string;
   /** false for a non-SOL-quote pool: SOL economics are 0 and the position is surfaced flagged, never dropped. */
   solDenominated: boolean;
   /** epoch ms of the first on-chain event (open). */
@@ -92,36 +107,47 @@ export class DlmmPositionPnl {
       const openedAt = times.length ? Math.min(...times) * 1000 : 0;
       const closedAt = times.length ? Math.max(...times) * 1000 : 0;
       const durationSeconds = openedAt && closedAt ? Math.round((closedAt - openedAt) / 1000) : 0;
-      if (!meta.solSide) {
-        // Non-SOL-quote pool: a SOL valuation needs a quote/SOL price series we don't reconstruct here, so we
-        // surface the position FLAGGED with zeroed SOL economics — it must never vanish (zero-loss mandate).
-        out.push({
-          position,
-          pool,
-          pnlSol: 0,
-          depositSol: 0,
-          withdrawSol: 0,
-          claimedFeesSol: 0,
-          legs: plegs.length,
-          tokenMint: meta.mintX,
-          solDenominated: false,
-          openedAt,
-          closedAt,
-          durationSeconds,
-        });
-        continue;
-      }
-      const econ = positionEconomics(plegs, { binStep: meta.binStep, solSide: meta.solSide });
+      const convention = quoteConventionOf(meta.mintX, meta.mintY);
+      const quoteSide = convention?.quoteSide ?? 'Y';
+      const quoteMint = convention?.quoteMint ?? meta.mintY;
+      const tokenMint = convention?.baseMint ?? meta.mintX;
+      const quote = convention
+        ? positionEconomicsQuote(plegs, {
+            binStep: meta.binStep,
+            quoteSide,
+            quoteDecimals: convention.quoteDecimals,
+          })
+        : {
+            pnlQuote: 0,
+            depositQuote: 0,
+            withdrawQuote: 0,
+            claimedFeesQuote: 0,
+            valuationStatus: 'partial' as const,
+            unpricedLegs: plegs.length,
+          };
+      const solDenominated = convention?.quoteSymbol === 'SOL';
+      const economicStatus = plegs.some((leg) => leg.amountX !== 0n || leg.amountY !== 0n)
+        ? 'funded'
+        : 'empty_shell';
       out.push({
         position,
         pool,
-        pnlSol: econ.pnlSol,
-        depositSol: econ.depositSol,
-        withdrawSol: econ.withdrawSol,
-        claimedFeesSol: econ.claimedFeesSol,
+        pnlSol: solDenominated ? quote.pnlQuote : 0,
+        depositSol: solDenominated ? quote.depositQuote : 0,
+        withdrawSol: solDenominated ? quote.withdrawQuote : 0,
+        claimedFeesSol: solDenominated ? quote.claimedFeesQuote : 0,
+        ...quote,
+        quoteMint,
+        quoteSymbol: convention?.quoteSymbol ?? null,
+        quoteDecimals: convention?.quoteDecimals ?? null,
+        quoteSide,
+        valuationStatus: convention ? quote.valuationStatus : 'unpriced',
+        economicStatus,
         legs: plegs.length,
-        tokenMint: meta.solSide === 'Y' ? meta.mintX : meta.mintY,
-        solDenominated: true,
+        tokenMint,
+        mintX: meta.mintX,
+        mintY: meta.mintY,
+        solDenominated,
         openedAt,
         closedAt,
         durationSeconds,
