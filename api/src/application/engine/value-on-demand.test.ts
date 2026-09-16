@@ -143,6 +143,7 @@ function makeEngine(opts: { withOpen: boolean; priceRef: { v: number } }) {
     stream: streamStub as unknown as EngineDeps['stream'],
     onchain: {
       snapshotWallet,
+      invalidateIdle: vi.fn(),
       positionBins: vi.fn(),
       positionHistory: vi.fn(),
       decimalsOf: vi.fn(),

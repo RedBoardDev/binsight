@@ -368,6 +368,9 @@ export interface OnchainDlmmGateway {
     ownerStr: string,
     cachedPlan?: SnapshotPlan,
   ): Promise<OnchainWalletSnapshot & { plan: SnapshotPlan }>;
+  /** Drop a wallet's cached idle-token read so the next snapshot re-reads its balances. Called on any
+   *  activity for that wallet: token balances only move when it transacts. */
+  invalidateIdle(ownerStr: string): void;
 }
 
 /** Ingests a wallet's full Meteora DLMM history from chain into the LegRepository (resumable). */

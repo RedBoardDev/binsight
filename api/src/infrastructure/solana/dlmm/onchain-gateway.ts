@@ -43,6 +43,17 @@ const GMA_CHUNK = 100;
  *  the same 165-byte base before its extensions, so one decoder serves both. */
 const TOKEN_ACCOUNT_MIN_LEN = 72;
 const MIN_CONTEXT_RETRIES = 3;
+/**
+ * How long an idle-token read stays reusable. Position amounts and fees move on their own every block,
+ * which is why the snapshot cadence is 10s; a wallet's token BALANCES only move when it transacts, and
+ * every transaction already invalidates this cache through `invalidateIdle`. Re-reading hundreds of
+ * token accounts on every cadence tick multiplied the snapshot's cost by the number of chunks they
+ * span (measured: 301 accounts → 5 getMultipleAccounts instead of 1, every 10s, per wallet).
+ *
+ * The TTL is only the backstop for a change no event announced. It bounds how stale the idle side can
+ * be; the position side stays exact on every tick.
+ */
+const IDLE_TTL_MS = 60_000;
 const HISTORY_TTL_MS = 60_000; // open positions may still accrue events; closed are immutable
 const HISTORY_MAX = 5000; // bound the cache: closed entries have no TTL, so cap total + FIFO-evict
 
@@ -73,6 +84,11 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
   // every other call — so the rate-limiter + CreditMeter still meter it (method 'getProgramAccountsV2' →
   // 1 credit). Injectable so the gateway is unit-tested with a spy (no network).
   private readonly rawRpc: RawRpc;
+  /** owner → last idle-token read. See {@link IDLE_TTL_MS}. */
+  private readonly idleCache = new Map<
+    string,
+    { tokens: OnchainWalletSnapshot['idleTokens']; at: number }
+  >();
 
   constructor(
     private readonly conn: Connection,
@@ -85,6 +101,16 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
           method,
           params,
         ));
+  }
+
+  /**
+   * Drop a wallet's cached idle-token read so the next snapshot re-reads its balances. The engine calls
+   * this on any activity for the wallet: a plain SPL transfer is not a DLMM instruction, so it never
+   * invalidates the position discovery plan, and tying the idle read to that plan alone would leave a
+   * received token invisible until the 10-minute safety rediscovery.
+   */
+  invalidateIdle(ownerStr: string): void {
+    this.idleCache.delete(ownerStr);
   }
 
   deriveAta(owner: PublicKey, mint: PublicKey): PublicKey {
@@ -283,9 +309,21 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
       tokenAccountKeys,
     } = plan;
 
+    // The idle side is re-read only when it may actually have moved — see IDLE_TTL_MS. The position
+    // side is always read: its amounts and fees change on their own between ticks, the balances do not.
+    const cachedIdle = this.idleCache.get(ownerStr);
+    const reuseIdle =
+      cachedPlan != null && cachedIdle != null && Date.now() - cachedIdle.at < IDLE_TTL_MS;
+
     // Round 2: ONE pinned pass — positions + lbPairs + binArrays + wallet (native) + EVERY
     // owner-controlled token account. This replaces the three-ATA shortlist that omitted most assets.
-    const allKeys = [...positionKeys, ...lbPairKeys, ...binArrayKeys, owner, ...tokenAccountKeys];
+    const allKeys = [
+      ...positionKeys,
+      ...lbPairKeys,
+      ...binArrayKeys,
+      owner,
+      ...(reuseIdle ? [] : tokenAccountKeys),
+    ];
     const { slot, skew, infos } = await this.fetchAtSlot(allKeys);
 
     const nPos = positionKeys.length;
@@ -364,37 +402,50 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
       });
     });
 
-    // Decode every discovered token account. The mint is read FROM the account rather than assumed,
-    // so any token the wallet holds is counted — not just a hardcoded stablecoin shortlist.
-    const held: { key: PublicKey; info: AccountInfo<Buffer>; mint: PublicKey; amount: bigint }[] =
-      [];
-    const heldMints = new Map<string, PublicKey>();
-    tokenInfos.forEach((info, i) => {
-      if (!info || info.data.length < TOKEN_ACCOUNT_MIN_LEN) return;
-      if (!info.owner.equals(TOKEN_PROGRAM) && !info.owner.equals(TOKEN_2022_PROGRAM)) return;
-      const amount = u64le(info.data, 64);
-      if (amount <= 0n) return;
-      const mint = new PublicKey(info.data.subarray(0, 32));
-      heldMints.set(mint.toBase58(), mint);
-      held.push({ key: tokenAccountKeys[i]!, info, mint, amount });
-    });
-    // One batched pass for the mints we have not already resolved from the pools above.
-    await this.decimalsFor([...heldMints.values()]);
-
-    const idleTokens: OnchainWalletSnapshot['idleTokens'] = [];
-    for (const { key, info, mint, amount } of held) {
-      const mintStr = mint.toBase58();
-      const decimals = this.decimalsCache.get(mintStr);
-      // An undecodable mint would mis-scale the amount by up to 10^9 — flag the read incomplete
-      // instead of persisting a wrong number; the next snapshot retries the mint.
-      if (decimals === undefined) complete = false;
-      idleTokens.push({
-        accountAddress: key.toBase58(),
-        tokenProgram: info.owner.equals(TOKEN_2022_PROGRAM) ? 'token2022' : 'spl',
-        mint: mintStr,
-        amount,
-        decimals: decimals ?? 0,
+    let idleTokens: OnchainWalletSnapshot['idleTokens'];
+    if (reuseIdle) {
+      // A cached entry only exists when every one of its mints decoded (see below), so reusing it
+      // cannot make this snapshot claim more than it actually knows.
+      idleTokens = cachedIdle.tokens;
+    } else {
+      // Decode every discovered token account. The mint is read FROM the account rather than assumed,
+      // so any token the wallet holds is counted — not just a hardcoded stablecoin shortlist.
+      const held: { key: PublicKey; info: AccountInfo<Buffer>; mint: PublicKey; amount: bigint }[] =
+        [];
+      const heldMints = new Map<string, PublicKey>();
+      tokenInfos.forEach((info, i) => {
+        if (!info || info.data.length < TOKEN_ACCOUNT_MIN_LEN) return;
+        if (!info.owner.equals(TOKEN_PROGRAM) && !info.owner.equals(TOKEN_2022_PROGRAM)) return;
+        const amount = u64le(info.data, 64);
+        if (amount <= 0n) return;
+        const mint = new PublicKey(info.data.subarray(0, 32));
+        heldMints.set(mint.toBase58(), mint);
+        held.push({ key: tokenAccountKeys[i]!, info, mint, amount });
       });
+      // One batched pass for the mints we have not already resolved from the pools above.
+      await this.decimalsFor([...heldMints.values()]);
+
+      const decoded: OnchainWalletSnapshot['idleTokens'] = [];
+      let idleComplete = true;
+      for (const { key, info, mint, amount } of held) {
+        const mintStr = mint.toBase58();
+        const decimals = this.decimalsCache.get(mintStr);
+        // An undecodable mint would mis-scale the amount by up to 10^9 — flag the read incomplete
+        // instead of persisting a wrong number; the next snapshot retries the mint.
+        if (decimals === undefined) idleComplete = false;
+        decoded.push({
+          accountAddress: key.toBase58(),
+          tokenProgram: info.owner.equals(TOKEN_2022_PROGRAM) ? 'token2022' : 'spl',
+          mint: mintStr,
+          amount,
+          decimals: decimals ?? 0,
+        });
+      }
+      idleTokens = decoded;
+      if (!idleComplete) complete = false;
+      // Only cache a read whose every mint resolved: caching a partial one would keep re-serving the
+      // mis-scaled amounts for a whole TTL instead of retrying them on the next tick.
+      if (idleComplete) this.idleCache.set(ownerStr, { tokens: decoded, at: Date.now() });
     }
 
     return {

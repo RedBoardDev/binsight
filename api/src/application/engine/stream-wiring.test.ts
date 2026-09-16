@@ -154,6 +154,7 @@ function makeEngine() {
     stream,
     onchain: {
       snapshotWallet,
+      invalidateIdle: vi.fn(),
       positionBins: vi.fn(),
       positionHistory: vi.fn(),
       decimalsOf: vi.fn(),

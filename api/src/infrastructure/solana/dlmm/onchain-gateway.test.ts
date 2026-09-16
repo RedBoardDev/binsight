@@ -73,6 +73,74 @@ describe('OnchainDlmmGateway — Layer A discovery gating', () => {
     ]);
   });
 
+  it('does not re-read the token accounts on every cadence tick, and re-reads on invalidation', async () => {
+    // WHY: doSnapshot runs every 10s per open wallet. Measured on a real wallet, its 301 token accounts
+    // turn the pinned pass from 1 getMultipleAccounts into 5 — a 5× standing cost for data that only
+    // moves when the wallet transacts.
+    vi.useFakeTimers();
+    try {
+      const reads: number[] = [];
+      const conn = {
+        async getMultipleAccountsInfoAndContext(keys: unknown[]) {
+          reads.push((keys as unknown[]).length);
+          return { context: { slot: 100 }, value: (keys as unknown[]).map(() => null) };
+        },
+        async getMultipleAccountsInfo(keys: unknown[]) {
+          return (keys as unknown[]).map(() => null);
+        },
+      } as unknown as Connection;
+      const g = new OnchainDlmmGateway(conn, fakeRawRpc());
+      const plan: SnapshotPlan = {
+        positionKeys: [],
+        lbPairByPos: new Map(),
+        coverageByPos: new Map(),
+        lbPairKeys: [],
+        binArrayKeys: [],
+        binArrayMeta: [],
+        tokenAccountKeys: Array.from({ length: 40 }, () => PublicKey.unique()),
+      };
+
+      await g.snapshotWallet(OWNER, plan); // cold: owner + 40 token accounts
+      expect(reads.at(-1)).toBe(41);
+
+      await g.snapshotWallet(OWNER, plan); // next tick: owner only, balances reused
+      expect(reads.at(-1)).toBe(1);
+
+      g.invalidateIdle(OWNER); // the wallet transacted
+      await g.snapshotWallet(OWNER, plan);
+      expect(reads.at(-1)).toBe(41);
+
+      await g.snapshotWallet(OWNER, plan);
+      expect(reads.at(-1)).toBe(1);
+
+      vi.advanceTimersByTime(61_000); // TTL backstop, for a change no event announced
+      await g.snapshotWallet(OWNER, plan);
+      expect(reads.at(-1)).toBe(41);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('always re-reads the balances when the discovery plan was just rebuilt', async () => {
+    const reads: number[] = [];
+    const conn = {
+      async getMultipleAccountsInfoAndContext(keys: unknown[]) {
+        reads.push((keys as unknown[]).length);
+        return { context: { slot: 100 }, value: (keys as unknown[]).map(() => null) };
+      },
+      async getMultipleAccountsInfo(keys: unknown[]) {
+        return (keys as unknown[]).map(() => null);
+      },
+    } as unknown as Connection;
+    const g = new OnchainDlmmGateway(conn, fakeRawRpc());
+
+    const fresh = await g.snapshotWallet(OWNER); // no plan → full discovery + read
+    await g.snapshotWallet(OWNER, fresh.plan); // cached plan → idle reused
+    const cheap = reads.at(-1);
+    await g.snapshotWallet(OWNER); // rebuilt plan → idle re-read, never served stale
+    expect(reads.at(-1)).toBeGreaterThanOrEqual(cheap!);
+  });
+
   it('retries a lagging RPC backend without lowering the monotonic context floor', async () => {
     // A load-balanced node can answer from BEHIND the floor set by the previous chunk (Helius -32016).
     // That used to throw and abort the whole snapshot; it must retry the same floor instead.

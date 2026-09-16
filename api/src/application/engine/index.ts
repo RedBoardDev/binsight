@@ -59,7 +59,10 @@ const POLL_STAGGER_MS = 50;
 // closed history). 10s aligns the exact fee/size read with the 10s price-mark so every field of an open
 // position refreshes on the same beat. Cost: one getMultipleAccounts (cached plan, no 10-credit gPA) per
 // OPEN-position wallet per tick — trivial here (the bot's dominant cost is the Enhanced realized-PnL
-// ingest, ~95%, not these reads); bound to a viewed/requested set at large scale.
+// ingest, ~95%, not these reads); bound to a viewed/requested set at large scale. The wallet's token
+// balances are NOT part of that per-tick read: they only move when it transacts, so the gateway serves
+// them from a cache invalidated on activity (see IDLE_TTL_MS). Folding them in would have made the tick
+// cost scale with the account count — measured at 5 getMultipleAccounts on a 301-account wallet.
 const SYNC_INTERVAL_MS = 10_000;
 // After a close the residual is usually market-sold within seconds; Helius indexes that swap in ~1-2s
 // (measured), so the realized pass fired at close-detection can run BEFORE the sell exists and overstate
@@ -391,7 +394,9 @@ export class Engine {
         onClosed: (addr, pools) => void this.reconciler.captureClosed(addr, pools),
         onBalance: (addr) => {
           const target = this.wallets.get(addr);
-          if (target) void this.doSnapshot(target);
+          if (!target) return;
+          this.onchain.invalidateIdle(addr); // balances moved → the cached idle read is stale
+          void this.doSnapshot(target);
         },
       })
       .then((changed) => {
@@ -722,6 +727,9 @@ export class Engine {
   /** WS open/close/add/remove/claim → delta-ingest the new signatures then re-project, after a short
    *  lag so the just-confirmed tx is visible to getSignaturesForAddress. */
   private onchainActivity(address: string): void {
+    // The wallet transacted, so its token balances may have moved. This is the only signal that covers
+    // a plain SPL transfer: it is not a DLMM instruction, so it never invalidates the discovery plan.
+    this.onchain.invalidateIdle(address);
     setTimeout(() => void this.triggerOnchainSync(address), INITIAL_LAG_MS);
   }
 
