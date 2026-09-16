@@ -105,6 +105,8 @@ interface PtxOpts {
   postTokenBalances?: Tb[];
   /** when true, meta is explicitly null (degenerate / not-found tx). */
   nullMeta?: boolean;
+  /** non-null marks the tx as FAILED — its instructions ran but moved nothing but the fee. */
+  err?: unknown;
 }
 const ptx = (o: PtxOpts): ParsedTransactionWithMeta =>
   ({
@@ -120,6 +122,7 @@ const ptx = (o: PtxOpts): ParsedTransactionWithMeta =>
       ? null
       : {
           fee: 5000,
+          err: o.err ?? null,
           preBalances: o.preBalances ?? [],
           postBalances: o.postBalances ?? [],
           preTokenBalances: o.preTokenBalances ?? [],
@@ -698,10 +701,115 @@ describe('extractFlowRow — trading classification', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
-// 4) Defensive — degenerate inputs must yield [] / null without throwing.
+// 4) Ephemeral token accounts — an account opened AND closed in-tx never reaches the balances.
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+describe('ephemeral token accounts — owner declared by the instructions', () => {
+  it('attributes a WSOL leg opened AND closed in-tx to its owner, so the sell is still seen', () => {
+    // WHY: routers open a throwaway wrapped-SOL account, swap through it, then close it. Such an account
+    // is in NEITHER preTokenBalances nor postTokenBalances, so the balance-derived owner map misses it
+    // and the WSOL leg gets attributed to the raw account address — netting the proceeds to zero and
+    // making the sale vanish. Measured on real Jupiter swaps before the instruction-harvest fix.
+    const synth = ptx({
+      accountKeys: [WALLET, 'TMP_WSOL', 'POOL', 'TOK_ATA'],
+      topInstructions: [
+        {
+          program: 'spl-token',
+          programId: TOKEN_PROGRAM_ID,
+          parsed: {
+            type: 'initializeAccount3',
+            info: { account: 'TMP_WSOL', mint: SOL_MINT, owner: WALLET },
+          },
+        },
+        splTransferChecked('TOK_ATA', 'POOL', MINT_X, 100, '100000000', TOK_DEC, WALLET),
+        splTransferChecked('POOL', 'TMP_WSOL', SOL_MINT, 2, '2000000000', WSOL_DEC),
+        {
+          program: 'spl-token',
+          programId: TOKEN_PROGRAM_ID,
+          parsed: {
+            type: 'closeAccount',
+            info: { account: 'TMP_WSOL', destination: WALLET, owner: WALLET },
+          },
+        },
+      ],
+      preBalances: [10_000_000_000, 0, 0, 0],
+      postBalances: [12_000_000_000, 0, 0, 0],
+      preTokenBalances: [tb(3, MINT_X, WALLET, '100000000', TOK_DEC)],
+      postTokenBalances: [],
+    });
+
+    const enhanced = parsedTxToEnhancedTx(synth);
+    const wsolLeg = enhanced.tokenTransfers?.find((t) => t.mint === SOL_MINT);
+    expect(wsolLeg?.toUserAccount).toBe(WALLET); // NOT 'TMP_WSOL'
+
+    const rows = extractSwapRows(synth, WALLET);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ mint: MINT_X, side: 'sell', tokenAmount: 100 });
+    expect(rows[0]?.solAmount).toBeCloseTo(2, 9);
+  });
+
+  it('never lets a declared owner override what the balances already proved', () => {
+    // The balances are authoritative; an instruction-declared owner only FILLS a gap. Otherwise a
+    // misleading `closeAccount` destination could re-attribute a counterparty's leg to our wallet.
+    const synth = ptx({
+      accountKeys: [WALLET, 'POOL_ATA', 'POOL'],
+      topInstructions: [
+        splTransferChecked('POOL_ATA', 'POOL', MINT_X, 5, '5000000', TOK_DEC),
+        {
+          program: 'spl-token',
+          programId: TOKEN_PROGRAM_ID,
+          parsed: {
+            type: 'closeAccount',
+            info: { account: 'POOL_ATA', destination: WALLET, owner: WALLET },
+          },
+        },
+      ],
+      preBalances: [10_000_000_000, 0, 0],
+      postBalances: [10_000_000_000, 0, 0],
+      preTokenBalances: [tb(1, MINT_X, 'SOMEONE_ELSE', '5000000', TOK_DEC)],
+      postTokenBalances: [],
+    });
+    const leg = parsedTxToEnhancedTx(synth).tokenTransfers?.[0];
+    expect(leg?.fromUserAccount).toBe('SOMEONE_ELSE');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// 5) Defensive — degenerate inputs must yield [] / null without throwing.
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 describe('extractSwapRows / extractFlowRow — defensive', () => {
+  it('rejects a FAILED tx — its instructions ran but moved nothing but the fee', () => {
+    // WHY: `message.instructions` is populated even for a failed tx, so reducing one synthesises
+    // transfers that never happened. Rejecting here rather than trusting every caller to pre-filter.
+    const synth = ptx({
+      err: { InstructionError: [0, 'Custom'] },
+      accountKeys: [WALLET, 'TOK_ATA', 'POOL'],
+      topInstructions: [
+        splTransferChecked('TOK_ATA', 'POOL', MINT_X, 100, '100000000', TOK_DEC, WALLET),
+        sysTransfer('POOL', WALLET, 2_000_000_000),
+      ],
+      preBalances: [10_000_000_000, 0, 0],
+      postBalances: [9_999_995_000, 0, 0],
+      preTokenBalances: [tb(1, MINT_X, WALLET, '100000000', TOK_DEC)],
+    });
+    expect(extractSwapRows(synth, WALLET)).toEqual([]);
+    expect(extractFlowRow(synth, WALLET)).toBeNull();
+  });
+
+  it('rejects a tx with no blockTime rather than dating it at epoch 0', () => {
+    // WHY: ts=0 lands in the 1970 day bucket, which becomes the curve's first day and back-fills ~20 000
+    // empty days. A row we cannot date is worse than no row.
+    const synth = ptx({
+      blockTime: null,
+      accountKeys: [WALLET, 'CEX'],
+      topInstructions: [sysTransfer(WALLET, 'CEX', 1_000_000_000)],
+      preBalances: [10_000_000_000, 0],
+      postBalances: [9_000_000_000, 0],
+    });
+    expect(extractFlowRow(synth, WALLET)).toBeNull();
+  });
+
   it('null meta → [] swap rows and null flow row, no throw', () => {
     const synth = ptx({ accountKeys: [], nullMeta: true });
     expect(extractSwapRows(synth, WALLET)).toEqual([]);
