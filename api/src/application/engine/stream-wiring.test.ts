@@ -180,6 +180,10 @@ function makeEngine() {
     walletFlowIngest: walletFlowIngest as unknown as EngineDeps['walletFlowIngest'],
     swapFlowIngest: swapFlowIngest as unknown as EngineDeps['swapFlowIngest'],
     realizedPnl: { computeForWallet: vi.fn() } as unknown as EngineDeps['realizedPnl'],
+    walletRealized: {
+      set: async () => {},
+      sumFor: async () => 0,
+    } as unknown as EngineDeps['walletRealized'],
   };
 
   const engine = new Engine(deps);

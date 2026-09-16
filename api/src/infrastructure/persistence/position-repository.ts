@@ -429,8 +429,11 @@ export class PostgresPositionRepository implements PositionRepository {
     return rows.map((r) => r.a);
   }
 
-  async statsAggregate(wallets: string[], sinceMs: number): Promise<Omit<Stats, 'scope'>> {
-    const empty: Omit<Stats, 'scope'> = {
+  async statsAggregate(
+    wallets: string[],
+    sinceMs: number,
+  ): Promise<Omit<Stats, 'scope' | 'outsidePositionsPnlSol'>> {
+    const empty: Omit<Stats, 'scope' | 'outsidePositionsPnlSol'> = {
       closedCount: 0,
       wins: 0,
       losses: 0,

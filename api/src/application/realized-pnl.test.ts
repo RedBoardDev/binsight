@@ -147,10 +147,13 @@ describe('RealizedPnlEngine — chained FIFO cost-basis (persisted swap_flows)',
 
     const out = await engine.computeForWallet(WALLET);
     expect(out).not.toBeNull();
-    expect(out!.get('P1')).toBeCloseTo(-5, 9);
-    expect(out!.get('P2')).toBeCloseTo(13, 9);
+    expect(out!.byPosition.get('P1')).toBeCloseTo(-5, 9);
+    expect(out!.byPosition.get('P2')).toBeCloseTo(13, 9);
     // Wallet conservation: Σ PnL = Σ solLeg + (Σ sells − Σ buys) when nothing is still held.
-    expect((out!.get('P1') ?? 0) + (out!.get('P2') ?? 0)).toBeCloseTo(-2 + (20 - 10), 9);
+    expect((out!.byPosition.get('P1') ?? 0) + (out!.byPosition.get('P2') ?? 0)).toBeCloseTo(
+      -2 + (20 - 10),
+      9,
+    );
   });
 
   it('marks a FRESH still-held residual at the CLOSE-bin price, NOT the current market price (died-token regression)', async () => {
@@ -177,8 +180,8 @@ describe('RealizedPnlEngine — chained FIFO cost-basis (persisted swap_flows)',
 
     const out = await engine.computeForWallet(WALLET);
     expect(out).not.toBeNull();
-    expect(out!.size).toBe(1);
-    expect(out!.get('P2')).toBeCloseTo(1e-7, 12); // close-bin mark (1e-9), NOT the current 1e-10
+    expect(out!.byPosition.size).toBe(1);
+    expect(out!.byPosition.get('P2')).toBeCloseTo(1e-7, 12); // close-bin mark (1e-9), NOT the current 1e-10
   });
 
   it('returns null (skip persist) when the swap_flow cursor is incomplete (seed unfinished)', async () => {
@@ -228,7 +231,7 @@ describe('RealizedPnlEngine — chained FIFO cost-basis (persisted swap_flows)',
     });
     const out = await engine.computeForWallet(WALLET);
     expect(out).not.toBeNull();
-    expect(out!.size).toBe(0);
+    expect(out!.byPosition.size).toBe(0);
   });
 
   it('sources buys/sells exclusively from the persisted swap_flows repo (no Enhanced API in the realized path)', async () => {
@@ -253,7 +256,7 @@ describe('RealizedPnlEngine — chained FIFO cost-basis (persisted swap_flows)',
     // Single position: solLeg(-5) − entryCost(10) + exitCredit(10) + realizedGain(20−10) = +5. The
     // persisted buy (cost basis) AND sell (proceeds) both came from swap_flows, so a non-trivial value
     // proves the DB rows actually drove the FIFO result (not an empty/mocked source).
-    expect(out!.get('P1')).toBeCloseTo(5, 9);
+    expect(out!.byPosition.get('P1')).toBeCloseTo(5, 9);
   });
 
   it('recomputes from the persisted swaps + a freshly-ingested delta, not a re-fetch (a late sell converges)', async () => {
@@ -272,13 +275,64 @@ describe('RealizedPnlEngine — chained FIFO cost-basis (persisted swap_flows)',
 
     // 1) Cold pass — residual still held (≈0 mark), no realized sale yet.
     const first = await engine.computeForWallet(WALLET);
-    expect(first!.get('P1')).toBeCloseTo(-5, 4);
+    expect(first!.byPosition.get('P1')).toBeCloseTo(-5, 4);
 
     // 2) The dump lands and SwapFlowIngest persists it (the delta) — a re-read converges to -7.
     await repo.upsertMany(
       toRows('sell', [{ ts: 2100, mint: MINT, tokenAmount: 100, solReceived: 8 }]),
     );
     const second = await engine.computeForWallet(WALLET);
-    expect(second!.get('P1')).toBeCloseTo(-7, 4);
+    expect(second!.byPosition.get('P1')).toBeCloseTo(-7, 4);
+  });
+});
+
+describe('RealizedPnlEngine — realized PnL that belongs to no position', () => {
+  it('routes a buy→sell round trip with no position to tradingPnlSol, never to a position', async () => {
+    // WHY: the FIFO walk attaches each sale's gain to the position whose withdrawal supplied the tokens.
+    // A token bought and sold on the side has no such origin. That branch used to be computed and thrown
+    // away, so the reported realized PnL was only the position half of what the wallet actually did —
+    // on a real wallet, +13.8 SOL of position PnL was shown while −11.8 SOL of speculation stayed hidden.
+    const legs = [leg('P1', 'deposit', 100, 10, 1000), leg('P1', 'withdraw', 100, 10, 2000)];
+    const status = new Map([['P1', { status: 'closed', closedAt: 2000_000 }]]);
+    const { engine } = await makeEngine({
+      legs,
+      status,
+      // A first pair feeds the position; a SECOND, later pair is pure speculation sold at a loss.
+      buys: [
+        { ts: 500, mint: MINT, tokenAmount: 100, solReceived: 10 },
+        { ts: 6000, mint: MINT, tokenAmount: 50, solReceived: 20 },
+      ],
+      sells: [
+        { ts: 3000, mint: MINT, tokenAmount: 100, solReceived: 10 },
+        { ts: 7000, mint: MINT, tokenAmount: 50, solReceived: 8 },
+      ],
+    });
+
+    const out = await engine.computeForWallet(WALLET);
+    expect(out).not.toBeNull();
+    // The speculative leg lost 12 SOL (bought 20, sold 8) and lands OUTSIDE any position.
+    expect(out!.tradingPnlSol).toBeCloseTo(-12, 6);
+    // The position keeps only what its own tokens produced — the loss must not leak into it.
+    expect(out!.byPosition.get('P1')).toBeCloseTo(0, 6);
+  });
+
+  it('reports zero when every sale traces back to a position', async () => {
+    const legs = [leg('P1', 'deposit', 100, 10, 1000), leg('P1', 'withdraw', 100, 5, 2000)];
+    const status = new Map([['P1', { status: 'closed', closedAt: 2000_000 }]]);
+    const { engine } = await makeEngine({
+      legs,
+      status,
+      buys: [{ ts: 500, mint: MINT, tokenAmount: 100, solReceived: 10 }],
+      sells: [{ ts: 3000, mint: MINT, tokenAmount: 100, solReceived: 20 }],
+    });
+
+    const out = await engine.computeForWallet(WALLET);
+    expect(out!.tradingPnlSol).toBeCloseTo(0, 9);
+  });
+
+  it('reports zero for a wallet with no legs at all, without throwing', async () => {
+    const { engine } = await makeEngine({ legs: [], status: new Map(), buys: [], sells: [] });
+    const out = await engine.computeForWallet(WALLET);
+    expect(out).toEqual({ byPosition: new Map(), tradingPnlSol: 0 });
   });
 });

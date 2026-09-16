@@ -12,7 +12,12 @@ import type { NotificationManager } from '@/application/notification/manager';
 import { BUCKET_MS, type Bucket, isBucket, profitHistory } from '@/application/profit-history';
 import type { ResidualBackfill } from '@/application/residual-backfill';
 import type { WalletPnlService } from '@/application/wallet-pnl-service';
-import type { AccountRepository, ConfigRepository, PositionRepository } from '@/domain/ports';
+import type {
+  AccountRepository,
+  ConfigRepository,
+  PositionRepository,
+  WalletRealizedStore,
+} from '@/domain/ports';
 import type { GeckoTerminalGateway } from '@/infrastructure/geckoterminal/geckoterminal-gateway';
 import type { PresenceTracker } from '@/infrastructure/notifications/presence';
 import type { NetworthSnapshotRepository } from '@/infrastructure/persistence/networth-snapshot-repository';
@@ -49,6 +54,8 @@ export type RouteDeps = {
   meter: CreditMeter;
   /** Durable RPC-credit rollup — backs the persisted last-7d spend on /debug/rpc (survives restarts). */
   creditLedger: RpcCreditLedgerRepository;
+  /** Realized PnL that belongs to no position — reported beside the per-position figures. */
+  walletRealized: WalletRealizedStore;
   /** VAPID public key handed to the browser so it can subscribe ('' when push is disabled). */
   vapidPublicKey: string;
   /** Send a test push to an account's own subscriptions; returns how many were targeted. */
@@ -80,6 +87,7 @@ export function registerRoutes(app: FastifyInstance, deps: RouteDeps): void {
     gecko,
     meter,
     creditLedger,
+    walletRealized,
     vapidPublicKey,
     sendTestPush,
     openAccess,
@@ -459,6 +467,8 @@ export function registerRoutes(app: FastifyInstance, deps: RouteDeps): void {
     return statsCache.wrap(`stats|${req.query.wallet ?? 'all'}|${since}`, wallets, async () => ({
       scope: req.query.wallet ?? 'all',
       ...(await repo.statsAggregate(wallets, since)),
+      // All-time by construction: a FIFO cost-basis chain has no meaningful window.
+      outsidePositionsPnlSol: await walletRealized.sumFor(wallets),
     }));
   });
 

@@ -50,6 +50,22 @@ interface Lot {
   origin: string | null; // position address, or null = bought (pure trading origin)
 }
 
+/**
+ * What one realized pass produces.
+ *
+ * The FIFO walk routes each sale's gain to the position whose withdrawal supplied the tokens. A token
+ * BOUGHT and sold outside any DLMM position has no such origin, and its gain lands in `tradingPnlSol`
+ * instead. Both halves are part of the wallet's realized result: reporting only `byPosition` overstates
+ * it by exactly the speculation the wallet did on the side (measured on a real wallet: +13.8 SOL of
+ * position PnL alongside −11.8 SOL of it).
+ */
+export interface RealizedPnlResult {
+  /** realized PnL per CLOSED position — what `market_pnl_sol` stores. */
+  byPosition: Map<string, number>;
+  /** realized PnL of sales whose tokens never came from a position (pure speculation). */
+  tradingPnlSol: number;
+}
+
 /** Per-position accumulators built by the FIFO walk. */
 interface Acc {
   solLeg: number;
@@ -155,12 +171,12 @@ export class RealizedPnlEngine {
    * NOT hand back values to persist (it would overwrite good data with inflated ones). Both legs matter:
    * missing buys lose cost basis, missing sells leave residual unsold.
    */
-  async computeForWallet(wallet: string): Promise<Map<string, number> | null> {
+  async computeForWallet(wallet: string): Promise<RealizedPnlResult | null> {
     // Realized path: tag so the decimals/price RPC issued underneath is attributed to 'realized'.
     return withCodePath('realized', () => this.computeForWalletInner(wallet));
   }
 
-  private async computeForWalletInner(wallet: string): Promise<Map<string, number> | null> {
+  private async computeForWalletInner(wallet: string): Promise<RealizedPnlResult | null> {
     const out = new Map<string, number>();
 
     // 1. ALL legs for the wallet + their pool meta. Only SOL-paired pools (sol_side != null) — non-SOL
@@ -169,7 +185,7 @@ export class RealizedPnlEngine {
     const allLegs = await this.legs.legsByWallet(wallet);
     if (allLegs.length === 0) {
       this.logger.warn({ wallet }, 'realized-pnl: no DLMM legs for this wallet');
-      return out;
+      return { byPosition: out, tradingPnlSol: 0 };
     }
     const poolMetas = await this.legs.getPoolMetas([...new Set(allLegs.map((l) => l.lbPair))]);
     const legRows = allLegs.filter((l) => {
@@ -178,7 +194,7 @@ export class RealizedPnlEngine {
     });
     if (legRows.length === 0) {
       this.logger.warn({ wallet }, 'realized-pnl: no legs on SOL-paired pools for this wallet');
-      return out;
+      return { byPosition: out, tradingPnlSol: 0 };
     }
     // Time-order (block_time asc, signature as a stable secondary key) — the script orders by
     // block_time then leg id; signature is the closest stable per-leg surrogate available off-chain.
@@ -445,6 +461,6 @@ export class RealizedPnlEngine {
       { wallet, closed: out.size, tradingPnL: Number(tradingPnL.toFixed(4)) },
       'realized-pnl: computed',
     );
-    return out;
+    return { byPosition: out, tradingPnlSol: tradingPnL };
   }
 }

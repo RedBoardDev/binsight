@@ -26,6 +26,7 @@ import type {
   RpcSubscriber,
   StreamActivityReason,
   TransactionStreamPort,
+  WalletRealizedStore,
 } from '@/domain/ports';
 import { mintsNeedingPrice, valueSnapshot } from '@/domain/snapshot-valuation';
 import { KeyedSerializer, Semaphore } from '@/util/concurrency';
@@ -90,6 +91,7 @@ export interface EngineDeps {
   walletFlowIngest: WalletFlowIngest;
   swapFlowIngest: SwapFlowIngest;
   realizedPnl: RealizedPnlEngine;
+  walletRealized: WalletRealizedStore;
 }
 
 export class Engine {
@@ -137,6 +139,7 @@ export class Engine {
   private readonly walletFlowIngest: WalletFlowIngest;
   private readonly swapFlowIngest: SwapFlowIngest;
   private readonly realizedPnl: RealizedPnlEngine;
+  private readonly walletRealized: WalletRealizedStore;
 
   constructor(deps: EngineDeps) {
     // gateway is only needed to build the refresher/reconciler below — it's not a field.
@@ -158,6 +161,7 @@ export class Engine {
     this.walletFlowIngest = deps.walletFlowIngest;
     this.swapFlowIngest = deps.swapFlowIngest;
     this.realizedPnl = deps.realizedPnl;
+    this.walletRealized = deps.walletRealized;
     // The emitter reports WS health off whichever backbone is actually live for this mode (the on-chain
     // TransactionStream or the legacy logsSubscribe subscriber) — both expose isConnected().
     this.emitter = new StateEmitter(
@@ -605,18 +609,22 @@ export class Engine {
       }
       do {
         this.realizedPnlRerun.delete(wallet);
-        const pnlByPos = await this.realizedPnl.computeForWallet(wallet);
+        const result = await this.realizedPnl.computeForWallet(wallet);
         // null = the engine refused to produce values (incomplete persisted swap history — cursor
         // missing or the seed unfinished). Skip persisting so a partial history can never overwrite good
         // market_pnl_sol with inflated held values.
-        if (pnlByPos == null || pnlByPos.size === 0) continue;
+        if (result == null || result.byPosition.size === 0) continue;
         // One atomic batched UPDATE for the whole wallet (was N sequential single-row writes): a
         // mid-loop crash can no longer leave mixed old/new market_pnl_sol generations.
-        await this.repo.setAuthoritativePnlMany(pnlByPos);
+        await this.repo.setAuthoritativePnlMany(result.byPosition);
+        // The other half of the same walk: gains on tokens that never came from a position. Persisted
+        // beside the per-position figures so the reported realized PnL is the whole result, not just
+        // the part that happens to map onto a position.
+        await this.walletRealized.set(wallet, result.tradingPnlSol);
         // Tell viewers the closed figures changed so the table/stats recompute with the real cash values.
         this.bus.emit('closedChanged', { wallet });
         this.logger.info(
-          { wallet, written: pnlByPos.size },
+          { wallet, written: result.byPosition.size, tradingPnlSol: result.tradingPnlSol },
           'realized-pnl: market_pnl_sol persisted',
         );
       } while (this.realizedPnlRerun.has(wallet));

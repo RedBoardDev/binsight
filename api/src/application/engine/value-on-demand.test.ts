@@ -176,6 +176,10 @@ function makeEngine(opts: { withOpen: boolean; priceRef: { v: number } }) {
     walletFlowIngest: { ingest: noopAsync } as unknown as EngineDeps['walletFlowIngest'],
     swapFlowIngest: { ingest: noopAsync } as unknown as EngineDeps['swapFlowIngest'],
     realizedPnl: { computeForWallet: vi.fn() } as unknown as EngineDeps['realizedPnl'],
+    walletRealized: {
+      set: async () => {},
+      sumFor: async () => 0,
+    } as unknown as EngineDeps['walletRealized'],
   };
 
   const engine = new Engine(deps);

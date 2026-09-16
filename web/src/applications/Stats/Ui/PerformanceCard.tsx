@@ -68,7 +68,11 @@ interface PerformanceBodyProps {
 
 const PerformanceBody = ({ stats, now }: PerformanceBodyProps) => (
   <div className="flex flex-col">
-    <PnlBridge positionsPnl={stats.totalPnlSol} now={now} />
+    <PnlBridge
+      positionsPnl={stats.totalPnlSol}
+      outsidePositionsPnl={stats.outsidePositionsPnlSol}
+      now={now}
+    />
     <div className={cn(GRID, 'mt-6 border-border border-t pt-6')}>
       <StatTile
         label="Win rate"

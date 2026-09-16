@@ -311,7 +311,15 @@ export const StatsSchema = z.object({
   wins: z.number().int(),
   losses: z.number().int(),
   winRate: z.number(),
+  /** realized PnL of the CLOSED positions in scope. */
   totalPnlSol: z.number(),
+  /**
+   * Realized PnL on tokens the wallet bought and sold OUTSIDE any position — the other half of the same
+   * FIFO walk that produces `totalPnlSol`. It has no position to attach to, so it used to be dropped and
+   * the reported result was only the position side of what the wallet actually did. All-time per wallet
+   * (a cost-basis chain cannot be windowed), so it is NOT filtered by the `since` query.
+   */
+  outsidePositionsPnlSol: z.number().default(0),
   todayPnlSol: z.number(),
   totalFeesSol: z.number(),
   totalVolumeSol: z.number(),

@@ -35,6 +35,7 @@ import { PushRepository } from './infrastructure/persistence/push-repository';
 import { RpcCreditLedgerRepository } from './infrastructure/persistence/rpc-credit-ledger-repository';
 import { SwapFlowRepository } from './infrastructure/persistence/swap-flow-repository';
 import { WalletFlowRepository } from './infrastructure/persistence/wallet-flow-repository';
+import { WalletRealizedRepository } from './infrastructure/persistence/wallet-realized-repository';
 import { WalletStreamCursorRepository } from './infrastructure/persistence/wallet-stream-cursor-repository';
 import { CreditMeter } from './infrastructure/solana/credit-meter';
 import { DlmmIngest } from './infrastructure/solana/dlmm/dlmm-ingest';
@@ -199,6 +200,9 @@ export function compose(config: AppConfig): App {
   );
   // Wallet PnL curve — the TRUE realized SOL over time from on-chain cash-flow (captures rug/slippage
   // losses that position-level PnL misses). Reads the persisted flows; SQL aggregation, no live paging.
+  // The non-position half of realized PnL — persisted beside market_pnl_sol so the reported figure is
+  // the wallet's whole result, not just the part that maps onto a position.
+  const walletRealized = new WalletRealizedRepository(db);
   const walletPnl = new WalletPnlService(walletFlowRepo);
   // Forward-only Net Worth history (TRUE on-chain wallet total = tvl + idle, sampled into 15-min
   // buckets) + a fail-loud reconciliation of the flow ledger against the live on-chain idle.
@@ -242,6 +246,7 @@ export function compose(config: AppConfig): App {
     walletFlowIngest,
     swapFlowIngest,
     realizedPnl,
+    walletRealized,
   });
   const notifications = new NotificationManager(bus, configRepo, presence, bark, webPush, logger);
 
@@ -272,6 +277,7 @@ export function compose(config: AppConfig): App {
         gecko,
         meter,
         creditLedger: creditLedgerRepo,
+        walletRealized,
         vapidPublicKey: config.VAPID_PUBLIC_KEY,
         sendTestPush: (userId) => pushRepo.forUser(userId).then((subs) => webPush.sendTest(subs)),
         openAccess: config.OPEN_ACCESS_MODE,

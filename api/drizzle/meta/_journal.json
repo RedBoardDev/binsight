@@ -92,6 +92,13 @@
       "when": 1782468966200,
       "tag": "0012_regular_sentinel",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1786200000000,
+      "tag": "0013_wallet_realized",
+      "breakpoints": true
     }
   ]
 }

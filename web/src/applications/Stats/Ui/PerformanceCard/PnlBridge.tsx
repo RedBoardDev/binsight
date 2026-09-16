@@ -22,6 +22,8 @@ const GAIN_EXPLAINER =
 
 interface PnlBridgeProps {
   positionsPnl: number;
+  /** All-time realized PnL on tokens traded outside any position — see the third leg below. */
+  outsidePositionsPnl: number;
   /** The clock the whole tab shares — frozen per (scope, period, closed set) so the query keys hold. */
   now: number;
 }
@@ -33,8 +35,12 @@ interface PnlBridgeProps {
  * story — `marked at close` (mark-at-close / LPAgent parity) and `trading cash-flow` (the on-chain
  * realized SOL over the same window, which books post-close bleed the per-position view never sees). It
  * shares the metric grid's columns so it reads as one coherent header, not a separate box.
+ *
+ * On the all-time view a third leg appears — `outside positions` — the realized PnL of tokens bought
+ * and sold with no position involved. It is the bulk of what separates the per-position story from the
+ * cash-flow one, and it was invisible until the engine started reporting it.
  */
-export const PnlBridge = ({ positionsPnl, now }: PnlBridgeProps) => {
+export const PnlBridge = ({ positionsPnl, outsidePositionsPnl, now }: PnlBridgeProps) => {
   const scope = usePortfolioFeed((s) => s.scope);
   const closedVersion = usePortfolioFeed((s) => s.closedVersion);
   const walletTotal = usePortfolioFeed((s) => s.portfolio?.totals.walletTotalSol ?? null);
@@ -94,6 +100,12 @@ export const PnlBridge = ({ positionsPnl, now }: PnlBridgeProps) => {
 
       <Leg label="Marked at close" value={positionsPnl} />
       <Leg label="Trading cash-flow" value={trading} />
+      {/* The leg that explains most of the distance between the two others: tokens bought and sold
+          outside any position. A FIFO cost-basis chain cannot be cut into windows, so this figure is
+          all-time and is only shown when the selected period is too — mixing scopes would misread. */}
+      {period === 'all' && outsidePositionsPnl !== 0 && (
+        <Leg label="Outside positions" value={outsidePositionsPnl} />
+      )}
     </div>
   );
 };

@@ -331,3 +331,15 @@ export const rpcCreditDaily = pgTable(
   },
   (t) => [primaryKey({ columns: [t.day, t.method, t.wallet, t.codePath] })],
 );
+
+/**
+ * Per-wallet realized PnL that belongs to NO position: the chained-FIFO engine routes each sale's gain
+ * to the position whose withdrawal supplied the tokens, but a token bought and sold outside any DLMM
+ * position has no such origin. That branch was computed and thrown away, so the app reported only the
+ * position half of the wallet's realized result. One row per wallet, rewritten by each realized pass.
+ */
+export const walletRealized = pgTable('wallet_realized', {
+  wallet: text('wallet').primaryKey(),
+  tradingPnlSol: doublePrecision('trading_pnl_sol').notNull().default(0),
+  updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
+});

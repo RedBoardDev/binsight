@@ -133,8 +133,12 @@ export interface PositionRepository {
     total: number;
   }>;
   /** Aggregate closed-position analytics entirely in SQL (no full-row transfer). `sinceMs` windows by
-   *  closed_at; returns the Stats DTO minus `scope` (the route supplies it). Scales to large histories. */
-  statsAggregate(wallets: string[], sinceMs: number): Promise<Omit<Stats, 'scope'>>;
+   *  closed_at. Returns the Stats DTO minus the two fields this repository cannot know: `scope` (the
+   *  route supplies it) and `outsidePositionsPnlSol` (realized PnL with no position, held elsewhere). */
+  statsAggregate(
+    wallets: string[],
+    sinceMs: number,
+  ): Promise<Omit<Stats, 'scope' | 'outsidePositionsPnlSol'>>;
   /** Realized PnL per time bucket via SQL GROUP BY (floor(closed_at / bucketMs)) — all-time, ascending.
    *  The caller fills gaps + the running cumulative; only the (few hundred) buckets cross the wire. */
   profitBuckets(wallets: string[], bucketMs: number): Promise<{ t: number; realized: number }[]>;
@@ -433,4 +437,10 @@ export interface StrategyResolver {
 export interface PoolMetaReader {
   /** Decode the LbPair account for `pool`; null if missing/undecodable or no SOL side resolved. */
   loadPoolMeta(pool: string): Promise<LoadedPoolMeta | null>;
+}
+
+/** Persists the half of a wallet's realized PnL that belongs to no position (see RealizedPnlResult). */
+export interface WalletRealizedStore {
+  set(wallet: string, tradingPnlSol: number): Promise<void>;
+  sumFor(wallets: string[]): Promise<number>;
 }
