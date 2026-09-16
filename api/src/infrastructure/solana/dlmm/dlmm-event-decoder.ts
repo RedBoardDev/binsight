@@ -29,6 +29,14 @@ const binOf = (data: Record<string, unknown>): number | null => {
   const b = data.active_bin_id ?? data.active_id ?? data.bin_id;
   return b == null ? null : Number(b);
 };
+/** Identity of a single claim: the same pool/position/X/Y is the SAME claim, whatever event emitted it. */
+const claimKey = (data: Record<string, unknown>): string =>
+  [
+    String(data.lb_pair ?? ''),
+    String(data.position ?? ''),
+    num(data.fee_x).toString(),
+    num(data.fee_y).toString(),
+  ].join(':');
 
 /** A raw decoded DLMM event with its host signature/blockTime (before normalization into legs). */
 interface RawEvent {
@@ -86,13 +94,18 @@ export function decodeDlmmLegs(tx: ParsedTransactionWithMeta): DlmmLeg[] {
   if (events.length === 0) return [];
   // a representative bin id for the tx, to backfill events that don't carry one (ClaimFee v1).
   const txBin = events.map((e) => binOf(e.data)).find((b) => b != null) ?? null;
-  // ClaimFee (v1) and ClaimFee2 are emitted together for the SAME claim (v2 just added the bin id) —
-  // count only one. Prefer ClaimFee2 (carries its own bin id); drop the v1 duplicate when present.
-  const hasClaimFee2 = events.some((e) => e.name === 'ClaimFee2');
+  // ClaimFee (v1) and ClaimFee2 may be emitted together for the SAME claim (v2 just added the bin id) —
+  // count only one. Deduplicate by the exact pool/position/X/Y identity, NOT by transaction-wide presence:
+  // a batch can carry several claims, and only some of them may have a ClaimFee2 sibling. Keying on
+  // presence dropped every v1 claim in such a tx, silently losing the ones with no v2 counterpart.
+  const modernClaims = new Set(
+    events.filter((e) => e.name === 'ClaimFee2').map((e) => claimKey(e.data)),
+  );
+  const seenClaims = new Set<string>();
   const legs: DlmmLeg[] = [];
   for (const e of events) {
-    if (e.name === 'ClaimFee' && hasClaimFee2) continue;
     const d = e.data;
+    if (e.name === 'ClaimFee' && modernClaims.has(claimKey(d))) continue;
     const base = {
       signature: e.signature,
       blockTime: e.blockTime,
@@ -138,6 +151,9 @@ export function decodeDlmmLegs(tx: ParsedTransactionWithMeta): DlmmLeg[] {
       }
       case 'ClaimFee2':
       case 'ClaimFee': {
+        const key = claimKey(d);
+        if (seenClaims.has(key)) break;
+        seenClaims.add(key);
         legs.push({
           ...base,
           kind: 'claim',

@@ -93,6 +93,27 @@ describe('decodeDlmmLegs (IDL-driven)', () => {
     expect(claims[0]!.amountY).toBe(46620648n);
   });
 
+  it('keeps a v1-only claim in a BATCH where another claim does have a ClaimFee2 sibling', () => {
+    // Regression: dedup used to key on transaction-wide presence of ANY ClaimFee2, so one v2 event
+    // dropped EVERY v1 claim in the tx — silently losing the claims that had no v2 counterpart.
+    const legs = decodeDlmmLegs(
+      tx([
+        claimFee2(0n, 100n, -429), // claim A, modern
+        claimFeeV1(0n, 100n), // claim A again, legacy duplicate → dropped
+        claimFeeV1(0n, 250n), // claim B, legacy only → must survive
+      ]),
+    );
+    const claims = legs.filter((l) => l.kind === 'claim');
+    expect(claims.map((c) => c.amountY)).toEqual([100n, 250n]);
+  });
+
+  it('counts a claim once when the very same event is emitted twice', () => {
+    const legs = decodeDlmmLegs(
+      tx([claimFee2(0n, 46620648n, -429), claimFee2(0n, 46620648n, -429)]),
+    );
+    expect(legs.filter((l) => l.kind === 'claim')).toHaveLength(1);
+  });
+
   it('backfills a lone ClaimFee v1 bin id from a sibling event in the same tx', () => {
     // a v1 claim with no bin id, but a Remove in the same tx carries bin -429.
     const legs = decodeDlmmLegs(tx([removeLiquidity(0n, 1n, -429), claimFeeV1(0n, 5n)]));
