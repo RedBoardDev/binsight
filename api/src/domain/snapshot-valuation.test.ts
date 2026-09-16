@@ -120,3 +120,34 @@ describe('valueSnapshot', () => {
     expect(s.complete).toBe(false);
   });
 });
+
+describe('valueSnapshot — price coverage is separate from chain completeness', () => {
+  it('marks an unpriced holding partial WITHOUT claiming the chain read failed', () => {
+    // Now that the inventory covers every token held, an unpriceable dust mint is routine. Folding it
+    // into `chainComplete` would report a current, exact wallet as permanently "syncing".
+    const v = valueSnapshot(
+      snap([], { idleTokens: [{ mint: 'DUST', amount: 1_000_000n, decimals: 6 }] }),
+      new Map(),
+    );
+    expect(v.chainComplete).toBe(true);
+    expect(v.valuationStatus).toBe('partial');
+    expect(v.authoritative).toBe(true); // an exact RPC read stays authoritative
+    expect(v.complete).toBe(false); // the legacy aggregate still folds both together
+  });
+
+  it('is complete on both axes when every held asset is priced', () => {
+    const v = valueSnapshot(
+      snap([], { idleTokens: [{ mint: 'USDCish', amount: 1_000_000n, decimals: 6 }] }),
+      new Map([['USDCish', 0.01]]),
+    );
+    expect(v.valuationStatus).toBe('complete');
+    expect(v.complete).toBe(true);
+    expect(v.idleSol).toBeCloseTo(0.01, 9);
+  });
+
+  it('keeps an unfetched chain read incomplete on the chain axis', () => {
+    const v = valueSnapshot(snap([], { complete: false }), new Map());
+    expect(v.chainComplete).toBe(false);
+    expect(v.valuationStatus).toBe('complete'); // nothing was unpriced — the two are independent
+  });
+});

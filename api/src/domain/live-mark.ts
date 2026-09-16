@@ -10,7 +10,7 @@ import { valueSnapshot } from './snapshot-valuation';
  * current Jupiter SOL price, with NO RPC (no getMultipleAccounts). The token amounts are held fixed, so
  * this is an approximation — the real bin liquidity redistributes between X and Y as the price moves
  * through bins — but it tracks the wallet's value + each position's in/out-of-range live, for the UI only.
- * The valuation is flagged `complete: false` so the NetworthRecorder NEVER persists it as authoritative;
+ * The valuation is flagged `authoritative: false` so the NetworthRecorder NEVER persists it;
  * only an EXACT on-chain read (a WS position-set change / close / detail view) is persisted. Pure: no I/O.
  */
 
@@ -67,7 +67,7 @@ function remarkRow(
 
 /**
  * Approximate live mark of a wallet from its cached snapshot + the fresh price map.
- *  - `valued`: the re-priced wallet valuation (totals + per-position sizes), forced `complete: false`
+ *  - `valued`: the re-priced wallet valuation (totals + per-position sizes), forced non-authoritative
  *    so it is DISPLAY-ONLY and never persisted as a net-worth point.
  *  - `open`: the given open rows re-marked (size/fees/poolPrice/range/uPnL). Rows whose position is no
  *    longer in the cached snapshot are returned untouched.
@@ -77,7 +77,11 @@ export function liveMarkWallet(
   open: OpenPosition[],
   priceSol: Map<string, number>,
 ): { valued: OnchainValued; open: OpenPosition[] } {
-  const valued: OnchainValued = { ...valueSnapshot(snapshot, priceSol), complete: false };
+  const valued: OnchainValued = {
+    ...valueSnapshot(snapshot, priceSol),
+    authoritative: false,
+    complete: false,
+  };
   const rawByAddr = new Map(snapshot.positions.map((p) => [p.positionAddress, p]));
   const marked = open.map((o) => {
     const raw = rawByAddr.get(o.positionAddress);

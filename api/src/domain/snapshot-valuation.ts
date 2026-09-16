@@ -34,9 +34,12 @@ export function valueSnapshot(
   const priced = (mint: string, fallback: number): boolean =>
     mint === SOL_MINT || priceSol.has(mint) || fallback > 0;
 
-  // Start from the chain-read completeness (unfetched bin-array / unknown decimals — see snapshotWallet),
-  // then fold in price completeness below.
-  let complete = snap.complete;
+  // The chain read's own completeness (unfetched bin-array / undecodable mint — see snapshotWallet).
+  // Price coverage is tracked SEPARATELY below: now that the inventory covers every token the wallet
+  // holds, a single unpriced dust mint would otherwise pin the whole wallet to "syncing" forever and
+  // stop the Net Worth curve from ever recording another point.
+  const chainComplete = snap.complete;
+  let pricingComplete = true;
   let tvl = 0;
   let fees = 0;
   let rent = 0;
@@ -52,8 +55,8 @@ export function valueSnapshot(
     const pX = priceOf(p.tokenXMint, fbX);
     const pY = priceOf(p.tokenYMint, fbY);
     // Only a side that actually holds value (tokens or unclaimed fees) can deflate the total.
-    if ((p.amountX > 0n || p.feeX > 0n) && !priced(p.tokenXMint, fbX)) complete = false;
-    if ((p.amountY > 0n || p.feeY > 0n) && !priced(p.tokenYMint, fbY)) complete = false;
+    if ((p.amountX > 0n || p.feeX > 0n) && !priced(p.tokenXMint, fbX)) pricingComplete = false;
+    if ((p.amountY > 0n || p.feeY > 0n) && !priced(p.tokenYMint, fbY)) pricingComplete = false;
     const size = ui(p.amountX, p.decimalsX) * pX + ui(p.amountY, p.decimalsY) * pY;
     const fee = ui(p.feeX, p.decimalsX) * pX + ui(p.feeY, p.decimalsY) * pY;
     sizeBy.set(p.positionAddress, size);
@@ -66,7 +69,7 @@ export function valueSnapshot(
   let idle = Number(snap.nativeLamports) / LAMPORTS_PER_SOL;
   for (const t of snap.idleTokens) {
     idle += ui(t.amount, t.decimals) * priceOf(t.mint, 0);
-    if (t.amount > 0n && !priced(t.mint, 0)) complete = false;
+    if (t.amount > 0n && !priced(t.mint, 0)) pricingComplete = false;
   }
 
   return {
@@ -78,7 +81,10 @@ export function valueSnapshot(
     lockedRentSol: rent,
     walletTotalSol: tvl + idle + fees + rent,
     positionCount: snap.positions.length,
-    complete,
+    chainComplete,
+    valuationStatus: pricingComplete ? 'complete' : 'partial',
+    authoritative: true,
+    complete: chainComplete && pricingComplete,
     sizeSolByPosition: sizeBy,
     feeSolByPosition: feeBy,
   };

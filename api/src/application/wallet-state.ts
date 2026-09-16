@@ -32,6 +32,9 @@ export function buildTotals(positions: OpenPosition[], idleSol = 0): PortfolioTo
     tvlSol: tvl,
     idleSol,
     walletTotalSol: tvl + idleSol,
+    // Position-only fallback, before any on-chain snapshot has landed: nothing was skipped for want of
+    // a price, so the figure is complete for what it claims to cover.
+    valuationStatus: 'complete',
     openCount: positions.length,
     inRangeCount: inRange,
     outOfRangeCount: outOfRange,
@@ -78,15 +81,22 @@ export function buildWalletState(
     unclaimedFeesSol: onchain.unclaimedFeesSol,
     feesSol: base.claimedFeesSol + onchain.unclaimedFeesSol,
     walletTotalSol: onchain.walletTotalSol,
+    valuationStatus: onchain.valuationStatus,
   };
   return {
     scope,
     totals,
     openPositions: sorted,
     asOfSlot: onchain.slot,
-    // An incomplete valuation (missing price, unfetched bin-array, unknown decimals) is under/over-stated
-    // → report 'syncing' so the UI signals it AND the Net Worth recorder skips persisting a wrong point.
-    freshness: !onchain.complete || onchain.slotSkew > SYNCING_SKEW_SLOTS ? 'syncing' : 'fresh',
+    // Freshness describes the AUTHORITY and currentness of the chain read: a cached price-only re-mark
+    // is display-only, and an unfetched bin-array or undecodable mint really does mean "not yet". Price
+    // coverage is reported separately by totals.valuationStatus — a couple of unpriced dust mints must
+    // not leave a current, exact wallet stuck on "syncing" forever, which is what folding the two
+    // together would now do, since the inventory covers every token held.
+    freshness:
+      !onchain.authoritative || !onchain.chainComplete || onchain.slotSkew > SYNCING_SKEW_SLOTS
+        ? 'syncing'
+        : 'fresh',
     updatedAt: Date.now(),
   };
 }
@@ -125,7 +135,13 @@ export function combineOnchain(present: OnchainValued[]): OnchainValued | null {
     lockedRentSol,
     walletTotalSol,
     positionCount,
-    // The aggregate is complete only if every contributing wallet's valuation was complete.
+    // Each dimension aggregates on its own: the combined read is only as authoritative, as complete
+    // and as fully priced as its weakest contributor.
+    chainComplete: present.every((v) => v.chainComplete),
+    valuationStatus: present.every((v) => v.valuationStatus === 'complete')
+      ? 'complete'
+      : 'partial',
+    authoritative: present.every((v) => v.authoritative),
     complete: present.every((v) => v.complete),
     sizeSolByPosition: sizeBy,
     feeSolByPosition: feeBy,

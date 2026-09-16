@@ -1,7 +1,6 @@
 import type { WalletState } from '@binsight/shared';
 import type { Logger } from 'pino';
 import { describe, expect, it, vi } from 'vitest';
-import type { WalletFlowRepository } from '@/domain/ports';
 import { NetworthRecorder, type NetworthSnapshotStore } from './networth-recorder';
 
 function stateFor(
@@ -36,24 +35,21 @@ function busStub() {
   };
 }
 
-function deps(reconstructedSum = 0) {
+function deps() {
   const snapRepo: NetworthSnapshotStore & { record: ReturnType<typeof vi.fn> } = {
     record: vi.fn(async () => {}),
   };
-  const flowRepo = {
-    reconstructedSum: vi.fn(async () => reconstructedSum),
-  } as unknown as WalletFlowRepository & { reconstructedSum: ReturnType<typeof vi.fn> };
   const logger = { error: vi.fn(), info: vi.fn(), warn: vi.fn() } as unknown as Logger & {
     error: ReturnType<typeof vi.fn>;
   };
-  return { snapRepo, flowRepo, logger };
+  return { snapRepo, logger };
 }
 
 describe('NetworthRecorder', () => {
   it('records the wallet total from the state payload', async () => {
-    const { snapRepo, flowRepo, logger } = deps();
+    const { snapRepo, logger } = deps();
     const bus = busStub();
-    new NetworthRecorder(bus, snapRepo, flowRepo, logger).start();
+    new NetworthRecorder(bus, snapRepo, logger).start();
 
     await bus.emit(stateFor('walletA', { walletTotalSol: 12, tvlSol: 8, idleSol: 4 }));
 
@@ -65,9 +61,9 @@ describe('NetworthRecorder', () => {
   });
 
   it('throttles to one snapshot per wallet per 15-min bucket', async () => {
-    const { snapRepo, flowRepo, logger } = deps();
+    const { snapRepo, logger } = deps();
     const bus = busStub();
-    new NetworthRecorder(bus, snapRepo, flowRepo, logger).start();
+    new NetworthRecorder(bus, snapRepo, logger).start();
 
     await bus.emit(stateFor('walletA', { walletTotalSol: 1, tvlSol: 1, idleSol: 0 }));
     await bus.emit(stateFor('walletA', { walletTotalSol: 2, tvlSol: 2, idleSol: 0 }));
@@ -79,9 +75,9 @@ describe('NetworthRecorder', () => {
   });
 
   it('skips an incomplete valuation (freshness !== "fresh") WITHOUT consuming the bucket', async () => {
-    const { snapRepo, flowRepo, logger } = deps();
+    const { snapRepo, logger } = deps();
     const bus = busStub();
-    new NetworthRecorder(bus, snapRepo, flowRepo, logger).start();
+    new NetworthRecorder(bus, snapRepo, logger).start();
 
     // An incomplete snapshot (missing price / null bin-array / unknown decimals → 'syncing') would
     // deflate/inflate the wallet total — it must NOT be persisted as a Net Worth point.
@@ -96,39 +92,12 @@ describe('NetworthRecorder', () => {
   });
 
   it('ignores the aggregated "all" scope (never persisted under a non-address key)', async () => {
-    const { snapRepo, flowRepo, logger } = deps();
+    const { snapRepo, logger } = deps();
     const bus = busStub();
-    new NetworthRecorder(bus, snapRepo, flowRepo, logger).start();
+    new NetworthRecorder(bus, snapRepo, logger).start();
 
     await bus.emit(stateFor('all', { walletTotalSol: 100, tvlSol: 60, idleSol: 40 }));
 
     expect(snapRepo.record).not.toHaveBeenCalled();
-  });
-
-  it('logs a fail-loud error when the flow ledger diverges from on-chain idle beyond tolerance', async () => {
-    // ledger = 10, idle = 5 → drift 5 > 0.5 ⇒ must shout.
-    const { snapRepo, flowRepo, logger } = deps(10);
-    const bus = busStub();
-    new NetworthRecorder(bus, snapRepo, flowRepo, logger).start();
-
-    await bus.emit(stateFor('walletA', { walletTotalSol: 5, tvlSol: 0, idleSol: 5 }));
-
-    expect(logger.error).toHaveBeenCalledTimes(1);
-    expect(logger.error.mock.calls[0]![0]).toMatchObject({
-      wallet: 'walletA',
-      ledger: 10,
-      idleSol: 5,
-      drift: 5,
-    });
-  });
-
-  it('stays quiet when ledger and on-chain idle agree within tolerance (SOL-only wallet)', async () => {
-    const { snapRepo, flowRepo, logger } = deps(4.9);
-    const bus = busStub();
-    new NetworthRecorder(bus, snapRepo, flowRepo, logger).start();
-
-    await bus.emit(stateFor('walletA', { walletTotalSol: 5, tvlSol: 0.1, idleSol: 4.9 }));
-
-    expect(logger.error).not.toHaveBeenCalled();
   });
 });

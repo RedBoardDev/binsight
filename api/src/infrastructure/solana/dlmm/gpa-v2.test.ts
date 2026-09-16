@@ -1,6 +1,12 @@
 import type { GetProgramAccountsFilter } from '@solana/web3.js';
 import { describe, expect, it } from 'vitest';
-import { buildGpaV2Params, GPA_V2_PAGE_LIMIT, parseGpaV2Response } from './gpa-v2';
+import {
+  buildGpaV2Params,
+  buildTokenAccountsByOwnerV2Params,
+  GPA_V2_PAGE_LIMIT,
+  parseGpaV2Response,
+  parseTokenAccountsByOwnerV2Response,
+} from './gpa-v2';
 
 const PROGRAM = 'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo';
 const filters: GetProgramAccountsFilter[] = [{ memcmp: { offset: 40, bytes: 'owner' } }];
@@ -66,5 +72,53 @@ describe('parseGpaV2Response', () => {
       /bad params/,
     );
     expect(() => parseGpaV2Response({})).toThrow(/malformed/);
+  });
+});
+
+describe('getTokenAccountsByOwnerV2 helpers', () => {
+  it('builds the owner-indexed request with the token program filter', () => {
+    const params = buildTokenAccountsByOwnerV2Params('owner', 'token-program', {
+      dataSlice: { offset: 0, length: 0 },
+      commitment: 'confirmed',
+      limit: 1000,
+      paginationKey: 'cursor-2',
+    });
+
+    expect(params).toEqual([
+      'owner',
+      { programId: 'token-program' },
+      {
+        encoding: 'base64',
+        dataSlice: { offset: 0, length: 0 },
+        commitment: 'confirmed',
+        limit: 1000,
+        paginationKey: 'cursor-2',
+      },
+    ]);
+  });
+
+  it('parses the no-context response shape used by discovery', () => {
+    expect(
+      parseTokenAccountsByOwnerV2Response({
+        result: { value: [{ pubkey: 'Ata1' }, { pubkey: 'Ata2' }], paginationKey: 'next' },
+      }),
+    ).toEqual({ pubkeys: ['Ata1', 'Ata2'], paginationKey: 'next' });
+  });
+
+  it('also parses the documented with-context response shape', () => {
+    expect(
+      parseTokenAccountsByOwnerV2Response({
+        result: {
+          value: { accounts: [{ pubkey: 'Ata3' }], paginationKey: null },
+        },
+      }),
+    ).toEqual({ pubkeys: ['Ata3'], paginationKey: null });
+  });
+
+  it('throws on RPC errors and malformed envelopes', () => {
+    expect(() =>
+      parseTokenAccountsByOwnerV2Response({ error: { code: -32602, message: 'bad owner' } }),
+    ).toThrow(/bad owner/);
+    expect(() => parseTokenAccountsByOwnerV2Response({})).toThrow(/malformed/);
   });
 });

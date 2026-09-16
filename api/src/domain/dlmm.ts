@@ -51,8 +51,16 @@ export interface OnchainWalletSnapshot {
   /** max−min context.slot across getMultipleAccounts chunks (0 = a true single slot). */
   slotSkew: number;
   nativeLamports: bigint;
-  /** wSOL / USDC / USDT ATA balances (raw), present only when the account exists & is non-zero. */
-  idleTokens: { mint: string; amount: bigint; decimals: number }[];
+  /** Every classic SPL and Token-2022 account the wallet controls, associated or not — not a fixed
+   * shortlist of stablecoins. Quantities stay raw/exact; `decimals` is 0 only when the mint could not
+   * be decoded, which also flags the snapshot incomplete. */
+  idleTokens: {
+    accountAddress?: string;
+    tokenProgram?: 'spl' | 'token2022';
+    mint: string;
+    amount: bigint;
+    decimals: number;
+  }[];
   positions: OnchainPositionValue[];
   /** false when the chain read was under/over-stated: a token's decimals was unknown (RPC miss → would
    *  mis-scale the amount) or a share>0 bin's bin-array was absent (amounts under-counted). Bubbles up
@@ -73,6 +81,8 @@ export interface SnapshotPlan {
   lbPairKeys: PublicKey[];
   binArrayKeys: PublicKey[];
   binArrayMeta: { lbPair: string; index: number }[];
+  /** All owner-controlled classic SPL + Token-2022 accounts, discovered by owner-indexed RPC. */
+  tokenAccountKeys: PublicKey[];
 }
 
 /** SOL valuation of a whole on-chain wallet snapshot. Token side priced via Jupiter (`priceSol`),
@@ -87,9 +97,17 @@ export interface OnchainValued {
   /** tvl + idle + unclaimed fees + locked rent ("tout inclus"). */
   walletTotalSol: number;
   positionCount: number;
-  /** false when the snapshot was incomplete (see OnchainWalletSnapshot.complete) OR a non-SOL holding
-   *  had no Jupiter quote and no pool-price fallback (priced at 0 → deflated total). Gates Net Worth
-   *  persistence: an incomplete valuation is surfaced as freshness!=='fresh' and never recorded. */
+  /** Chain/account decoding completeness (unfetched bin-array, undecodable mint). DISTINCT from price
+   * coverage: an exact, current inventory can still be only partially priced, and that must be
+   * displayed rather than disguised as "syncing" — see valuationStatus. */
+  chainComplete: boolean;
+  /** Price coverage. 'partial' means a held asset had no Jupiter quote and no pool fallback, so
+   * walletTotalSol is an explicit LOWER BOUND rather than a wrong number presented as exact. */
+  valuationStatus: 'complete' | 'partial';
+  /** false for a cached price-only re-mark. An exact RPC snapshot stays authoritative even when its
+   * total is a labelled lower bound; only a non-authoritative mark is barred from the Net Worth curve. */
+  authoritative: boolean;
+  /** Legacy aggregate: chainComplete AND a complete valuation. Kept for existing consumers. */
   complete: boolean;
   /** per-position liquidity value in SOL (excludes unclaimed fees), keyed by positionAddress. */
   sizeSolByPosition: Map<string, number>;

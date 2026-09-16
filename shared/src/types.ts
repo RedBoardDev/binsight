@@ -204,8 +204,11 @@ export const PortfolioTotalsSchema = z.object({
   tvlSol: z.number(),
   /** Idle wallet capital in SOL: native SOL + wSOL + stables (USDC/USDT) converted. */
   idleSol: z.number(),
-  /** Grand total: tvlSol + idleSol. */
+  /** Known priced total. When valuationStatus is 'partial' this is an explicit LOWER BOUND, not an
+   * exact figure: a held asset had no price source and was counted as zero rather than guessed. */
   walletTotalSol: z.number(),
+  /** Price coverage of the wallet read. Defaults keep older persisted/native payloads decodable. */
+  valuationStatus: z.enum(['complete', 'partial']).default('complete'),
   openCount: z.number().int(),
   inRangeCount: z.number().int(),
   outOfRangeCount: z.number().int(),

@@ -1,10 +1,8 @@
 import {
   type PositionBins,
   type PositionHistory,
-  SOL_MINT,
+  TOKEN_2022_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
-  USDC_MINT,
-  USDT_MINT,
 } from '@binsight/shared';
 import { utils } from '@coral-xyz/anchor';
 import {
@@ -15,7 +13,15 @@ import {
 } from '@solana/web3.js';
 import type { OnchainPositionValue, OnchainWalletSnapshot, SnapshotPlan } from '@/domain/dlmm';
 import type { OnchainDlmmGateway as OnchainDlmmGatewayPort } from '@/domain/ports';
-import { buildGpaV2Params, GPA_V2_PAGE_LIMIT, parseGpaV2Response, type RawRpc } from './gpa-v2';
+import { sleep } from '@/util/sleep';
+import {
+  buildGpaV2Params,
+  buildTokenAccountsByOwnerV2Params,
+  GPA_V2_PAGE_LIMIT,
+  parseGpaV2Response,
+  parseTokenAccountsByOwnerV2Response,
+  type RawRpc,
+} from './gpa-v2';
 import {
   DLMM_PROGRAM_ID,
   decodeLbPair,
@@ -31,7 +37,12 @@ import { coverageIndices, valuePosition } from './valuation';
 
 const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
 const TOKEN_PROGRAM = new PublicKey(TOKEN_PROGRAM_ID);
+const TOKEN_2022_PROGRAM = new PublicKey(TOKEN_2022_PROGRAM_ID);
 const GMA_CHUNK = 100;
+/** SPL token-account layout: mint @ 0 (32B), owner @ 32 (32B), amount @ 64 (u64 LE). Token-2022 keeps
+ *  the same 165-byte base before its extensions, so one decoder serves both. */
+const TOKEN_ACCOUNT_MIN_LEN = 72;
+const MIN_CONTEXT_RETRIES = 3;
 const HISTORY_TTL_MS = 60_000; // open positions may still accrue events; closed are immutable
 const HISTORY_MAX = 5000; // bound the cache: closed entries have no TTL, so cap total + FIFO-evict
 
@@ -116,6 +127,33 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
     return pubkeys;
   }
 
+  /**
+   * Discover associated AND non-associated token accounts through Helius' owner-indexed endpoint.
+   * getProgramAccountsV2 over either Token program paginates the entire program account space and can
+   * yield many empty filtered pages before reaching this owner, causing multi-minute scans and 429s.
+   *
+   * This is what replaces the fixed wSOL/USDC/USDT shortlist: the wallet total used to ignore every
+   * other token it held, so a wallet's Net Worth silently omitted most of its assets.
+   */
+  private async discoverTokenAccounts(owner: string, programId: PublicKey): Promise<PublicKey[]> {
+    const pubkeys: PublicKey[] = [];
+    let paginationKey: string | null = null;
+    do {
+      const params = buildTokenAccountsByOwnerV2Params(owner, programId.toBase58(), {
+        dataSlice: { offset: 0, length: 0 },
+        commitment: 'confirmed',
+        limit: GPA_V2_PAGE_LIMIT,
+        paginationKey,
+      });
+      const page = parseTokenAccountsByOwnerV2Response(
+        await this.rawRpc('getTokenAccountsByOwnerV2', params),
+      );
+      for (const pubkey of page.pubkeys) pubkeys.push(new PublicKey(pubkey));
+      paginationKey = page.paginationKey;
+    } while (paginationKey !== null);
+    return pubkeys;
+  }
+
   /** Chunked getMultipleAccounts pinned to one target slot. Returns infos in key order + slot skew. */
   private async fetchAtSlot(
     keys: PublicKey[],
@@ -127,20 +165,14 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
     let maxSlot = 0;
     for (let i = 0; i < keys.length; i += GMA_CHUNK) {
       const chunk = keys.slice(i, i + GMA_CHUNK);
-      let res = await this.conn.getMultipleAccountsInfoAndContext(chunk, {
-        commitment: 'confirmed',
-        minContextSlot: target,
-      });
+      let res = await this.readChunkAtFloor(chunk, target);
       for (
         let attempt = 0;
         attempt < 5 && target !== undefined && res.context.slot !== target;
         attempt++
       ) {
         target = res.context.slot; // chunk advanced past target — bump and retry to re-converge
-        res = await this.conn.getMultipleAccountsInfoAndContext(chunk, {
-          commitment: 'confirmed',
-          minContextSlot: target,
-        });
+        res = await this.readChunkAtFloor(chunk, target);
       }
       if (target === undefined) target = res.context.slot;
       res.value.forEach((v, j) => {
@@ -150,6 +182,28 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
       maxSlot = Math.max(maxSlot, res.context.slot);
     }
     return { slot: maxSlot, skew: maxSlot - minSlot, infos };
+  }
+
+  /** One pinned getMultipleAccounts, retrying a transient lag behind the requested floor. */
+  private async readChunkAtFloor(
+    chunk: PublicKey[],
+    minContextSlot: number | undefined,
+  ): Promise<Awaited<ReturnType<Connection['getMultipleAccountsInfoAndContext']>>> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.conn.getMultipleAccountsInfoAndContext(chunk, {
+          commitment: 'confirmed',
+          minContextSlot,
+        });
+      } catch (error) {
+        // A load-balanced RPC node may briefly lag behind the previous chunk's context. Helius reports
+        // that as code -32016; retry the SAME floor after a short wait. Every other error stays fatal,
+        // so an incomplete inventory can never be mistaken for a successful read.
+        if ((error as { code?: number }).code !== -32016 || attempt === MIN_CONTEXT_RETRIES)
+          throw error;
+        await sleep(100 * (attempt + 1));
+      }
+    }
   }
 
   private async decimalsFor(mints: PublicKey[]): Promise<void> {
@@ -163,7 +217,11 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
         // transient RPC miss (429 / not-yet-visible mint) — do NOT cache it: a one-off blip would pin
         // this mint's decimals at 0 forever and mis-value every later residual conversion. Leaving it
         // unset lets the next call retry; until then decimalsOf falls back to 0 for this call only.
-        if (info) this.decimalsCache.set(chunk[j]!.toBase58(), info.data[44]!);
+        // A NULL info is a transient RPC miss and stays uncached (see above). An account neither token
+        // program owns is not a mint at all: byte 44 would be meaningless, so reject it outright.
+        if (!info) return;
+        if (!info.owner.equals(TOKEN_PROGRAM) && !info.owner.equals(TOKEN_2022_PROGRAM)) return;
+        this.decimalsCache.set(chunk[j]!.toBase58(), info.data[44]!);
       });
     }
   }
@@ -215,14 +273,19 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
     // invalidates it on WS open/close/add/remove), skipping the getProgramAccountsV2 discovery AND the
     // round-1 header read. The round-2 valuation below is byte-identical either way.
     const plan = cachedPlan ?? (await this.buildPlan(ownerStr));
-    const { positionKeys, lbPairByPos, coverageByPos, lbPairKeys, binArrayKeys, binArrayMeta } =
-      plan;
+    const {
+      positionKeys,
+      lbPairByPos,
+      coverageByPos,
+      lbPairKeys,
+      binArrayKeys,
+      binArrayMeta,
+      tokenAccountKeys,
+    } = plan;
 
-    const ataMints = [SOL_MINT, USDC_MINT, USDT_MINT].map((m) => new PublicKey(m));
-    const ataKeys = ataMints.map((m) => this.deriveAta(owner, m));
-
-    // Round 2: ONE pinned pass — positions + lbPairs + binArrays + wallet (native) + stable ATAs.
-    const allKeys = [...positionKeys, ...lbPairKeys, ...binArrayKeys, owner, ...ataKeys];
+    // Round 2: ONE pinned pass — positions + lbPairs + binArrays + wallet (native) + EVERY
+    // owner-controlled token account. This replaces the three-ATA shortlist that omitted most assets.
+    const allKeys = [...positionKeys, ...lbPairKeys, ...binArrayKeys, owner, ...tokenAccountKeys];
     const { slot, skew, infos } = await this.fetchAtSlot(allKeys);
 
     const nPos = positionKeys.length;
@@ -232,7 +295,7 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
     const lbInfos = infos.slice(nPos, nPos + nLb);
     const baInfos = infos.slice(nPos + nLb, nPos + nLb + nBa);
     const walletInfo = infos[nPos + nLb + nBa];
-    const ataInfos = infos.slice(nPos + nLb + nBa + 1);
+    const tokenInfos = infos.slice(nPos + nLb + nBa + 1);
 
     const lbByKey = new Map<string, ReturnType<typeof decodeLbPair>>();
     lbPairKeys.forEach((k, i) => {
@@ -301,19 +364,38 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
       });
     });
 
-    const idleTokens: OnchainWalletSnapshot['idleTokens'] = [];
-    const stableDecimals: Record<string, number> = {
-      [SOL_MINT]: 9,
-      [USDC_MINT]: 6,
-      [USDT_MINT]: 6,
-    };
-    ataInfos.forEach((info, i) => {
-      if (!info || info.data.length < 72) return;
-      const amount = u64le(info.data, 64); // SPL token account: amount @ offset 64
+    // Decode every discovered token account. The mint is read FROM the account rather than assumed,
+    // so any token the wallet holds is counted — not just a hardcoded stablecoin shortlist.
+    const held: { key: PublicKey; info: AccountInfo<Buffer>; mint: PublicKey; amount: bigint }[] =
+      [];
+    const heldMints = new Map<string, PublicKey>();
+    tokenInfos.forEach((info, i) => {
+      if (!info || info.data.length < TOKEN_ACCOUNT_MIN_LEN) return;
+      if (!info.owner.equals(TOKEN_PROGRAM) && !info.owner.equals(TOKEN_2022_PROGRAM)) return;
+      const amount = u64le(info.data, 64);
       if (amount <= 0n) return;
-      const mint = ataMints[i]!.toBase58();
-      idleTokens.push({ mint, amount, decimals: stableDecimals[mint] ?? 0 });
+      const mint = new PublicKey(info.data.subarray(0, 32));
+      heldMints.set(mint.toBase58(), mint);
+      held.push({ key: tokenAccountKeys[i]!, info, mint, amount });
     });
+    // One batched pass for the mints we have not already resolved from the pools above.
+    await this.decimalsFor([...heldMints.values()]);
+
+    const idleTokens: OnchainWalletSnapshot['idleTokens'] = [];
+    for (const { key, info, mint, amount } of held) {
+      const mintStr = mint.toBase58();
+      const decimals = this.decimalsCache.get(mintStr);
+      // An undecodable mint would mis-scale the amount by up to 10^9 — flag the read incomplete
+      // instead of persisting a wrong number; the next snapshot retries the mint.
+      if (decimals === undefined) complete = false;
+      idleTokens.push({
+        accountAddress: key.toBase58(),
+        tokenProgram: info.owner.equals(TOKEN_2022_PROGRAM) ? 'token2022' : 'spl',
+        mint: mintStr,
+        amount,
+        decimals: decimals ?? 0,
+      });
+    }
 
     return {
       owner: ownerStr,
@@ -330,6 +412,10 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
   /** Discovery (getProgramAccountsV2) + round-1 header read → the cacheable snapshot plan. */
   private async buildPlan(ownerStr: string): Promise<SnapshotPlan> {
     const positionKeys = await this.discover(ownerStr);
+    const [classicTokenKeys, token2022Keys] = await Promise.all([
+      this.discoverTokenAccounts(ownerStr, TOKEN_PROGRAM),
+      this.discoverTokenAccounts(ownerStr, TOKEN_2022_PROGRAM),
+    ]);
     const headers = (await this.fetchAtSlot(positionKeys)).infos;
     const lbPairByPos = new Map<string, PublicKey>();
     const coverageByPos = new Map<string, number[]>();
@@ -357,6 +443,7 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
       lbPairKeys: [...lbPairSet.values()],
       binArrayKeys,
       binArrayMeta,
+      tokenAccountKeys: [...classicTokenKeys, ...token2022Keys],
     };
   }
 }

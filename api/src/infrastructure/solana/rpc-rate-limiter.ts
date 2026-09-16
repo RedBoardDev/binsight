@@ -69,6 +69,24 @@ export function rpcMethodOf(body: unknown): string | undefined {
 }
 
 /**
+ * How many JSON-RPC calls a request body actually contains — the length of a batch array, else 1.
+ *
+ * A batch is ONE HTTP request but N billable calls, and providers rate-limit it as N. Counting it as
+ * one reservation is what let a 50-call batch blow straight past a 10 rps ceiling: the provider
+ * answered 429, web3.js retried the whole batch up to 5 times, and the retry storm was invisible to
+ * both the limiter and the credit meter (which under-reported the spend ~50-fold).
+ */
+export function rpcBatchSizeOf(body: unknown): number {
+  if (typeof body !== 'string') return 1;
+  try {
+    const parsed = JSON.parse(body);
+    return Array.isArray(parsed) ? Math.max(1, parsed.length) : 1;
+  } catch {
+    return 1;
+  }
+}
+
+/**
  * Connection-level rate limiter for a Solana RPC provider. Every JSON-RPC call passes through
  * `gate()`: it reserves a slot in the overall bucket AND in its method-class bucket
  * (getProgramAccounts / DAS / sendTransaction), then waits until both allow it — so we never exceed
@@ -103,20 +121,28 @@ export class SolanaRpcRateLimiter {
 
   /** Reserve the next instant `method` may run; both the overall and the method bucket advance.
    *  The method bucket is reserved first, then the overall bucket is pinned to at-least that time,
-   *  so a sub-limited call's overall slot reflects when it really fires (no coincident bursts). */
-  reserveSlot(method: string | undefined): number {
+   *  so a sub-limited call's overall slot reflects when it really fires (no coincident bursts).
+   *
+   *  `weight` is the number of JSON-RPC calls the request carries (a batch of N reserves N slots and
+   *  costs N credits — see {@link rpcBatchSizeOf}). Reservations are monotonic, so the LAST slot is the
+   *  latest: waiting for it covers all N. */
+  reserveSlot(method: string | undefined, weight = 1): number {
     const sub = this.subFor(method);
-    this.callCounts.total++;
     const m = method ?? 'unknown';
-    this.byMethod[m] = (this.byMethod[m] ?? 0) + 1;
-    // Credit attribution: every gated JSON-RPC call costs its method's credits on the active code path.
-    this.meter?.record(m, { codePath: currentCodePath() });
-    if (sub === this.gpa) this.callCounts.gpa++;
-    else if (sub === this.das) this.callCounts.das++;
-    else if (sub === this.send) this.callCounts.send++;
-    else this.callCounts.other++;
-    const subAt = sub ? sub.reserve() : 0;
-    return this.overall.reserveAtLeast(subAt);
+    let at = 0;
+    for (let i = 0; i < Math.max(1, weight); i++) {
+      this.callCounts.total++;
+      this.byMethod[m] = (this.byMethod[m] ?? 0) + 1;
+      // Credit attribution: every gated JSON-RPC call costs its method's credits on the active code path.
+      this.meter?.record(m, { codePath: currentCodePath() });
+      if (sub === this.gpa) this.callCounts.gpa++;
+      else if (sub === this.das) this.callCounts.das++;
+      else if (sub === this.send) this.callCounts.send++;
+      else this.callCounts.other++;
+      const subAt = sub ? sub.reserve() : 0;
+      at = this.overall.reserveAtLeast(subAt);
+    }
+    return at;
   }
 
   /** Cumulative RPC call counts by method-class + per-exact-method since boot — credit/tier instrumentation. */
@@ -131,25 +157,31 @@ export class SolanaRpcRateLimiter {
     return { ...this.callCounts, byMethod: { ...this.byMethod } };
   }
 
-  async gate(method: string | undefined): Promise<void> {
-    const wait = this.reserveSlot(method) - this.now();
+  async gate(method: string | undefined, weight = 1): Promise<void> {
+    const wait = this.reserveSlot(method, weight) - this.now();
     if (wait > 0) await sleep(wait);
   }
 
   private subFor(method: string | undefined): Spacer | null {
     if (!method) return null;
-    if (method === 'getProgramAccounts') return this.gpa;
+    if (
+      method === 'getProgramAccounts' ||
+      method === 'getProgramAccountsV2' ||
+      method === 'getTokenAccountsByOwnerV2'
+    )
+      return this.gpa;
     if (method === 'sendTransaction') return this.send;
     if (DAS_METHODS.has(method)) return this.das;
     return null;
   }
 
-  /** web3.js fetch middleware: read the JSON-RPC method, gate on its limits, then let it proceed. */
+  /** web3.js fetch middleware: read the JSON-RPC method AND how many calls the body carries, gate on
+   *  the resulting budget, then let it proceed. */
   middleware(): FetchMiddleware {
     return (info, init, fetch) => {
       // Proceed with the fetch whether the gate resolves OR rejects (a sleep/abort must never strand
       // the request — web3.js would then hang forever waiting on a promise that never settles).
-      void this.gate(rpcMethodOf(init?.body)).then(
+      void this.gate(rpcMethodOf(init?.body), rpcBatchSizeOf(init?.body)).then(
         () => fetch(info, init),
         () => fetch(info, init),
       );

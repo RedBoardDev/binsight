@@ -11,7 +11,8 @@ import { useNetworthCurve, useStats } from '@app/applications/Stats/Api/useStats
 import { ALL_TIME_DAYS } from '@app/applications/Stats/Domain/period';
 import { periodLabel, realPnlGain } from '@app/applications/Stats/Domain/realPnl';
 import { useUi } from '@app/core/stores/uiStore';
-import { Card, Chip, cn, Skeleton } from '@heroui/react';
+import { Card, Chip, cn, Skeleton, Tooltip } from '@heroui/react';
+import { Info } from 'lucide-react';
 
 /** The desktop hero: live Net Worth plus the four headline metrics the whole product is read from. */
 export const PortfolioSummaryCard = () => {
@@ -45,7 +46,23 @@ export const PortfolioSummaryCard = () => {
           void down the middle of the app's most important card. */}
       <Card.Content className="grid grid-cols-2 items-end gap-x-8 gap-y-7 sm:grid-cols-4 lg:grid-cols-6 lg:gap-x-10">
         <div className="col-span-2 flex min-w-0 flex-col gap-2.5">
-          <span className="font-medium text-faint text-xs uppercase tracking-wide">Net Worth</span>
+          <span className="flex items-center gap-2 font-medium text-faint text-xs uppercase tracking-wide">
+            Net Worth
+            {totals.valuationStatus === 'partial' && (
+              <Tooltip.Root>
+                <Tooltip.Trigger
+                  aria-label="Why this total is a lower bound"
+                  className="grid size-4 cursor-help place-items-center rounded-full border border-border text-faint"
+                >
+                  <Info size={10} />
+                </Tooltip.Trigger>
+                <Tooltip.Content className="max-w-xs text-xs leading-relaxed">
+                  At least this much. One or more assets you hold have no price source, so they are
+                  counted as zero rather than guessed — the real total can only be higher.
+                </Tooltip.Content>
+              </Tooltip.Root>
+            )}
+          </span>
           <TickFlash value={totals.walletTotalSol} className="flex items-center gap-2.5">
             <span className="tabular font-semibold text-4xl text-foreground leading-none tracking-tight md:text-[2.75rem]">
               {money.hero(totals.walletTotalSol)}

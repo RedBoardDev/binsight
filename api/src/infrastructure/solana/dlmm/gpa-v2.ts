@@ -84,3 +84,57 @@ export function parseGpaV2Response(envelope: unknown): GpaV2Page {
   const pubkeys = (result.accounts ?? []).map((a) => a.pubkey);
   return { pubkeys, paginationKey: result.paginationKey ?? null };
 }
+
+export interface TokenAccountsByOwnerV2Config {
+  dataSlice: { offset: number; length: number };
+  commitment: string;
+  limit: number;
+  paginationKey?: string | null;
+}
+
+/** Build the owner-indexed Token V2 request. Unlike getProgramAccountsV2 over the Token programs,
+ * this endpoint paginates only the requested owner's accounts instead of scanning program-wide pages. */
+export function buildTokenAccountsByOwnerV2Params(
+  owner: string,
+  programId: string,
+  cfg: TokenAccountsByOwnerV2Config,
+): unknown[] {
+  const config: Record<string, unknown> = {
+    encoding: 'base64',
+    dataSlice: cfg.dataSlice,
+    commitment: cfg.commitment,
+    limit: cfg.limit,
+  };
+  if (cfg.paginationKey != null) config.paginationKey = cfg.paginationKey;
+  return [owner, { programId }, config];
+}
+
+interface TokenAccountsByOwnerV2Envelope {
+  result?: {
+    value?:
+      | { pubkey: string }[]
+      | { accounts?: { pubkey: string }[]; paginationKey?: string | null };
+    paginationKey?: string | null;
+  };
+  error?: { code?: number; message?: string };
+}
+
+/** Parse both documented response shapes: without context (`result.value` array) and with context
+ * (`result.value.accounts`). We currently request no context, but accepting both prevents a silent miss. */
+export function parseTokenAccountsByOwnerV2Response(envelope: unknown): GpaV2Page {
+  const env = envelope as TokenAccountsByOwnerV2Envelope | null | undefined;
+  if (env?.error) {
+    throw new Error(
+      `getTokenAccountsByOwnerV2 failed: ${env.error.message ?? `code ${env.error.code}`}`,
+    );
+  }
+  const result = env?.result;
+  if (!result) throw new Error('getTokenAccountsByOwnerV2: malformed response (no result)');
+  const direct = Array.isArray(result.value) ? result.value : null;
+  const nested = !Array.isArray(result.value) ? result.value : null;
+  const accounts = direct ?? nested?.accounts ?? [];
+  return {
+    pubkeys: accounts.map((account) => account.pubkey),
+    paginationKey: result.paginationKey ?? nested?.paginationKey ?? null,
+  };
+}

@@ -207,7 +207,7 @@ export function compose(config: AppConfig): App {
   // Forward-only Net Worth history (TRUE on-chain wallet total = tvl + idle, sampled into 15-min
   // buckets) + a fail-loud reconciliation of the flow ledger against the live on-chain idle.
   const networthSnapshots = new NetworthSnapshotRepository(db);
-  const networthRecorder = new NetworthRecorder(bus, networthSnapshots, walletFlowRepo, logger);
+  const networthRecorder = new NetworthRecorder(bus, networthSnapshots, logger);
   const presence = new PresenceTracker(config.PRESENCE_TIMEOUT_SECONDS * 1000);
   const bark = new BarkChannel(
     config.BARK_BASE_URL,

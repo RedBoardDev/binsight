@@ -59,6 +59,9 @@ const onchain = (over: Partial<OnchainValued> = {}): OnchainValued => ({
   lockedRentSol: 0,
   walletTotalSol: 0,
   positionCount: 0,
+  chainComplete: true,
+  valuationStatus: 'complete' as const,
+  authoritative: true,
   complete: true,
   sizeSolByPosition: new Map(),
   feeSolByPosition: new Map(),
@@ -122,6 +125,29 @@ describe('buildWalletState (on-chain authoritative total)', () => {
     expect(buildWalletState('w', [pos()], onchain({ slot: 1000, slotSkew: 40 })).freshness).toBe(
       'syncing',
     );
+  });
+
+  it('stays FRESH when only the pricing is partial, and says so in the totals', () => {
+    // The wallet inventory now covers every token held, so an unpriceable dust mint is routine. It is
+    // reported through valuationStatus — pinning the wallet to "syncing" for it would mean a current,
+    // exact read never looks current again.
+    const s = buildWalletState(
+      'w',
+      [pos()],
+      onchain({ chainComplete: true, valuationStatus: 'partial', complete: false }),
+    );
+    expect(s.freshness).toBe('fresh');
+    expect(s.totals.valuationStatus).toBe('partial');
+  });
+
+  it('marks freshness=syncing when the CHAIN read itself was incomplete', () => {
+    const s = buildWalletState('w', [pos()], onchain({ chainComplete: false, complete: false }));
+    expect(s.freshness).toBe('syncing');
+  });
+
+  it('marks a cached price-only re-mark as syncing so it never reaches the Net Worth curve', () => {
+    const s = buildWalletState('w', [pos()], onchain({ authoritative: false, complete: false }));
+    expect(s.freshness).toBe('syncing');
   });
 });
 
