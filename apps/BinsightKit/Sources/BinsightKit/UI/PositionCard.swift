@@ -39,16 +39,16 @@ public struct PositionCard: View {
                 Spacer(minLength: 6)
                 VStack(alignment: .trailing, spacing: 0) {
                     // Live figures: roll the changed digits rather than re-cutting the whole label.
-                    Text("\(signed(p.pnlSol)) SOL")
+                    Text("\(signed(p.displayPnl)) \(p.nativeQuote)")
                         .font(.data(13, weight: .semibold))
-                        .foregroundStyle(pnlColor(p.pnlPctSol))
-                        .contentTransition(.numericText(value: p.pnlSol))
-                        .animation(dataAnimation(reduceMotion), value: p.pnlSol)
-                    Text(pct2(p.pnlPctSol))
+                        .foregroundStyle(pnlColor(p.displayPnlPct))
+                        .contentTransition(.numericText(value: p.displayPnl))
+                        .animation(dataAnimation(reduceMotion), value: p.displayPnl)
+                    Text(pct2(p.displayPnlPct))
                         .font(.data(11, weight: .semibold))
-                        .foregroundStyle(pnlColor(p.pnlPctSol))
-                        .contentTransition(.numericText(value: p.pnlPctSol))
-                        .animation(dataAnimation(reduceMotion), value: p.pnlPctSol)
+                        .foregroundStyle(pnlColor(p.displayPnlPct))
+                        .contentTransition(.numericText(value: p.displayPnlPct))
+                        .animation(dataAnimation(reduceMotion), value: p.displayPnlPct)
                 }
                 .fixedSize()
                 .layoutPriority(1)
@@ -56,7 +56,7 @@ public struct PositionCard: View {
             HStack(alignment: .center, spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
                     // lineLimit(1) keeps the card height fixed (no wrap to a second line).
-                    Text("Size \(abs4(p.sizeSol)) SOL · \(ageString(p.openedAt, now: now))")
+                    Text("Size \(abs4(p.displaySize)) \(p.nativeQuote) · \(ageString(p.openedAt, now: now))")
                         .font(.data(11)).foregroundStyle(.secondary)
                         .lineLimit(1)
                     FeesLabel(position: p)
@@ -92,8 +92,8 @@ public struct PositionCard: View {
             default: "range unknown"
             }
         let fees = p.claimedFeesSol + p.unclaimedFeesSol
-        let pnl = "PnL \(signed(p.pnlSol)) SOL, \(String(format: "%+.2f", p.pnlPctSol)) percent"
-        let size = "size \(abs4(p.sizeSol)) SOL, open \(ageString(p.openedAt, now: now))"
+        let pnl = "PnL \(signed(p.displayPnl)) \(p.nativeQuote), \(String(format: "%+.2f", p.displayPnlPct)) percent"
+        let size = "size \(abs4(p.displaySize)) \(p.nativeQuote), open \(ageString(p.openedAt, now: now))"
         return "\(p.tokenX) \(p.tokenY), \(range). \(pnl). \(size). Fees \(abs4(fees)) SOL."
     }
 }

@@ -5,7 +5,9 @@ import XCTest
 private func closed(_ address: String) -> ClosedPosition {
     ClosedPosition(
         positionAddress: address, wallet: "W", tokenX: "A", tokenY: "SOL", tokenXMint: "M",
-        pnlSol: 0, pnlPctSol: 0, feesSol: 0, depositSol: 1, closedAt: nil, strategy: nil)
+        pnlSol: 0, pnlPctSol: 0, feesSol: 0, depositSol: 1, tokenYMint: nil, quoteSymbol: nil,
+        pnlQuote: nil, pnlPctQuote: nil, feesQuote: nil, depositQuote: nil, withdrawQuote: nil,
+        closedAt: nil, strategy: nil)
 }
 
 private func bins(_ activeBinId: Int) -> PositionBins {
@@ -152,6 +154,8 @@ final class BinsCacheTests: XCTestCase {
             OpenPosition(
                 positionAddress: "pos2", wallet: "W", tokenX: "A", tokenY: "SOL", tokenXMint: "M",
                 sizeSol: 1, pnlSol: 0, pnlPctSol: 0, claimedFeesSol: 0, unclaimedFeesSol: 0,
+                tokenYMint: nil, quoteSymbol: nil, sizeQuote: nil, pnlQuote: nil, pnlPctQuote: nil,
+                claimedFeesQuote: nil, unclaimedFeesQuote: nil,
                 rangeStatus: .in, minPrice: 1, maxPrice: 2, poolPrice: 1.5, openedAt: nil,
                 strategy: nil)
         ]

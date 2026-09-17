@@ -459,18 +459,18 @@ private struct ClosedRow: View {
                     .opacity(hovering ? 0 : 1)
                     .allowsHitTesting(false)
             }
-            Text(signed(c.pnlSol))
+            Text("\(signed(c.displayPnl)) \(c.nativeQuote)")
                 .font(.data(12, weight: .semibold))
-                .foregroundStyle(pnlColor(c.pnlPctSol))
+                .foregroundStyle(pnlColor(c.displayPnlPct))
             // Fees, glyph-free (the old ⓒ read as a copyright mark). In a tabular row the dim
             // treatment and fixed column already separate this from the PnL beside it; the tooltip
             // and VoiceOver label name it for anyone who needs telling.
-            Text(abs4(c.feesSol))
+            Text("\(abs4(c.displayFees)) \(c.nativeQuote)")
                 .font(.data(11))
                 .foregroundStyle(.secondary)
                 .fixedSize()
                 .help("Fees earned")
-                .accessibilityLabel("fees \(abs4(c.feesSol)) SOL")
+                .accessibilityLabel("fees \(abs4(c.displayFees)) \(c.nativeQuote)")
             Text(ageString(c.closedAt, now: now))
                 .font(.data(11))
                 .foregroundStyle(.tertiary)
@@ -485,16 +485,16 @@ private struct ClosedRow: View {
 
     /// Spoken form of the row: the same facts the columns show, in reading order.
     private var spokenSummary: String {
-        let pnl = "PnL \(signed(c.pnlSol)) SOL, \(String(format: "%+.2f", c.pnlPctSol)) percent"
+        let pnl = "PnL \(signed(c.displayPnl)) \(c.nativeQuote), \(String(format: "%+.2f", c.displayPnlPct)) percent"
         return "\(c.tokenX) \(c.tokenY) closed \(ageString(c.closedAt, now: now)) ago. "
-            + "\(pnl). Fees \(abs4(c.feesSol)) SOL. Deposited \(abs2(c.depositSol)) SOL."
+            + "\(pnl). Fees \(abs4(c.displayFees)) \(c.nativeQuote). Deposited \(abs2(c.displayDeposit)) \(c.nativeQuote)."
     }
 
     // Size (deposited SOL, 2 dp) — shown only while the row is at rest. The DLMM shape is
     // deliberately NOT repeated here: on a closed position it no longer tells you anything
     // actionable, and it was crowding the row's one free slot.
     private var restingSummary: some View {
-        Text("\(abs2(c.depositSol)) SOL")
+        Text("\(abs2(c.displayDeposit)) \(c.nativeQuote)")
             .font(.data(11))
             .foregroundStyle(.tertiary)
             .fixedSize()

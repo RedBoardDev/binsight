@@ -48,12 +48,31 @@ public struct OpenPosition: Codable, Identifiable, Sendable, Equatable {
     public let pnlPctSol: Double
     public let claimedFeesSol: Double
     public let unclaimedFeesSol: Double
+    /// Native pool quote (SOL, USDC or USDT). Optional: rows written before the quote-aware sync, and
+    /// older servers, omit these — every reader falls back to the SOL fields below.
+    public let tokenYMint: String?
+    public let quoteSymbol: String?
+    public let sizeQuote: Double?
+    public let pnlQuote: Double?
+    public let pnlPctQuote: Double?
+    public let claimedFeesQuote: Double?
+    public let unclaimedFeesQuote: Double?
     public let rangeStatus: RangeStatus
     public let minPrice: Double
     public let maxPrice: Double
     public let poolPrice: Double?
     public let openedAt: Double?
     public let strategy: StrategyFamily?
+
+    /// What this position's economics are actually denominated in. A USDC pool reports zero in every
+    /// SOL column, so reading those would show a real trade as a flat, wrong zero.
+    public var nativeQuote: String { quoteSymbol ?? "SOL" }
+    public var displaySize: Double { sizeQuote ?? sizeSol }
+    public var displayPnl: Double { pnlQuote ?? pnlSol }
+    public var displayPnlPct: Double { pnlPctQuote ?? pnlPctSol }
+    public var displayFees: Double {
+        (claimedFeesQuote ?? claimedFeesSol) + (unclaimedFeesQuote ?? unclaimedFeesSol)
+    }
 }
 
 public struct WalletState: Codable, Sendable {
@@ -73,10 +92,24 @@ public struct ClosedPosition: Codable, Identifiable, Sendable {
     public let pnlPctSol: Double
     public let feesSol: Double
     public let depositSol: Double
+    /// See `OpenPosition` — native pool quote, optional for older rows/servers.
+    public let tokenYMint: String?
+    public let quoteSymbol: String?
+    public let pnlQuote: Double?
+    public let pnlPctQuote: Double?
+    public let feesQuote: Double?
+    public let depositQuote: Double?
+    public let withdrawQuote: Double?
     public let closedAt: Double?
     /// DLMM shape the position was opened with. Travels with the position into closed status; nil for
     /// historical closes the server never observed open (so the badge simply doesn't show).
     public let strategy: StrategyFamily?
+
+    public var nativeQuote: String { quoteSymbol ?? "SOL" }
+    public var displayPnl: Double { pnlQuote ?? pnlSol }
+    public var displayPnlPct: Double { pnlPctQuote ?? pnlPctSol }
+    public var displayFees: Double { feesQuote ?? feesSol }
+    public var displayDeposit: Double { depositQuote ?? depositSol }
 }
 
 public struct ClosedPage: Codable, Sendable {

@@ -76,13 +76,13 @@ public struct FeesLabel: View {
     public init(position: OpenPosition) { self.position = position }
 
     public var body: some View {
-        let fees = position.claimedFeesSol + position.unclaimedFeesSol
+        let fees = position.displayFees
         // No glyph: the word "Fees" is right there, so the icon was pure redundancy — and the one it
         // used (centsign.circle) read as a copyright mark.
         return HStack(spacing: 5) {
             Text("Fees")
-            Text(abs4(fees))
-            Text("(\(pctOf(fees, position.sizeSol)))")
+            Text("\(abs4(fees)) \(position.nativeQuote)")
+            Text("(\(pctOf(fees, position.displaySize)))")
         }
         .font(.data(11))
         .foregroundStyle(.secondary)
