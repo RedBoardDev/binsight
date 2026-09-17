@@ -81,7 +81,7 @@ public struct FeesLabel: View {
         // used (centsign.circle) read as a copyright mark.
         return HStack(spacing: 5) {
             Text("Fees")
-            Text("\(abs4(fees)) \(position.nativeQuote)")
+            Text(abs4(fees))
             Text("(\(pctOf(fees, position.displaySize)))")
         }
         .font(.data(11))

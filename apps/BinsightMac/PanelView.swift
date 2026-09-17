@@ -459,13 +459,13 @@ private struct ClosedRow: View {
                     .opacity(hovering ? 0 : 1)
                     .allowsHitTesting(false)
             }
-            Text("\(signed(c.displayPnl)) \(c.nativeQuote)")
+            Text(signed(c.displayPnl))
                 .font(.data(12, weight: .semibold))
                 .foregroundStyle(pnlColor(c.displayPnlPct))
             // Fees, glyph-free (the old ⓒ read as a copyright mark). In a tabular row the dim
             // treatment and fixed column already separate this from the PnL beside it; the tooltip
             // and VoiceOver label name it for anyone who needs telling.
-            Text("\(abs4(c.displayFees)) \(c.nativeQuote)")
+            Text(abs4(c.displayFees))
                 .font(.data(11))
                 .foregroundStyle(.secondary)
                 .fixedSize()
