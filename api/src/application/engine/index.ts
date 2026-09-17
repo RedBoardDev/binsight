@@ -64,6 +64,9 @@ const POLL_STAGGER_MS = 50;
 // them from a cache invalidated on activity (see IDLE_TTL_MS). Folding them in would have made the tick
 // cost scale with the account count — measured at 5 getMultipleAccounts on a 301-account wallet.
 const SYNC_INTERVAL_MS = 10_000;
+// How long an in-flight snapshot may run before a new one is allowed past the single-flight guard.
+// Generous next to a normal pass (well under a second) so it only ever fires on a genuinely wedged one.
+const SNAPSHOT_STUCK_MS = 120_000;
 // After a close the residual is usually market-sold within seconds; Helius indexes that swap in ~1-2s
 // (measured), so the realized pass fired at close-detection can run BEFORE the sell exists and overstate
 // PnL (residual still marked as held). Re-run it on a small front-loaded schedule after each close so the
@@ -418,7 +421,11 @@ export class Engine {
    * the displayed wallet size.
    */
   private async doSnapshot(rt: WalletRuntime): Promise<void> {
-    if (rt.snapshotting) return;
+    // `snapshotting` is cleared in a finally, so a THROW always releases it — but an await that never
+    // settles (a wedged RPC lane, a half-open socket) would pin it forever and the wallet would simply
+    // stop updating, silently and with no error. Treat an in-flight pass older than the stuck window as
+    // dead and let a new one through: a duplicate snapshot is cheap, a frozen wallet is not.
+    if (rt.snapshotting && Date.now() - rt.lastSnapshotAt < SNAPSHOT_STUCK_MS) return;
     rt.snapshotting = true;
     rt.lastSnapshotAt = Date.now();
     try {

@@ -57,39 +57,42 @@ describe('OnchainDlmmGateway — Layer A discovery gating', () => {
     expect(reused.idleTokens).toEqual(fresh.idleTokens);
   });
 
-  it('re-discovers positions + both token programs every time when no plan is passed', async () => {
+  it('re-discovers positions every time when no plan is passed', async () => {
     const conn = new FakeConn();
     const raw = fakeRawRpc();
     const g = new OnchainDlmmGateway(conn as unknown as Connection, raw);
     await g.snapshotWallet(OWNER);
     await g.snapshotWallet(OWNER);
+    // Positions are re-discovered on both passes; the balances are read once and then served from
+    // cache, because a rebuilt discovery plan says nothing about whether a balance moved.
     expect(raw.calls.map((call) => call.method)).toEqual([
       'getProgramAccountsV2',
       'getTokenAccountsByOwnerV2',
       'getTokenAccountsByOwnerV2',
       'getProgramAccountsV2',
-      'getTokenAccountsByOwnerV2',
-      'getTokenAccountsByOwnerV2',
     ]);
   });
 
-  it('does not re-read the token accounts on every cadence tick, and re-reads on invalidation', async () => {
-    // WHY: doSnapshot runs every 10s per open wallet. Measured on a real wallet, its 301 token accounts
-    // turn the pinned pass from 1 getMultipleAccounts into 5 — a 5× standing cost for data that only
-    // moves when the wallet transacts.
+  it('keeps the token accounts OUT of the pinned pass and off the cadence', async () => {
+    // WHY (production incident): web3.js sends a 100-key getMultipleAccounts as a JSON-RPC BATCH, which
+    // the rate limiter charges as 100 reservations. Folding a 301-account wallet into the pinned pass
+    // cost ~400 reservations every 10s; the limiter's cursor only moves forward, so it ran minutes into
+    // the future and froze the live lane for ~4 minutes at a time. Balances now cost TWO calls, and
+    // only when they may have moved.
     vi.useFakeTimers();
     try {
-      const reads: number[] = [];
+      const pinned: number[] = [];
       const conn = {
         async getMultipleAccountsInfoAndContext(keys: unknown[]) {
-          reads.push((keys as unknown[]).length);
+          pinned.push((keys as unknown[]).length);
           return { context: { slot: 100 }, value: (keys as unknown[]).map(() => null) };
         },
         async getMultipleAccountsInfo(keys: unknown[]) {
           return (keys as unknown[]).map(() => null);
         },
       } as unknown as Connection;
-      const g = new OnchainDlmmGateway(conn, fakeRawRpc());
+      const raw = fakeRawRpc();
+      const g = new OnchainDlmmGateway(conn, raw);
       const plan: SnapshotPlan = {
         positionKeys: [],
         lbPairByPos: new Map(),
@@ -97,48 +100,31 @@ describe('OnchainDlmmGateway — Layer A discovery gating', () => {
         lbPairKeys: [],
         binArrayKeys: [],
         binArrayMeta: [],
-        tokenAccountKeys: Array.from({ length: 40 }, () => PublicKey.unique()),
       };
+      const balanceReads = () =>
+        raw.calls.filter((c) => c.method === 'getTokenAccountsByOwnerV2').length;
 
-      await g.snapshotWallet(OWNER, plan); // cold: owner + 40 token accounts
-      expect(reads.at(-1)).toBe(41);
+      await g.snapshotWallet(OWNER, plan);
+      expect(pinned.at(-1)).toBe(1); // the wallet account ONLY — never the token accounts
+      expect(balanceReads()).toBe(2); // one call per token program
 
-      await g.snapshotWallet(OWNER, plan); // next tick: owner only, balances reused
-      expect(reads.at(-1)).toBe(1);
+      await g.snapshotWallet(OWNER, plan); // next cadence tick
+      expect(pinned.at(-1)).toBe(1);
+      expect(balanceReads()).toBe(2); // balances served from cache — no extra call
 
       g.invalidateIdle(OWNER); // the wallet transacted
       await g.snapshotWallet(OWNER, plan);
-      expect(reads.at(-1)).toBe(41);
+      expect(balanceReads()).toBe(4);
 
       await g.snapshotWallet(OWNER, plan);
-      expect(reads.at(-1)).toBe(1);
+      expect(balanceReads()).toBe(4);
 
-      vi.advanceTimersByTime(61_000); // TTL backstop, for a change no event announced
+      vi.advanceTimersByTime(61_000); // TTL backstop for a change no event announced
       await g.snapshotWallet(OWNER, plan);
-      expect(reads.at(-1)).toBe(41);
+      expect(balanceReads()).toBe(6);
     } finally {
       vi.useRealTimers();
     }
-  });
-
-  it('always re-reads the balances when the discovery plan was just rebuilt', async () => {
-    const reads: number[] = [];
-    const conn = {
-      async getMultipleAccountsInfoAndContext(keys: unknown[]) {
-        reads.push((keys as unknown[]).length);
-        return { context: { slot: 100 }, value: (keys as unknown[]).map(() => null) };
-      },
-      async getMultipleAccountsInfo(keys: unknown[]) {
-        return (keys as unknown[]).map(() => null);
-      },
-    } as unknown as Connection;
-    const g = new OnchainDlmmGateway(conn, fakeRawRpc());
-
-    const fresh = await g.snapshotWallet(OWNER); // no plan → full discovery + read
-    await g.snapshotWallet(OWNER, fresh.plan); // cached plan → idle reused
-    const cheap = reads.at(-1);
-    await g.snapshotWallet(OWNER); // rebuilt plan → idle re-read, never served stale
-    expect(reads.at(-1)).toBeGreaterThanOrEqual(cheap!);
   });
 
   it('retries a lagging RPC backend without lowering the monotonic context floor', async () => {
@@ -163,17 +149,16 @@ describe('OnchainDlmmGateway — Layer A discovery gating', () => {
       },
     } as unknown as Connection;
     const plan: SnapshotPlan = {
-      positionKeys: [],
+      // 101 keys + the owner = two chunks, so the second one carries a floor from the first.
+      positionKeys: Array.from({ length: 101 }, () => PublicKey.unique()),
       lbPairByPos: new Map(),
       coverageByPos: new Map(),
       lbPairKeys: [],
       binArrayKeys: [],
       binArrayMeta: [],
-      // 101 keys + the owner = two chunks, so the second one carries a floor from the first.
-      tokenAccountKeys: Array.from({ length: 101 }, () => PublicKey.unique()),
     };
 
-    const snapshot = await new OnchainDlmmGateway(conn).snapshotWallet(OWNER, plan);
+    const snapshot = await new OnchainDlmmGateway(conn, fakeRawRpc()).snapshotWallet(OWNER, plan);
 
     // undefined (first chunk) → 100 (second chunk) → 100 (the -32016 retry, SAME floor) → 101
     // (main's existing re-converge, because the chunk landed at 101 rather than the requested 100).

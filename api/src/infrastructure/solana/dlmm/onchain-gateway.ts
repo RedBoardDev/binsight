@@ -19,7 +19,7 @@ import {
   buildTokenAccountsByOwnerV2Params,
   GPA_V2_PAGE_LIMIT,
   parseGpaV2Response,
-  parseTokenAccountsByOwnerV2Response,
+  parseTokenAccountsByOwnerV2Accounts,
   type RawRpc,
 } from './gpa-v2';
 import {
@@ -154,30 +154,63 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
   }
 
   /**
-   * Discover associated AND non-associated token accounts through Helius' owner-indexed endpoint.
-   * getProgramAccountsV2 over either Token program paginates the entire program account space and can
-   * yield many empty filtered pages before reaching this owner, causing multi-minute scans and 429s.
+   * Read every classic-SPL and Token-2022 account the wallet controls, WITH the bytes we need, in one
+   * call per token program. `dataSlice` 0..72 covers the mint (0..32) and the amount (64..72).
    *
-   * This is what replaces the fixed wSOL/USDC/USDT shortlist: the wallet total used to ignore every
-   * other token it held, so a wallet's Net Worth silently omitted most of its assets.
+   * This deliberately does NOT discover pubkeys and then read them with getMultipleAccounts. web3.js
+   * sends a 100-key read as a JSON-RPC BATCH, which the rate limiter charges as 100 reservations — and
+   * the limiter's cursor only moves forward, so four such chunks every snapshot pushed it minutes into
+   * the future and froze the whole live lane for ~4 minutes at a time. Two reservations instead of
+   * ~400 is the difference between working and not.
    */
-  private async discoverTokenAccounts(owner: string, programId: PublicKey): Promise<PublicKey[]> {
-    const pubkeys: PublicKey[] = [];
-    let paginationKey: string | null = null;
-    do {
-      const params = buildTokenAccountsByOwnerV2Params(owner, programId.toBase58(), {
-        dataSlice: { offset: 0, length: 0 },
-        commitment: 'confirmed',
-        limit: GPA_V2_PAGE_LIMIT,
-        paginationKey,
+  private async readTokenAccounts(owner: string): Promise<OnchainWalletSnapshot['idleTokens']> {
+    const out: OnchainWalletSnapshot['idleTokens'] = [];
+    const heldMints = new Map<string, PublicKey>();
+    const decoded: { key: string; mint: PublicKey; amount: bigint; token2022: boolean }[] = [];
+
+    for (const programId of [TOKEN_PROGRAM, TOKEN_2022_PROGRAM]) {
+      let paginationKey: string | null = null;
+      do {
+        const params = buildTokenAccountsByOwnerV2Params(owner, programId.toBase58(), {
+          dataSlice: { offset: 0, length: TOKEN_ACCOUNT_MIN_LEN },
+          commitment: 'confirmed',
+          limit: GPA_V2_PAGE_LIMIT,
+          paginationKey,
+        });
+        const page = parseTokenAccountsByOwnerV2Accounts(
+          await this.rawRpc('getTokenAccountsByOwnerV2', params),
+        );
+        for (const account of page.accounts) {
+          const data = Buffer.from(account.data, 'base64');
+          if (data.length < TOKEN_ACCOUNT_MIN_LEN) continue;
+          const amount = u64le(data, 64);
+          if (amount <= 0n) continue; // a zero-balance account holds nothing to value
+          const mint = new PublicKey(data.subarray(0, 32));
+          heldMints.set(mint.toBase58(), mint);
+          decoded.push({
+            key: account.pubkey,
+            mint,
+            amount,
+            token2022: account.owner === TOKEN_2022_PROGRAM_ID,
+          });
+        }
+        paginationKey = page.paginationKey;
+      } while (paginationKey !== null);
+    }
+
+    // One batched pass for the mints not already resolved from the pools.
+    await this.decimalsFor([...heldMints.values()]);
+    for (const { key, mint, amount, token2022 } of decoded) {
+      const mintStr = mint.toBase58();
+      out.push({
+        accountAddress: key,
+        tokenProgram: token2022 ? 'token2022' : 'spl',
+        mint: mintStr,
+        amount,
+        decimals: this.decimalsCache.get(mintStr) ?? 0,
       });
-      const page = parseTokenAccountsByOwnerV2Response(
-        await this.rawRpc('getTokenAccountsByOwnerV2', params),
-      );
-      for (const pubkey of page.pubkeys) pubkeys.push(new PublicKey(pubkey));
-      paginationKey = page.paginationKey;
-    } while (paginationKey !== null);
-    return pubkeys;
+    }
+    return out;
   }
 
   /** Chunked getMultipleAccounts pinned to one target slot. Returns infos in key order + slot skew. */
@@ -299,31 +332,13 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
     // invalidates it on WS open/close/add/remove), skipping the getProgramAccountsV2 discovery AND the
     // round-1 header read. The round-2 valuation below is byte-identical either way.
     const plan = cachedPlan ?? (await this.buildPlan(ownerStr));
-    const {
-      positionKeys,
-      lbPairByPos,
-      coverageByPos,
-      lbPairKeys,
-      binArrayKeys,
-      binArrayMeta,
-      tokenAccountKeys,
-    } = plan;
+    const { positionKeys, lbPairByPos, coverageByPos, lbPairKeys, binArrayKeys, binArrayMeta } =
+      plan;
 
-    // The idle side is re-read only when it may actually have moved — see IDLE_TTL_MS. The position
-    // side is always read: its amounts and fees change on their own between ticks, the balances do not.
-    const cachedIdle = this.idleCache.get(ownerStr);
-    const reuseIdle =
-      cachedPlan != null && cachedIdle != null && Date.now() - cachedIdle.at < IDLE_TTL_MS;
-
-    // Round 2: ONE pinned pass — positions + lbPairs + binArrays + wallet (native) + EVERY
-    // owner-controlled token account. This replaces the three-ATA shortlist that omitted most assets.
-    const allKeys = [
-      ...positionKeys,
-      ...lbPairKeys,
-      ...binArrayKeys,
-      owner,
-      ...(reuseIdle ? [] : tokenAccountKeys),
-    ];
+    // Round 2: ONE pinned pass — positions + lbPairs + binArrays + wallet (native). The wallet's token
+    // accounts are read SEPARATELY (see readTokenAccounts): folding them in made every snapshot a
+    // multi-hundred-reservation burst on the live rate-limiter lane.
+    const allKeys = [...positionKeys, ...lbPairKeys, ...binArrayKeys, owner];
     const { slot, skew, infos } = await this.fetchAtSlot(allKeys);
 
     const nPos = positionKeys.length;
@@ -333,7 +348,6 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
     const lbInfos = infos.slice(nPos, nPos + nLb);
     const baInfos = infos.slice(nPos + nLb, nPos + nLb + nBa);
     const walletInfo = infos[nPos + nLb + nBa];
-    const tokenInfos = infos.slice(nPos + nLb + nBa + 1);
 
     const lbByKey = new Map<string, ReturnType<typeof decodeLbPair>>();
     lbPairKeys.forEach((k, i) => {
@@ -402,50 +416,19 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
       });
     });
 
+    // Idle balances: served from cache unless the wallet transacted (invalidateIdle) or the TTL
+    // lapsed. Two RPC calls when it does refresh, not a pinned multi-chunk read.
+    const cachedIdle = this.idleCache.get(ownerStr);
     let idleTokens: OnchainWalletSnapshot['idleTokens'];
-    if (reuseIdle) {
-      // A cached entry only exists when every one of its mints decoded (see below), so reusing it
-      // cannot make this snapshot claim more than it actually knows.
+    if (cachedIdle != null && Date.now() - cachedIdle.at < IDLE_TTL_MS) {
       idleTokens = cachedIdle.tokens;
     } else {
-      // Decode every discovered token account. The mint is read FROM the account rather than assumed,
-      // so any token the wallet holds is counted — not just a hardcoded stablecoin shortlist.
-      const held: { key: PublicKey; info: AccountInfo<Buffer>; mint: PublicKey; amount: bigint }[] =
-        [];
-      const heldMints = new Map<string, PublicKey>();
-      tokenInfos.forEach((info, i) => {
-        if (!info || info.data.length < TOKEN_ACCOUNT_MIN_LEN) return;
-        if (!info.owner.equals(TOKEN_PROGRAM) && !info.owner.equals(TOKEN_2022_PROGRAM)) return;
-        const amount = u64le(info.data, 64);
-        if (amount <= 0n) return;
-        const mint = new PublicKey(info.data.subarray(0, 32));
-        heldMints.set(mint.toBase58(), mint);
-        held.push({ key: tokenAccountKeys[i]!, info, mint, amount });
-      });
-      // One batched pass for the mints we have not already resolved from the pools above.
-      await this.decimalsFor([...heldMints.values()]);
-
-      const decoded: OnchainWalletSnapshot['idleTokens'] = [];
-      let idleComplete = true;
-      for (const { key, info, mint, amount } of held) {
-        const mintStr = mint.toBase58();
-        const decimals = this.decimalsCache.get(mintStr);
-        // An undecodable mint would mis-scale the amount by up to 10^9 — flag the read incomplete
-        // instead of persisting a wrong number; the next snapshot retries the mint.
-        if (decimals === undefined) idleComplete = false;
-        decoded.push({
-          accountAddress: key.toBase58(),
-          tokenProgram: info.owner.equals(TOKEN_2022_PROGRAM) ? 'token2022' : 'spl',
-          mint: mintStr,
-          amount,
-          decimals: decimals ?? 0,
-        });
-      }
-      idleTokens = decoded;
-      if (!idleComplete) complete = false;
-      // Only cache a read whose every mint resolved: caching a partial one would keep re-serving the
-      // mis-scaled amounts for a whole TTL instead of retrying them on the next tick.
-      if (idleComplete) this.idleCache.set(ownerStr, { tokens: decoded, at: Date.now() });
+      idleTokens = await this.readTokenAccounts(ownerStr);
+      // A mint whose decimals would not decode mis-scales the amount by up to 10^9. Flag the snapshot
+      // incomplete and do NOT cache it, so the next tick retries instead of re-serving it for a TTL.
+      const idleComplete = idleTokens.every((t) => this.decimalsCache.has(t.mint));
+      if (idleComplete) this.idleCache.set(ownerStr, { tokens: idleTokens, at: Date.now() });
+      else complete = false;
     }
 
     return {
@@ -463,10 +446,6 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
   /** Discovery (getProgramAccountsV2) + round-1 header read → the cacheable snapshot plan. */
   private async buildPlan(ownerStr: string): Promise<SnapshotPlan> {
     const positionKeys = await this.discover(ownerStr);
-    const [classicTokenKeys, token2022Keys] = await Promise.all([
-      this.discoverTokenAccounts(ownerStr, TOKEN_PROGRAM),
-      this.discoverTokenAccounts(ownerStr, TOKEN_2022_PROGRAM),
-    ]);
     const headers = (await this.fetchAtSlot(positionKeys)).infos;
     const lbPairByPos = new Map<string, PublicKey>();
     const coverageByPos = new Map<string, number[]>();
@@ -494,7 +473,6 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
       lbPairKeys: [...lbPairSet.values()],
       binArrayKeys,
       binArrayMeta,
-      tokenAccountKeys: [...classicTokenKeys, ...token2022Keys],
     };
   }
 }

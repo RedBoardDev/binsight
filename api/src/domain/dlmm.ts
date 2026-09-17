@@ -81,8 +81,6 @@ export interface SnapshotPlan {
   lbPairKeys: PublicKey[];
   binArrayKeys: PublicKey[];
   binArrayMeta: { lbPair: string; index: number }[];
-  /** All owner-controlled classic SPL + Token-2022 accounts, discovered by owner-indexed RPC. */
-  tokenAccountKeys: PublicKey[];
 }
 
 /** SOL valuation of a whole on-chain wallet snapshot. Token side priced via Jupiter (`priceSol`),

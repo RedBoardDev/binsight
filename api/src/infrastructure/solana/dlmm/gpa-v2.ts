@@ -119,6 +119,64 @@ interface TokenAccountsByOwnerV2Envelope {
   error?: { code?: number; message?: string };
 }
 
+/** One token account as returned WITH its sliced data (see parseTokenAccountsByOwnerV2Accounts). */
+export interface TokenAccountV2 {
+  pubkey: string;
+  /** base64 of the requested dataSlice. */
+  data: string;
+  /** owning token program — tells classic SPL from Token-2022 without a second lookup. */
+  owner: string;
+}
+
+/**
+ * Parse the same response but keeping each account's sliced DATA, so the balances need no follow-up
+ * getMultipleAccounts. That follow-up was the expensive part: web3.js sends a 100-key read as a
+ * JSON-RPC BATCH, which the rate limiter correctly charges as 100 reservations — four of those per
+ * snapshot ran the limiter's cursor minutes into the future and stalled the whole live lane.
+ */
+export function parseTokenAccountsByOwnerV2Accounts(envelope: unknown): {
+  accounts: TokenAccountV2[];
+  paginationKey: string | null;
+} {
+  const env = envelope as
+    | {
+        result?: {
+          value?: unknown;
+          context?: { slot?: number };
+          paginationKey?: string | null;
+        };
+        error?: { code?: number; message?: string };
+      }
+    | null
+    | undefined;
+  if (env?.error) {
+    throw new Error(
+      `getTokenAccountsByOwnerV2 failed: ${env.error.message ?? `code ${env.error.code}`}`,
+    );
+  }
+  const result = env?.result;
+  if (!result) throw new Error('getTokenAccountsByOwnerV2: malformed response (no result)');
+  const value = result.value as
+    | { pubkey: string; account?: { data?: unknown; owner?: string } }[]
+    | {
+        accounts?: { pubkey: string; account?: { data?: unknown; owner?: string } }[];
+        paginationKey?: string | null;
+      }
+    | undefined;
+  const direct = Array.isArray(value) ? value : null;
+  const nested = !Array.isArray(value) ? value : null;
+  const rows = direct ?? nested?.accounts ?? [];
+  const accounts: TokenAccountV2[] = [];
+  for (const row of rows) {
+    // base64 encoding answers `data: [base64, 'base64']`; anything else is not decodable here.
+    const raw = row.account?.data;
+    const data = Array.isArray(raw) ? raw[0] : null;
+    if (typeof data !== 'string' || typeof row.account?.owner !== 'string') continue;
+    accounts.push({ pubkey: row.pubkey, data, owner: row.account.owner });
+  }
+  return { accounts, paginationKey: result.paginationKey ?? nested?.paginationKey ?? null };
+}
+
 /** Parse both documented response shapes: without context (`result.value` array) and with context
  * (`result.value.accounts`). We currently request no context, but accepting both prevents a silent miss. */
 export function parseTokenAccountsByOwnerV2Response(envelope: unknown): GpaV2Page {
