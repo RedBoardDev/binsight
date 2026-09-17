@@ -67,6 +67,9 @@ const SYNC_INTERVAL_MS = 10_000;
 // How long an in-flight snapshot may run before a new one is allowed past the single-flight guard.
 // Generous next to a normal pass (well under a second) so it only ever fires on a genuinely wedged one.
 const SNAPSHOT_STUCK_MS = 120_000;
+// Snapshot beat for a wallet with NO open positions. Its total is almost all idle SOL, which moves when
+// a position closes and the liquidity lands — so it cannot be left unread, but it does not need 10s.
+const IDLE_SYNC_INTERVAL_MS = 60_000;
 // After a close the residual is usually market-sold within seconds; Helius indexes that swap in ~1-2s
 // (measured), so the realized pass fired at close-detection can run BEFORE the sell exists and overstate
 // PnL (residual still marked as held). Re-run it on a small front-loaded schedule after each close so the
@@ -330,12 +333,14 @@ export class Engine {
       if (
         this.onchainSource &&
         shouldRefreshOpenSnapshot({
-          hasOpen,
           reconciled: rt.reconciled,
           snapshotting: rt.snapshotting,
           lastSyncAt: rt.lastSyncAt,
           now: Date.now(),
-          intervalMs: SYNC_INTERVAL_MS,
+          // An open position needs the 10s beat (fees grow, bins move). A wallet with nothing open
+          // still needs its total refreshed — that is when a close has just returned liquidity to it —
+          // but a minute is plenty for a figure whose only mover is a transaction.
+          intervalMs: hasOpen ? SYNC_INTERVAL_MS : IDLE_SYNC_INTERVAL_MS,
         })
       )
         void this.doSnapshot(rt);

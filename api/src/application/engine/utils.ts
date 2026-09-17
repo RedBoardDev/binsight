@@ -80,20 +80,25 @@ export function shouldRefreshRealized(args: {
  * an event (WS position-set change, viewer-connect, detail view), so a quiet open position's unclaimed
  * fees stay pinned at their last-read value (≈0 right after open) — wrong for the UI, and the HTTP-polling
  * widget never even gets the viewer-connect read. This drives a slow periodic exact read so unclaimed fees
- * + true size converge; idle wallets (no open positions) still issue zero recurring RPC.
+ * + true size converge.
+ *
+ * A wallet with NO open positions used to issue zero recurring RPC ("idle = 0 RPC"). That guarantee is
+ * wrong for the headline figure: the wallet total is mostly idle SOL, which moves precisely when a
+ * position closes and its liquidity comes back. The result was a Net Worth frozen at its last value,
+ * and a curve that stopped being sampled, for as long as nothing was open. The caller now passes a
+ * slower interval for that case instead of skipping the read.
  *
  * Uses the SAME clock + threshold as `doSnapshot`'s internal open-refresh gate (`lastSyncAt`/`intervalMs`)
  * so that when this fires, that gate also passes and the freshly-read open set is actually persisted.
  */
 export function shouldRefreshOpenSnapshot(args: {
-  hasOpen: boolean;
   reconciled: boolean;
   snapshotting: boolean;
   lastSyncAt: number;
   now: number;
   intervalMs: number;
 }): boolean {
-  const { hasOpen, reconciled, snapshotting, lastSyncAt, now, intervalMs } = args;
-  if (!hasOpen || !reconciled || snapshotting) return false;
+  const { reconciled, snapshotting, lastSyncAt, now, intervalMs } = args;
+  if (!reconciled || snapshotting) return false;
   return now - lastSyncAt >= intervalMs;
 }

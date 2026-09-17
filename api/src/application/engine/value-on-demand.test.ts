@@ -191,10 +191,11 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
 describe('Step 6: value-on-demand', () => {
-  it('an idle wallet (0 open, no viewer) issues ZERO recurring on-chain reads over many ticks', async () => {
-    // WHY: dropping the blind 30s snapshot timer is the whole point — an idle wallet must cost ~0 RPC.
-    // The ONLY snapshotWallet allowed is the one-shot initial backfill; if a periodic snapshot OR the
-    // price tick (which must skip un-viewed wallets) fired, this would catch it.
+  it('an idle wallet (0 open, no viewer) reads on the SLOW beat — never on the 10s one', async () => {
+    // The blind 30s timer is gone, but "idle = 0 RPC" went too far: a wallet total is mostly idle SOL,
+    // which moves exactly when a close returns liquidity. Reading nothing left the headline Net Worth
+    // frozen at its last value, and the curve unsampled, for as long as nothing was open. An idle wallet
+    // now reads once a minute — two reads over two minutes — and still never on the open-position beat.
     const h = makeEngine({ withOpen: false, priceRef: { v: 0.001 } });
     await h.engine.start();
     await vi.advanceTimersByTimeAsync(2_000); // drain the initial backfill (its single doSnapshot)
@@ -202,11 +203,12 @@ describe('Step 6: value-on-demand', () => {
     h.snapshotWallet.mockClear();
     h.getPricesSol.mockClear();
 
-    // Advance far past both the old 30s snapshot interval AND many shared price ticks — with NO viewer.
     await vi.advanceTimersByTimeAsync(120_000);
 
-    expect(h.snapshotWallet).not.toHaveBeenCalled(); // no recurring getMultipleAccounts snapshot
-    expect(h.getPricesSol).not.toHaveBeenCalled(); // price tick skipped the un-viewed wallet → no fetch
+    expect(h.snapshotWallet).toHaveBeenCalledTimes(2); // 120s / 60s — NOT the 12 a 10s beat would give
+    // Each snapshot prices what it read, so there are exactly as many price fetches as snapshots. The
+    // shared price-mark tick still contributes none of its own: it skips the un-viewed wallet.
+    expect(h.getPricesSol).toHaveBeenCalledTimes(2);
     h.engine.stop();
   });
 

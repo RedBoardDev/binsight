@@ -99,7 +99,6 @@ describe('shouldRefreshRealized — front-loaded post-close realized-PnL refresh
 describe('shouldRefreshOpenSnapshot — slow periodic EXACT read so unclaimed fees stay current', () => {
   const INTERVAL = 10_000; // mirrors SYNC_INTERVAL_MS (engine/index.ts) — the open-position refresh cadence
   const ok = {
-    hasOpen: true,
     reconciled: true,
     snapshotting: false,
     lastSyncAt: 0,
@@ -113,8 +112,16 @@ describe('shouldRefreshOpenSnapshot — slow periodic EXACT read so unclaimed fe
     expect(shouldRefreshOpenSnapshot(ok)).toBe(true);
   });
 
-  it('never fires for a wallet with NO open positions (the near-zero guarantee: idle = 0 RPC)', () => {
-    expect(shouldRefreshOpenSnapshot({ ...ok, hasOpen: false })).toBe(false);
+  it('still fires for a wallet with NO open positions, on the slower interval the caller passes', () => {
+    // The old "idle = 0 RPC" guarantee froze the headline total: a wallet total is mostly idle SOL, and
+    // it moves exactly when a close returns liquidity. Nothing open is the moment it MUST be re-read.
+    const idleInterval = 60_000;
+    expect(
+      shouldRefreshOpenSnapshot({ ...ok, intervalMs: idleInterval, now: idleInterval - 1 }),
+    ).toBe(false);
+    expect(shouldRefreshOpenSnapshot({ ...ok, intervalMs: idleInterval, now: idleInterval })).toBe(
+      true,
+    );
   });
 
   it('does not fire before reconciliation (never read before the first backfill seeds the open set)', () => {
