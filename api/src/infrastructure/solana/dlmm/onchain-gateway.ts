@@ -224,15 +224,14 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
     let maxSlot = 0;
     for (let i = 0; i < keys.length; i += GMA_CHUNK) {
       const chunk = keys.slice(i, i + GMA_CHUNK);
-      let res = await this.readChunkAtFloor(chunk, target);
-      for (
-        let attempt = 0;
-        attempt < 5 && target !== undefined && res.context.slot !== target;
-        attempt++
-      ) {
-        target = res.context.slot; // chunk advanced past target — bump and retry to re-converge
-        res = await this.readChunkAtFloor(chunk, target);
-      }
+      // Exactly ONE read per chunk. `minContextSlot` is a FLOOR, not an exact slot: pinning every later
+      // chunk to the first one's slot keeps them from reading OLDER state, which is all it can do. A
+      // "re-converge" loop used to re-read a chunk that landed past the floor, bumping the floor each time
+      // — but the first chunk was never re-read, and a floor cannot go back, so the loop could never
+      // align the chunks. It only chased a newer slot, WIDENING the very skew it meant to close, and paid
+      // a getMultipleAccounts per turn: ~40% of the snapshot's standing cost for no consistency at all.
+      // The skew that remains is reported below and gates freshness exactly as before.
+      const res = await this.readChunkAtFloor(chunk, target);
       if (target === undefined) target = res.context.slot;
       res.value.forEach((v, j) => {
         infos[i + j] = v;

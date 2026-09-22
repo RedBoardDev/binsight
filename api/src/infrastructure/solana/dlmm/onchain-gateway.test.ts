@@ -160,11 +160,42 @@ describe('OnchainDlmmGateway — Layer A discovery gating', () => {
 
     const snapshot = await new OnchainDlmmGateway(conn, fakeRawRpc()).snapshotWallet(OWNER, plan);
 
-    // undefined (first chunk) → 100 (second chunk) → 100 (the -32016 retry, SAME floor) → 101
-    // (main's existing re-converge, because the chunk landed at 101 rather than the requested 100).
-    expect(calls).toEqual([undefined, 100, 100, 101]);
+    // undefined (first chunk) → 100 (second chunk, pinned to the first's slot) → 100 (the -32016
+    // retry, SAME floor). No further read: landing at 101 is past the floor, which is all it can promise.
+    expect(calls).toEqual([undefined, 100, 100]);
     expect(snapshot.slot).toBe(101);
     expect(snapshot.slotSkew).toBe(1);
+  });
+
+  it('reads each chunk exactly once, even when a later chunk lands past the floor', async () => {
+    // WHY: a "re-converge" loop re-read any chunk that came back past the first chunk's slot. The first
+    // chunk was never re-read and a floor cannot go back, so it could not align anything — it chased a
+    // newer slot, widening the skew, and cost a getMultipleAccounts per turn (~40% of the standing
+    // snapshot cost, measured on a 24-position wallet: 19.6 reads/min where 2 chunks × 6 ticks = 12).
+    let slot = 100;
+    let reads = 0;
+    const conn = {
+      async getMultipleAccountsInfoAndContext(keys: unknown[]) {
+        reads++;
+        return { context: { slot: slot++ }, value: keys.map(() => null) }; // every read a slot later
+      },
+      async getMultipleAccountsInfo(keys: unknown[]) {
+        return keys.map(() => null);
+      },
+    } as unknown as Connection;
+    const plan: SnapshotPlan = {
+      positionKeys: Array.from({ length: 150 }, () => PublicKey.unique()), // + owner = 2 chunks
+      lbPairByPos: new Map(),
+      coverageByPos: new Map(),
+      lbPairKeys: [],
+      binArrayKeys: [],
+      binArrayMeta: [],
+    };
+
+    const snapshot = await new OnchainDlmmGateway(conn, fakeRawRpc()).snapshotWallet(OWNER, plan);
+
+    expect(reads).toBe(2); // one per chunk — not 1 + up to 5 re-reads
+    expect(snapshot.slotSkew).toBe(1); // the smallest skew two sequential reads can have
   });
 });
 
