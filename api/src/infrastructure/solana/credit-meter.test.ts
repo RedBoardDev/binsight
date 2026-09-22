@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { CREDIT_COST, type CreditFlushRow, CreditMeter } from './credit-meter';
+import {
+  CREDIT_COST,
+  type CreditFlushRow,
+  CreditMeter,
+  WS_BYTES_PER_CREDIT_UNIT,
+} from './credit-meter';
 
 /** A meter on a mutable clock so the time-based flush day-bucket is deterministic. */
 function meterAt(start: number) {
@@ -9,13 +14,14 @@ function meterAt(start: number) {
 }
 
 describe('WebSocket credit costs', () => {
-  // WHY: Helius bills a WebSocket 1 credit to open + 20 per STARTED megabyte. Those are ordinary entries
-  // in the cost map; it is the TRANSPORT that decides WHEN to record a megabyte (once per boundary
-  // crossed, never per frame — see helius-ws-transport). Billing per frame would charge 20 credits for a
-  // 100-byte notification.
-  it('prices an open at 1 credit and a streamed megabyte at 20', () => {
+  // WHY: Helius bills a WebSocket 1 credit to open + 2 per STARTED 0.1 MB ("2 credits per 0.1 MB of
+  // uncompressed streamed data"). Those are ordinary entries in the cost map; it is the TRANSPORT that
+  // decides WHEN to record a unit (once per boundary crossed, never per frame — see helius-ws-transport).
+  // Pricing a whole megabyte at the first byte overstated every reconnect ~10x.
+  it('prices an open at 1 credit and a streamed 0.1 MB at 2', () => {
     expect(CREDIT_COST.wsOpen).toBe(1);
-    expect(CREDIT_COST.wsData).toBe(20);
+    expect(CREDIT_COST.wsData).toBe(2);
+    expect(WS_BYTES_PER_CREDIT_UNIT).toBe(100_000);
   });
 
   it('records them like any other method, on the stream code path', () => {
@@ -23,8 +29,8 @@ describe('WebSocket credit costs', () => {
     meter.record('wsOpen', { codePath: 'stream' });
     meter.record('wsData', { codePath: 'stream' });
     meter.record('wsData', { codePath: 'stream' });
-    expect(meter.stats().totalCredits).toBe(41); // 1 + 20 + 20
-    expect(meter.stats().byCodePath.stream).toBe(41);
+    expect(meter.stats().totalCredits).toBe(5); // 1 + 2 + 2
+    expect(meter.stats().byCodePath.stream).toBe(5);
   });
 });
 

@@ -14,11 +14,10 @@ import type { WsTransport, WsTransportFactory } from './transaction-stream';
 class HeliusWsTransport implements WsTransport {
   private readonly ws: WebSocket;
 
-  /** Cumulative bytes received, and how many megabytes of that we have already billed. Helius charges
-   *  per STARTED megabyte, so we charge on each boundary crossed rather than per message — billing each
-   *  frame would cost 20 credits for a 100-byte notification. */
+  /** Cumulative bytes received, and how many 0.1 MB units of that we have already billed. Helius charges
+   *  per STARTED 0.1 MB (2 credits), so we charge on each boundary crossed rather than per message. */
   private bytesReceived = 0;
-  private megabytesBilled = 0;
+  private unitsBilled = 0;
 
   constructor(
     url: string,
@@ -41,7 +40,7 @@ class HeliusWsTransport implements WsTransport {
   onMessage(cb: (data: string) => void): void {
     this.ws.addEventListener('message', (ev) => {
       const data = typeof ev.data === 'string' ? ev.data : String(ev.data);
-      // Streamed bytes are billed per started megabyte. Without this the WebSocket — the busiest
+      // Streamed bytes are billed per started 0.1 MB. Without this the WebSocket — the busiest
       // surface once the Enhanced API leaves the recurring path — would be entirely unmetered, and
       // /debug/rpc would under-report real spend with no way to notice.
       this.bill(Buffer.byteLength(data, 'utf8'));
@@ -49,13 +48,13 @@ class HeliusWsTransport implements WsTransport {
     });
   }
 
-  /** Accumulate `bytes` and charge one `wsData` unit for each megabyte boundary this crosses. */
+  /** Accumulate `bytes` and charge one `wsData` unit for each 0.1 MB boundary this crosses. */
   private bill(bytes: number): void {
     if (!this.meter) return;
     this.bytesReceived += bytes;
     const owed = Math.ceil(this.bytesReceived / WS_BYTES_PER_CREDIT_UNIT);
-    while (this.megabytesBilled < owed) {
-      this.megabytesBilled++;
+    while (this.unitsBilled < owed) {
+      this.unitsBilled++;
       this.meter.record('wsData', { codePath: 'stream' });
     }
   }
