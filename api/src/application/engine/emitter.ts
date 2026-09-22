@@ -47,9 +47,9 @@ export class StateEmitter {
 
   constructor(
     private readonly wallets: Map<string, WalletRuntime>,
-    // The active WS backbone (on-chain TransactionStream or legacy logsSubscribe subscriber) — only its
-    // live-connectivity slice is needed for the health payload.
-    private readonly subscriber: ConnectionStatus,
+    // The WS backbone (the on-chain TransactionStream) — only its live-connectivity slice is needed
+    // for the health payload.
+    private readonly backbone: ConnectionStatus,
     private readonly bus: EventBus,
     private readonly health: HealthMonitor,
   ) {}
@@ -92,11 +92,15 @@ export class StateEmitter {
    *  single source of truth for the frame shape. Used by emitHealth and by the WS layer to hand a fresh
    *  client the live health on connect. Defaults to the last effectiveRps seen by the 1s tick. */
   snapshotHealth(effectiveRps: number = this.lastEffectiveRps): Health {
-    const wsOk = this.subscriber.isConnected();
+    const wsOk = this.backbone.isConnected();
     return {
       ok: this.health.ok,
       wsConnected: wsOk,
-      meteoraOk: this.health.statusOf('meteora') !== 'down',
+      // DEPRECATED, always true. The legacy Meteora datapi source it reported on is gone, so the field
+      // has no source left — but the already-deployed native clients (BinsightKit decodes `meteoraOk`
+      // as NON-optional) would fail to decode the whole health payload if it disappeared from the wire.
+      // Kept as a constant `true` for backward compatibility; remove only once those clients are retired.
+      meteoraOk: true,
       effectiveRps,
       chainTipSlot: this.health.chainTipSlot,
       sources: this.health.list(),
@@ -115,7 +119,7 @@ export class StateEmitter {
 
   emitHealth(effectiveRps: number): void {
     this.lastEffectiveRps = effectiveRps;
-    const wsOk = this.subscriber.isConnected();
+    const wsOk = this.backbone.isConnected();
     this.health.set('ws', wsOk ? 'ok' : 'down', wsOk ? undefined : 'disconnected');
     const payload = this.snapshotHealth(effectiveRps);
     // Emit-on-change: the signature is a stable projection (healthChangeSignature) that excludes volatile

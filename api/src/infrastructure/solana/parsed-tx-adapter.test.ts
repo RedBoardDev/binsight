@@ -1,6 +1,11 @@
+import { createHash } from 'node:crypto';
 import { DLMM_PROGRAM_ID, SOL_MINT, TOKEN_PROGRAM_ID } from '@binsight/shared';
+import { utils } from '@coral-xyz/anchor';
 import type { ParsedTransactionWithMeta } from '@solana/web3.js';
 import { describe, expect, it } from 'vitest';
+
+const bs58encode = (b: Uint8Array): string => utils.bytes.bs58.encode(b);
+
 import { type EnhancedTx, parseSwapBuy, parseSwapSell, walletSolFlow } from './helius-enhanced';
 import { extractFlowRow, extractSwapRows, parsedTxToEnhancedTx } from './parsed-tx-adapter';
 
@@ -105,7 +110,7 @@ interface PtxOpts {
   postTokenBalances?: Tb[];
   /** when true, meta is explicitly null (degenerate / not-found tx). */
   nullMeta?: boolean;
-  /** non-null marks the tx as FAILED — its instructions ran but moved nothing but the fee. */
+  /** non-null marks the tx as FAILED — its instructions ran but changed no state beyond the fee. */
   err?: unknown;
 }
 const ptx = (o: PtxOpts): ParsedTransactionWithMeta =>
@@ -130,6 +135,16 @@ const ptx = (o: PtxOpts): ParsedTransactionWithMeta =>
           innerInstructions: o.innerInstructions ?? [],
         },
   }) as unknown as ParsedTransactionWithMeta;
+
+/** A DLMM instruction carrying a REAL Anchor discriminator, base58-encoded exactly as the RPC returns
+ *  it — so the position/swap split is exercised through the same decoding path production uses. */
+const dlmmIx = (instructionName: string): AnyIx => ({
+  programId: DLMM_PROGRAM_ID,
+  accounts: [],
+  data: bs58encode(
+    createHash('sha256').update(`global:${instructionName}`).digest().subarray(0, 8),
+  ),
+});
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
 // 1) Adapter reconstruction — assert parsedTxToEnhancedTx rebuilds exactly what Helius enriches.
@@ -663,10 +678,11 @@ describe('extractFlowRow — trading classification', () => {
     expect(extractFlowRow(synth, WALLET)?.isTrading).toBe(true);
   });
 
-  it('DOCUMENTED GAP: a non-DLMM swap is isTrading=false because Helius `type`=SWAP is not reconstructable', () => {
-    // WHY (Rule 8): `type` is the one Enhanced field we cannot derive offline. A plain Jupiter swap that
-    // never touches the DLMM program would be isTrading=true on Helius (type 'SWAP') but is classified
-    // false here. This test pins that known divergence so the orchestrator handles SWAP detection on wiring.
+  it('marks a non-DLMM swap as trading from the token movement, without Helius `type`', () => {
+    // WHY: `type` is the one Enhanced field that cannot be derived offline, so the trading flag is
+    // STRUCTURAL — a non-SOL token left the wallet, which no plain SOL transfer ever does. Deriving it
+    // from `type` instead would file every Jupiter swap as an external transfer and drop its proceeds
+    // from the PnL curve. Verified against Helius's own labels on 200 real txs.
     const synth = ptx({
       accountKeys: [WALLET, 'WX_ATA', 'POOL'],
       innerInstructions: [
@@ -684,8 +700,22 @@ describe('extractFlowRow — trading classification', () => {
       postTokenBalances: [],
     });
     const row = extractFlowRow(synth, WALLET);
-    expect(row?.isTrading).toBe(false);
-    expect(row?.type).toBe('UNKNOWN');
+    expect(row?.isTrading).toBe(true);
+    expect(row?.solFlow).toBeCloseTo(2, 9);
+  });
+
+  it('keeps a WSOL-only movement out of the trading flag (SOL is not a traded token)', () => {
+    // Wrapping/unwrapping SOL is not a trade. Only a NON-SOL mint moving marks trading, otherwise every
+    // wrap would be misfiled and a plain funding transfer routed through WSOL would pollute the curve.
+    const synth = ptx({
+      accountKeys: [WALLET, 'WSOL_ATA', 'CEX'],
+      topInstructions: [splTransferChecked('WSOL_ATA', 'CEX', SOL_MINT, 1, '1000000000', WSOL_DEC)],
+      preBalances: [10_000_000_000, 0, 0],
+      postBalances: [9_000_000_000, 0, 0],
+      preTokenBalances: [tb(1, SOL_MINT, WALLET, '1000000000', WSOL_DEC)],
+      postTokenBalances: [tb(1, SOL_MINT, WALLET, '0', WSOL_DEC)],
+    });
+    expect(extractFlowRow(synth, WALLET)?.isTrading).toBe(false);
   });
 
   it('emits a row for a plain external SOL transfer (isTrading=false), exactly as pageFlows would', () => {
@@ -701,7 +731,7 @@ describe('extractFlowRow — trading classification', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
-// 4) Ephemeral token accounts — an account opened AND closed in-tx never reaches the balances.
+// 4) Defensive — degenerate inputs must yield [] / null without throwing.
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 describe('ephemeral token accounts — owner declared by the instructions', () => {
@@ -774,9 +804,60 @@ describe('ephemeral token accounts — owner declared by the instructions', () =
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────────────────────────
-// 5) Defensive — degenerate inputs must yield [] / null without throwing.
-// ─────────────────────────────────────────────────────────────────────────────────────────────────
+describe('extractSwapRows — market swaps only', () => {
+  const withdrawIx = () => dlmmIx('remove_liquidity_by_range2');
+
+  it('does NOT fabricate a buy from a DLMM withdraw', () => {
+    // WHY: a withdraw returns tokens to the wallet while it pays rent/fees in SOL. Read naively that is
+    // "bought N tokens for 0.00003 SOL" — a near-zero cost basis that would massively overstate realized
+    // profit when those tokens are later sold. Observed on real withdraws (106 697 tokens for 0.000028 SOL).
+    const synth = ptx({
+      accountKeys: [WALLET, 'POS', 'TOK_ATA'],
+      topInstructions: [withdrawIx()],
+      innerInstructions: [
+        {
+          index: 0,
+          instructions: [splTransferChecked('POS', 'TOK_ATA', MINT_X, 1000, '1000000000', TOK_DEC)],
+        },
+      ],
+      preBalances: [10_000_000_000, 0, 0],
+      postBalances: [9_999_970_000, 0, 0], // paid rent + fee
+      preTokenBalances: [tb(2, MINT_X, WALLET, '0', TOK_DEC)],
+      postTokenBalances: [tb(2, MINT_X, WALLET, '1000000000', TOK_DEC)],
+    });
+    expect(extractSwapRows(synth, WALLET)).toEqual([]);
+  });
+
+  it('DOES keep a real swap that an aggregator routed through a DLMM pool', () => {
+    // WHY: the DLMM program also appears when Jupiter routes a trade through a Meteora pool. Guarding on
+    // mere program presence silently dropped a real 0.97 SOL sale — the discriminator is the instruction
+    // KIND, so `swap2` stays a swap while position instructions do not.
+    const synth = ptx({
+      accountKeys: [WALLET, 'TOK_ATA', 'POOL', 'WSOL_ATA'],
+      topInstructions: [dlmmIx('swap2')],
+      innerInstructions: [
+        {
+          index: 0,
+          instructions: [
+            splTransferChecked('TOK_ATA', 'POOL', MINT_X, 50, '50000000', TOK_DEC, WALLET),
+            splTransferChecked('POOL', 'WSOL_ATA', SOL_MINT, 1, '1000000000', WSOL_DEC),
+          ],
+        },
+      ],
+      preBalances: [10_000_000_000, 0, 0, 0],
+      postBalances: [11_000_000_000, 0, 0, 0],
+      preTokenBalances: [
+        tb(1, MINT_X, WALLET, '50000000', TOK_DEC),
+        tb(3, SOL_MINT, WALLET, '0', WSOL_DEC),
+      ],
+      postTokenBalances: [tb(3, SOL_MINT, WALLET, '1000000000', WSOL_DEC)],
+    });
+    const rows = extractSwapRows(synth, WALLET);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ mint: MINT_X, side: 'sell' });
+    expect(rows[0]?.solAmount).toBeCloseTo(1, 9);
+  });
+});
 
 describe('extractSwapRows / extractFlowRow — defensive', () => {
   it('rejects a FAILED tx — its instructions ran but moved nothing but the fee', () => {

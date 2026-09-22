@@ -15,6 +15,7 @@ export type CodePath =
   | 'reconcile' // on-chain reconcile / close-confirm
   | 'enhanced' // Helius Enhanced Transactions API
   | 'metadata' // DAS token-metadata reads
+  | 'stream' // WebSocket subscription: open + streamed bytes
   | 'unknown'; // unattributed (default when no caller tag is set)
 
 const storage = new AsyncLocalStorage<CodePath>();

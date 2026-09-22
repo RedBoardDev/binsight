@@ -4,12 +4,14 @@ import type { PoolRef } from '@/domain/ports';
 
 export interface WalletRuntime {
   address: string;
+  /** Legacy poll bookkeeping: nothing writes these anymore (the Meteora poller is gone) — they only
+   *  keep the Health wire's `pollIntervalMs` / `lastPollAt` / `lastPollOk` fields populated for the
+   *  already-deployed native clients that decode them. */
   pools: PoolRef[];
   open: Map<string, OpenPosition>;
   lastPollAt: number;
   lastPollOk: boolean;
   pollIntervalMs: number;
-  refreshing: boolean;
   reconciled: boolean;
   /** Authoritative, slot-consistent valuation from the on-chain snapshot (null until first snapshot). */
   onchain: OnchainValued | null;
@@ -19,7 +21,6 @@ export interface WalletRuntime {
   lastSnapshot: OnchainWalletSnapshot | null;
   lastSnapshotAt: number;
   snapshotting: boolean;
-  lastClosedSyncAt: number;
   /** Layer A: cached snapshot discovery plan (position set + ranges). Null until first discovery. */
   snapshotPlan: SnapshotPlan | null;
   /** Set when a WS open/close/add/remove may have changed the position set/ranges → re-discover. */
@@ -56,13 +57,11 @@ export function makeRuntime(address: string, openPositions: OpenPosition[]): Wal
     lastPollAt: 0,
     lastPollOk: false,
     pollIntervalMs: 0,
-    refreshing: false,
     reconciled: false,
     onchain: null,
     lastSnapshot: null,
     lastSnapshotAt: 0,
     snapshotting: false,
-    lastClosedSyncAt: Date.now(),
     snapshotPlan: null,
     needsDiscovery: true,
     lastDiscoveryAt: 0,

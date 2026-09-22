@@ -7,7 +7,7 @@ const DOWN_THRESHOLD = 3; // consecutive failures before a source is reported "d
  * Per-source health with a simple circuit breaker: a source goes `lagging` on the first failure and
  * `down` after `downThreshold` consecutive failures; any success resets it to `ok`. Callers keep their
  * own last-good data (the engine never discards the last snapshot/positions on error) — this just makes
- * WHY the live indicator is degraded visible per service (rpc / meteora / jupiter / ws).
+ * WHY the live indicator is degraded visible per service (rpc / jupiter / ws).
  */
 export class HealthMonitor implements HealthReporter {
   private readonly sources = new Map<string, SourceHealth>();
@@ -15,7 +15,7 @@ export class HealthMonitor implements HealthReporter {
 
   constructor(private readonly downThreshold = DOWN_THRESHOLD) {}
 
-  /** A programmatic call's outcome (rpc/meteora/jupiter). */
+  /** A programmatic call's outcome (rpc/jupiter). */
   record(source: string, ok: boolean, detail?: string): void {
     const s = this.ensure(source);
     if (ok) {

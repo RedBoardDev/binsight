@@ -19,7 +19,8 @@ across multiple wallets. Binsight does that without a dashboard to babysit.
   (presence-aware, no double-notify). No Apple Developer Program required.
 - **Resilient engine** — a decoupled on-chain DLMM engine (history backfill when a wallet registers,
   then Solana WS delta ingest) is the default source; designed to never miss a position (late is fine,
-  missing is not). An optional legacy Meteora datapi poller is available via `POSITIONS_SOURCE=meteora`.
+  missing is not). Runs on a **free** Solana RPC plan: one transaction read feeds positions, cash-flow and
+  swap history alike, and a poll that finds nothing costs a single credit.
 
 ## Quick start
 

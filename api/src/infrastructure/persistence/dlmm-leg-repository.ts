@@ -1,4 +1,4 @@
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import type { DlmmLeg, IngestCursor, LoadedPoolMeta, StoredLeg } from '@/domain/dlmm';
 import type { LegRepository } from '@/domain/ports';
 import type { Database } from './database';
@@ -27,7 +27,11 @@ export class DlmmLegRepository implements LegRepository {
   async replaceForSignatures(wallet: string, signatures: string[], legs: DlmmLeg[]): Promise<void> {
     if (signatures.length === 0) return;
     await this.db.transaction(async (tx) => {
-      await tx.delete(dlmmLegs).where(inArray(dlmmLegs.signature, signatures));
+      // Scoped to THIS wallet: a single transaction can carry legs for several watched wallets, and an
+      // unscoped delete would wipe the other wallet's legs every time this one re-ingests that tx.
+      await tx
+        .delete(dlmmLegs)
+        .where(and(eq(dlmmLegs.wallet, wallet), inArray(dlmmLegs.signature, signatures)));
       if (legs.length === 0) return;
       const rows = legs.map((l) => ({
         signature: l.signature,

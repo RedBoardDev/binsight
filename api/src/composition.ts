@@ -12,8 +12,6 @@ import { PositionSync } from './application/position-sync-service';
 import { RealizedPnlEngine } from './application/realized-pnl';
 import { ResidualBackfill } from './application/residual-backfill';
 import { flowFromHistory } from './application/residual-realized';
-import { SwapFlowIngest } from './application/swap-flow-ingest';
-import { WalletFlowIngest } from './application/wallet-flow-ingest';
 import { WalletPnlService } from './application/wallet-pnl-service';
 import type { AppConfig } from './config/env';
 import { GeckoTerminalGateway } from './infrastructure/geckoterminal/geckoterminal-gateway';
@@ -21,7 +19,6 @@ import { installGracefulShutdown } from './infrastructure/http/graceful-shutdown
 import { buildServer } from './infrastructure/http/server';
 import { CachedPriceGateway } from './infrastructure/jupiter/cached-price-gateway';
 import { JupiterPriceGateway } from './infrastructure/jupiter/jupiter-price';
-import { MeteoraGateway } from './infrastructure/meteora/meteora-gateway';
 import { BarkChannel } from './infrastructure/notifications/bark-channel';
 import { PresenceTracker } from './infrastructure/notifications/presence';
 import { WebPushChannel } from './infrastructure/notifications/web-push-channel';
@@ -38,16 +35,15 @@ import { WalletFlowRepository } from './infrastructure/persistence/wallet-flow-r
 import { WalletRealizedRepository } from './infrastructure/persistence/wallet-realized-repository';
 import { WalletStreamCursorRepository } from './infrastructure/persistence/wallet-stream-cursor-repository';
 import { CreditMeter } from './infrastructure/solana/credit-meter';
-import { DlmmIngest } from './infrastructure/solana/dlmm/dlmm-ingest';
 import { OnchainDlmmGateway } from './infrastructure/solana/dlmm/onchain-gateway';
 import { OnchainPoolMetaReader } from './infrastructure/solana/dlmm/pool-meta';
 import { StrategyResolver } from './infrastructure/solana/dlmm/strategy-resolver';
 import { HeliusEnhancedGateway } from './infrastructure/solana/helius-enhanced';
-import { HeliusSubscriber } from './infrastructure/solana/helius-subscriber';
 import { createHeliusWsTransportFactory } from './infrastructure/solana/helius-ws-transport';
 import { SolanaRpcRateLimiter } from './infrastructure/solana/rpc-rate-limiter';
 import { HeliusTokenMetadataGateway } from './infrastructure/solana/token-metadata-gateway';
 import { TransactionStream } from './infrastructure/solana/transaction-stream';
+import { WalletTxIngest } from './infrastructure/solana/wallet-tx-ingest';
 
 /** Cadence to flush the CreditMeter's since-last-drain deltas into the rpc_credit_daily rollup. */
 const CREDIT_FLUSH_INTERVAL_MS = 60_000;
@@ -78,21 +74,17 @@ export function compose(config: AppConfig): App {
   // ONE shared credit meter wired into every billable chokepoint (both RPC lanes, the Enhanced REST
   // gateway, the DAS metadata gateway) — the single in-memory ledger behind /debug/rpc.
   const meter = new CreditMeter();
-  const gateway = new MeteoraGateway(logger);
   // Resource-keyed (per-mint) price cache + single-flight + token bucket: N wallets/snapshots
   // needing the same token in one window collapse to ONE Jupiter call (cross-user dedup).
   const prices = new CachedPriceGateway(
     new JupiterPriceGateway(logger, config.JUPITER_PRICE_URL, health),
   );
-  // LEGACY 'meteora' WS backbone (logsSubscribe). Built unconditionally but only started/watched when
-  // POSITIONS_SOURCE !== 'onchain' — it never opens a socket until the engine calls subscriber.start().
-  const subscriber = new HeliusSubscriber(config.SOLANA_WS_URL, logger);
-  // ON-CHAIN WS backbone: ONE Helius transactionSubscribe multiplexing every wallet, the trigger for the
+  // WS backbone: ONE Helius transactionSubscribe multiplexing every wallet, the trigger for the
   // cursor-based delta ingest (replacing the deleted BACKSTOP_INGEST_MS sweep). The transport factory opens
-  // the real socket ONLY when the engine calls stream.start() in onchain mode — never at composition time —
-  // and the durable wallet_stream_cursor backs the no-miss reconnect/replay (Step 5a machinery).
+  // the real socket ONLY when the engine calls stream.start() — never at composition time — and the
+  // durable wallet_stream_cursor backs the no-miss reconnect/replay (Step 5a machinery).
   const stream = new TransactionStream({
-    transportFactory: createHeliusWsTransportFactory(config.SOLANA_WS_URL),
+    transportFactory: createHeliusWsTransportFactory(config.SOLANA_WS_URL, meter),
     cursors: new WalletStreamCursorRepository(db),
     logger,
   });
@@ -141,10 +133,22 @@ export function compose(config: AppConfig): App {
     fetchMiddleware: backfillLimiter.middleware(),
   });
   const onchain = new OnchainDlmmGateway(connection);
-  // On-chain DLMM positions engine — the decoupled source (legs ingest + projection → positions table),
-  // gated by POSITIONS_SOURCE. Runs on the BACKFILL lane so it never starves the live snapshot path.
+  // On-chain DLMM positions engine — the single source (legs ingest + projection → positions table).
+  // Runs on the BACKFILL lane so it never starves the live snapshot path.
   const dlmmLegRepo = new DlmmLegRepository(db);
-  const dlmmIngest = new DlmmIngest(backfillConnection, dlmmLegRepo, logger);
+  const walletFlowRepo = new WalletFlowRepository(db);
+  const swapFlowRepo = new SwapFlowRepository(db);
+  // THE wallet transaction ingest: one signature pagination, one fetch per new transaction, decoded into
+  // DLMM legs + cash-flows + swap legs together. Replaces three independent ingests that each paged the
+  // same transactions — two of them through the Enhanced API at 100 credits per page, billed whether or
+  // not anything was new. An idle poll now costs a single credit.
+  const walletTxIngest = new WalletTxIngest(
+    backfillConnection,
+    dlmmLegRepo,
+    walletFlowRepo,
+    swapFlowRepo,
+    logger,
+  );
   const dlmmPositionPnl = new DlmmPositionPnl(
     dlmmLegRepo,
     new OnchainPoolMetaReader(backfillConnection),
@@ -170,15 +174,6 @@ export function compose(config: AppConfig): App {
   );
   // Free OHLCV candle source (no key) for the position price chart.
   const gecko = new GeckoTerminalGateway(logger);
-  // Persisted wallet cash-flow: ingested once at backfill + topped up on the cadence, so the wallet
-  // PnL curve is served by SQL instead of re-paging the chain per request.
-  const walletFlowRepo = new WalletFlowRepository(db);
-  const walletFlowIngest = new WalletFlowIngest(enhanced, walletFlowRepo, logger);
-  // Persisted decoded SWAP legs (realized-PnL FIFO inputs): seeded once at backfill + topped up on the
-  // SAME cadence as the wallet cash-flow, so a restart/close reads them from the DB instead of re-paging
-  // the whole Enhanced SWAP history (the incident this kills).
-  const swapFlowRepo = new SwapFlowRepository(db);
-  const swapFlowIngest = new SwapFlowIngest(enhanced, swapFlowRepo, logger);
   // Exact per-position SOL leg + net residual from the decoded DLMM event history (LPAgent-grade:
   // per-position amounts, not the wallet's aggregate native flow which over-counts multi-position opens).
   const positionFlow = async (address: string) => {
@@ -228,9 +223,7 @@ export function compose(config: AppConfig): App {
   );
 
   const engine = new Engine({
-    gateway,
     prices,
-    subscriber,
     stream,
     onchain,
     health,
@@ -241,10 +234,8 @@ export function compose(config: AppConfig): App {
     bus,
     logger,
     appConfig: config,
-    dlmmIngest,
+    walletTxIngest,
     positionSync,
-    walletFlowIngest,
-    swapFlowIngest,
     realizedPnl,
     walletRealized,
   });

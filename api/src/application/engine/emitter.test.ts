@@ -2,12 +2,12 @@ import type { Health } from '@binsight/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EventBus } from '@/application/event-bus';
 import { HealthMonitor } from '@/application/health-monitor';
-import type { RpcSubscriber } from '@/domain/ports';
+import type { ConnectionStatus } from '@/domain/ports';
 import { StateEmitter } from './emitter';
 import { makeRuntime, type WalletRuntime } from './runtime';
 
-/** Minimal RpcSubscriber stub — emitHealth only reads isConnected(). */
-function fakeSubscriber(connected: () => boolean): RpcSubscriber {
+/** Minimal WS-backbone stub — emitHealth only reads isConnected(). */
+function fakeSubscriber(connected: () => boolean): ConnectionStatus {
   return {
     isConnected: connected,
     start: () => {},
@@ -16,7 +16,7 @@ function fakeSubscriber(connected: () => boolean): RpcSubscriber {
     unwatch: () => {},
     onReconnect: () => {},
     onConnectionChange: () => {},
-  } as unknown as RpcSubscriber;
+  } as unknown as ConnectionStatus;
 }
 
 function setup(connected: () => boolean = () => true) {

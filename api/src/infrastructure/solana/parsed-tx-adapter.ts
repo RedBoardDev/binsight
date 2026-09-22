@@ -1,11 +1,11 @@
-import { DLMM_PROGRAM_ID } from '@binsight/shared';
+import { DLMM_PROGRAM_ID, SOL_MINT } from '@binsight/shared';
 import type {
   ParsedInstruction,
   ParsedTransactionWithMeta,
   PartiallyDecodedInstruction,
 } from '@solana/web3.js';
-import { classifyTradingByType } from '@/domain/cashflow';
 import type { SwapFlowRow, WalletFlowRow } from '@/domain/dlmm';
+import { hasDlmmPositionInstruction } from './dlmm/position-instructions';
 import { type EnhancedTx, parseSwapBuy, parseSwapSell, walletSolFlow } from './helius-enhanced';
 
 /**
@@ -46,8 +46,8 @@ const SPL_TRANSFER_CHECKED = 'transferChecked'; // carries mint + decimals in th
 // SPL-Token / ATA instruction variants that DECLARE a token account's owner. Harvesting these is what
 // resolves EPHEMERAL accounts — a wrapped-SOL account a router opens and closes inside the same tx
 // appears in NEITHER preTokenBalances nor postTokenBalances, so the balance-derived owner map misses it
-// entirely and every leg through it is attributed to the raw account address instead of the wallet.
-// That zeroes the WSOL leg of a routed swap (measured: 17/42 sampled txs).
+// entirely and every leg through it would be attributed to the raw account address instead of the
+// wallet. That silently zeroed the WSOL leg of every Jupiter swap (measured: 17/42 sampled txs).
 const SPL_INIT_ACCOUNT = new Set(['initializeAccount', 'initializeAccount2', 'initializeAccount3']);
 const SPL_CLOSE_ACCOUNT = 'closeAccount';
 const ATA_CREATE = new Set(['create', 'createIdempotent']);
@@ -109,7 +109,7 @@ function buildTokenAccountMaps(tx: ParsedTransactionWithMeta): {
   }
   // Second pass: harvest owner/mint DECLARED by the instructions themselves. An account created and
   // closed inside this tx never reaches the balances, so this is the only place its owner is stated.
-  // Balance-derived entries win (set first, and never overwritten below).
+  // Balance-derived entries win (set first, and we never overwrite them below).
   harvestDeclaredOwners(tx, ownerOf, mintDecOf, decimalsOfMint);
   return { ownerOf, mintDecOf, decimalsOfMint };
 }
@@ -360,6 +360,27 @@ function touchesDlmm(tx: EnhancedTx): boolean {
 }
 
 /**
+ * Is this tx TRADING activity (counts toward wallet PnL) rather than an external transfer (CEX in/out,
+ * funding)? Derived STRUCTURALLY from what actually moved, never from Helius's `type` taxonomy — which
+ * is a proprietary heuristic with no on-chain field and is therefore unavailable offline.
+ *
+ * Trading = the tx touched the DLMM program (deposit/withdraw/claim/close), OR a NON-SOL token entered
+ * or left the wallet (every swap does this; a plain SOL funding transfer never does). Measured against
+ * Helius's own labels this reproduces the SWAP + DLMM classification exactly on real swaps.
+ *
+ * Deliberate, immaterial divergence: sending an SPL token to an exchange counts as trading here while
+ * Helius calls it TRANSFER. Such a tx carries no SOL beyond its fee, so the PnL curve — which sums
+ * `solFlow` over trading txs — moves by ~0.000005 SOL. Erring this way is the safe direction: the
+ * opposite error drops a real swap's proceeds out of the curve entirely.
+ */
+function isTradingTx(tx: EnhancedTx, wallet: string): boolean {
+  if (touchesDlmm(tx)) return true;
+  return (tx.tokenTransfers ?? []).some(
+    (t) => t.mint !== SOL_MINT && (t.fromUserAccount === wallet || t.toUserAccount === wallet),
+  );
+}
+
+/**
  * Reshape a `getParsedTransaction` (jsonParsed) result into the {@link EnhancedTx} the Helius parsers
  * consume. Defensive against missing/null meta and a malformed/empty tx (returns empty arrays, never
  * throws). `type` is the {@link RECONSTRUCTED_TX_TYPE} sentinel — see the module JSDoc.
@@ -384,10 +405,20 @@ export function parsedTxToEnhancedTx(tx: ParsedTransactionWithMeta): EnhancedTx 
  * at most one parser, so a tx yields 0 or 1 rows; an unattributable tx (batched/multi-mint) yields none.
  */
 export function extractSwapRows(tx: ParsedTransactionWithMeta, wallet: string): SwapFlowRow[] {
-  // A failed tx moved nothing but its fee, yet its instructions are still listed — reducing it would
+  // A failed tx moved nothing but its fee; its instructions are still listed, so reducing it would
   // fabricate legs. Reject here rather than depend on every caller pre-filtering.
   if (tx?.meta?.err != null) return [];
   const enhanced = parsedTxToEnhancedTx(tx);
+  // MARKET swaps only. The Enhanced path gets this for free from the server-side `?type=SWAP` filter;
+  // the on-chain equivalent is "this tx does not act on one of the wallet's own DLMM positions". A
+  // withdraw moves POSITION legs — already captured in dlmm_legs — and pairing that token inflow with
+  // the rent/fee outflow makes parseSwapBuy fabricate a buy at a near-zero cost basis (measured:
+  // 106 697 tokens "bought" for 0.000028 SOL), which would overstate realized profit on the later sale.
+  //
+  // The test is the instruction KIND, never mere program presence: an aggregator routing a trade
+  // through a Meteora pool emits a DLMM `swap` and IS a real market swap (measured: a 0.97 SOL sale
+  // that a presence-based guard silently dropped).
+  if (hasDlmmPositionInstruction(tx)) return [];
   const rows: SwapFlowRow[] = [];
   const sell = parseSwapSell(enhanced, wallet);
   if (sell)
@@ -420,30 +451,29 @@ export function extractSwapRows(tx: ParsedTransactionWithMeta, wallet: string): 
  * no metadata (nothing reliable to reduce) or no signature (nothing to key a row on); for any real tx —
  * including a plain external transfer — it emits a row, exactly as pageFlows does.
  *
- * KNOWN GAP: classifyTradingByType's `type === 'SWAP'` branch cannot fire here because Helius's `type` is
- * not reconstructable offline (see module JSDoc); the trading flag is driven PURELY by the DLMM-touch
- * signal. For DLMM lifecycle txs (the live ingestion target) this is exact; a plain non-DLMM swap that
- * Helius would label 'SWAP' (isTrading=true) is classified isTrading=false here. The orchestrator must
- * cover SWAP classification separately when wiring this onto the wallet-flow curve.
+ * The trading flag is STRUCTURAL, not taxonomic — see {@link isTradingTx}. Helius's `type` is not
+ * reconstructable offline, so relying on it here would misfile every non-DLMM swap as an external
+ * transfer; the structural signal is derived from the token movements themselves instead.
  */
 export function extractFlowRow(
   tx: ParsedTransactionWithMeta,
   wallet: string,
 ): WalletFlowRow | null {
   if (tx?.meta == null) return null; // no metadata → nothing reliable to reduce into a flow row
-  // A FAILED tx changed no state beyond the fee. Its instructions are still present, so reducing it
-  // would synthesise transfers that never happened.
+  // A FAILED tx changed no state beyond the fee. Its `message.instructions` are still present, so
+  // reducing it would synthesise transfers that never happened — reject it outright rather than trust
+  // every caller to pre-filter (the leg ingest does; nothing guarantees the next caller will).
   if (tx.meta.err != null) return null;
   const enhanced = parsedTxToEnhancedTx(tx);
   if (!enhanced.signature) return null;
   // A missing blockTime would land the row at epoch 0: `wallet_flow_daily` would gain a 1970 bucket and
-  // the curve would back-fill ~20 000 empty days from it. Refuse rather than corrupt the series.
+  // the PnL curve would back-fill ~20 000 empty days from it. Refuse rather than corrupt the series.
   if (!enhanced.timestamp) return null;
   return {
     signature: enhanced.signature,
     timestamp: enhanced.timestamp,
     type: enhanced.type,
     solFlow: walletSolFlow(enhanced, wallet),
-    isTrading: classifyTradingByType(enhanced.type, touchesDlmm(enhanced)),
+    isTrading: isTradingTx(enhanced, wallet),
   };
 }

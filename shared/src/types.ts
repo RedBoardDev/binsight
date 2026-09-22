@@ -252,7 +252,7 @@ export const SourceStatusSchema = z.enum(['ok', 'lagging', 'down']);
 export type SourceStatus = z.infer<typeof SourceStatusSchema>;
 
 export const SourceHealthSchema = z.object({
-  /** rpc | meteora | jupiter | ws */
+  /** rpc | jupiter | ws */
   name: z.string(),
   status: SourceStatusSchema,
   lastOkAt: z.number().int().nullable(),
@@ -266,6 +266,10 @@ export type SourceHealth = z.infer<typeof SourceHealthSchema>;
 export const HealthSchema = z.object({
   ok: z.boolean(),
   wsConnected: z.boolean(),
+  /** @deprecated Always `true`. The legacy Meteora datapi source this reported on has been removed, so
+   *  the field no longer has a source. It is KEPT ON THE WIRE because already-deployed native clients
+   *  (BinsightKit decodes it as a NON-optional `Bool`) would fail to decode the whole health payload
+   *  without it. Remove only once those clients are retired. */
   meteoraOk: z.boolean(),
   effectiveRps: z.number(),
   /** latest Solana slot the engine has observed (for indexer-lag display). */
@@ -331,6 +335,9 @@ export type NotifRule = z.infer<typeof NotifRuleSchema>;
  * ──────────────────────────────────────────────────────────────────────── */
 
 export const RuntimeSettingsSchema = z.object({
+  /** @deprecated Inert poll-budget knobs kept on the wire: the Meteora poller they throttled is gone,
+   *  but they are still persisted/served to the Settings page and feed the Health `pollIntervalMs`
+   *  field that deployed native clients decode. */
   meteoraTargetRps: z.number().positive(),
   pollMinMs: z.number().int().positive(),
   pollMaxMs: z.number().int().positive(),
