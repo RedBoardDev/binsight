@@ -14,6 +14,16 @@ import { coverageIndices } from './valuation';
 
 const ui = (raw: bigint, decimals: number): number => Number(raw) / 10 ** decimals;
 
+/** The raw accounts one position's bin distribution is decoded from — exactly what the wallet snapshot's
+ *  pinned pass already reads, so a fresh snapshot can serve them without another RPC. */
+export interface PositionBinsSource {
+  position: Uint8Array;
+  lbPair: Uint8Array;
+  /** bin-array index → its account data (null when that array was absent). */
+  binArrays: Map<number, Uint8Array | null>;
+  slot: number;
+}
+
 /**
  * Per-bin liquidity distribution of one OPEN position, decoded from on-chain accounts at a single slot
  * (the data behind the Price-Bin histogram). Returns null for a closed/missing position.
@@ -33,12 +43,26 @@ export async function fetchPositionBins(
     'confirmed',
   );
   if (!value[0] || !value[1]) return null;
-  const pos = decodePosition(value[0].data);
-  const lbp = decodeLbPair(value[1].data);
-  const binArray = new Map<number, Uint8Array | null>();
+  const binArrays = new Map<number, Uint8Array | null>();
   indices.forEach((idx, n) => {
-    binArray.set(idx, value[2 + n]?.data ?? null);
+    binArrays.set(idx, value[2 + n]?.data ?? null);
   });
+  return binsFromAccounts(
+    { position: value[0].data, lbPair: value[1].data, binArrays, slot: context.slot },
+    decimalsOf,
+  );
+}
+
+/** Decode a position's bin distribution from its already-read accounts. Pure apart from `decimalsOf`,
+ *  which is cached — so serving from a snapshot costs no RPC for any mint already seen. */
+export async function binsFromAccounts(
+  src: PositionBinsSource,
+  decimalsOf: (mint: string) => Promise<number>,
+): Promise<PositionBins> {
+  const pos = decodePosition(src.position);
+  const lbp = decodeLbPair(src.lbPair);
+  const binArray = src.binArrays;
+  const context = { slot: src.slot };
 
   const decX = await decimalsOf(lbp.tokenXMint.toBase58());
   const decY = await decimalsOf(lbp.tokenYMint.toBase58());

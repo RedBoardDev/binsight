@@ -31,7 +31,7 @@ import {
   POSITION_V2_DISC,
   POSITION_V2_OWNER_OFFSET,
 } from './layout';
-import { fetchPositionBins } from './position-detail';
+import { binsFromAccounts, fetchPositionBins, type PositionBinsSource } from './position-detail';
 import { fetchPositionHistory } from './position-history';
 import { coverageIndices, valuePosition } from './valuation';
 
@@ -56,6 +56,9 @@ const MIN_CONTEXT_RETRIES = 3;
 const IDLE_TTL_MS = 60_000;
 const HISTORY_TTL_MS = 60_000; // open positions may still accrue events; closed are immutable
 const HISTORY_MAX = 5000; // bound the cache: closed entries have no TTL, so cap total + FIFO-evict
+// How old a snapshot's accounts may be and still serve a position's bin histogram. The snapshot refreshes
+// an open position every 10 s; this covers a skipped or slow tick without ever serving a stale chart.
+const BINS_SOURCE_MAX_AGE_MS = 30_000;
 
 /** base58 encode of a byte array (for getProgramAccounts memcmp filters). */
 const minimalBase58 = (b: Uint8Array): string => utils.bytes.bs58.encode(b);
@@ -84,6 +87,8 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
   // every other call — so the rate-limiter + CreditMeter still meter it (method 'getProgramAccountsV2' →
   // 1 credit). Injectable so the gateway is unit-tested with a spy (no network).
   private readonly rawRpc: RawRpc;
+  /** position → the accounts its last snapshot valued it from, with when. See positionBins. */
+  private readonly binsSource = new Map<string, PositionBinsSource & { at: number }>();
   /** owner → last idle-token read. See {@link IDLE_TTL_MS}. */
   private readonly idleCache = new Map<
     string,
@@ -299,8 +304,21 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
     return new Map(mints.map((m) => [m, this.decimalsCache.get(m) ?? 0]));
   }
 
-  /** Per-bin liquidity distribution of one open position (for the Price-Bin histogram). */
+  /**
+   * Per-bin liquidity distribution of one open position (for the Price-Bin histogram).
+   *
+   * Served from the last wallet snapshot when it is recent: that pinned pass already read this exact
+   * position, its pool and every bin array it covers. Re-reading them per request was the single largest
+   * cost with the macOS panel open — it polls each open card's bins every ~100 s, measured at 134 reads
+   * in 10 minutes across 23 positions, ~25 credits/min — for data the 10 s snapshot had just fetched.
+   * A snapshot-sourced histogram is exactly as fresh as every other figure on screen, which comes from
+   * the same snapshot. A position the snapshot does not cover (or a stale one) still reads on demand.
+   */
   positionBins(positionAddress: string): Promise<PositionBins | null> {
+    const src = this.binsSource.get(positionAddress);
+    if (src && Date.now() - src.at < BINS_SOURCE_MAX_AGE_MS) {
+      return binsFromAccounts(src, (m) => this.decimalsOf(m));
+    }
     return fetchPositionBins(this.conn, (m) => this.decimalsOf(m), positionAddress);
   }
 
@@ -349,10 +367,19 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
     const walletInfo = infos[nPos + nLb + nBa];
 
     const lbByKey = new Map<string, ReturnType<typeof decodeLbPair>>();
+    const lbRawByKey = new Map<string, Uint8Array>();
     lbPairKeys.forEach((k, i) => {
       const info = lbInfos[i];
-      if (info) lbByKey.set(k.toBase58(), decodeLbPair(info.data));
+      if (!info) return;
+      lbByKey.set(k.toBase58(), decodeLbPair(info.data));
+      lbRawByKey.set(k.toBase58(), info.data);
     });
+    // Positions that left the snapshot (closed, or another wallet's that stopped refreshing) age out here,
+    // so the per-position cache stays bounded by what is currently open.
+    const now = Date.now();
+    for (const [addr, src] of this.binsSource) {
+      if (now - src.at >= BINS_SOURCE_MAX_AGE_MS) this.binsSource.delete(addr);
+    }
     const baByMeta = new Map<string, Uint8Array>();
     binArrayMeta.forEach((m, i) => {
       const info = baInfos[i];
@@ -390,6 +417,18 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
       }
       const v = valuePosition(pos, baMap);
       if (!v.complete) complete = false; // a share>0 bin's bin-array was absent → amounts under-counted
+      // Keep the exact accounts this position was just valued from, so the bin histogram is served from
+      // memory instead of re-reading them — see positionBins.
+      const lbRaw = lbRawByKey.get(lbPair.toBase58());
+      if (lbRaw) {
+        this.binsSource.set(pk.toBase58(), {
+          position: info.data,
+          lbPair: lbRaw,
+          binArrays: baMap,
+          slot,
+          at: now,
+        });
+      }
       const dX = this.decimalsCache.get(lb.tokenXMint.toBase58());
       const dY = this.decimalsCache.get(lb.tokenYMint.toBase58());
       // R23: a NULL decimals (transient RPC miss — deliberately not cached) makes ui(amount,0) =

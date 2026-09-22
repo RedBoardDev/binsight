@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { SnapshotPlan } from '@/domain/dlmm';
 import type { RawRpc } from './gpa-v2';
 import { OnchainDlmmGateway } from './onchain-gateway';
+import { fetchPositionBins } from './position-detail';
 
 const OWNER = 'So11111111111111111111111111111111111111112';
 const TOKEN_PROGRAM = new PublicKey(TOKEN_PROGRAM_ID);
@@ -244,5 +245,129 @@ describe('OnchainDlmmGateway — decimals cache', () => {
     expect(calls).toBe(3); // 250 mints / 100 per chunk = 3 calls, NOT 250
     expect(out.size).toBe(250);
     expect(out.get(mints[0]!)).toBe(6);
+  });
+});
+
+describe('OnchainDlmmGateway — bin histogram served from the snapshot', () => {
+  // Minimal but VALID accounts, built from the layout offsets the decoders read.
+  const POSITION_DISC = [117, 176, 212, 199, 245, 180, 133, 182];
+  const LBPAIR_DISC = [33, 11, 49, 98, 181, 101, 177, 13];
+  const u128le = (buf: Buffer, off: number, v: bigint) => {
+    buf.writeBigUInt64LE(v & 0xffffffffffffffffn, off);
+    buf.writeBigUInt64LE(v >> 64n, off + 8);
+  };
+  const lbPairKey = PublicKey.unique();
+  const posKey = PublicKey.unique();
+  const mintX = PublicKey.unique();
+  const mintY = PublicKey.unique();
+
+  const position = Buffer.alloc(8120);
+  Buffer.from(POSITION_DISC).copy(position, 0);
+  lbPairKey.toBuffer().copy(position, 8);
+  new PublicKey(OWNER).toBuffer().copy(position, 40);
+  u128le(position, 72 + 16 * 0, 100n); // bin 0 share
+  u128le(position, 72 + 16 * 1, 50n); // bin 1 share
+  position.writeInt32LE(0, 7912); // lowerBinId
+  position.writeInt32LE(2, 7916); // upperBinId
+
+  const lbPair = Buffer.alloc(900);
+  Buffer.from(LBPAIR_DISC).copy(lbPair, 0);
+  lbPair.writeInt32LE(1, 76); // activeId
+  lbPair.writeUInt16LE(10, 80); // binStep
+  mintX.toBuffer().copy(lbPair, 88);
+  mintY.toBuffer().copy(lbPair, 120);
+
+  const binArray = Buffer.alloc(56 + 144 * 70);
+  const bin = (sub: number, x: bigint, y: bigint, supply: bigint) => {
+    const o = 56 + 144 * sub;
+    binArray.writeBigUInt64LE(x, o);
+    binArray.writeBigUInt64LE(y, o + 8);
+    u128le(binArray, o + 32, supply);
+  };
+  bin(0, 1000n, 2000n, 200n);
+  bin(1, 400n, 0n, 100n);
+
+  const mint = (decimals: number) => {
+    const d = Buffer.alloc(82);
+    d[44] = decimals;
+    return { data: d, owner: TOKEN_PROGRAM, executable: false, lamports: 0, rentEpoch: 0 };
+  };
+  const acc = (data: Buffer) => ({
+    data,
+    owner: TOKEN_PROGRAM,
+    executable: false,
+    lamports: 1,
+    rentEpoch: 0,
+  });
+
+  it('makes NO RPC call once a snapshot has read the position, and matches the on-demand read', async () => {
+    // WHY: the macOS panel polls every open card's bins (~every 100 s). Each poll re-read the position,
+    // its pool and its bin arrays — measured at 134 reads in 10 minutes over 23 positions, the largest
+    // cost with the panel open — although the 10 s snapshot had just read exactly those accounts.
+    let rpc = 0;
+    const conn = {
+      async getMultipleAccountsInfoAndContext(keys: PublicKey[]) {
+        rpc++;
+        return {
+          context: { slot: 500 },
+          value: keys.map((k) =>
+            k.equals(posKey)
+              ? acc(position)
+              : k.equals(lbPairKey)
+                ? acc(lbPair)
+                : k.toBase58() === OWNER
+                  ? null
+                  : acc(binArray),
+          ),
+        };
+      },
+      async getMultipleAccountsInfo(keys: PublicKey[]) {
+        rpc++;
+        return keys.map((k) => (k.equals(mintX) ? mint(6) : mint(9)));
+      },
+      async getAccountInfo() {
+        rpc++;
+        return acc(position);
+      },
+    } as unknown as Connection;
+    const g = new OnchainDlmmGateway(conn, fakeRawRpc());
+    const binArrayKey = PublicKey.unique();
+    const plan: SnapshotPlan = {
+      positionKeys: [posKey],
+      lbPairByPos: new Map([[posKey.toBase58(), lbPairKey]]),
+      coverageByPos: new Map([[posKey.toBase58(), [0]]]),
+      lbPairKeys: [lbPairKey],
+      binArrayKeys: [binArrayKey],
+      binArrayMeta: [{ lbPair: lbPairKey.toBase58(), index: 0 }],
+    };
+
+    await g.snapshotWallet(OWNER, plan);
+    const before = rpc;
+    const served = await g.positionBins(posKey.toBase58());
+    expect(rpc).toBe(before); // served from memory — not one read
+
+    // …and it is the same histogram the on-demand path decodes from the same accounts.
+    const fetched = await fetchPositionBins(conn, (m) => g.decimalsOf(m), posKey.toBase58());
+    expect(served).toEqual(fetched);
+    expect(served?.activeBinId).toBe(1);
+    expect(served?.bins.map((b) => b.binId)).toEqual([0, 1, 2]);
+    expect(served?.bins[0]?.amountX).toBeCloseTo(500 / 1e6, 12); // half of bin 0's X
+    expect(served?.bins[1]?.amountX).toBeCloseTo(200 / 1e6, 12); // half of bin 1's X
+  });
+
+  it('falls back to an on-demand read for a position no snapshot covers', async () => {
+    let reads = 0;
+    const conn = {
+      async getAccountInfo() {
+        reads++;
+        return null; // not found → null histogram, but it DID ask
+      },
+      async getMultipleAccountsInfo(keys: unknown[]) {
+        return keys.map(() => null);
+      },
+    } as unknown as Connection;
+    const g = new OnchainDlmmGateway(conn, fakeRawRpc());
+    expect(await g.positionBins(PublicKey.unique().toBase58())).toBeNull();
+    expect(reads).toBe(1);
   });
 });
