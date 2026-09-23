@@ -41,8 +41,20 @@ export async function forwardAuthSession(
     return NextResponse.json({ error: fallbackError }, { status: 502 });
   }
   if (!res.ok) {
-    const data = (await res.json().catch(() => ({}))) as { error?: string };
-    return NextResponse.json({ error: data.error ?? fallbackError }, { status: res.status });
+    const data = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      signatureRequired?: boolean;
+      notWhitelisted?: boolean;
+    };
+    // The flags steer the sign-up UI (sign with the wallet / not approved): pass them through.
+    return NextResponse.json(
+      {
+        error: data.error ?? fallbackError,
+        ...(data.signatureRequired ? { signatureRequired: true } : {}),
+        ...(data.notWhitelisted ? { notWhitelisted: true } : {}),
+      },
+      { status: res.status },
+    );
   }
   const parsed = (await res.json().catch(() => null)) as {
     token?: string;

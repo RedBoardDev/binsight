@@ -61,13 +61,14 @@ export const authApi = {
     return postAuth('/api/auth/login', { address, password });
   },
 
-  // In open-access mode the backend ignores signature/nonce, so the simplified signup omits them.
+  // In open access the simplified signup omits signature/nonce — except for the owner address, which
+  // the backend answers with `signatureRequired`.
   register(p: {
     address: string;
     password: string;
     signature?: string;
     nonce?: string;
-  }): Promise<{ ok: boolean; error?: string }> {
+  }): Promise<{ ok: boolean; error?: string; signatureRequired?: boolean }> {
     return postAuth('/api/auth/register', p);
   },
 
