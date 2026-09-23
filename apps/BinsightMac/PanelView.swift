@@ -386,7 +386,7 @@ struct PanelView: View {
     }
 
     private var connectionDot: some View {
-        let degraded = store.health.map { !$0.wsConnected || !$0.meteoraOk } ?? false
+        let degraded = store.health?.isDegraded ?? false
         let color = connectionColor(store.connection, degraded: degraded)
         let label: String = switch store.connection {
         case .live: degraded ? "degraded" : "live"

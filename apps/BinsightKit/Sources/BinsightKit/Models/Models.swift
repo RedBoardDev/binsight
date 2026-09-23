@@ -165,9 +165,7 @@ public struct Stats: Codable, Sendable {
     public let totalFeesSol: Double
 }
 
-/// Engine health (subset). `wsConnected`/`meteoraOk` reflect the SERVER's data freshness —
-/// distinct from the client's own socket, so the UI can warn when the engine is blind.
-/// One external dependency's live status (rpc / meteora / jupiter / ws).
+/// One external dependency's live status, as the engine reports it (rpc / jupiter / ws).
 public struct SourceHealth: Codable, Sendable, Identifiable, Equatable {
     public var id: String { name }
     public let name: String
@@ -178,13 +176,24 @@ public struct SourceHealth: Codable, Sendable, Identifiable, Equatable {
     public let detail: String?
 }
 
+/// Engine health (subset). Reflects the SERVER's data freshness — distinct from the client's own
+/// socket, so the UI can warn when the engine is blind. `ok` goes false as soon as a source is down.
 public struct Health: Codable, Sendable, Equatable {
     public let ok: Bool
     public let wsConnected: Bool
-    public let meteoraOk: Bool
+    /// Deprecated, never read: the server hard-codes it to `true` (its source is gone) and will drop
+    /// it. Optional so a payload without it still decodes — a non-optional field here would fail the
+    /// whole health frame the day it disappears.
+    public let meteoraOk: Bool?
     // Added by the backend's per-source health system; optional so older payloads still decode.
     public let chainTipSlot: Int?
     public let sources: [SourceHealth]?
+
+    /// Up but not fully healthy: a source is down (`ok`), the chain feed is disconnected, or a source
+    /// is lagging. The same three signals the web's status dot reads.
+    public var isDegraded: Bool {
+        !ok || !wsConnected || (sources ?? []).contains { $0.status != "ok" }
+    }
 }
 
 public struct LiveEvent: Codable, Sendable {
