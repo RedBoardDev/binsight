@@ -27,7 +27,8 @@ export const InviteWalletModal = ({ state }: InviteWalletModalProps) => {
   const [note, setNote] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  const addressOk = isSolanaAddress(address);
+  const trimmed = address.trim();
+  const addressOk = isSolanaAddress(trimmed);
 
   const close = () => {
     setAddress('');
@@ -41,7 +42,7 @@ export const InviteWalletModal = ({ state }: InviteWalletModalProps) => {
     if (!addressOk || invite.isPending) return;
     setError(null);
     try {
-      const ok = await invite.mutateAsync({ address: address.trim(), note: note.trim() });
+      const ok = await invite.mutateAsync({ address: trimmed, note: note.trim() });
       if (ok) close();
       else setError('Could not invite — check the address.');
     } catch {
