@@ -4,11 +4,16 @@ import type { NextRequest } from 'next/server';
 
 type Context = { params: Promise<{ path: string[] }> };
 
+/** Upstream response headers passed through besides content-type: the CSV export's filename and the
+ *  share card's caching. An allowlist, not a copy — hop-by-hop and encoding headers must not leak. */
+const FORWARDED_RESPONSE_HEADERS = ['content-disposition', 'cache-control'];
+
 /**
  * BFF proxy: forwards every `/api/<path>` call to the backend `<API_URL>/<path>`,
  * attaching the session JWT (httpOnly cookie) as a Bearer token. The browser never
- * sees the token. Auth routes (`/api/auth/*`) are handled by their own explicit
- * handlers and never reach this catch-all.
+ * sees the token. The cookie-managing auth routes (login, logout, register, …) have
+ * their own explicit handlers; any other `/api/auth/*` read (e.g. `auth/me`) lands
+ * here like every other call.
  */
 async function proxy(request: NextRequest, { params }: Context): Promise<Response> {
   const cookieStore = await cookies();
@@ -52,14 +57,16 @@ async function proxy(request: NextRequest, { params }: Context): Promise<Respons
   }
   // A rejected session token is dead — clear the cookie so the next navigation lands on /login.
   if (upstream.status === 401) cookieStore.delete(SESSION_COOKIE);
-  return new Response(upstream.body, {
-    status: upstream.status,
-    headers: { 'content-type': upstream.headers.get('content-type') ?? 'application/json' },
+  const responseHeaders = new Headers({
+    'content-type': upstream.headers.get('content-type') ?? 'application/json',
   });
+  for (const name of FORWARDED_RESPONSE_HEADERS) {
+    const value = upstream.headers.get(name);
+    if (value !== null) responseHeaders.set(name, value);
+  }
+  return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
 }
 
 export const GET = proxy;
 export const POST = proxy;
-export const PUT = proxy;
-export const PATCH = proxy;
 export const DELETE = proxy;
