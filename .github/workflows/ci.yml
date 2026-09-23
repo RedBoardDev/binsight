@@ -59,6 +59,7 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/setup
+      # Runs the `test` script of every affected workspace that defines one (api + web vitest, …).
       - run: yarn turbo run test --affected
 
   build:
@@ -103,11 +104,31 @@ jobs:
       # PGlite + the runtime migrator, so this job is the only check of the actual prod migration path.
       - run: yarn workspace @binsight/api db:migrate
 
+  # Build the production images exactly as deploy.sh does (same Dockerfiles, same context), without
+  # pushing anywhere — so a packaging mistake (a file missing from a COPY, a .dockerignore that drops
+  # something the build needs, a broken standalone output) fails here instead of on the VPS.
+  docker:
+    name: Docker image (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [api, web]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Build ${{ matrix.image }}/Dockerfile
+        env:
+          DOCKER_BUILDKIT: 1
+        run: docker build --file ${{ matrix.image }}/Dockerfile --tag binsight-${{ matrix.image }}:ci .
+
   ci-status:
     name: CI Status
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [check, typecheck, test, build, migrations]
+    needs: [check, typecheck, test, build, migrations, docker]
     if: always()
     steps:
       - name: Verify all jobs passed
@@ -116,7 +137,8 @@ jobs:
                 "${{ needs.typecheck.result }}" != "success" || \
                 "${{ needs.test.result }}" != "success" || \
                 "${{ needs.build.result }}" != "success" || \
-                "${{ needs.migrations.result }}" != "success" ]]; then
+                "${{ needs.migrations.result }}" != "success" || \
+                "${{ needs.docker.result }}" != "success" ]]; then
             echo "One or more CI jobs failed"
             exit 1
           fi

@@ -16,8 +16,8 @@ apps/
 
 `BinsightKit` holds the reusable core (wire types, WS/REST clients, store, notifier, formatters,
 shared SwiftUI components); `BinsightMac` owns only the menu-bar presentation shell. The kit is
-**macOS-only** (the iOS client was retired — the PWA covers mobile), so it freely uses AppKit
-(`NSWorkspace`, `NSColor`) where convenient; there is no longer a "no-AppKit / portable" constraint.
+**macOS-only** (the web PWA covers mobile), so it freely uses AppKit (`NSWorkspace`, `NSColor`) where
+convenient; there is no "no-AppKit / portable" constraint.
 
 ## Install (from the repo root)
 
@@ -28,10 +28,14 @@ make install-mac    # build + install to /Applications, then launch
 Helpers: `make xcode` (open the project), `make apps-gen` (regenerate `Binsight.xcodeproj`),
 `make apps-test` (run the BinsightKit unit tests). First run installs XcodeGen via Homebrew.
 
-### Zero config: API URL + token baked from `.env`
+### Zero config: the API URL is baked from `.env`
 
-`make` reads the repo `.env` at build time and bakes the defaults (URL → `localhost`; token). You can
-override anything in the app's **Settings** (persisted to Keychain/UserDefaults).
+`make install-mac` reads `CLIENT_API_URL` from the repo `.env` at build time (default
+`http://localhost:8787`) and passes it to `xcodebuild` as the `BINSIGHT_API_URL` build setting, which
+lands in the app's Info.plist as `BinsightApiURL`. That URL is the only thing baked in. Auth is your
+wallet **address + password** (the account you registered on the web), entered in the app's
+**Settings**: the credentials go to the Keychain, and the URL can be overridden there too
+(UserDefaults).
 
 ### Signing (for notifications)
 

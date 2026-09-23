@@ -17,9 +17,18 @@ build-shared: ## Build the shared types package (required before api typecheck)
 	yarn workspace @binsight/shared build
 
 ## ─── Dev ─────────────────────────────────────────────────────────────────
+.PHONY: db-up
+# Depends on setup: compose parses the api service's env_file (.env) even when starting postgres alone.
+db-up: setup ## Start only the dev Postgres (docker-compose.yml, host port 5435) — needed by dev-api
+	docker compose up -d --wait postgres
+
 .PHONY: dev-api
-dev-api: build-shared ## Run the API in watch mode
+dev-api: build-shared ## Run the API in watch mode on :8787 (needs Postgres: make db-up)
 	yarn workspace @binsight/api dev
+
+.PHONY: dev-web
+dev-web: build-shared ## Run the web app (Next.js dev server) on :3000 (needs the API: make dev-api)
+	yarn workspace @binsight/web dev
 
 ## ─── Quality ─────────────────────────────────────────────────────────────
 .PHONY: typecheck
@@ -54,27 +63,28 @@ build: ## Build all workspaces
 start: ## Start the built API
 	yarn workspace @binsight/api start
 
-## ─── Docker ──────────────────────────────────────────────────────────────
+## ─── Docker (dev stack: docker-compose.yml, project "binsight-dev") ─────
+# Production is docker-compose.prod.yml via deploy.sh — see deploy/README.md. These never touch it.
 .PHONY: up
-up: ## Start the stack with Docker Compose
+up: ## Start the dev stack (Postgres + API) with Docker Compose
 	docker compose up -d --build
 
 .PHONY: down
-down: ## Stop the Docker stack
+down: ## Stop the dev stack (keeps its data volume)
 	docker compose down
 
 .PHONY: logs
-logs: ## Tail Docker logs
+logs: ## Tail the dev stack's logs
 	docker compose logs -f
 
-## ─── Swift clients (Binsight: macOS menu-bar + iOS app) ─────────────────
+## ─── macOS menu-bar app (Binsight) ──────────────────────────────────────
 APPS := apps
 ENV_FILE := .env
 # Pull defaults from the repo .env at build time → baked into the app (overridable in Settings).
 envval = $(shell [ -f $(ENV_FILE) ] && sed -n 's/^$(1)=//p' $(ENV_FILE) | tail -1 | tr -d '"')
-MLPM_URL := $(or $(call envval,CLIENT_API_URL),http://localhost:8787)
+BINSIGHT_URL := $(or $(call envval,CLIENT_API_URL),http://localhost:8787)
 # Only the API URL is baked into the app; auth is address+password→JWT, entered in the app's Settings.
-MLPM_BAKE := MLPM_API_URL="$(MLPM_URL)"
+BINSIGHT_BAKE := BINSIGHT_API_URL="$(BINSIGHT_URL)"
 # Sign with the first code-signing identity in your keychain (a FREE Apple ID's "Apple
 # Development" cert is enough — no $99 needed). A real signature is required for macOS
 # notifications; the app is non-sandboxed so no provisioning profile is needed. Ad-hoc fallback.
@@ -96,16 +106,16 @@ xcode: apps-gen ## Open the Binsight project in Xcode
 	open $(APPS)/Binsight.xcodeproj
 
 .PHONY: notify-test
-notify-test: ## Fire a test notif. Needs MLPM_ADDRESS + MLPM_PASSWORD (a registered account). KIND=oor_enter to override.
-	@test -n "$(MLPM_ADDRESS)" && test -n "$(MLPM_PASSWORD)" || { \
-		echo "Set MLPM_ADDRESS and MLPM_PASSWORD to a registered account, e.g.:"; \
-		echo "  make notify-test MLPM_ADDRESS=<wallet> MLPM_PASSWORD=<password>"; exit 1; }
+notify-test: ## Fire a test notif. Needs BINSIGHT_ADDRESS + BINSIGHT_PASSWORD (a registered account). KIND=oor_enter to override.
+	@test -n "$(BINSIGHT_ADDRESS)" && test -n "$(BINSIGHT_PASSWORD)" || { \
+		echo "Set BINSIGHT_ADDRESS and BINSIGHT_PASSWORD to a registered account, e.g.:"; \
+		echo "  make notify-test BINSIGHT_ADDRESS=<wallet> BINSIGHT_PASSWORD=<password>"; exit 1; }
 	@TOKEN=$$(curl -s -X POST -H "Content-Type: application/json" \
-		-d '{"address":"$(MLPM_ADDRESS)","password":"$(MLPM_PASSWORD)"}' "$(MLPM_URL)/auth/login" \
+		-d '{"address":"$(BINSIGHT_ADDRESS)","password":"$(BINSIGHT_PASSWORD)"}' "$(BINSIGHT_URL)/auth/login" \
 		| sed -n 's/.*"token":"\([^"]*\)".*/\1/p'); \
-	test -n "$$TOKEN" || { echo "Login failed — check MLPM_ADDRESS / MLPM_PASSWORD and that the API is running."; exit 1; }; \
+	test -n "$$TOKEN" || { echo "Login failed — check BINSIGHT_ADDRESS / BINSIGHT_PASSWORD and that the API is running."; exit 1; }; \
 	curl -s -X POST -H "Authorization: Bearer $$TOKEN" \
-		"$(MLPM_URL)/debug/notify?kind=$(or $(KIND),position_close)"; echo
+		"$(BINSIGHT_URL)/debug/notify?kind=$(or $(KIND),position_close)"; echo
 
 .PHONY: apps-test
 apps-test: ## Run the shared Swift package tests (BinsightKit)
@@ -114,12 +124,12 @@ apps-test: ## Run the shared Swift package tests (BinsightKit)
 .PHONY: install-mac
 install-mac: apps-gen ## macOS: build + install to /Applications, then launch (auto-signs with your dev cert if present — needed for notifs)
 	cd $(APPS) && xcodebuild -scheme BinsightMac -configuration Release \
-		-derivedDataPath $(BUILD_DIR)/mac $(MAC_SIGN) $(MLPM_BAKE) build
+		-derivedDataPath $(BUILD_DIR)/mac $(MAC_SIGN) $(BINSIGHT_BAKE) build
 	@killall Binsight 2>/dev/null && sleep 1 || true
 	rm -rf /Applications/Binsight.app
 	cp -R $(BUILD_DIR)/mac/Build/Products/Release/Binsight.app /Applications/
 	open /Applications/Binsight.app
-	@echo "✓ Binsight is in the menu bar (API URL + token baked from .env)."
+	@echo "✓ Binsight is in the menu bar (API URL baked from .env — sign in from its Settings)."
 
 ## ─── Housekeeping ────────────────────────────────────────────────────────
 .PHONY: clean

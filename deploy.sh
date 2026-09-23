@@ -3,7 +3,11 @@
 #
 # Durable data lives in the named `pgdata` Docker volume and is PRESERVED across rebuilds, restarts
 # and reboots. This script never tears the stack down, so no data is lost. NEVER run the compose
-# `down -v` flag (or `docker volume rm meteora_pgdata`) — that deletes the database.
+# `down -v` flag (or `docker volume rm binsight_pgdata`) — that deletes the database.
+#
+# POSTGRES_PASSWORD must be set in the host `.env` next to docker-compose.prod.yml (see
+# deploy/README.md): without it compose refuses to parse, so the deploy stops before anything is
+# rebuilt or replaced.
 set -euo pipefail
 cd "$(dirname "$0")"
 
