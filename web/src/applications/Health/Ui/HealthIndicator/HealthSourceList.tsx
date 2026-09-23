@@ -35,7 +35,7 @@ export const HealthSourceList = ({ health }: HealthSourceListProps) => {
         </div>
       ))}
       <div className="tabular mt-1 border-separator border-t px-2 pt-2 text-faint text-xs">
-        {health.effectiveRps.toFixed(1)} rps · up {Math.floor(health.uptimeSeconds / 3600)}h
+        up {Math.floor(health.uptimeSeconds / 3600)}h
       </div>
     </div>
   );

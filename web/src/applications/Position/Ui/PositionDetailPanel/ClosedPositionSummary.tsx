@@ -42,7 +42,6 @@ export const ClosedPositionSummary = ({ position }: ClosedPositionSummaryProps) 
   const deposit = position.depositQuote ?? position.depositSol;
   const withdraw = position.withdrawQuote ?? position.withdrawSol;
   const apr = feeApr(fees, deposit, position.durationSeconds ?? 0);
-  const hasResidual = (position.residualAmount ?? 0) > 0 && !!position.residualMint;
 
   return (
     <section className="flex flex-col gap-3">
@@ -81,22 +80,11 @@ export const ClosedPositionSummary = ({ position }: ClosedPositionSummaryProps) 
           <BreakdownRow label="Invested" value={-deposit} quoteSymbol={quoteSymbol} />
           <BreakdownRow label="Withdrawn" value={withdraw} quoteSymbol={quoteSymbol} />
           <BreakdownRow label="Fees" value={fees} quoteSymbol={quoteSymbol} />
-          {hasResidual && (
-            <BreakdownRow label="Residual (sold/marked)" value={position.residualMarkSol ?? 0} />
-          )}
           <div className="mt-1 border-border border-t pt-1.5">
             <BreakdownRow label="Net PnL" value={pnl} quoteSymbol={quoteSymbol} strong />
           </div>
         </div>
       </div>
-
-      {hasResidual && (
-        <p className="text-faint text-xs">
-          Residual {fmtAmount(position.residualAmount ?? 0)} {position.tokenX} left at close, marked
-          at <MoneyValue value={position.residualMarkSol ?? 0} /> (
-          {position.pnlSource === 'market' ? 'live price' : 'pool spot'}).
-        </p>
-      )}
     </section>
   );
 };
