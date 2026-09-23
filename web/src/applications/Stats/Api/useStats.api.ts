@@ -1,6 +1,7 @@
 'use client';
 
 import { apiGet } from '@app/applications/Shared/Api/httpClient';
+import { sameScopePlaceholder } from '@app/applications/Shared/Api/queryClient';
 import type { Bucket, NetworthCurve, ProfitBucket, Stats, WalletPnlCurve } from '@binsight/shared';
 import { useQuery } from '@tanstack/react-query';
 
@@ -10,6 +11,7 @@ export function useStats(scope: string, closedVersion: number, since = 0) {
   return useQuery({
     queryKey: ['stats', scope, since, closedVersion],
     queryFn: () => apiGet<Stats>(`stats?${wallet(scope)}${since > 0 ? `&since=${since}` : ''}`),
+    placeholderData: sameScopePlaceholder(scope),
   });
 }
 
@@ -24,6 +26,7 @@ export function useProfitHistory(
     queryKey: ['profit-history', scope, bucket, since, closedVersion],
     queryFn: () =>
       apiGet<ProfitBucket[]>(`stats/history?${wallet(scope)}&bucket=${bucket}&since=${since}`),
+    placeholderData: sameScopePlaceholder(scope),
     enabled,
   });
 }
@@ -38,6 +41,7 @@ export function useNetworthCurve(
   return useQuery({
     queryKey: ['networth-curve', scope, days, closedVersion],
     queryFn: () => apiGet<NetworthCurve>(`networth/curve?${wallet(scope)}&days=${days}`),
+    placeholderData: sameScopePlaceholder(scope),
     enabled,
   });
 }
@@ -48,6 +52,7 @@ export function useWalletPnlCurve(scope: string, days: number, closedVersion: nu
   return useQuery({
     queryKey: ['wallet-pnl-curve', scope, days, closedVersion],
     queryFn: () => apiGet<WalletPnlCurve>(`wallet/pnl-curve?${wallet(scope)}&days=${days}`),
+    placeholderData: sameScopePlaceholder(scope),
   });
 }
 
