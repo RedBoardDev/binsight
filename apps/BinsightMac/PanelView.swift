@@ -519,10 +519,10 @@ private struct TabChip: View {
                 .foregroundStyle(active ? Theme.accent : .secondary)
         }
         .buttonStyle(.plain)
-        .onHover { h in
-            hovering = h
-            if h { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-        }
+        .onHover { hovering = $0 }
+        // The shared helper, not a bare push/pop: that pair leaked a cursor whenever the chip went
+        // away under the pointer (see `PointingHandCursor`).
+        .pointingHandCursor()
     }
 
     private var background: Color {
