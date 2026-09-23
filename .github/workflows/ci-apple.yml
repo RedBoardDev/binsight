@@ -3,18 +3,21 @@ name: CI / Apple
 # Build + test the shared Swift package (BinsightKit) on a macOS runner. The main CI never
 # compiles Swift, so a kit regression (e.g. an auth-flow change) would otherwise ship unnoticed. Only
 # the SwiftPM kit is built — the macOS app target needs XcodeGen + signing and is out of CI scope.
-# Path-gated because macOS runner minutes are scarce/expensive.
+# Path-gated because macOS runner minutes are scarce/expensive: anything under apps/ (the kit, the
+# app shell, project.yml) and shared/ (the zod wire contract the kit's Models.swift mirrors).
 
 on:
   push:
     branches: [main]
     paths:
-      - 'apps/BinsightKit/**'
+      - 'apps/**'
+      - 'shared/**'
       - '.github/workflows/ci-apple.yml'
   pull_request:
     branches: [main]
     paths:
-      - 'apps/BinsightKit/**'
+      - 'apps/**'
+      - 'shared/**'
       - '.github/workflows/ci-apple.yml'
 
 permissions:
@@ -27,7 +30,9 @@ concurrency:
 jobs:
   kit:
     name: Swift kit (build + test)
-    runs-on: macos-latest
+    # Pinned rather than macos-latest: the kit needs swift-tools 6.2 and the macOS 26 SDK (Xcode 26),
+    # which macos-26 (arm64) ships as its default Xcode. macos-latest would move under us.
+    runs-on: macos-26
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1

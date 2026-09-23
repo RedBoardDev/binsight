@@ -10,8 +10,10 @@ node_modules
 **/*.tsbuildinfo
 data
 **/*.log
-.env
-.env.*
+# Env files at ANY depth (the root .env/.env.prod, a web/.env.local Next.js would otherwise read at
+# build time, …). No image needs .env.example either: the Dockerfiles never copy it.
+**/.env
+**/.env.*
 docs
 apps
 scripts
