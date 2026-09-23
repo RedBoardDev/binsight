@@ -1,6 +1,6 @@
 import type { DlmmLeg } from '@binsight/solana-core';
 import { SOL_MINT, USDC_MINT, USDT_MINT } from '@binsight/solana-core';
-import type { PoolMeta, PositionEconomics, PositionEconomicsQuote, QuoteMeta } from './dlmm';
+import type { PositionEconomicsQuote, QuoteMeta } from './dlmm';
 
 /**
  * Pure mark-to-pool PnL for a Meteora DLMM position, fully on-chain (no Meteora API, all history).
@@ -91,15 +91,6 @@ export function legValueQuote(leg: DlmmLeg, meta: QuoteMeta): number | null {
   return amountsValueQuote(leg.amountX, leg.amountY, leg.activeBinId, meta);
 }
 
-/** Value one leg's raw token amounts in SOL via its bin price. */
-export function legValueSol(leg: DlmmLeg, meta: PoolMeta): number | null {
-  return legValueQuote(leg, {
-    binStep: meta.binStep,
-    quoteSide: meta.solSide,
-    quoteDecimals: 9,
-  });
-}
-
 /** Split a position's legs in its native quote. Values from different quote mints must never be summed
  * until an explicitly timestamped normalization has been applied. */
 export function positionEconomicsQuote(legs: DlmmLeg[], meta: QuoteMeta): PositionEconomicsQuote {
@@ -132,25 +123,11 @@ export function positionEconomicsQuote(legs: DlmmLeg[], meta: QuoteMeta): Positi
   };
 }
 
-/** Split a position's legs into deposit / withdraw / claimed-fee SOL totals (one source of truth). */
-export function positionEconomics(legs: DlmmLeg[], meta: PoolMeta): PositionEconomics {
-  const quote = positionEconomicsQuote(legs, {
-    binStep: meta.binStep,
-    quoteSide: meta.solSide,
-    quoteDecimals: 9,
-  });
-  const depositSol = quote.depositQuote;
-  const withdrawSol = quote.withdrawQuote;
-  const claimedFeesSol = quote.claimedFeesQuote;
-  return {
-    depositSol,
-    withdrawSol,
-    claimedFeesSol,
-    pnlSol: withdrawSol + claimedFeesSol - depositSol,
-  };
-}
-
-/** Open-position PnL in a native quote: realized legs + current liquidity + unclaimed fees - deposits. */
+/**
+ * Open-position PnL in its native quote = the "open = snapshot ⊕ legs" model: realized so far
+ * (withdrawals + claimed fees) + what closing now would return (live liquidity + unclaimed fees) −
+ * the cost basis (deposits). `econ` comes from the leg history, `live` from the current snapshot.
+ */
 export function openUnrealizedPnlQuote(
   econ: Pick<PositionEconomicsQuote, 'depositQuote' | 'withdrawQuote' | 'claimedFeesQuote'>,
   live: { sizeQuote: number; unclaimedFeesQuote: number },
@@ -161,20 +138,5 @@ export function openUnrealizedPnlQuote(
     live.sizeQuote +
     live.unclaimedFeesQuote -
     econ.depositQuote
-  );
-}
-
-/**
- * Live unrealized SOL PnL of an OPEN position = the "open = snapshot ⊕ legs" model.
- *   uPnL = (realized so far: withdrawals + claimed fees) + (if closed now: live liquidity + unclaimed fees)
- *          − cost basis (deposits)
- * `econ` comes from the leg history (cost basis); `live` from the current on-chain snapshot.
- */
-export function openUnrealizedPnlSol(
-  econ: Pick<PositionEconomics, 'depositSol' | 'withdrawSol' | 'claimedFeesSol'>,
-  live: { sizeSol: number; unclaimedFeesSol: number },
-): number {
-  return (
-    econ.withdrawSol + econ.claimedFeesSol + live.sizeSol + live.unclaimedFeesSol - econ.depositSol
   );
 }

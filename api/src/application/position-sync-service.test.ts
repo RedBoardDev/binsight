@@ -8,6 +8,7 @@ import { type LegProjectionSource, PositionSync } from './position-sync-service'
 
 const silent = pino({ level: 'silent' });
 
+const DEFAULT_DEPOSIT = 1;
 const proj = (over: Partial<PositionPnl>): PositionPnl => ({
   position: 'p',
   pool: 'pool',
@@ -34,6 +35,16 @@ const proj = (over: Partial<PositionPnl>): PositionPnl => ({
   closedAt: 2000,
   durationSeconds: 1,
   ...over,
+  // A SOL pool's quote IS SOL (as DlmmPositionPnl builds it): its quote figures mirror the SOL ones
+  // unless a test sets them.
+  ...(over.solDenominated === false
+    ? {}
+    : {
+        pnlQuote: over.pnlQuote ?? over.pnlSol ?? 0,
+        depositQuote: over.depositQuote ?? over.depositSol ?? DEFAULT_DEPOSIT,
+        withdrawQuote: over.withdrawQuote ?? over.withdrawSol ?? 0,
+        claimedFeesQuote: over.claimedFeesQuote ?? over.claimedFeesSol ?? 0,
+      }),
 });
 
 const opv = (positionAddress: string): OnchainPositionValue => ({

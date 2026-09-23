@@ -4,7 +4,6 @@ import {
   amountsValueQuote,
   binPriceRaw,
   openUnrealizedPnlQuote,
-  openUnrealizedPnlSol,
   quoteConventionOf,
 } from '@/domain/dlmm-pnl';
 import type { TokenMeta } from '@/domain/ports';
@@ -70,9 +69,10 @@ export function buildPositionRows(input: BuildPositionRowsInput): {
 
     if (liveVal) {
       // OPEN: snapshot ⊕ legs
-      const pnlSol = p.solDenominated ? openUnrealizedPnlSol(p, liveVal) : 0;
-      const pnlPctSol = p.depositSol > 0 ? (pnlSol / p.depositSol) * 100 : 0;
       const pnlQuote = openUnrealizedPnlQuote(p, liveVal);
+      // A SOL pool's quote IS SOL: its SOL figures are its quote figures.
+      const pnlSol = p.solDenominated ? pnlQuote : 0;
+      const pnlPctSol = p.depositSol > 0 ? (pnlSol / p.depositSol) * 100 : 0;
       const pnlPctQuote = p.depositQuote > 0 ? (pnlQuote / p.depositQuote) * 100 : 0;
       const prior = input.priorOorSince.get(p.position) ?? null;
       const outOfRangeSince = isOutOfRange(liveVal.rangeStatus) ? (prior ?? input.now) : null;

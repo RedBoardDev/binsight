@@ -17,6 +17,7 @@ const meta: TokenMetaResolver = (mint) =>
       ? { symbol: 'USDC' }
       : { symbol: 'MEME', icon: 'http://icon' };
 
+const DEFAULT_DEPOSIT = 0;
 const proj = (over: Partial<PositionPnl>): PositionPnl => ({
   position: 'pos1',
   pool: 'pool1',
@@ -43,19 +44,30 @@ const proj = (over: Partial<PositionPnl>): PositionPnl => ({
   closedAt: 2000,
   durationSeconds: 1,
   ...over,
+  // A SOL pool's quote IS SOL (as DlmmPositionPnl builds it): its quote figures mirror the SOL ones
+  // unless a test sets them.
+  ...(over.solDenominated === false
+    ? {}
+    : {
+        pnlQuote: over.pnlQuote ?? over.pnlSol ?? 0,
+        depositQuote: over.depositQuote ?? over.depositSol ?? DEFAULT_DEPOSIT,
+        withdrawQuote: over.withdrawQuote ?? over.withdrawSol ?? 0,
+        claimedFeesQuote: over.claimedFeesQuote ?? over.claimedFeesSol ?? 0,
+      }),
 });
 
 const live = (over: Partial<LivePositionValue>): LivePositionValue => ({
   sizeSol: 0,
   unclaimedFeesSol: 0,
-  sizeQuote: 0,
-  unclaimedFeesQuote: 0,
   valuationStatus: 'complete',
   minPrice: 0,
   maxPrice: 0,
   poolPrice: 0,
   rangeStatus: 'in',
   ...over,
+  // snapshotToLive values a SOL pool's quote side as its SOL side.
+  sizeQuote: over.sizeQuote ?? over.sizeSol ?? 0,
+  unclaimedFeesQuote: over.unclaimedFeesQuote ?? over.unclaimedFeesSol ?? 0,
 });
 
 const base = { wallet: 'W', strategy: new Map<string, StrategyFamily | null>(), now: 9999 };

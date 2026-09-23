@@ -4,13 +4,42 @@ import { describe, expect, it } from 'vitest';
 import type { PoolMeta } from './dlmm';
 import {
   binPriceRaw,
-  legValueSol,
-  openUnrealizedPnlSol,
-  positionEconomics,
+  legValueQuote,
+  openUnrealizedPnlQuote,
   positionEconomicsQuote,
   quoteConventionOf,
   solSideOf,
 } from './dlmm-pnl';
+
+// A SOL pool is the quote model with SOL (9 decimals) on its SOL side: these helpers keep the validated
+// on-chain examples below in their original SOL terms.
+const solQuote = (meta: PoolMeta) => ({
+  binStep: meta.binStep,
+  quoteSide: meta.solSide,
+  quoteDecimals: 9,
+});
+const legValueSol = (l: DlmmLeg, meta: PoolMeta) => legValueQuote(l, solQuote(meta));
+const positionEconomics = (legs: DlmmLeg[], meta: PoolMeta) => {
+  const q = positionEconomicsQuote(legs, solQuote(meta));
+  return {
+    depositSol: q.depositQuote,
+    withdrawSol: q.withdrawQuote,
+    claimedFeesSol: q.claimedFeesQuote,
+    pnlSol: q.pnlQuote,
+  };
+};
+const openUnrealizedPnlSol = (
+  e: { depositSol: number; withdrawSol: number; claimedFeesSol: number },
+  live: { sizeSol: number; unclaimedFeesSol: number },
+) =>
+  openUnrealizedPnlQuote(
+    {
+      depositQuote: e.depositSol,
+      withdrawQuote: e.withdrawSol,
+      claimedFeesQuote: e.claimedFeesSol,
+    },
+    { sizeQuote: live.sizeSol, unclaimedFeesQuote: live.unclaimedFeesSol },
+  );
 
 const SOL = SOL_MINT;
 const leg = (
@@ -213,7 +242,7 @@ describe('positionEconomicsQuote — audited HX USDC fixtures', () => {
   });
 });
 
-describe('openUnrealizedPnlSol — open = snapshot ⊕ legs', () => {
+describe('openUnrealizedPnlQuote — open = snapshot ⊕ legs (SOL pool)', () => {
   it('equals realized PnL when nothing is left in the position (live = 0)', () => {
     // a fully-withdrawn position must reconcile to its realized economics, not double-count
     const econ = { depositSol: 6.0393, withdrawSol: 6.2343, claimedFeesSol: 0.0466 };

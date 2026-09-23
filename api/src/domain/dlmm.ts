@@ -111,7 +111,7 @@ export interface QuoteMeta {
   quoteDecimals: number;
 }
 
-/** Per-position economics in the pool's native quote. Unlike PositionEconomics this is not assumed
+/** Per-position economics in the pool's native quote. It is not assumed
  * to be SOL: a USDC pool produces USDC values and a USDT pool produces USDT values. */
 export interface PositionEconomicsQuote {
   depositQuote: number;
@@ -121,18 +121,6 @@ export interface PositionEconomicsQuote {
   valuationStatus: 'complete' | 'partial';
   /** Legs whose amounts are exact but carry no price anchor, so only the quote side could be counted. */
   unpricedLegs: number;
-}
-
-/** Per-position SOL economics from decoded legs, mark-to-pool (single source for the PnL split). */
-export interface PositionEconomics {
-  /** Σ deposit legs valued in SOL — the cost basis. */
-  depositSol: number;
-  /** Σ withdraw legs valued in SOL. */
-  withdrawSol: number;
-  /** Σ claim legs valued in SOL — realized fees. */
-  claimedFeesSol: number;
-  /** withdrawSol + claimedFeesSol − depositSol — the realized mark-to-pool PnL. */
-  pnlSol: number;
 }
 
 /** A persisted DLMM leg as read back from storage — the projection input (no wallet/owner column). */
