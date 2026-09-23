@@ -49,7 +49,9 @@ export function useMoney(): Money {
   return {
     hide,
     usd,
-    showGlyph: currency === 'SOL',
+    // Follows what is actually rendered: before any rate has loaded, USD mode still shows SOL, and
+    // those amounts need their unit mark rather than reading as bare numbers.
+    showGlyph: !usd,
     sol,
     quote: (value, symbol, options) => {
       // Only SOL follows the currency switch: there is no USDC⇄USD rate to apply, and converting a
