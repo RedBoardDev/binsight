@@ -6,11 +6,19 @@ export function periodLabel(period: Period): string {
   return PERIOD_OPTIONS.find((o) => o.value === period)?.label ?? period.toUpperCase();
 }
 
+const dayStartMs = (point: NetworthCurvePoint): number => Date.parse(`${point.date}T00:00:00Z`);
+
 /**
  * Real PnL gain over `period` = realPnl(now) − realPnl(start of period), where realPnl = performance
- * NET of apports (deposits/withdrawals). CAN be negative. Null when the curve has no point on/before
- * the period floor or the live net worth is unknown. The single source of truth for this headline —
- * SummaryCard and PnlBridge both call it, so the two displayed numbers can never drift.
+ * NET of apports (deposits/withdrawals). CAN be negative. Null when the curve is empty or the live net
+ * worth is unknown. The single source of truth for this headline — SummaryCard and PnlBridge both call
+ * it, so the two displayed numbers can never drift.
+ *
+ * Each curve point is the END-of-day value of its UTC `date`, so the baseline is the last point whose
+ * day starts strictly BEFORE the floor (the first one on/after it would already include that day, and
+ * 24H would read ≈ 0). All-time has nothing before the wallet's first day, when realPnl was 0; a curve
+ * that starts inside the window (a younger wallet, a window cut at its own floor) falls back to its
+ * earliest point — the closest baseline there is.
  *
  * realPnlNow uses the LIVE net worth (walletTotalSol) minus the cumulative apports of the LAST curve
  * point — NOT points[last].realPnl: today's at-cost reconstruction lags the live tx stream (a fresh
@@ -22,13 +30,16 @@ export function realPnlGain(
   now: number,
   walletTotalSol: number | null,
 ): number | null {
-  if (points.length === 0 || walletTotalSol == null) return null;
+  const first = points[0];
+  if (first === undefined || walletTotalSol == null) return null;
   const apportsLast = points.at(-1)?.apports ?? 0;
   const realPnlNow = walletTotalSol - apportsLast;
   const floor = sinceMs(period, now);
-  const start =
-    floor <= 0
-      ? points[0]?.realPnl
-      : points.find((p) => Date.parse(`${p.date}T00:00:00Z`) >= floor)?.realPnl;
-  return start == null ? null : realPnlNow - start;
+  if (floor <= 0) return realPnlNow;
+  let start = first;
+  for (const point of points) {
+    if (dayStartMs(point) >= floor) break;
+    start = point;
+  }
+  return realPnlNow - start.realPnl;
 }
