@@ -71,8 +71,7 @@ struct BinsightMacApp: App {
                     rest.panelDidDisappear()
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .reconnect)) { _ in
-                    client.stop()
-                    client.start()
+                    client.restart()
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .refresh)) { _ in
                     client.refreshNow()

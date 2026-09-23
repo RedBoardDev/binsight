@@ -45,6 +45,16 @@ public final class LiveClient {
         task?.cancel(with: .goingAway, reason: nil)
     }
 
+    /// Explicit, user-initiated reconnect (Settings saved, the Reconnect button): drop the socket and
+    /// connect afresh — and let credentials the server refused be tried once more, since the API URL
+    /// may be what changed.
+    public func restart() {
+        stop()
+        started = true
+        stopped = false
+        connect(clearingRejection: true)
+    }
+
     public func refreshNow() { onSync?() }
 
     /// Send a presence update immediately (call on sleep/wake/lock/foreground transitions).
@@ -54,6 +64,8 @@ public final class LiveClient {
     /// stale (URLSession won't report it), so we drop it and reconnect rather than guess.
     public func reconnect() {
         guard started, !stopped else { return }
+        // A refused password stays refused across a sleep: only new credentials or `restart()` retry.
+        if store.connection == .unauthorized, task == nil { return }
         backoff = 1
         scheduleReconnect()
     }
@@ -84,7 +96,7 @@ public final class LiveClient {
         return URL(string: "\(base)/live")
     }
 
-    private func connect() {
+    private func connect(clearingRejection: Bool = false) {
         reconnecting = false
         guard Config.isConfigured else {
             store.setConnection(.unconfigured)
@@ -94,15 +106,29 @@ public final class LiveClient {
         // Fetch a fresh JWT (re-logins from the stored password if needed) before opening the socket.
         Task { [weak self] in
             guard let self else { return }
-            guard let token = await Auth.shared.token(), let url = self.wsURL() else {
-                self.store.setConnection(.unauthorized)
-                self.scheduleReconnect()
-                return
-            }
+            if clearingRejection { await Auth.shared.clearRejection() }
+            let auth = await Auth.shared.tokenResult()
             // Re-check AFTER the await: stop() or a heartbeat-triggered scheduleReconnect() may have
             // landed while we fetched the token. Opening a socket now would leak it (a parallel reconnect
             // owns the connection) — bail and let that path drive.
             if self.stopped || self.reconnecting { return }
+            let token: String
+            switch auth {
+            case .token(let t):
+                token = t
+            case .rejected:
+                // Terminal until the credentials change: no retry timer (which would also overwrite
+                // this with `.offline`). Settings' save, or an explicit reconnect, restarts us.
+                self.store.setConnection(.unauthorized)
+                return
+            case .unreachable:
+                self.scheduleReconnect() // → .offline, retried with backoff
+                return
+            }
+            guard let url = self.wsURL() else {
+                self.scheduleReconnect()
+                return
+            }
             // Send the JWT in the Authorization header, not the URL query — a long-lived token in the
             // upgrade URL would persist in nginx/proxy access logs (S10). URLSessionWebSocketTask carries
             // the URLRequest's headers on the HTTP upgrade.
