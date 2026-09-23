@@ -66,7 +66,9 @@ self.addEventListener('push', (event) => {
       body: data.body || '',
       icon: '/icon-192.png',
       badge: '/icon-192.png',
-      tag: data.tag,
+      // The server's tag names the alert KIND; a notification with the same tag silently replaces
+      // the previous one, so two alerts of one kind would collapse into one. Make each distinct.
+      tag: `${data.tag || 'binsight'}:${Date.now()}`,
       data: { url: data.url || '/' },
     }),
   );
