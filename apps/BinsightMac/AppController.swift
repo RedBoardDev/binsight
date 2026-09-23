@@ -22,6 +22,8 @@ final class AppController {
         let rest = RestClient(store: store)
         let live = LiveClient(store: store, device: .mac)
         live.onSync = { rest.refresh() }
+        // A resync that no longer lists the scoped wallet (removed on the web, say) → back to "all".
+        rest.onWalletsLoaded = { [weak live] in live?.dropScopeIfUnwatched() }
         let presence = MacPresence()
         live.presenceActive = { presence.isActive } // away/asleep/locked → routes to Bark
         presence.onChange = { [weak live] in live?.refreshPresence() } // flip immediately
@@ -46,4 +48,11 @@ final class AppController {
 
     /// Settings saved, or the health popover's Reconnect: an explicit reconnect.
     func reconnect() { client.restart() }
+
+    /// A wallet was removed in Settings: drop its tab now, and leave its scope if the panel was on it
+    /// — rather than wait for a resync that only runs while the panel is open.
+    func walletRemoved(_ address: String) {
+        store.wallets.removeAll { $0.address == address }
+        client.dropScopeIfUnwatched()
+    }
 }

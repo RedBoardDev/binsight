@@ -24,6 +24,9 @@ public final class RestClient {
     /// requests into the single one that will actually be displayed.
     private var refreshPending = false
     private var loading = false
+    /// Called after a resync replaced `store.wallets` — the host drops a scope whose wallet is gone
+    /// (see `LiveClient.dropScopeIfUnwatched`).
+    public var onWalletsLoaded: (() -> Void)?
 
     public init(store: PortfolioStore) { self.store = store }
 
@@ -75,7 +78,10 @@ public final class RestClient {
             store.replaceClosed(page.rows, total: page.total, pages: pages)
         }
         if let stats { store.stats = stats }
-        if let wallets { store.wallets = wallets }
+        if let wallets {
+            store.wallets = wallets
+            onWalletsLoaded?() // may switch the scope, which queues a resync the defer replays
+        }
         store.pruneBins() // resync is event-driven — a good, rare moment to drop closed positions
     }
 

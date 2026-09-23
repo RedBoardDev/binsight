@@ -15,9 +15,10 @@ struct SettingsView: View {
                     .onChange(of: launch) { _, v in LaunchAtLogin.set(v) }
             }
             Section("Wallets") {
-                WalletsEditor(onChange: {
-                    app.reconnect()
-                })
+                WalletsEditor(
+                    onChange: { app.reconnect() },
+                    onRemove: { app.walletRemoved($0) },
+                )
             }
             NotificationsEditor()
         }

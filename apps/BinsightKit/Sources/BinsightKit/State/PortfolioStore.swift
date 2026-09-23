@@ -56,6 +56,12 @@ public final class PortfolioStore {
 
     public init() {}
 
+    /// Whether `scope` still names something the server streams: the aggregate, or a wallet still in
+    /// the watchlist. A removed wallet gets no more frames, and a subscribe to it is ignored.
+    public var isScopeWatched: Bool {
+        scope == "all" || wallets.contains { $0.address == scope }
+    }
+
     // Both setters are called from the socket's receive loop, i.e. once a second — and both were
     // writing unconditionally. `setConnection(.live)` in particular re-published an already-`.live`
     // value on every single frame. Same rule as `apply`: no write, no invalidation.

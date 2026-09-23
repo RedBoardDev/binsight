@@ -115,6 +115,14 @@ public final class LiveClient {
         onSync?()
     }
 
+    /// Back to the all-wallets scope once the scoped wallet has left the watchlist. The server stops
+    /// streaming a wallet it no longer watches, so a stale scope would drop every frame
+    /// (`PortfolioStore.apply`) and freeze the panel on its last numbers.
+    public func dropScopeIfUnwatched() {
+        guard !store.isScopeWatched else { return }
+        setScope("all")
+    }
+
     private func subscribe(_ scope: String) {
         send(#"{"type":"subscribe","scope":"\#(scope)"}"#)
     }
@@ -240,7 +248,9 @@ public final class LiveClient {
         }
         switch msg {
         case .state(let state):
-            lastStateAppliedAt = Date()
+            // Stamp only a frame the store will actually take: an other-scope frame is dropped, and
+            // counting it would let the skip window starve the menu bar of the real one.
+            if state.scope == store.scope { lastStateAppliedAt = Date() }
             store.apply(state)
         case .event:
             onSync?() // raw live feed: a transition (e.g. close) changes history → refresh, no banner
