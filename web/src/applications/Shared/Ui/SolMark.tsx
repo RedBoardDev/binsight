@@ -1,19 +1,11 @@
 interface SolMarkProps {
   size?: number;
-  className?: string;
 }
 
 /** The Solana brand mark in its official teal→purple gradient — a small unit glyph next to SOL
  *  amounts, kept neutral so it never competes with the theme accent. */
-export const SolMark = ({ size = 14, className }: SolMarkProps) => (
-  <svg
-    width={size}
-    height={size}
-    viewBox="0 0 398 312"
-    className={className}
-    role="img"
-    aria-label="SOL"
-  >
+export const SolMark = ({ size = 14 }: SolMarkProps) => (
+  <svg width={size} height={size} viewBox="0 0 398 312" role="img" aria-label="SOL">
     <defs>
       <linearGradient
         id="sol-mark"

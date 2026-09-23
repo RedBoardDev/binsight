@@ -55,9 +55,3 @@ export function useWalletPnlCurve(scope: string, days: number, closedVersion: nu
     placeholderData: sameScopePlaceholder(scope),
   });
 }
-
-export const fetchProfitHistory = (scope: string, bucket: Bucket, since: number) =>
-  apiGet<ProfitBucket[]>(`stats/history?${wallet(scope)}&bucket=${bucket}&since=${since}`);
-
-export const fetchNetworthCurve = (scope: string, days: number) =>
-  apiGet<NetworthCurve>(`networth/curve?${wallet(scope)}&days=${days}`);

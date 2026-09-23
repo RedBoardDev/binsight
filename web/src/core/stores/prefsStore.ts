@@ -29,6 +29,3 @@ export const usePrefs = create<PrefsState>()(
     { name: 'mlm-prefs' },
   ),
 );
-
-/** The mask shown in place of a hidden money value. */
-export const AMOUNT_MASK = '****';

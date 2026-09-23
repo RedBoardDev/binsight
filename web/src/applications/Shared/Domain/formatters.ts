@@ -1,22 +1,25 @@
 /** Pure presentation formatters. No React, no side effects — safe on server and client. */
 
+/** SOL amounts are shown to the milli-SOL everywhere. */
+const SOL_DECIMALS = 3;
+
 /** Bare SOL amount — the unit (◎) is shown contextually (hero/labels), not on every number. */
-export function fmtSol(value: number, decimals = 3): string {
-  return value.toFixed(decimals);
+export function fmtSol(value: number): string {
+  return value.toFixed(SOL_DECIMALS);
 }
 
 /** Hero SOL amount with thousands separators (e.g. "1,234.567") for large headline figures. */
-export function fmtSolHero(value: number, decimals = 3): string {
+export function fmtSolHero(value: number): string {
   return value.toLocaleString('en-US', {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
+    minimumFractionDigits: SOL_DECIMALS,
+    maximumFractionDigits: SOL_DECIMALS,
   });
 }
 
 /** Signed SOL amount with an explicit + for gains (PnL, fees). */
-export function fmtSolSigned(value: number, decimals = 3): string {
+export function fmtSolSigned(value: number): string {
   const sign = value > 0 ? '+' : '';
-  return `${sign}${value.toFixed(decimals)}`;
+  return `${sign}${value.toFixed(SOL_DECIMALS)}`;
 }
 
 export function fmtPct(value: number, decimals = 1): string {

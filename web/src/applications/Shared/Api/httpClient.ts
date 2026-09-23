@@ -51,5 +51,3 @@ export async function apiGetBlob(
   if (!res.ok) throw new ApiError(`GET ${path} failed (${res.status})`);
   return res.blob();
 }
-
-export const scopeParam = (scope: string): string => encodeURIComponent(scope);

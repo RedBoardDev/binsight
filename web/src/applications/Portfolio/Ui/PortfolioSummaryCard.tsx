@@ -26,7 +26,7 @@ export const PortfolioSummaryCard = () => {
   // Fetched all-time and sliced client-side: the period gain is a NetWorth delta off it.
   const { data: curve } = useNetworthCurve(scope, ALL_TIME_DAYS, closedVersion);
   // Today's realized PnL comes from the backend (/stats.todayPnlSol) — the single source of truth, the
-  // exact value the macOS/iOS apps show. The client must NOT re-derive it (that drifted from the apps).
+  // exact value the macOS app shows. The client must NOT re-derive it (that drifted from the app).
   const { data: stats } = useStats(scope, closedVersion);
 
   if (!portfolio) return <PortfolioSummarySkeleton />;

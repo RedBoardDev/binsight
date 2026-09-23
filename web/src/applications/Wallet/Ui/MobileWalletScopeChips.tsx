@@ -6,7 +6,7 @@ import { useWallets } from '@app/applications/Wallet/Api/useWallets.api';
 import { useOpenAccess } from '@app/core/Layout/OpenAccessContext';
 import { ToggleButton, ToggleButtonGroup } from '@heroui/react';
 
-/** Horizontally-scrollable scope selector (Overview + one chip per wallet), like the iOS app. */
+/** Horizontally-scrollable scope selector: Overview + one chip per wallet. */
 export const MobileWalletScopeChips = () => {
   const scope = usePortfolioFeed((s) => s.scope);
   const setScope = usePortfolioFeed((s) => s.setScope);
