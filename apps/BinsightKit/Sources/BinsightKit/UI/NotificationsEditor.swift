@@ -168,6 +168,8 @@ public struct NotificationsEditor: View {
             s = await NotifPermission.status()
         }
         status = s
+        // The permission gates presence (see `notifStatusShowsBanners`): re-report it now.
+        NotificationCenter.default.post(name: .presenceShouldRefresh, object: nil)
     }
 
     @MainActor private func load() async {

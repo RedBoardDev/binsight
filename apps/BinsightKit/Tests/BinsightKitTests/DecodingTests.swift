@@ -18,13 +18,43 @@ final class DecodingTests: XCTestCase {
 
     func testHealthDecodes() throws {
         let json = """
-        {"type":"health","payload":{"ok":true,"wsConnected":true,"meteoraOk":false,
+        {"type":"health","payload":{"ok":true,"wsConnected":true,"meteoraOk":true,
         "effectiveRps":2,"wallets":[],"uptimeSeconds":10}}
         """
         let msg = try ServerMessage(from: Data(json.utf8))
         guard case .health(let h) = msg else { return XCTFail("expected .health") }
         XCTAssertTrue(h.wsConnected)
-        XCTAssertFalse(h.meteoraOk)
+        XCTAssertFalse(h.isDegraded)
+    }
+
+    // WHY: `meteoraOk` is deprecated and the API will drop it. A non-optional field would fail the
+    // WHOLE health frame on that day, freezing the status dot on its last value.
+    func testHealthDecodesWithoutMeteoraOk() throws {
+        let json = """
+        {"type":"health","payload":{"ok":true,"wsConnected":true,
+        "effectiveRps":2,"sources":[],"wallets":[],"uptimeSeconds":10}}
+        """
+        let msg = try ServerMessage(from: Data(json.utf8))
+        guard case .health(let h) = msg else { return XCTFail("expected .health") }
+        XCTAssertNil(h.meteoraOk)
+        XCTAssertTrue(h.ok)
+    }
+
+    // WHY: the status dot used to read `meteoraOk`, which the server hard-codes to true — so it stayed
+    // green with the RPC down. Degraded must follow `ok`, the chain feed and the per-source statuses.
+    func testHealthDegradedFollowsOkFeedAndSources() {
+        func source(_ status: String) -> SourceHealth {
+            SourceHealth(
+                name: "rpc", status: status, lastOkAt: nil, lastErrorAt: nil, consecutiveErrors: 0,
+                detail: nil)
+        }
+        func health(ok: Bool = true, ws: Bool = true, sources: [SourceHealth]? = nil) -> Health {
+            Health(ok: ok, wsConnected: ws, meteoraOk: true, chainTipSlot: nil, sources: sources)
+        }
+        XCTAssertFalse(health(sources: [source("ok")]).isDegraded)
+        XCTAssertTrue(health(ok: false).isDegraded) // RPC down, meteoraOk still true
+        XCTAssertTrue(health(ws: false).isDegraded)
+        XCTAssertTrue(health(sources: [source("lagging")]).isDegraded)
     }
 
     func testHealthDecodesPerSourceDetail() throws {

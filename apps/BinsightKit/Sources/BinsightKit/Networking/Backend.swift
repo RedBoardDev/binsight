@@ -23,6 +23,10 @@ public enum Backend {
     /// Perform `path` with ONE automatic retry on a 401 (the JWT expired → drop it, re-login via Auth,
     /// try once more). Returns the response bytes + HTTP status, or nil on a build/transport failure.
     /// The shared retry loop the three callers below used to hand-roll identically.
+    ///
+    /// Only a request that CARRIED a token is retried: with none, Auth already failed to get one (the
+    /// password was refused, or there is none), and the retry could only repeat the same 401. Auth
+    /// itself won't re-post a refused password, so a burst of REST calls can't turn into a login loop.
     private static func requestWithRetry(_ path: String, method: String = "GET", body: Data? = nil)
         async -> (data: Data, status: Int)?
     {
@@ -30,7 +34,8 @@ public enum Backend {
             guard let req = await request(path, method: method, body: body) else { return nil }
             guard let (data, resp) = try? await URLSession.shared.data(for: req) else { return nil }
             let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-            if code == 401, attempt == 0 {
+            let sentToken = req.value(forHTTPHeaderField: "Authorization") != nil
+            if code == 401, attempt == 0, sentToken {
                 await Auth.shared.invalidate()
                 continue
             }

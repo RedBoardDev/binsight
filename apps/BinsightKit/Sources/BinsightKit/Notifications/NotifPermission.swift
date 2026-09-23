@@ -33,6 +33,14 @@ public func notifSectionState(status: UNAuthorizationStatus, masterOn: Bool) -> 
     }
 }
 
+/// Whether macOS will actually put up a banner under this status. Presence reports "active" only on
+/// this: claiming presence without it makes the server route an alert to this device instead of to
+/// Bark, and the alert is lost. `.provisional` is excluded on purpose — it delivers quietly, with no
+/// banner, and falling through to Bark is the safe side of that line.
+public func notifStatusShowsBanners(_ status: UNAuthorizationStatus) -> Bool {
+    status == .authorized
+}
+
 /// Notification authorization helpers.
 public enum NotifPermission {
     public static func status() async -> UNAuthorizationStatus {
@@ -41,6 +49,11 @@ public enum NotifPermission {
                 cont.resume(returning: s.authorizationStatus)
             }
         }
+    }
+
+    /// See `notifStatusShowsBanners`.
+    public static func showsBanners() async -> Bool {
+        notifStatusShowsBanners(await status())
     }
 
     /// Prompts the user (only effective while status is .notDetermined).

@@ -164,3 +164,22 @@ final class BinsCacheTests: XCTestCase {
         XCTAssertNotNil(store.bins["pos2"])
     }
 }
+
+@MainActor
+final class ScopeWatchTests: XCTestCase {
+    // WHY: the server stops streaming a wallet once it leaves the watchlist, and `apply` drops every
+    // frame of another scope — so a scope left pointing at a removed wallet froze the panel for good.
+    // `isScopeWatched` is what tells the client to fall back to "all".
+    func testAScopeIsWatchedOnlyWhileItsWalletIsInTheList() {
+        let store = PortfolioStore()
+        store.wallets = [WalletInfo(address: "W1", label: ""), WalletInfo(address: "W2", label: "")]
+        XCTAssertTrue(store.isScopeWatched) // "all"
+        store.scope = "W2"
+        XCTAssertTrue(store.isScopeWatched)
+        store.wallets = [WalletInfo(address: "W1", label: "")]
+        XCTAssertFalse(store.isScopeWatched)
+        store.wallets = []
+        store.scope = "all"
+        XCTAssertTrue(store.isScopeWatched) // the aggregate never goes away
+    }
+}

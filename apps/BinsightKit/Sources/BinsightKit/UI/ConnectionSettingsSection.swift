@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// Shared "Connection" settings section (API URL + wallet address + password → JWT + error +
-/// Save & reconnect). Used by the macOS Settings screen. `onSaved` lets the host
-/// reconnect after a successful save. Renders a grouped `Section` — drop it
+/// Save & reconnect, Sign out). Used by the macOS Settings screen. `onSaved` lets the host
+/// reconnect after a successful save or a sign-out. Renders a grouped `Section` — drop it
 /// inside a `Form`. Sign-in only; creating an account / resetting a password is done on the web (they
 /// require a wallet signature).
 public struct ConnectionSettingsSection: View {
@@ -11,6 +11,7 @@ public struct ConnectionSettingsSection: View {
     @State private var address = Keychain.get("authAddress") ?? ""
     @State private var password = ""
     @State private var authError = false
+    @State private var signedIn = Config.isConfigured
 
     public init(onSaved: @escaping () -> Void) { self.onSaved = onSaved }
 
@@ -40,6 +41,9 @@ public struct ConnectionSettingsSection: View {
             }
             Button("Save & reconnect") { save() }
                 .buttonStyle(.glassProminent)
+            if signedIn {
+                Button("Sign out", role: .destructive) { signOut() }
+            }
             Text("No account yet? Create one on the web with your wallet.")
                 .font(.caption).foregroundStyle(.secondary)
         }
@@ -61,6 +65,19 @@ public struct ConnectionSettingsSection: View {
                 password = ""
             }
             authError = false
+            signedIn = Config.isConfigured
+            onSaved()
+        }
+    }
+
+    /// Forget the credentials here and revoke the session on the server (in the background — the
+    /// local sign-out doesn't wait on the network), then reconnect into "not signed in".
+    private func signOut() {
+        Task { @MainActor in
+            await Auth.shared.logout()
+            password = ""
+            authError = false
+            signedIn = false
             onSaved()
         }
     }

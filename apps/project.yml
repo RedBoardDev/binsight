@@ -24,7 +24,7 @@ targets:
         LSUIElement: true
         CFBundleDisplayName: Binsight
         NSHumanReadableCopyright: ""
-        MLPMApiURL: "$(MLPM_API_URL)"
+        BinsightApiURL: "$(BINSIGHT_API_URL)"
     settings:
       base:
         PRODUCT_NAME: Binsight
@@ -35,4 +35,4 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         SWIFT_VERSION: "6.0" # Swift 6 language mode, matching BinsightKit
         ENABLE_HARDENED_RUNTIME: NO
-        MLPM_API_URL: http://localhost:8787
+        BINSIGHT_API_URL: http://localhost:8787

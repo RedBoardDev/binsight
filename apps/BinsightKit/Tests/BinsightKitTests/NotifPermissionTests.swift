@@ -36,6 +36,15 @@ final class NotifSectionStateTests: XCTestCase {
             notifSectionState(status: .provisional, masterOn: true), .ready(rulesVisible: true))
     }
 
+    // WHY: presence is reported active only when a banner will really show. Claiming it while the OS
+    // withholds permission routes alerts to this Mac instead of Bark, where they vanish.
+    func testOnlyFullAuthorizationCountsForPresence() {
+        XCTAssertTrue(notifStatusShowsBanners(.authorized))
+        XCTAssertFalse(notifStatusShowsBanners(.notDetermined))
+        XCTAssertFalse(notifStatusShowsBanners(.denied))
+        XCTAssertFalse(notifStatusShowsBanners(.provisional))
+    }
+
     func testAnUnavailableOutcomeIsDistinctFromADenial() {
         // These drive different UI: a denial points at System Settings, an unavailable request means
         // the build itself can't receive notifications and retrying cannot help.

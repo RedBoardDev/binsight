@@ -3,14 +3,11 @@ import Foundation
 /// Client configuration (API endpoint). The API URL may be overridden in Settings or baked at
 /// build time from the repo `.env` (Info.plist seed). Authentication is password→JWT (see `Auth`):
 /// the password lives in the Keychain, never baked into the app.
-/// P2: switch `defaults` to `UserDefaults(suiteName: appGroup)` once the App Group
-/// entitlement is provisioned, so widgets/Live Activity read the same config.
 public enum Config {
-    public static let appGroup = "group.com.binsight"
-
     static var defaults: UserDefaults { .standard }
 
-    /// Non-empty Info.plist string baked at build time (see the Makefile's MLPM_* settings).
+    /// Non-empty Info.plist string baked at build time (the `BINSIGHT_API_URL` build setting, which
+    /// `project.yml` maps to the `BinsightApiURL` key).
     private static func seed(_ key: String) -> String? {
         guard let s = Bundle.main.object(forInfoDictionaryKey: key) as? String, !s.isEmpty else {
             return nil
@@ -19,7 +16,7 @@ public enum Config {
     }
 
     public static var apiURL: String {
-        get { defaults.string(forKey: "apiURL") ?? seed("MLPMApiURL") ?? "http://localhost:8787" }
+        get { defaults.string(forKey: "apiURL") ?? seed("BinsightApiURL") ?? "http://localhost:8787" }
         // Normalized on the way IN, so every reader is spared the question. Settings is not the only
         // writer, and a raw value here breaks every request the app makes.
         set { defaults.set(normalizedAPIURL(newValue), forKey: "apiURL") }

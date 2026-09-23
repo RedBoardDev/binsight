@@ -2,16 +2,23 @@ import SwiftUI
 
 /// Wallets editor (macOS Settings). Lists monitored wallets
 /// with delete + an add row, validates the address client-side, and surfaces API errors.
-/// `onChange` lets the host resync after a change.
+/// `onChange` lets the host resync after a change; `onRemove` names the wallet that just went, so
+/// the host can leave its scope if the panel was showing it.
 public struct WalletsEditor: View {
     private let onChange: () -> Void
+    private let onRemove: (String) -> Void
     @State private var wallets: [WalletInfo] = []
     @State private var newAddress = ""
     @State private var newLabel = ""
     @State private var busy = false
     @State private var error: String?
 
-    public init(onChange: @escaping () -> Void = {}) { self.onChange = onChange }
+    public init(
+        onChange: @escaping () -> Void = {}, onRemove: @escaping (String) -> Void = { _ in },
+    ) {
+        self.onChange = onChange
+        self.onRemove = onRemove
+    }
 
     private var addressValid: Bool { SolanaAddress.isValid(newAddress) }
 
@@ -87,6 +94,7 @@ public struct WalletsEditor: View {
         switch await Backend.removeWallet(address: address) {
         case .ok:
             await load()
+            onRemove(address)
             onChange()
         case .unauthorized:
             error = "Unauthorized — check your password in Settings."

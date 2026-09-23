@@ -18,8 +18,19 @@ public final class LiveClient {
     private var started = false
     private var heartbeat: Task<Void, Never>?
     private var reconnecting = false
+    /// The pending backoff sleep → `connect()`. Kept so `stop()` can cancel it: a sleeper that only
+    /// checked `stopped` woke after a `stop(); start()` and opened a SECOND socket.
+    private var reconnectTask: Task<Void, Never>?
+    /// Bumped every time the current socket is dropped (`stop()`, `scheduleReconnect()`). Callbacks and
+    /// in-flight connects capture it and bail on a mismatch, so a late failure from a socket we already
+    /// replaced can't tear down — or double — the one that replaced it.
+    private var generation = 0
     /// When the last periodic `state` frame was actually processed. See `shouldSkipStateFrame`.
     private var lastStateAppliedAt: Date?
+    /// Whether macOS lets this app show banners. The OS answers asynchronously, so it is cached here
+    /// for the synchronous presence frame and re-read on every heartbeat — a change in System Settings
+    /// lands within one tick. Starts false: never claim presence before we know.
+    private var notificationsAuthorized = false
 
     /// Whether this device counts as "present" right now. The host platform injects the real
     /// logic (macOS: not idle/asleep/locked). Default: always present.
@@ -30,30 +41,67 @@ public final class LiveClient {
         self.device = device
     }
 
-    /// Idempotent: re-opening the menu-bar panel calls this repeatedly; only connect once.
+    /// Called once at launch. Idempotent: a second call while started does nothing.
     public func start() {
         if started { return }
         started = true
         stopped = false
+        backoff = 1
         connect()
     }
 
     public func stop() {
         started = false
         stopped = true
+        generation += 1
         heartbeat?.cancel()
+        heartbeat = nil
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        reconnecting = false
+        backoff = 1
         task?.cancel(with: .goingAway, reason: nil)
+        task = nil
     }
 
-    public func refreshNow() { onSync?() }
+    /// Explicit, user-initiated reconnect (Settings saved, the Reconnect button): drop the socket and
+    /// connect afresh — and let credentials the server refused be tried once more, since the API URL
+    /// may be what changed.
+    public func restart() {
+        stop()
+        started = true
+        stopped = false
+        connect(clearingRejection: true)
+    }
 
-    /// Send a presence update immediately (call on sleep/wake/lock/foreground transitions).
-    public func refreshPresence() { sendPresence() }
+    /// Send a presence update immediately (call on sleep/wake/lock/foreground transitions, or when
+    /// the notification toggle / permission changed). Sent at once from the cached permission — a
+    /// sleep can't wait on the OS — then again if re-reading the permission changed it.
+    public func refreshPresence() {
+        sendPresence()
+        Task { [weak self] in
+            guard let self, await self.refreshNotificationAuthorization() else { return }
+            self.sendPresence()
+        }
+    }
+
+    /// Re-reads the OS notification permission. True when it changed.
+    private func refreshNotificationAuthorization() async -> Bool {
+        let authorized = await NotifPermission.showsBanners()
+        guard authorized != notificationsAuthorized else { return false }
+        notificationsAuthorized = authorized
+        return true
+    }
 
     /// Force a fresh connection now. Call on wake / return-to-foreground: the old socket is
     /// stale (URLSession won't report it), so we drop it and reconnect rather than guess.
     public func reconnect() {
         guard started, !stopped else { return }
+        // A refused password stays refused across a sleep: only new credentials or `restart()` retry.
+        if store.connection == .unauthorized, task == nil { return }
+        // Wake beats a pending backoff: don't sit out the rest of a 15 s sleep before retrying.
+        reconnectTask?.cancel()
+        reconnecting = false
         backoff = 1
         scheduleReconnect()
     }
@@ -63,6 +111,14 @@ public final class LiveClient {
         store.resetClosedPaging() // another wallet's history starts at page 1, not the old depth
         subscribe(scope)
         onSync?()
+    }
+
+    /// Back to the all-wallets scope once the scoped wallet has left the watchlist. The server stops
+    /// streaming a wallet it no longer watches, so a stale scope would drop every frame
+    /// (`PortfolioStore.apply`) and freeze the panel on its last numbers.
+    public func dropScopeIfUnwatched() {
+        guard !store.isScopeWatched else { return }
+        setScope("all")
     }
 
     private func subscribe(_ scope: String) {
@@ -84,25 +140,40 @@ public final class LiveClient {
         return URL(string: "\(base)/live")
     }
 
-    private func connect() {
+    private func connect(clearingRejection: Bool = false) {
         reconnecting = false
         guard Config.isConfigured else {
             store.setConnection(.unconfigured)
             return // no password yet — wait for Settings → reconnect rather than failing in a loop
         }
         store.setConnection(.connecting)
+        let gen = generation
         // Fetch a fresh JWT (re-logins from the stored password if needed) before opening the socket.
         Task { [weak self] in
             guard let self else { return }
-            guard let token = await Auth.shared.token(), let url = self.wsURL() else {
-                self.store.setConnection(.unauthorized)
-                self.scheduleReconnect()
-                return
-            }
+            if clearingRejection { await Auth.shared.clearRejection() }
+            let auth = await Auth.shared.tokenResult()
             // Re-check AFTER the await: stop() or a heartbeat-triggered scheduleReconnect() may have
             // landed while we fetched the token. Opening a socket now would leak it (a parallel reconnect
             // owns the connection) — bail and let that path drive.
-            if self.stopped || self.reconnecting { return }
+            if self.stopped || self.reconnecting || gen != self.generation { return }
+            let token: String
+            switch auth {
+            case .token(let t):
+                token = t
+            case .rejected:
+                // Terminal until the credentials change: no retry timer (which would also overwrite
+                // this with `.offline`). Settings' save, or an explicit reconnect, restarts us.
+                self.store.setConnection(.unauthorized)
+                return
+            case .unreachable:
+                self.scheduleReconnect() // → .offline, retried with backoff
+                return
+            }
+            guard let url = self.wsURL() else {
+                self.scheduleReconnect()
+                return
+            }
             // Send the JWT in the Authorization header, not the URL query — a long-lived token in the
             // upgrade URL would persist in nginx/proxy access logs (S10). URLSessionWebSocketTask carries
             // the URLRequest's headers on the HTTP upgrade.
@@ -122,9 +193,11 @@ public final class LiveClient {
     }
 
     private func receive() {
+        let gen = generation
         task?.receive { [weak self] result in
             Task { @MainActor in
-                guard let self else { return }
+                // A replaced socket's late frame or failure must not touch the current connection.
+                guard let self, gen == self.generation else { return }
                 switch result {
                 case .success(let message):
                     self.store.setConnection(.live)
@@ -173,7 +246,9 @@ public final class LiveClient {
         }
         switch msg {
         case .state(let state):
-            lastStateAppliedAt = Date()
+            // Stamp only a frame the store will actually take: an other-scope frame is dropped, and
+            // counting it would let the skip window starve the menu bar of the real one.
+            if state.scope == store.scope { lastStateAppliedAt = Date() }
             store.apply(state)
         case .event:
             onSync?() // raw live feed: a transition (e.g. close) changes history → refresh, no banner
@@ -187,9 +262,16 @@ public final class LiveClient {
         }
     }
 
+    /// A socket callback reported a failure: reconnect — unless that socket was already replaced.
+    private func socketFailed(generation gen: Int) {
+        guard gen == generation else { return }
+        scheduleReconnect()
+    }
+
     private func scheduleReconnect() {
         guard !reconnecting, !stopped else { return }
         reconnecting = true
+        generation += 1 // every callback of the socket being dropped is stale from here on
         heartbeat?.cancel()
         let unauthorized = task?.closeCode == .policyViolation // server closed /live with 1008
         task?.cancel(with: .goingAway, reason: nil) // drop the stale/half-dead socket
@@ -199,9 +281,13 @@ public final class LiveClient {
         store.setConnection(unauthorized ? .unauthorized : .offline)
         let delay = backoff
         backoff = min(backoff * 2, 15)
-        Task { [weak self] in
+        let gen = generation
+        reconnectTask?.cancel()
+        reconnectTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(delay))
-            guard let self, !self.stopped else { return }
+            // A cancelled sleep returns early (the error is swallowed), so check for it explicitly.
+            guard !Task.isCancelled, let self, !self.stopped, gen == self.generation else { return }
+            self.reconnectTask = nil
             self.connect()
         }
     }
@@ -210,6 +296,7 @@ public final class LiveClient {
         heartbeat?.cancel()
         heartbeat = Task { [weak self] in
             while !Task.isCancelled {
+                _ = await self?.refreshNotificationAuthorization()
                 self?.sendPresence()
                 self?.ping() // detect a dead/half-open socket (e.g. after sleep) → reconnect
                 try? await Task.sleep(for: .seconds(10))
@@ -220,17 +307,18 @@ public final class LiveClient {
     /// Liveness probe: a failed pong means the socket is dead even if `receive` never errored
     /// (happens after the Mac sleeps — URLSession leaves the task hanging silently).
     private func ping() {
+        let gen = generation
         task?.sendPing { [weak self] error in
-            if error != nil { Task { @MainActor in self?.scheduleReconnect() } }
+            if error != nil { Task { @MainActor in self?.socketFailed(generation: gen) } }
         }
     }
 
     private func sendPresence() {
-        // Report active only when we'll actually SHOW a native banner: present (foreground/awake)
-        // AND notifications enabled here. Otherwise the server would route "native" to us and skip
-        // Bark — a muted device would swallow the alert (black hole). Reporting inactive lets
-        // routing fall through to another open app, or to Bark on the phone.
-        let active = presenceActive() && Config.notificationsEnabled
+        // Report active only when we'll actually SHOW a native banner: present (foreground/awake),
+        // notifications enabled here AND allowed by macOS. Otherwise the server would route "native"
+        // to us and skip Bark — a muted or unpermitted device would swallow the alert (black hole).
+        // Reporting inactive lets routing fall through to another open app, or to Bark on the phone.
+        let active = presenceActive() && Config.notificationsEnabled && notificationsAuthorized
         send(#"{"type":"presence","device":"\#(device.rawValue)","active":\#(active)}"#)
     }
 
@@ -238,8 +326,9 @@ public final class LiveClient {
     /// rather than silently losing the subscribe/presence and stalling on a dead connection.
     private func send(_ json: String) {
         guard let task else { return }
+        let gen = generation
         task.send(.string(json)) { [weak self] error in
-            if error != nil { Task { @MainActor in self?.scheduleReconnect() } }
+            if error != nil { Task { @MainActor in self?.socketFailed(generation: gen) } }
         }
     }
 }
