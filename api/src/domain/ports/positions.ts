@@ -5,7 +5,7 @@ import type { ClosedPosition, OpenPosition, Stats, StrategyFamily } from '@binsi
 /** The write side of the positions table: the projection and the realized-PnL pass. */
 export interface PositionStore {
   /** Upsert closed rows; a row is rewritten only when one of its figures changed. */
-  upsertClosed(positions: ClosedPosition[]): Promise<void>;
+  upsertClosed(positions: ClosedPosition[]): Promise<number>;
   /** Replace a wallet's open set: listed positions are upserted, the others go to 'pending_close' —
    *  except `stillOpen`, positions known to be open whose row is left untouched. */
   replaceOpenForWallet(

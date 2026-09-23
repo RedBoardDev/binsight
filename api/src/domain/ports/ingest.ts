@@ -48,6 +48,8 @@ export interface IngestResult {
   legs: number;
   flows: number;
   swaps: number;
+  /** Positions whose legs this run wrote. */
+  positions: string[];
   /** The wallet's history is read to genesis. */
   complete: boolean;
   /** It already was before this run (a known wallet, not a first-ever backfill). */

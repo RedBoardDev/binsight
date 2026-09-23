@@ -136,6 +136,7 @@ function makeEngine(opts: { withOpen: boolean; wallets?: string[]; priceRef: { v
         txs: 0,
         flows: 0,
         swaps: 0,
+        positions: [],
         complete: true,
         wasComplete: true,
       })),

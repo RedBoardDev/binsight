@@ -29,8 +29,8 @@ export interface OpenTransitions {
 
 export interface SyncResult {
   openPositions: OpenPosition[];
-  /** Closed positions in the whole projection. */
-  closed: number;
+  /** Closed rows actually written (new or changed) — 0 when the closed history is unchanged. */
+  closedWritten: number;
   /** Only the positions that went open → closed in this sync (the close-notification trigger). */
   closedRows: ClosedPosition[];
   transitions: OpenTransitions;
@@ -39,7 +39,8 @@ export interface SyncResult {
 /**
  * Reconciles the `positions` table for a wallet entirely from chain. Two paths so the read/write cost
  * matches what changed:
- *   - `sync` (after an ingest found transactions): full reproject of open + closed from every leg.
+ *   - `sync` (after an ingest found transactions): reproject open + closed — the whole history, or
+ *     only the positions the new transactions touched (plus every open one).
  *   - `refreshOpen` (the snapshot cadence): only the open positions' live values.
  */
 export class PositionSync {
@@ -54,22 +55,34 @@ export class PositionSync {
     wallet: string,
     snapshot: OnchainWalletSnapshot,
     valued: OnchainValued,
+    /** Only these positions changed (null = reproject the whole history). */
+    touched: Iterable<string> | null = null,
   ): Promise<SyncResult> {
-    const projection = await this.legPnl.pnlByPosition(wallet);
-    const { open, closed, prior } = await this.buildRows(wallet, projection, snapshot, valued);
+    const prior = await this.priorOpen(wallet);
+    const projection =
+      touched === null
+        ? await this.legPnl.pnlByPosition(wallet)
+        : await this.legPnl.pnlForPositions([
+            ...new Set([
+              ...touched,
+              ...prior.keys(),
+              ...snapshot.positions.map((p) => p.positionAddress),
+            ]),
+          ]);
+    const { open, closed } = await this.buildRows(wallet, projection, snapshot, valued, prior);
     // Newly closed = a closed row that was OPEN in the persisted set just before this sync. This diff
     // is the notification trigger and cannot spam or repeat: a wallet's first sync has no persisted open
     // set, and `replaceOpenForWallet` below drops the closed address from it for the next sync.
     const closedRows = closed.filter((c) => prior.has(c.positionAddress));
     await this.repo.replaceOpenForWallet(wallet, open, unprojected(snapshot, projection));
-    if (closed.length) await this.repo.upsertClosed(closed);
+    const closedWritten = await this.repo.upsertClosed(closed);
     this.logger.info(
-      { wallet, open: open.length, closed: closed.length, newlyClosed: closedRows.length },
+      { wallet, open: open.length, closedWritten, newlyClosed: closedRows.length },
       'positions reprojected from chain',
     );
     return {
       openPositions: open,
-      closed: closed.length,
+      closedWritten,
       closedRows,
       transitions: transitionsOf(prior, open, new Set(closedRows.map((c) => c.positionAddress))),
     };
@@ -83,9 +96,19 @@ export class PositionSync {
   ): Promise<{ openPositions: OpenPosition[]; transitions: OpenTransitions }> {
     const openAddrs = snapshot.positions.map((p) => p.positionAddress);
     const projection = openAddrs.length > 0 ? await this.legPnl.pnlForPositions(openAddrs) : [];
-    const { open, prior } = await this.buildRows(wallet, projection, snapshot, valued);
+    const prior = await this.priorOpen(wallet);
+    const { open } = await this.buildRows(wallet, projection, snapshot, valued, prior);
     await this.repo.replaceOpenForWallet(wallet, open, unprojected(snapshot, projection));
     return { openPositions: open, transitions: transitionsOf(prior, open, new Set()) };
+  }
+
+  /** The persisted open set right before this sync — the source of truth for transitions. It includes
+   *  'pending_close' rows: a position the cadence already saw vanish is still an open → closed
+   *  transition when this sync reprojects its close. */
+  private async priorOpen(wallet: string): Promise<Map<string, OpenPosition>> {
+    const prior = new Map<string, OpenPosition>();
+    for (const o of await this.repo.getOpenOrPendingClose(wallet)) prior.set(o.positionAddress, o);
+    return prior;
   }
 
   private async buildRows(
@@ -93,7 +116,8 @@ export class PositionSync {
     projection: PositionPnl[],
     snapshot: OnchainWalletSnapshot,
     valued: OnchainValued,
-  ): Promise<{ open: OpenPosition[]; closed: ClosedPosition[]; prior: Map<string, OpenPosition> }> {
+    prior: Map<string, OpenPosition>,
+  ): Promise<{ open: OpenPosition[]; closed: ClosedPosition[] }> {
     const live = snapshotToLive(snapshot.positions, valued);
     // Both sides of every pair: a pool's quote side is labelled from the metadata of its quote mint.
     const mints = new Set<string>([SOL_MINT]);
@@ -104,15 +128,8 @@ export class PositionSync {
     const metaMap = await this.metadata.resolve([...mints]);
     const resolver: TokenMetaResolver = (mint) => metaMap.get(mint) ?? { symbol: shortMint(mint) };
     const strategy = await this.repo.strategiesOf(projection.map((p) => p.position));
-    // The persisted open set right before this sync — the source of truth for transitions. It includes
-    // 'pending_close' rows: a position the cadence already saw vanish is still an open → closed
-    // transition when this sync reprojects its close.
-    const prior = new Map<string, OpenPosition>();
     const priorOorSince = new Map<string, number | null>();
-    for (const o of await this.repo.getOpenOrPendingClose(wallet)) {
-      prior.set(o.positionAddress, o);
-      priorOorSince.set(o.positionAddress, o.outOfRangeSince ?? null);
-    }
+    for (const [a, o] of prior) priorOorSince.set(a, o.outOfRangeSince ?? null);
     const rows = buildPositionRows({
       wallet,
       projection,
@@ -122,7 +139,7 @@ export class PositionSync {
       priorOorSince,
       now: Date.now(),
     });
-    return { ...rows, prior };
+    return rows;
   }
 }
 

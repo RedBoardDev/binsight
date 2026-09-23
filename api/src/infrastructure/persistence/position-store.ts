@@ -87,12 +87,13 @@ const CLOSED_CHANGED = sql`(${t.status}, ${t.tokenX}, ${t.tokenY}, ${t.quoteSymb
 export class PostgresPositionStore implements PositionStore {
   constructor(private readonly db: Database) {}
 
-  async upsertClosed(positions: ClosedPosition[]): Promise<void> {
-    if (positions.length === 0) return;
+  async upsertClosed(positions: ClosedPosition[]): Promise<number> {
+    if (positions.length === 0) return 0;
     const now = Date.now();
     const rows = positions.map((p) => closedRow(p, now));
+    let written = 0;
     for (let i = 0; i < rows.length; i += WRITE_CHUNK) {
-      await this.db
+      const res = await this.db
         .insert(t)
         .values(rows.slice(i, i + WRITE_CHUNK))
         .onConflictDoUpdate({
@@ -106,8 +107,11 @@ export class PostgresPositionStore implements PositionStore {
             // market_pnl_sol is the realized-PnL pass's column; the projection never writes it.
           },
           setWhere: CLOSED_CHANGED,
-        });
+        })
+        .returning({ address: t.positionAddress });
+      written += res.length;
     }
+    return written;
   }
 
   async replaceOpenForWallet(

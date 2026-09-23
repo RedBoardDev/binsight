@@ -148,11 +148,26 @@ const noTransitions = (t: Partial<OpenTransitions> = {}): OpenTransitions => ({
 });
 
 function syncResult(r: Partial<SyncResult> = {}): SyncResult {
-  return { openPositions: [], closed: 0, closedRows: [], transitions: noTransitions(), ...r };
+  return {
+    openPositions: [],
+    closedWritten: 0,
+    closedRows: [],
+    transitions: noTransitions(),
+    ...r,
+  };
 }
 
 function ingestResult(r: Partial<IngestResult> = {}): IngestResult {
-  return { txs: 0, legs: 0, flows: 0, swaps: 0, complete: true, wasComplete: true, ...r };
+  return {
+    txs: 0,
+    legs: 0,
+    flows: 0,
+    swaps: 0,
+    positions: [],
+    complete: true,
+    wasComplete: true,
+    ...r,
+  };
 }
 
 type Step<T> = T | Deferred<T>;
@@ -182,7 +197,7 @@ function harness(opts: { realizedEnabled?: boolean } = {}) {
     calls.push('snapshot');
     return snapshot({ positionsComplete: chain.positionsComplete });
   });
-  const sync = vi.fn(async () => {
+  const sync = vi.fn(async (..._args: unknown[]) => {
     calls.push('sync');
     return settle(q.sync.shift() ?? syncResult());
   });
@@ -287,6 +302,20 @@ describe('WalletActor — one step at a time', () => {
     expect(h.actor.reconciled).toBe(true);
   });
 
+  it('only the first projection re-reads the whole history; later ones read what new legs touched', async () => {
+    // WHY: a wallet with thousands of closed positions must not re-read (and re-diff) all of them every
+    // time a transaction lands. The first projection has no baseline and covers everything.
+    const h = harness();
+    await boot(h);
+    expect(h.sync.mock.calls[0]?.[3]).toBeNull();
+
+    h.q.ingest.push(ingestResult({ txs: 1, positions: [POS2] }));
+    h.actor.resync();
+    await flush();
+    expect(h.sync).toHaveBeenCalledTimes(2);
+    expect(h.sync.mock.calls[1]?.[3]).toEqual(new Set([POS2]));
+  });
+
   it('(1) an ingest that lands while a projection is running is projected afterwards — no lost close', async () => {
     // WHY (the old `needsSync` race): the ingest ran concurrently with a projection, set "needs sync",
     // and the projection's completion then cleared that flag — the close the ingest had just written
@@ -303,7 +332,7 @@ describe('WalletActor — one step at a time', () => {
     expect(h.ingest).toHaveBeenCalledTimes(1); // only the backfill: the ingest WAITS for the projection
 
     h.q.ingest.push(ingestResult({ txs: 1 })); // …and it will find the close
-    h.q.sync.push(syncResult({ closed: 1, closedRows: [closedRow()] }));
+    h.q.sync.push(syncResult({ closedWritten: 1, closedRows: [closedRow()] }));
     firstSync.resolve(syncResult({ openPositions: [openRow()] }));
     await flush();
 
@@ -343,7 +372,7 @@ describe('WalletActor — one step at a time', () => {
     h.q.ingest.push(ingestResult({ txs: 0 })); // backfill of a known wallet: nothing new
     h.q.ingest.push(ingestResult({ txs: 1 })); // the realized top-up: the close lands here
     h.q.sync.push(syncResult({ openPositions: [openRow()] })); // first projection: POS open
-    h.q.sync.push(syncResult({ closed: 1, closedRows: [closedRow()] })); // the close's projection
+    h.q.sync.push(syncResult({ closedWritten: 1, closedRows: [closedRow()] })); // the close's projection
     h.actor.start();
     await flush();
 
@@ -397,7 +426,7 @@ describe('WalletActor — one step at a time', () => {
 
     h.q.refreshOpen.push({ openPositions: [], transitions: noTransitions({ vanished: [POS] }) });
     h.q.ingest.push(ingestResult({ txs: 1 }));
-    h.q.sync.push(syncResult({ closed: 1, closedRows: [closedRow()] }));
+    h.q.sync.push(syncResult({ closedWritten: 1, closedRows: [closedRow()] }));
     const before = h.calls.length;
     h.actor.tick(Date.now() + 10_000); // the open-position cadence
     await flush();

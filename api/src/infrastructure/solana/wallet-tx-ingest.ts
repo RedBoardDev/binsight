@@ -105,6 +105,7 @@ export class WalletTxIngest implements WalletTxIngestPort {
     // Run-level: a top-up reconnected to the previously-ingested top. Only then may the stored top move.
     let hitKnownTop = false;
     const totals = { txs: 0, legs: 0, flows: 0, swaps: 0 };
+    const positions = new Set<string>();
 
     while (true) {
       const page = await this.signatures(owner, before);
@@ -152,6 +153,7 @@ export class WalletTxIngest implements WalletTxIngestPort {
       totals.legs += decoded.legs.length;
       totals.flows += decoded.flows.length;
       totals.swaps += decoded.swaps.length;
+      for (const leg of decoded.legs) positions.add(leg.position);
       opts.onProgress?.(totals.txs);
 
       oldestSig = page[page.length - 1]!.signature;
@@ -193,7 +195,7 @@ export class WalletTxIngest implements WalletTxIngestPort {
       complete,
     });
     this.logger.info({ wallet, ...totals, complete }, 'wallet tx ingest: done');
-    return { ...totals, complete, wasComplete: toppingUp };
+    return { ...totals, positions: [...positions], complete, wasComplete: toppingUp };
   }
 
   /** One page of signatures, newest-first, with retry. */

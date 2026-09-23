@@ -85,13 +85,14 @@ export class WalletActor {
   /** Open/range notifications only make sense against a projection this process can trust: never for
    *  the first-ever backfill of a wallet, whose whole open set would read as "just opened". */
   private announceTransitions = false;
-  /** New legs were ingested since the last full projection. */
+  /** New legs were ingested since the last projection. */
   private dirty = false;
+  /** The positions those legs belong to — null until the first projection, which covers everything. */
+  private touched: Set<string> | null = null;
   private plan: SnapshotPlan | null = null;
   private needsDiscovery = true;
   private lastDiscoveryAt = 0;
   private lastIngestAt = 0;
-  private lastClosedCount = -1;
   private lastCloseAt = 0;
   private lastRealizedRunAt = 0;
 
@@ -227,6 +228,7 @@ export class WalletActor {
     this.historyComplete = r.complete;
     if (r.txs > 0) {
       this.dirty = true;
+      for (const p of r.positions) this.touched?.add(p);
       // New transactions may have opened or closed positions and moved token balances.
       this.needsDiscovery = true;
       this.deps.onchain.invalidateIdle(this.address);
@@ -274,17 +276,21 @@ export class WalletActor {
   }
 
   private async projectAll(snap: OnchainWalletSnapshot, valued: OnchainValued): Promise<void> {
-    const res = await this.deps.positionSync.sync(this.address, snap, valued);
+    // The first projection covers the whole history; later ones only what new legs touched (plus every
+    // open position) — a wallet with 15k closed positions must not re-read them all on each close.
+    const res = await this.deps.positionSync.sync(this.address, snap, valued, this.touched);
     this.dirty = false;
+    this.touched = new Set();
     const firstProjection = !this.reconciled;
     this.reconciled = true;
     this.applyOpen(res.openPositions, res.transitions);
     // Newly closed = open in the persisted set just before this sync: on a restart, that is exactly
     // the positions that closed while the process was down.
     for (const row of res.closedRows) this.deps.bus.emit('closed', row);
-    if (res.closed !== this.lastClosedCount) {
-      this.lastClosedCount = res.closed;
-      this.deps.bus.emit('closedChanged', { wallet: this.address });
+    if (res.closedWritten > 0) this.deps.bus.emit('closedChanged', { wallet: this.address });
+    // The FIFO runs whenever the closed history changed — and once per process start, since swaps
+    // made while it was down (a residual sale) change it without touching any position.
+    if (res.closedWritten > 0 || firstProjection) {
       this.lastRealizedRunAt = Date.now();
       this.request('realized');
       // Arm the deferred realized refresh only for a live close, never for the first projection.
@@ -301,6 +307,7 @@ export class WalletActor {
     // A position left the chain but its close isn't projected yet: fetch the close now.
     if (res.transitions.vanished.length > 0) {
       this.dirty = true;
+      for (const p of res.transitions.vanished) this.touched?.add(p);
       this.request('ingest');
       this.request('snapshot'); // reproject even if the ingest finds nothing new (legs already in)
     }

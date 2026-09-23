@@ -72,6 +72,43 @@ const valued = (over: Partial<OnchainValued> = {}): OnchainValued => ({
   ...over,
 });
 
+describe('PositionSync — incremental projection', () => {
+  it('projects only the touched positions plus every open one, never the whole history', async () => {
+    // WHY: after the first projection, a new transaction can only change the positions it touched;
+    // re-reading a large wallet's entire leg history on every one is the cost this removes. Open
+    // positions (persisted or live) are always included so their open/closed status is decided.
+    const legPnl: LegProjectionSource = {
+      pnlByPosition: vi.fn(async () => []),
+      pnlForPositions: vi.fn(async () => [proj({ position: 'OPEN', depositSol: 6 })]),
+    };
+    const metadata = { resolve: vi.fn(async () => new Map()) };
+    const repo = {
+      replaceOpenForWallet: vi.fn(async () => {}),
+      upsertClosed: vi.fn(async (rows: ClosedPosition[]) => rows.length),
+      getOpenOrPendingClose: vi.fn(async (): Promise<OpenPosition[]> => []),
+      strategiesOf: vi.fn(async () => new Map<string, never>()),
+    };
+    const snapshot: OnchainWalletSnapshot = {
+      owner: 'W',
+      slot: 1,
+      slotSkew: 0,
+      nativeLamports: 0n,
+      idleTokens: [],
+      positions: [opv('OPEN')],
+      complete: true,
+      positionsComplete: true,
+    };
+    await new PositionSync(legPnl, metadata, repo, silent).sync(
+      'W',
+      snapshot,
+      valued(),
+      new Set(['TOUCHED']),
+    );
+    expect(legPnl.pnlByPosition).not.toHaveBeenCalled();
+    expect(legPnl.pnlForPositions).toHaveBeenCalledWith(['TOUCHED', 'OPEN']);
+  });
+});
+
 describe('PositionSync — chain → positions table', () => {
   it('routes a snapshot-present position to OPEN and an absent one to CLOSED, through the repo', async () => {
     const legPnl: LegProjectionSource = {
@@ -96,7 +133,9 @@ describe('PositionSync — chain → positions table', () => {
     const replaceOpenForWallet = vi.fn<(wallet: string, rows: OpenPosition[]) => Promise<void>>(
       async () => {},
     );
-    const upsertClosed = vi.fn<(rows: ClosedPosition[]) => Promise<void>>(async () => {});
+    const upsertClosed = vi.fn<(rows: ClosedPosition[]) => Promise<number>>(
+      async (rows) => rows.length,
+    );
     const repo = {
       replaceOpenForWallet,
       upsertClosed,
@@ -119,8 +158,8 @@ describe('PositionSync — chain → positions table', () => {
     const res = await sync.sync('W', snapshot, valued());
 
     // No prior persisted open row for CLOSED (getOpenOrPendingClose → []), so it's NOT a newly-closed transition:
-    // closedRows is empty even though the closed COUNT is 1 (this is the backfill-safety property).
-    expect(res.closed).toBe(1);
+    // closedRows is empty even though the closed row was written (this is the backfill-safety property).
+    expect(res.closedWritten).toBe(1);
     expect(res.closedRows).toEqual([]);
     // The open rows are returned so the engine can refresh its in-memory open set (the live /state).
     expect(res.openPositions).toHaveLength(1);
@@ -156,7 +195,7 @@ describe('PositionSync — chain → positions table', () => {
       replaceOpenForWallet: vi.fn(async (_w: string, rows: { positionAddress: string }[]) => {
         openRows.push(...rows);
       }),
-      upsertClosed: vi.fn(async () => {}),
+      upsertClosed: vi.fn(async (rows: ClosedPosition[]) => rows.length),
       getOpenOrPendingClose: vi.fn(async () => [
         { positionAddress: 'OPEN', outOfRangeSince: 1234 },
       ]),
@@ -189,7 +228,7 @@ describe('PositionSync — chain → positions table', () => {
       resolve: vi.fn(async (m: string[]) => new Map(m.map((x) => [x, { symbol: 'S' }]))),
     };
     const replaceOpenForWallet = vi.fn(async () => {});
-    const upsertClosed = vi.fn(async () => {});
+    const upsertClosed = vi.fn(async (rows: ClosedPosition[]) => rows.length);
     const repo = {
       replaceOpenForWallet,
       upsertClosed,
@@ -255,6 +294,7 @@ describe('PositionSync — close-notification wiring (no backfill spam, no dupli
           const v = byAddr.get(r.positionAddress);
           if (v) v.status = 'closed';
         }
+        return rows.length;
       }),
       getOpenOrPendingClose: vi.fn(async () => withStatus('open', 'pending_close')),
       strategiesOf: vi.fn(async () => new Map<string, never>()),
@@ -295,7 +335,7 @@ describe('PositionSync — close-notification wiring (no backfill spam, no dupli
     expect(emitted).toEqual([]); // no backfill spam
     // And even the raw closedRows are empty: no historical close was ever in the persisted open set.
     const res = await sync.sync('W', snap(['OPEN']), valued());
-    expect(res.closed).toBe(2);
+    expect(res.closedWritten).toBe(2);
     expect(res.closedRows).toEqual([]);
   });
 
@@ -418,7 +458,9 @@ describe('PositionSync — labels, strategies and stillOpen', () => {
       async (mints: string[]) =>
         new Map(mints.filter((m) => known[m]).map((m) => [m, { symbol: known[m]! }])),
     );
-    const upsertClosed = vi.fn<(rows: ClosedPosition[]) => Promise<void>>(async () => {});
+    const upsertClosed = vi.fn<(rows: ClosedPosition[]) => Promise<number>>(
+      async (rows) => rows.length,
+    );
     const repo = {
       replaceOpenForWallet: vi.fn(async () => {}),
       upsertClosed,
@@ -444,7 +486,9 @@ describe('PositionSync — labels, strategies and stillOpen', () => {
       pnlByPosition: vi.fn(async () => [proj({ position: 'OPEN' }), proj({ position: 'C1' })]),
       pnlForPositions: vi.fn(async () => []),
     };
-    const upsertClosed = vi.fn<(rows: ClosedPosition[]) => Promise<void>>(async () => {});
+    const upsertClosed = vi.fn<(rows: ClosedPosition[]) => Promise<number>>(
+      async (rows) => rows.length,
+    );
     const strategiesOf = vi.fn(
       async (_p: string[]) =>
         new Map<string, StrategyFamily>([
@@ -485,7 +529,7 @@ describe('PositionSync — labels, strategies and stillOpen', () => {
       metadataOf('S'),
       {
         replaceOpenForWallet,
-        upsertClosed: vi.fn(async () => {}),
+        upsertClosed: vi.fn(async (rows: ClosedPosition[]) => rows.length),
         getOpenOrPendingClose: vi.fn(noPrior),
         strategiesOf: vi.fn(async () => new Map<string, StrategyFamily>()),
       },
@@ -516,7 +560,7 @@ describe('PositionSync — open-set transitions', () => {
       metadataOf('S'),
       {
         replaceOpenForWallet: vi.fn(async () => {}),
-        upsertClosed: vi.fn(async () => {}),
+        upsertClosed: vi.fn(async (rows: ClosedPosition[]) => rows.length),
         getOpenOrPendingClose: vi.fn(async () => priorRows),
         strategiesOf: vi.fn(async () => new Map<string, StrategyFamily>()),
       },

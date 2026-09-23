@@ -88,6 +88,7 @@ function makeEngine() {
       txs: nextTxs,
       flows: 0,
       swaps: 0,
+      positions: [],
       complete: true,
       wasComplete: true,
     }),
