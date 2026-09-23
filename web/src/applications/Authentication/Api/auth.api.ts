@@ -17,11 +17,17 @@ async function postJson(path: string, body: unknown): Promise<Response> {
 }
 
 /** POST to an auth endpoint and normalise the {ok}|{ok:false,error} result (login/register/reset). */
-async function postAuth(path: string, body: unknown): Promise<{ ok: boolean; error?: string }> {
+async function postAuth(
+  path: string,
+  body: unknown,
+): Promise<{ ok: boolean; error?: string; signatureRequired?: boolean }> {
   const res = await postJson(path, body);
   if (res.ok) return { ok: true };
-  const data = (await res.json().catch(() => ({}))) as { error?: string };
-  return { ok: false, error: data.error };
+  const data = (await res.json().catch(() => ({}))) as {
+    error?: string;
+    signatureRequired?: boolean;
+  };
+  return { ok: false, error: data.error, signatureRequired: data.signatureRequired === true };
 }
 
 /**

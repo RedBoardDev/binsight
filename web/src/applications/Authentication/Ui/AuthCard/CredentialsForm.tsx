@@ -12,10 +12,12 @@ const MIN_PASSWORD = 8;
 
 interface CredentialsFormProps {
   mode: 'signin' | 'signup';
+  /** The backend wants a wallet signature for this sign-up (the owner address in open access). */
+  onSignatureRequired?: () => void;
 }
 
 /** Address + password, no signature: sign-in always, and sign-up when the backend runs open-access. */
-export const CredentialsForm = ({ mode }: CredentialsFormProps) => {
+export const CredentialsForm = ({ mode, onSignatureRequired }: CredentialsFormProps) => {
   const router = useRouter();
   const resetSession = useResetSession();
   const [address, setAddress] = useState('');
@@ -41,6 +43,10 @@ export const CredentialsForm = ({ mode }: CredentialsFormProps) => {
       if (res.ok) {
         resetSession();
         router.replace('/');
+        return;
+      }
+      if (!isSignin && res.signatureRequired && onSignatureRequired) {
+        onSignatureRequired();
         return;
       }
       setError(

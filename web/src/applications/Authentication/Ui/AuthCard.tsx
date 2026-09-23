@@ -33,15 +33,20 @@ interface AuthCardProps {
 export const AuthCard = ({ openAccess }: AuthCardProps) => {
   const [mode, setMode] = useState<AuthMode>('signin');
   const [notApproved, setNotApproved] = useState<string | null>(null);
+  // Open access still asks the OWNER address for a signature: owner rights are never granted to a
+  // password alone.
+  const [signatureRequired, setSignatureRequired] = useState(false);
 
   const switchMode = (next: AuthMode) => {
     setMode(next);
     setNotApproved(null);
+    setSignatureRequired(false);
   };
 
   // Open-access signup reuses the address + password form (no wallet signature). Reset always needs a
   // signature (the only ownership proof), so it keeps the connect-and-sign flow in either mode.
-  const credentialsForm = mode === 'signin' || (mode === 'signup' && openAccess);
+  const credentialsForm =
+    mode === 'signin' || (mode === 'signup' && openAccess && !signatureRequired);
 
   return (
     <WalletProviders>
@@ -65,7 +70,11 @@ export const AuthCard = ({ openAccess }: AuthCardProps) => {
               {notApproved !== null ? (
                 <NotApprovedNotice address={notApproved} onBack={() => switchMode('signin')} />
               ) : credentialsForm ? (
-                <CredentialsForm key={mode} mode={mode === 'signin' ? 'signin' : 'signup'} />
+                <CredentialsForm
+                  key={mode}
+                  mode={mode === 'signin' ? 'signin' : 'signup'}
+                  onSignatureRequired={() => setSignatureRequired(true)}
+                />
               ) : (
                 <WalletProveForm
                   key={mode}
