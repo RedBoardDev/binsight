@@ -41,7 +41,7 @@ public final class LiveClient {
         self.device = device
     }
 
-    /// Idempotent: re-opening the menu-bar panel calls this repeatedly; only connect once.
+    /// Called once at launch. Idempotent: a second call while started does nothing.
     public func start() {
         if started { return }
         started = true

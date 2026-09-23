@@ -6,6 +6,7 @@ import SwiftUI
 private let ageRefreshSeconds: TimeInterval = 30
 
 struct PanelView: View {
+    let app: AppController
     @Environment(PortfolioStore.self) private var store
     @Environment(\.openURL) private var openURL
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -58,7 +59,7 @@ struct PanelView: View {
 
     private func tab(_ title: String, scope: String) -> some View {
         TabChip(title: title, active: store.scope == scope) {
-            NotificationCenter.default.post(name: .setScope, object: scope)
+            app.client.setScope(scope)
         }
     }
 
@@ -231,10 +232,10 @@ struct PanelView: View {
                     PositionCard(p: p, now: now, bins: store.bins[p.positionAddress])
                         // Per-card, on-demand: asks once per position each time the panel opens, and
                         // the store's TTL/in-flight claim drops the ask when a snapshot is still
-                        // fresh — so reopening the panel costs nothing.
-                        .task(id: p.positionAddress) {
-                            NotificationCenter.default.post(
-                                name: .needBins, object: p.positionAddress)
+                        // fresh — so reopening the panel costs nothing. (`onAppear`, not `task`: the
+                        // fetch is its own Task, and must not be cancelled when the panel closes.)
+                        .onAppear {
+                            app.rest.loadBins(for: p.positionAddress)
                         }
                 }
             }
@@ -307,7 +308,7 @@ struct PanelView: View {
     /// in-flight claim and `hasMoreClosed` drop every ask that isn't the one page actually missing.
     private func prefetchClosed(reaching index: Int) {
         guard store.hasMoreClosed, index >= store.closed.count - Self.closedPrefetchRows else { return }
-        NotificationCenter.default.post(name: .loadMoreClosed, object: nil)
+        app.rest.loadMoreClosed()
     }
 
     /// Foot of the list while more history exists — a status line, not a button: pagination is
@@ -413,7 +414,7 @@ struct PanelView: View {
                 HealthDetailView(health: store.health)
                 Button("Reconnect") {
                     showHealthDetail = false
-                    NotificationCenter.default.post(name: .reconnect, object: nil)
+                    app.reconnect()
                 }
                 .font(.system(size: 12, weight: .medium))
                 .buttonStyle(.glass)

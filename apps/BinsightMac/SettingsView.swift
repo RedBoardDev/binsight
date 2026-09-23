@@ -2,12 +2,13 @@ import BinsightKit
 import SwiftUI
 
 struct SettingsView: View {
+    let app: AppController
     @State private var launch = LaunchAtLogin.isEnabled
 
     var body: some View {
         Form {
             ConnectionSettingsSection {
-                NotificationCenter.default.post(name: .reconnect, object: nil)
+                app.reconnect()
             }
             Section("Behavior") {
                 Toggle("Launch at login", isOn: $launch)
@@ -15,7 +16,7 @@ struct SettingsView: View {
             }
             Section("Wallets") {
                 WalletsEditor(onChange: {
-                    NotificationCenter.default.post(name: .reconnect, object: nil)
+                    app.reconnect()
                 })
             }
             NotificationsEditor()
