@@ -29,7 +29,8 @@ export const OpenPositionRow = ({
 }: OpenPositionRowProps) => {
   const select = useUi((s) => s.select);
   const money = useMoney();
-  const age = position.raw.openedAt ? fmtDuration((now - position.raw.openedAt) / 1000) : '—';
+  const claimed = money.quote(position.displayClaimedFees, position.quoteSymbol);
+  const unclaimed = money.quote(position.displayUnclaimedFees, position.quoteSymbol);
 
   return (
     <PositionRowShell
@@ -38,7 +39,7 @@ export const OpenPositionRow = ({
       columnCount={columnCount}
       chartOpen={chartOpen}
       onToggleChart={onToggleChart}
-      onOpen={() => select({ address: position.address, pair: position.pair, open: true })}
+      onOpen={() => select(position.selection)}
       chart={{
         positionAddress: position.address,
         poolAddress: position.raw.poolAddress,
@@ -61,18 +62,20 @@ export const OpenPositionRow = ({
           tokenMint={position.raw.tokenXMint}
         />
       </Table.Cell>
-      <Table.Cell className="tabular text-right text-muted">{age}</Table.Cell>
+      <Table.Cell className="tabular text-right text-muted">
+        {fmtDuration(position.ageSeconds(now))}
+      </Table.Cell>
       <Table.Cell className="tabular text-right">
         {money.quote(position.displaySize, position.quoteSymbol)}
       </Table.Cell>
       <Table.Cell className="tabular text-right">
         <div
           className="inline-flex items-baseline gap-1.5"
-          title={`${money.sol(position.raw.claimedFeesSol)} claimed · ${money.sol(position.raw.unclaimedFeesSol)} unclaimed`}
+          title={`${claimed} claimed · ${unclaimed} unclaimed`}
         >
-          <span className="text-muted">{money.sol(position.raw.claimedFeesSol)}</span>
+          <span className="text-muted">{claimed}</span>
           <span className="text-faint">·</span>
-          <span className="text-profit">{money.sol(position.raw.unclaimedFeesSol)}</span>
+          <span className="text-profit">{unclaimed}</span>
           <span className="text-faint text-xs">
             {position.displaySize > 0 ? `${position.feeYieldPct.toFixed(2)}%` : '—'}
           </span>

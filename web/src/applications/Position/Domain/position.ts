@@ -17,9 +17,6 @@ export class OpenPositionEntity {
   get sizeSol(): number {
     return this.raw.sizeSol;
   }
-  get pnlSol(): number {
-    return this.raw.pnlSol;
-  }
   /**
    * The unit this position's economics are actually denominated in. A USDC pool reports USDC; the
    * SOL columns stay zero for it, so displaying them would read as a flat, and wrong, zero.
@@ -39,14 +36,14 @@ export class OpenPositionEntity {
   get tone(): Tone {
     return toneOf(this.displayPnl);
   }
-  get totalFeesSol(): number {
-    return this.raw.claimedFeesSol + this.raw.unclaimedFeesSol;
+  get displayClaimedFees(): number {
+    return this.raw.claimedFeesQuote ?? this.raw.claimedFeesSol;
+  }
+  get displayUnclaimedFees(): number {
+    return this.raw.unclaimedFeesQuote ?? this.raw.unclaimedFeesSol;
   }
   get displayTotalFees(): number {
-    return (
-      (this.raw.claimedFeesQuote ?? this.raw.claimedFeesSol) +
-      (this.raw.unclaimedFeesQuote ?? this.raw.unclaimedFeesSol)
-    );
+    return this.displayClaimedFees + this.displayUnclaimedFees;
   }
   /** Combined (claimed + unclaimed) fees as a percentage of the position's current value. */
   get feeYieldPct(): number {
@@ -57,6 +54,14 @@ export class OpenPositionEntity {
   }
   get inRange(): boolean {
     return this.raw.rangeStatus === 'in';
+  }
+  /** Seconds since the position opened, or null when its open time is unknown. */
+  ageSeconds(now: number): number | null {
+    return this.raw.openedAt ? (now - this.raw.openedAt) / 1000 : null;
+  }
+  /** The payload that opens this position's detail panel. */
+  get selection() {
+    return { address: this.address, pair: this.pair, open: true };
   }
 }
 
@@ -73,9 +78,6 @@ export class ClosedPositionEntity {
   get strategy(): StrategyFamily | null {
     return this.raw.strategy;
   }
-  get pnlSol(): number {
-    return this.raw.pnlSol;
-  }
   /** See {@link OpenPositionEntity.quoteSymbol}. */
   get quoteSymbol(): string {
     return this.raw.quoteSymbol ?? 'SOL';
@@ -85,9 +87,6 @@ export class ClosedPositionEntity {
   }
   get pnlPct(): number {
     return this.raw.pnlPctQuote ?? this.raw.pnlPctSol;
-  }
-  get feesSol(): number {
-    return this.raw.feesSol;
   }
   get displayFees(): number {
     return this.raw.feesQuote ?? this.raw.feesSol;
@@ -103,5 +102,9 @@ export class ClosedPositionEntity {
   }
   get durationSeconds(): number | null {
     return this.raw.durationSeconds;
+  }
+  /** The payload that opens this position's detail panel (with the figures its summary shows). */
+  get selection() {
+    return { address: this.address, pair: this.pair, open: false, closed: this.raw };
   }
 }

@@ -26,14 +26,7 @@ export const ClosedPositionCard = ({ position, now }: ClosedPositionCardProps) =
       variant="tertiary"
       fullWidth
       className={CARD_CLASS}
-      onPress={() =>
-        select({
-          address: position.address,
-          pair: position.pair,
-          open: false,
-          closed: position.raw,
-        })
-      }
+      onPress={() => select(position.selection)}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
