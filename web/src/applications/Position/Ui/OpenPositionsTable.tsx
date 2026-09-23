@@ -2,12 +2,11 @@
 
 import { usePortfolioFeed } from '@app/applications/Portfolio/Api/portfolioFeed.store';
 import { OpenPositionRow } from '@app/applications/Position/Ui/OpenPositionsTable/OpenPositionRow';
+import { OpenPositionsState } from '@app/applications/Position/Ui/PositionListState';
 import { toneOf, toneTextClass } from '@app/applications/Shared/Domain/tone';
 import { PagerBar } from '@app/applications/Shared/Ui/PagerBar';
-import { StateMessage } from '@app/applications/Shared/Ui/StateMessage';
 import { useMoney } from '@app/applications/Shared/Ui/useMoney';
 import { Card, cn, Skeleton, Table } from '@heroui/react';
-import { Layers } from 'lucide-react';
 import { useState } from 'react';
 
 // Open positions are usually a handful — only paginate once a wallet runs a LOT of them at once.
@@ -86,8 +85,6 @@ const OpenPositionsSkeleton = () => (
  *  expanded at a time) and the detail panel on row press. */
 export const OpenPositionsTable = () => {
   const portfolio = usePortfolioFeed((s) => s.portfolio);
-  const feedError = usePortfolioFeed((s) => s.error);
-  const retryFeed = usePortfolioFeed((s) => s.retry);
   const money = useMoney();
   const [openChart, setOpenChart] = useState<string | null>(null);
   const [page, setPage] = useState(1);
@@ -126,24 +123,7 @@ export const OpenPositionsTable = () => {
         </div>
       </Card.Header>
 
-      {portfolio == null ? (
-        feedError ? (
-          <StateMessage
-            variant="error"
-            title="Couldn't load positions"
-            hint="The wallet feed is unreachable."
-            onRetry={retryFeed}
-          />
-        ) : (
-          <OpenPositionsSkeleton />
-        )
-      ) : rows.length === 0 ? (
-        <StateMessage
-          icon={<Layers size={18} />}
-          title="No open positions"
-          hint="Active Meteora LP positions appear here live."
-        />
-      ) : (
+      <OpenPositionsState skeleton={<OpenPositionsSkeleton />}>
         <Table.Root variant="secondary" className="flex min-h-0 flex-1 flex-col">
           <Table.ScrollContainer className="min-h-0 flex-1 overflow-y-auto">
             <Table.Content aria-label="Open positions">
@@ -171,7 +151,7 @@ export const OpenPositionsTable = () => {
             />
           </Table.Footer>
         </Table.Root>
-      )}
+      </OpenPositionsState>
     </Card.Root>
   );
 };

@@ -1,25 +1,11 @@
 'use client';
 
+import { ClosedPositionsControls } from '@app/applications/Position/Ui/ClosedPositionsControls';
 import { ClosedPositionRow } from '@app/applications/Position/Ui/ClosedPositionsTable/ClosedPositionRow';
-import {
-  CLOSED_RESULTS,
-  CLOSED_SORTS,
-  useClosedPositionsQuery,
-} from '@app/applications/Position/Ui/useClosedPositionsQuery';
+import { ClosedPositionsState } from '@app/applications/Position/Ui/PositionListState';
+import { useClosedPositionsQuery } from '@app/applications/Position/Ui/useClosedPositionsQuery';
 import { PagerBar } from '@app/applications/Shared/Ui/PagerBar';
-import { StateMessage } from '@app/applications/Shared/Ui/StateMessage';
-import {
-  Button,
-  Card,
-  cn,
-  SearchField,
-  Skeleton,
-  Table,
-  ToggleButton,
-  ToggleButtonGroup,
-  Tooltip,
-} from '@heroui/react';
-import { ArrowDown, ArrowUp, Download, History } from 'lucide-react';
+import { Card, cn, Skeleton, Table } from '@heroui/react';
 import { useState } from 'react';
 
 const COLUMN_COUNT = 7;
@@ -100,7 +86,6 @@ export const ClosedPositionsTable = () => {
   const now = Date.now();
   const toggleChart = (address: string) =>
     setOpenChart((current) => (current === address ? null : address));
-  const isFiltered = closed.q !== '' || closed.result !== 'all';
 
   return (
     <Card.Root className="flex h-full min-h-0 flex-col gap-0 p-0">
@@ -109,105 +94,9 @@ export const ClosedPositionsTable = () => {
         <span className="tabular text-faint text-xs">{closed.total}</span>
       </Card.Header>
 
-      <div className="flex flex-wrap items-center gap-2 border-border border-b px-4 pb-3">
-        <SearchField.Root
-          aria-label="Search pair"
-          value={closed.qInput}
-          onChange={closed.setQInput}
-          className="w-full sm:w-48"
-        >
-          <SearchField.Group>
-            <SearchField.SearchIcon />
-            <SearchField.Input placeholder="Search pair…" spellCheck={false} />
-            <SearchField.ClearButton />
-          </SearchField.Group>
-        </SearchField.Root>
+      <ClosedPositionsControls closed={closed} />
 
-        <ToggleButtonGroup.Root
-          size="sm"
-          selectionMode="single"
-          disallowEmptySelection
-          aria-label="Result filter"
-          selectedKeys={[closed.result]}
-          onSelectionChange={(keys) => {
-            const [key] = [...keys];
-            if (key != null) closed.setResult(key as typeof closed.result);
-          }}
-        >
-          {CLOSED_RESULTS.map((option) => (
-            <ToggleButton.Root key={option.value} id={option.value}>
-              {option.label}
-            </ToggleButton.Root>
-          ))}
-        </ToggleButtonGroup.Root>
-
-        <div className="ml-auto flex items-center gap-2">
-          <ToggleButtonGroup.Root
-            size="sm"
-            selectionMode="single"
-            disallowEmptySelection
-            aria-label="Sort by"
-            selectedKeys={[closed.sort]}
-            onSelectionChange={(keys) => {
-              const [key] = [...keys];
-              if (key != null) closed.setSort(key as typeof closed.sort);
-            }}
-          >
-            {CLOSED_SORTS.map((option) => (
-              <ToggleButton.Root key={option.value} id={option.value}>
-                {option.label}
-              </ToggleButton.Root>
-            ))}
-          </ToggleButtonGroup.Root>
-
-          <Tooltip.Root>
-            <ToggleButton.Root
-              isIconOnly
-              size="sm"
-              variant="ghost"
-              isSelected={closed.dir === 'asc'}
-              onChange={(isAscending) => closed.setDir(isAscending ? 'asc' : 'desc')}
-              aria-label={closed.dir === 'asc' ? 'Sorted ascending' : 'Sorted descending'}
-            >
-              {closed.dir === 'asc' ? <ArrowUp size={16} /> : <ArrowDown size={16} />}
-            </ToggleButton.Root>
-            <Tooltip.Content>
-              {closed.dir === 'asc' ? 'Sorted ascending' : 'Sorted descending'}
-            </Tooltip.Content>
-          </Tooltip.Root>
-
-          <Tooltip.Root>
-            <Button
-              isIconOnly
-              size="sm"
-              variant="ghost"
-              isDisabled={closed.total === 0}
-              onPress={closed.exportCsv}
-              aria-label="Export CSV"
-            >
-              <Download size={16} />
-            </Button>
-            <Tooltip.Content>Export current filter as CSV</Tooltip.Content>
-          </Tooltip.Root>
-        </div>
-      </div>
-
-      {closed.error && !closed.hasData ? (
-        <StateMessage
-          variant="error"
-          title="Couldn't load history"
-          hint="Check the connection and try again."
-          onRetry={closed.refetch}
-        />
-      ) : closed.loading && !closed.hasData ? (
-        <ClosedPositionsSkeleton />
-      ) : closed.rows.length === 0 ? (
-        <StateMessage
-          icon={<History size={18} />}
-          title={isFiltered ? 'No matching trades' : 'No closed positions'}
-          hint={isFiltered ? 'Try clearing the filters.' : 'Closed positions land here.'}
-        />
-      ) : (
+      <ClosedPositionsState closed={closed} skeleton={<ClosedPositionsSkeleton />}>
         <Table.Root variant="secondary" className="flex min-h-0 flex-1 flex-col">
           <Table.ScrollContainer
             aria-busy={closed.stale}
@@ -240,7 +129,7 @@ export const ClosedPositionsTable = () => {
             />
           </Table.Footer>
         </Table.Root>
-      )}
+      </ClosedPositionsState>
     </Card.Root>
   );
 };
