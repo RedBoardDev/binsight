@@ -1,6 +1,7 @@
 'use client';
 
 import { authApi } from '@app/applications/Authentication/Api/auth.api';
+import { useResetSession } from '@app/applications/Authentication/Api/useSession.api';
 import { shortAddr } from '@app/applications/Shared/Domain/formatters';
 import { Alert, Button, FieldError, Form, Input, Label, Spinner, TextField } from '@heroui/react';
 import { WalletReadyState } from '@solana/wallet-adapter-base';
@@ -29,6 +30,7 @@ interface WalletProveFormProps {
  */
 export const WalletProveForm = ({ kind, onNotApproved }: WalletProveFormProps) => {
   const router = useRouter();
+  const resetSession = useResetSession();
   const { wallets, select, publicKey, connected, signMessage, disconnect } = useWallet();
 
   const [password, setPassword] = useState('');
@@ -78,8 +80,10 @@ export const WalletProveForm = ({ kind, onNotApproved }: WalletProveFormProps) =
         nonce: challenge.nonce,
         password,
       });
-      if (res.ok) router.replace('/');
-      else setError(res.error ?? 'Could not complete — please retry.');
+      if (res.ok) {
+        resetSession();
+        router.replace('/');
+      } else setError(res.error ?? 'Could not complete — please retry.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Signature cancelled.');
     } finally {
