@@ -18,6 +18,13 @@ public final class LiveClient {
     private var started = false
     private var heartbeat: Task<Void, Never>?
     private var reconnecting = false
+    /// The pending backoff sleep → `connect()`. Kept so `stop()` can cancel it: a sleeper that only
+    /// checked `stopped` woke after a `stop(); start()` and opened a SECOND socket.
+    private var reconnectTask: Task<Void, Never>?
+    /// Bumped every time the current socket is dropped (`stop()`, `scheduleReconnect()`). Callbacks and
+    /// in-flight connects capture it and bail on a mismatch, so a late failure from a socket we already
+    /// replaced can't tear down — or double — the one that replaced it.
+    private var generation = 0
     /// When the last periodic `state` frame was actually processed. See `shouldSkipStateFrame`.
     private var lastStateAppliedAt: Date?
 
@@ -35,14 +42,22 @@ public final class LiveClient {
         if started { return }
         started = true
         stopped = false
+        backoff = 1
         connect()
     }
 
     public func stop() {
         started = false
         stopped = true
+        generation += 1
         heartbeat?.cancel()
+        heartbeat = nil
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        reconnecting = false
+        backoff = 1
         task?.cancel(with: .goingAway, reason: nil)
+        task = nil
     }
 
     /// Explicit, user-initiated reconnect (Settings saved, the Reconnect button): drop the socket and
@@ -66,6 +81,9 @@ public final class LiveClient {
         guard started, !stopped else { return }
         // A refused password stays refused across a sleep: only new credentials or `restart()` retry.
         if store.connection == .unauthorized, task == nil { return }
+        // Wake beats a pending backoff: don't sit out the rest of a 15 s sleep before retrying.
+        reconnectTask?.cancel()
+        reconnecting = false
         backoff = 1
         scheduleReconnect()
     }
@@ -103,6 +121,7 @@ public final class LiveClient {
             return // no password yet — wait for Settings → reconnect rather than failing in a loop
         }
         store.setConnection(.connecting)
+        let gen = generation
         // Fetch a fresh JWT (re-logins from the stored password if needed) before opening the socket.
         Task { [weak self] in
             guard let self else { return }
@@ -111,7 +130,7 @@ public final class LiveClient {
             // Re-check AFTER the await: stop() or a heartbeat-triggered scheduleReconnect() may have
             // landed while we fetched the token. Opening a socket now would leak it (a parallel reconnect
             // owns the connection) — bail and let that path drive.
-            if self.stopped || self.reconnecting { return }
+            if self.stopped || self.reconnecting || gen != self.generation { return }
             let token: String
             switch auth {
             case .token(let t):
@@ -148,9 +167,11 @@ public final class LiveClient {
     }
 
     private func receive() {
+        let gen = generation
         task?.receive { [weak self] result in
             Task { @MainActor in
-                guard let self else { return }
+                // A replaced socket's late frame or failure must not touch the current connection.
+                guard let self, gen == self.generation else { return }
                 switch result {
                 case .success(let message):
                     self.store.setConnection(.live)
@@ -213,9 +234,16 @@ public final class LiveClient {
         }
     }
 
+    /// A socket callback reported a failure: reconnect — unless that socket was already replaced.
+    private func socketFailed(generation gen: Int) {
+        guard gen == generation else { return }
+        scheduleReconnect()
+    }
+
     private func scheduleReconnect() {
         guard !reconnecting, !stopped else { return }
         reconnecting = true
+        generation += 1 // every callback of the socket being dropped is stale from here on
         heartbeat?.cancel()
         let unauthorized = task?.closeCode == .policyViolation // server closed /live with 1008
         task?.cancel(with: .goingAway, reason: nil) // drop the stale/half-dead socket
@@ -225,9 +253,13 @@ public final class LiveClient {
         store.setConnection(unauthorized ? .unauthorized : .offline)
         let delay = backoff
         backoff = min(backoff * 2, 15)
-        Task { [weak self] in
+        let gen = generation
+        reconnectTask?.cancel()
+        reconnectTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(delay))
-            guard let self, !self.stopped else { return }
+            // A cancelled sleep returns early (the error is swallowed), so check for it explicitly.
+            guard !Task.isCancelled, let self, !self.stopped, gen == self.generation else { return }
+            self.reconnectTask = nil
             self.connect()
         }
     }
@@ -246,8 +278,9 @@ public final class LiveClient {
     /// Liveness probe: a failed pong means the socket is dead even if `receive` never errored
     /// (happens after the Mac sleeps — URLSession leaves the task hanging silently).
     private func ping() {
+        let gen = generation
         task?.sendPing { [weak self] error in
-            if error != nil { Task { @MainActor in self?.scheduleReconnect() } }
+            if error != nil { Task { @MainActor in self?.socketFailed(generation: gen) } }
         }
     }
 
@@ -264,8 +297,9 @@ public final class LiveClient {
     /// rather than silently losing the subscribe/presence and stalling on a dead connection.
     private func send(_ json: String) {
         guard let task else { return }
+        let gen = generation
         task.send(.string(json)) { [weak self] error in
-            if error != nil { Task { @MainActor in self?.scheduleReconnect() } }
+            if error != nil { Task { @MainActor in self?.socketFailed(generation: gen) } }
         }
     }
 }
