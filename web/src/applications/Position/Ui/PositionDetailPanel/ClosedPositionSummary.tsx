@@ -1,7 +1,7 @@
 'use client';
 
 import { feeApr, fmtFeeApr } from '@app/applications/Position/Domain/feeApr';
-import { fmtAmount, fmtDate, fmtDuration } from '@app/applications/Shared/Domain/formatters';
+import { fmtDate, fmtDuration } from '@app/applications/Shared/Domain/formatters';
 import { toneOf, toneTextClass } from '@app/applications/Shared/Domain/tone';
 import { MoneyValue } from '@app/applications/Shared/Ui/MoneyValue';
 import { SectionLabel } from '@app/applications/Shared/Ui/SectionLabel';
