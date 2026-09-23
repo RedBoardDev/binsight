@@ -1,11 +1,20 @@
-# Self-hosted infrastructure for the Binsight.
-# Postgres is the durable store (see docs/scaling/SCALING-SPEC.md D2). Redis is deferred until a
-# multi-instance split is needed (D4). When running the api inside compose, point DATABASE_URL at
-# the `postgres` service host: postgres://meteora:meteora@postgres:5432/meteora
+# Local development stack for Binsight (production uses docker-compose.prod.yml).
+#   make db-up   -> only Postgres, on host port 5435 — matches the API's default DATABASE_URL
+#                   (postgres://meteora:meteora@localhost:5435/meteora), for `make dev-api`.
+#   make up      -> Postgres + the API container (reads the repo .env).
+# Postgres is the only durable store; the API is stateless on disk. The `meteora` user/database
+# name predates the Binsight rename and is kept on purpose: it identifies existing data.
+
+# An explicit project name, distinct from the production one (`binsight`, docker-compose.prod.yml).
+# Without it the project is named after the checkout directory — `binsight` — so `make db-up` /
+# `make down` run from a checkout that also hosts production would recreate or stop the PROD
+# containers and mount the prod `binsight_pgdata` volume.
+name: binsight-dev
+
 services:
   postgres:
     image: postgres:17-alpine
-    container_name: meteora-postgres
+    container_name: binsight-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: meteora
@@ -32,16 +41,13 @@ services:
     environment:
       # The api runs INSIDE compose, so DATABASE_URL must target the `postgres` service on the compose
       # network — the code default (localhost:5435) is only reachable when the api runs on the host.
-      # Set here (not just .env) so the compose deploy is self-contained. See the header note above.
+      # Set here (not just .env) so the compose stack is self-contained.
       - DATABASE_URL=postgres://meteora:meteora@postgres:5432/meteora
     ports:
       - '8787:8787'
-    volumes:
-      - api-data:/repo/data
     depends_on:
       postgres:
         condition: service_healthy
 
 volumes:
   pgdata:
-  api-data:
