@@ -1,6 +1,8 @@
 # Production stack for a single VPS, fronted by the host nginx.
 # Containers listen on 127.0.0.1 only; the host nginx terminates TLS for the public hostname and
-# routes "/" -> web and "/live" (WebSocket) -> api. Secrets live in .env.prod on the host (never committed).
+# routes "/" -> web and "/live" (WebSocket) -> api on binsight.thomasott.fr, and the whole API on
+# api.binsight.thomasott.fr (for the macOS app). App secrets live in .env.prod on the host; the
+# Postgres password lives in the host .env (compose substitution). Neither is ever committed.
 #
 #   docker compose -f docker-compose.prod.yml up -d --build
 #
@@ -12,9 +14,11 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: meteora
-      # Substituted from the host .env at parse time; falls back to 'meteora' for local/dev so nothing
-      # breaks if it's unset. Set POSTGRES_PASSWORD in .env on the prod host (it is NOT committed).
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-meteora}
+      # Substituted from the host .env (next to this file) at parse time — NOT from .env.prod. No
+      # fallback on purpose: if it is unset, compose refuses to parse and nothing is replaced, instead
+      # of silently using a password committed in the repo. Postgres only applies it when the volume
+      # is first initialised; to rotate it see deploy/README.md.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in the host .env}
       POSTGRES_DB: meteora
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -34,7 +38,7 @@ services:
     # Reach Postgres over the compose network. The password is substituted from the host .env (same
     # value as POSTGRES_PASSWORD above) so the credential is never committed.
     environment:
-      DATABASE_URL: postgres://meteora:${POSTGRES_PASSWORD:-meteora}@postgres:5432/meteora
+      DATABASE_URL: postgres://meteora:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in the host .env}@postgres:5432/meteora
     ports:
       - '127.0.0.1:8787:8787'
     healthcheck:
