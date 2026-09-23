@@ -1,9 +1,9 @@
 import type { Health, OpenPosition, WalletState } from '@binsight/shared';
+import type { ConnectionStatus } from '@binsight/solana-core';
 import type { EventBus } from '@/application/event-bus';
 import type { HealthMonitor } from '@/application/health-monitor';
 import { buildWalletState, combineOnchain } from '@/application/wallet-state';
 import type { OnchainValued } from '@/domain/dlmm';
-import type { ConnectionStatus } from '@/domain/ports';
 
 /** The per-wallet state the emitter reads. */
 export interface WalletView {

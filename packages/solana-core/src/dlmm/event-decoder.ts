@@ -1,9 +1,8 @@
 import { utils } from '@coral-xyz/anchor';
 import type { ParsedTransactionWithMeta, PartiallyDecodedInstruction } from '@solana/web3.js';
-import type { DlmmLeg } from '@/domain/dlmm';
-import { DLMM_PROGRAM_ID, dlmmCoder } from './dlmm-coder';
-
-export { DLMM_PROGRAM_ID } from './dlmm-coder';
+import { DLMM_PROGRAM_ID } from '../constants';
+import type { DlmmLeg } from '../types';
+import { dlmmCoder } from './coder';
 
 const bs58 = utils.bytes.bs58;
 

@@ -1,8 +1,8 @@
+import type { SwapFlowRow } from '@binsight/solana-core';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { describe, expect, it } from 'vitest';
-import type { SwapFlowRow } from '@/domain/dlmm';
 import type { Database } from './database';
 import * as schema from './schema';
 import { SwapFlowRepository } from './swap-flow-repository';

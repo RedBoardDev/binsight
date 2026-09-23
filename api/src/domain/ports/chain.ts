@@ -23,31 +23,6 @@ export interface TokenMetadataGateway {
   resolve(mints: string[]): Promise<Map<string, TokenMeta>>;
 }
 
-/** Anything that reports live WS connectivity. The StateEmitter only needs this slice of the WS
- *  backbone, so it doesn't care about the rest of its surface. */
-export interface ConnectionStatus {
-  isConnected(): boolean;
-}
-
-/** What a stream notification says about a watched wallet's transaction. */
-export interface StreamActivity {
-  /** The transaction's logs mention the DLMM program (it may have moved a position). */
-  touchesDlmm: boolean;
-}
-
-/** The WS backbone the engine drives (Solana `logsSubscribe`). A notification only TRIGGERS the
- *  cursor-based delta ingest; correctness rests on the engine's periodic poll. */
-export interface TransactionStreamPort extends ConnectionStatus {
-  /** (Re)subscribe a wallet; `onActivity` fires for each successful transaction that mentions it. */
-  watch(wallet: string, onActivity: (wallet: string, activity: StreamActivity) => void): void;
-  unwatch(wallet: string): void;
-  /** Fires on every (re)connect: nothing that happened while the socket was down was delivered. */
-  onReconnect(cb: () => void): void;
-  onConnectionChange(cb: (connected: boolean) => void): void;
-  start(): void;
-  stop(): void;
-}
-
 export interface OnchainDlmmGateway {
   /** Per-bin liquidity distribution of one open position (Price-Bin histogram). */
   positionBins(positionAddress: string): Promise<PositionBins | null>;

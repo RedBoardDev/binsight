@@ -1,16 +1,16 @@
 import type { PositionBin, PositionBins } from '@binsight/shared';
-import type { Connection } from '@solana/web3.js';
-import { PublicKey } from '@solana/web3.js';
 import {
   BINS_PER_ARRAY,
   binToArrayIndex,
+  coverageIndices,
   decodeBin,
   decodeLbPair,
   decodePosition,
   decodePositionHeader,
   deriveBinArray,
-} from './layout';
-import { coverageIndices } from './valuation';
+} from '@binsight/solana-core';
+import type { Connection } from '@solana/web3.js';
+import { PublicKey } from '@solana/web3.js';
 
 const ui = (raw: bigint, decimals: number): number => Number(raw) / 10 ** decimals;
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CreditMeter } from './credit-meter';
-import { rpcBatchSizeOf, rpcMethodOf, SolanaRpcRateLimiter, Spacer } from './rpc-rate-limiter';
+import { rpcBatchSizeOf, rpcMethodOf, SolanaRpcRateLimiter, Spacer } from './rate-limiter';
 
 describe('Spacer', () => {
   it('spaces reservations by 1000/rps with a frozen clock', () => {

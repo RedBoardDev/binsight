@@ -11,6 +11,7 @@ RUN corepack enable
 # Manifests first so the install layer is cached until a dependency actually changes.
 COPY package.json yarn.lock .yarnrc.yml ./
 COPY shared/package.json shared/
+COPY packages/solana-core/package.json packages/solana-core/
 COPY api/package.json api/
 RUN yarn workspaces focus @binsight/api @binsight/shared --production
 
@@ -20,9 +21,12 @@ WORKDIR /repo
 RUN corepack enable
 COPY package.json yarn.lock .yarnrc.yml tsconfig.base.json ./
 COPY shared/package.json shared/
+COPY packages/solana-core/package.json packages/solana-core/
 COPY api/package.json api/
 RUN yarn workspaces focus @binsight/api @binsight/shared
 COPY shared/ shared/
+# Bundled into api/dist at build time (it ships TypeScript sources); its runtime deps come from deps.
+COPY packages/solana-core/ packages/solana-core/
 COPY api/ api/
 RUN yarn workspace @binsight/shared build && yarn workspace @binsight/api build
 

@@ -1,15 +1,13 @@
-import {
-  DLMM_PROGRAM_ID as DLMM_PROGRAM_ID_STR,
-  POSITION_V2_DISCRIMINATOR,
-} from '@binsight/shared';
 import { PublicKey } from '@solana/web3.js';
+import { DLMM_PROGRAM_ID as DLMM_PROGRAM_ID_STR, POSITION_V2_DISCRIMINATOR } from '../constants';
 
 /**
  * On-chain DLMM account layouts (lb_clmm program). Byte offsets validated against the datapi
  * to the lamport on 13+ live positions.
  */
 
-export const DLMM_PROGRAM_ID = new PublicKey(DLMM_PROGRAM_ID_STR);
+/** The DLMM program as a key (the constant is its base58 form). */
+export const DLMM_PROGRAM_KEY = new PublicKey(DLMM_PROGRAM_ID_STR);
 
 export const POSITION_V2_DISC = POSITION_V2_DISCRIMINATOR;
 /** Byte offset of the `owner` field in a PositionV2 account (disc 8 + lb_pair 32) — the getProgramAccounts
@@ -175,7 +173,7 @@ export function deriveBinArray(lbPair: PublicKey, index: number): PublicKey {
   idx.writeBigInt64LE(BigInt(index));
   return PublicKey.findProgramAddressSync(
     [Buffer.from('bin_array'), lbPair.toBuffer(), idx],
-    DLMM_PROGRAM_ID,
+    DLMM_PROGRAM_KEY,
   )[0];
 }
 

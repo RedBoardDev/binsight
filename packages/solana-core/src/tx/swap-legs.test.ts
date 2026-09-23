@@ -1,5 +1,5 @@
-import { SOL_MINT } from '@binsight/shared';
 import { describe, expect, it } from 'vitest';
+import { SOL_MINT } from '../constants';
 import { type EnhancedTx, parseSwapBuy, parseSwapSell } from './swap-legs';
 
 const W = 'WALLET';

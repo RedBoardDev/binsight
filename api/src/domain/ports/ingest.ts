@@ -1,12 +1,5 @@
-import type {
-  DailyFlow,
-  DlmmLeg,
-  IngestCursor,
-  LoadedPoolMeta,
-  StoredLeg,
-  SwapFlowRow,
-  WalletFlowRow,
-} from '@/domain/dlmm';
+import type { DlmmLeg, SwapFlowRow, WalletFlowRow } from '@binsight/solana-core';
+import type { DailyFlow, IngestCursor, LoadedPoolMeta, StoredLeg } from '@/domain/dlmm';
 
 /** Ports of the wallet transaction ingest and the history it persists. */
 

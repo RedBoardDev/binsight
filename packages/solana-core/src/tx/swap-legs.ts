@@ -1,6 +1,5 @@
-import { DLMM_PROGRAM_ID, SOL_MINT } from '@binsight/shared';
-import type { ResidualSell } from '@/domain/dlmm';
-import { LAMPORTS_PER_SOL } from '@/domain/dlmm-pnl';
+import { DLMM_PROGRAM_ID, LAMPORTS_PER_SOL, SOL_MINT } from '../constants';
+import type { ResidualSell } from '../types';
 
 /**
  * Wallet-centric reductions of one transaction: its net SOL flow and its clean swap leg. They run over

@@ -1,6 +1,6 @@
-import { SOL_MINT } from '@binsight/shared';
+import { LAMPORTS_PER_SOL, SOL_MINT } from '@binsight/solana-core';
 import type { OnchainPositionValue, OnchainValued, OnchainWalletSnapshot } from './dlmm';
-import { binPriceRaw, LAMPORTS_PER_SOL } from './dlmm-pnl';
+import { binPriceRaw } from './dlmm-pnl';
 
 const ui = (amount: bigint, decimals: number): number => Number(amount) / 10 ** decimals;
 

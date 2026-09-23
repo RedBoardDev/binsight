@@ -1,8 +1,7 @@
+import { DLMM_PROGRAM_KEY, decodeStrategy, type StrategyFamily } from '@binsight/solana-core';
 import { utils } from '@coral-xyz/anchor';
 import { type Connection, PublicKey } from '@solana/web3.js';
 import type { StrategyResolver as StrategyResolverPort } from '@/domain/ports';
-import { DLMM_PROGRAM_ID } from './layout';
-import { decodeStrategy, type StrategyFamily } from './strategy';
 
 /** base58 decode; invalid input yields an empty array (decodeStrategy then reports no family). */
 function bs58decode(s: string): Uint8Array {
@@ -50,7 +49,7 @@ export class StrategyResolver implements StrategyResolverPort {
       ixs: readonly { programId: PublicKey; data?: string }[],
     ): StrategyFamily | null => {
       for (const ix of ixs) {
-        if (typeof ix.data === 'string' && ix.programId.equals(DLMM_PROGRAM_ID)) {
+        if (typeof ix.data === 'string' && ix.programId.equals(DLMM_PROGRAM_KEY)) {
           const s = decodeStrategy(bs58decode(ix.data));
           if (s) return s.family;
         }

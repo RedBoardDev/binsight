@@ -1,10 +1,11 @@
-import { SOL_MINT } from '@binsight/shared';
+import type { ResidualSell, SwapFlowRow, SwapSide } from '@binsight/solana-core';
+import { SOL_MINT } from '@binsight/solana-core';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import type { Logger } from 'pino';
 import { describe, expect, it, vi } from 'vitest';
-import type { LoadedPoolMeta, ResidualSell, StoredLeg, SwapFlowRow, SwapSide } from '@/domain/dlmm';
+import type { LoadedPoolMeta, StoredLeg } from '@/domain/dlmm';
 import type { Database } from '@/infrastructure/persistence/database';
 import { PostgresIngestCursorRepository } from '@/infrastructure/persistence/ingest-cursor-repository';
 import * as schema from '@/infrastructure/persistence/schema';

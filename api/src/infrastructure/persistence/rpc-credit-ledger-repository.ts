@@ -1,5 +1,5 @@
+import type { CreditFlushRow } from '@binsight/solana-core';
 import { desc, gte, sql } from 'drizzle-orm';
-import type { CreditFlushRow } from '@/infrastructure/solana/credit-meter';
 import type { Database } from './database';
 import { rpcCreditDaily } from './schema';
 

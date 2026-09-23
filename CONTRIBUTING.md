@@ -12,6 +12,8 @@
 ```
 api/         Fastify + TypeScript engine (DDD/hexagonal: domain / application / infrastructure), Postgres via drizzle
 shared/      zod contract shared by the API and the web (the Swift client mirrors it)
+packages/solana-core/  Solana + DLMM primitives (metered RPC lanes, logsSubscribe stream, tx decoders) —
+             no persistence, no wire contract; consumed from source by the API (and a future bot)
 web/         Next.js 16 web app — desktop + mobile layouts, installable PWA with Web Push
 apps/        SwiftUI macOS menu-bar app (BinsightMac) + the BinsightKit Swift package, generated with XcodeGen
 deploy/      production runbook + nginx vhosts (docker-compose.prod.yml, deploy.sh at the root)

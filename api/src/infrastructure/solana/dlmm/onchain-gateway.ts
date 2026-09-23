@@ -1,9 +1,24 @@
+import type { PositionBins, PositionHistory } from '@binsight/shared';
 import {
-  type PositionBins,
-  type PositionHistory,
+  buildGpaV2Params,
+  buildTokenAccountsByOwnerV2Params,
+  coverageIndices,
+  DLMM_PROGRAM_ID,
+  decodeLbPair,
+  decodePosition,
+  decodePositionHeader,
+  deriveBinArray,
+  GPA_V2_PAGE_LIMIT,
+  POSITION_V2_DISC,
+  POSITION_V2_OWNER_OFFSET,
+  parseGpaV2Response,
+  parseTokenAccountsByOwnerV2Accounts,
+  type RawRpc,
+  sleep,
   TOKEN_2022_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
-} from '@binsight/shared';
+  valuePosition,
+} from '@binsight/solana-core';
 import { utils } from '@coral-xyz/anchor';
 import {
   type AccountInfo,
@@ -13,27 +28,8 @@ import {
 } from '@solana/web3.js';
 import type { OnchainPositionValue, OnchainWalletSnapshot, SnapshotPlan } from '@/domain/dlmm';
 import type { OnchainDlmmGateway as OnchainDlmmGatewayPort } from '@/domain/ports';
-import { sleep } from '@/util/sleep';
-import {
-  buildGpaV2Params,
-  buildTokenAccountsByOwnerV2Params,
-  GPA_V2_PAGE_LIMIT,
-  parseGpaV2Response,
-  parseTokenAccountsByOwnerV2Accounts,
-  type RawRpc,
-} from './gpa-v2';
-import {
-  DLMM_PROGRAM_ID,
-  decodeLbPair,
-  decodePosition,
-  decodePositionHeader,
-  deriveBinArray,
-  POSITION_V2_DISC,
-  POSITION_V2_OWNER_OFFSET,
-} from './layout';
 import { binsFromAccounts, fetchPositionBins, type PositionBinsSource } from './position-detail';
 import { fetchPositionHistory } from './position-history';
-import { coverageIndices, valuePosition } from './valuation';
 
 const TOKEN_PROGRAM = new PublicKey(TOKEN_PROGRAM_ID);
 const TOKEN_2022_PROGRAM = new PublicKey(TOKEN_2022_PROGRAM_ID);
@@ -130,7 +126,7 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
       { memcmp: { offset: 0, bytes: minimalBase58(Uint8Array.from(POSITION_V2_DISC)) } },
       { memcmp: { offset: POSITION_V2_OWNER_OFFSET, bytes: owner } },
     ];
-    const programId = DLMM_PROGRAM_ID.toBase58();
+    const programId = DLMM_PROGRAM_ID;
     const pubkeys: PublicKey[] = [];
     let paginationKey: string | null = null;
     do {

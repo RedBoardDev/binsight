@@ -1,8 +1,9 @@
-import { TOKEN_PROGRAM_ID } from '@binsight/shared';
+import type { SwapFlowRow, WalletFlowRow } from '@binsight/solana-core';
+import { TOKEN_PROGRAM_ID } from '@binsight/solana-core';
 import { type Connection, type ParsedTransactionWithMeta, PublicKey } from '@solana/web3.js';
 import { pino } from 'pino';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { IngestCursor, SwapFlowRow, WalletFlowRow } from '@/domain/dlmm';
+import type { IngestCursor } from '@/domain/dlmm';
 import type {
   IngestCursorStore,
   LegRepository,

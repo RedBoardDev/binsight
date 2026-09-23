@@ -1,0 +1,25 @@
+{
+  "name": "@binsight/solana-core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Solana + Meteora DLMM primitives: metered RPC lanes, the logsSubscribe stream, transaction decoders.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.30.1",
+    "@solana/web3.js": "1.98.4",
+    "pino": "^9.6.0",
+    "undici": "^7.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}

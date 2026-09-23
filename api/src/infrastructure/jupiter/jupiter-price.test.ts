@@ -1,4 +1,4 @@
-import { SOL_MINT } from '@binsight/shared';
+import { SOL_MINT } from '@binsight/solana-core';
 import { pino } from 'pino';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JupiterPriceGateway } from './jupiter-price';

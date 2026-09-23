@@ -1,9 +1,9 @@
 import type { Health, OpenPosition, WalletState } from '@binsight/shared';
+import type { ConnectionStatus } from '@binsight/solana-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EventBus } from '@/application/event-bus';
 import { HealthMonitor } from '@/application/health-monitor';
 import type { OnchainValued } from '@/domain/dlmm';
-import type { ConnectionStatus } from '@/domain/ports';
 import { StateEmitter, type WalletView } from './emitter';
 
 /** Minimal WS-backbone stub — the emitter only reads isConnected(). */

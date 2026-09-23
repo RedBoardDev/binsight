@@ -6,6 +6,8 @@ export default defineConfig({
   target: 'node22',
   clean: true,
   outDir: 'dist',
+  // The core package ships TypeScript sources: bundle it into the API instead of resolving it at runtime.
+  noExternal: ['@binsight/solana-core'],
   // Resolve the `@/*` alias to src/* at build time.
   esbuildOptions(options) {
     options.alias = { '@': new URL('./src', import.meta.url).pathname };

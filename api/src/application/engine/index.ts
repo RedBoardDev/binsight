@@ -1,4 +1,5 @@
 import type { Health, WalletState } from '@binsight/shared';
+import type { TransactionStreamPort } from '@binsight/solana-core';
 import type { Logger } from 'pino';
 import type { EventBus } from '@/application/event-bus';
 import type { HealthMonitor } from '@/application/health-monitor';
@@ -11,7 +12,6 @@ import type {
   OnchainDlmmGateway,
   PositionStore,
   PriceGateway,
-  TransactionStreamPort,
   WalletRealizedStore,
   WalletTxIngestPort,
 } from '@/domain/ports';

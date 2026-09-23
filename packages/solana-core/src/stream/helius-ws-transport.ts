@@ -1,6 +1,6 @@
 import { WebSocket } from 'undici';
-import type { CreditMeter } from './credit-meter';
-import { WS_BYTES_PER_CREDIT_UNIT } from './credit-meter';
+import type { CreditMeter } from '../rpc/credit-meter';
+import { WS_BYTES_PER_CREDIT_UNIT } from '../rpc/credit-meter';
 import type { WsTransport, WsTransportFactory } from './transaction-stream';
 
 /**

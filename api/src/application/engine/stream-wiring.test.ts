@@ -1,11 +1,10 @@
-import { DLMM_PROGRAM_ID } from '@binsight/shared';
+import { DLMM_PROGRAM_ID, TransactionStream, type WsTransport } from '@binsight/solana-core';
 import type { Logger } from 'pino';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventBus } from '@/application/event-bus';
 import { HealthMonitor } from '@/application/health-monitor';
 import type { SnapshotPlan } from '@/domain/dlmm';
 import type { IngestResult } from '@/domain/ports';
-import { TransactionStream, type WsTransport } from '@/infrastructure/solana/transaction-stream';
 import { Engine, type EngineDeps } from './index';
 
 // INTEGRATION test of the WIRING (Engine ⇄ TransactionStream) with ZERO network: a real

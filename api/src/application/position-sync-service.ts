@@ -1,4 +1,5 @@
-import { type ClosedPosition, type OpenPosition, SOL_MINT } from '@binsight/shared';
+import type { ClosedPosition, OpenPosition } from '@binsight/shared';
+import { SOL_MINT } from '@binsight/solana-core';
 import type { Logger } from 'pino';
 import type { OnchainValued, OnchainWalletSnapshot } from '@/domain/dlmm';
 import type { PositionStore, TokenMetadataGateway } from '@/domain/ports';

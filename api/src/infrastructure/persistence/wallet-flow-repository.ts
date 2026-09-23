@@ -1,5 +1,6 @@
+import type { WalletFlowRow } from '@binsight/solana-core';
 import { and, gte, inArray, sql } from 'drizzle-orm';
-import type { DailyFlow, WalletFlowRow } from '@/domain/dlmm';
+import type { DailyFlow } from '@/domain/dlmm';
 import type { WalletFlowRepository as WalletFlowRepositoryPort } from '@/domain/ports';
 import type { Database } from './database';
 import { walletFlowDaily, walletFlows } from './schema';

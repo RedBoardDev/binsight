@@ -1,4 +1,4 @@
-import { SOL_MINT } from '@binsight/shared';
+import { SOL_MINT } from '@binsight/solana-core';
 import { describe, expect, it } from 'vitest';
 import type { OnchainPositionValue, OnchainWalletSnapshot } from './dlmm';
 import { valueSnapshot } from './snapshot-valuation';

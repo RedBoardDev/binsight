@@ -1,5 +1,5 @@
+import type { SwapFlowRow, SwapSide } from '@binsight/solana-core';
 import { eq } from 'drizzle-orm';
-import type { SwapFlowRow, SwapSide } from '@/domain/dlmm';
 import type { SwapFlowRepository as SwapFlowRepositoryPort } from '@/domain/ports';
 import type { Database } from './database';
 import { swapFlows } from './schema';

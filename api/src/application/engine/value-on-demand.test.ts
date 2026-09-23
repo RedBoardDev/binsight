@@ -1,4 +1,5 @@
-import { type OpenPosition, SOL_MINT, type WalletState } from '@binsight/shared';
+import type { OpenPosition, WalletState } from '@binsight/shared';
+import { SOL_MINT } from '@binsight/solana-core';
 import type { Logger } from 'pino';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventBus } from '@/application/event-bus';

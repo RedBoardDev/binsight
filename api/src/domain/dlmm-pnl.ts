@@ -1,11 +1,6 @@
-import { SOL_MINT, USDC_MINT, USDT_MINT } from '@binsight/shared';
-import type {
-  DlmmLeg,
-  PoolMeta,
-  PositionEconomics,
-  PositionEconomicsQuote,
-  QuoteMeta,
-} from './dlmm';
+import type { DlmmLeg } from '@binsight/solana-core';
+import { SOL_MINT, USDC_MINT, USDT_MINT } from '@binsight/solana-core';
+import type { PoolMeta, PositionEconomics, PositionEconomicsQuote, QuoteMeta } from './dlmm';
 
 /**
  * Pure mark-to-pool PnL for a Meteora DLMM position, fully on-chain (no Meteora API, all history).
@@ -17,9 +12,6 @@ import type {
  *
  *   PnL = Σ(withdrawals + claimed fees) − Σ(deposits), each leg at its own bin price.
  */
-
-/** Lamports per SOL — the single source of truth, re-used by the application + infra SOL conversions. */
-export const LAMPORTS_PER_SOL = 1e9;
 
 export interface QuoteConvention {
   quoteMint: string;

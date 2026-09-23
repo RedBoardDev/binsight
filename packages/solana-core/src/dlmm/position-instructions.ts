@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
-import { DLMM_PROGRAM_ID, type PositionEventKind } from '@binsight/shared';
 import { utils } from '@coral-xyz/anchor';
 import type {
   ParsedInstruction,
   ParsedTransactionWithMeta,
   PartiallyDecodedInstruction,
 } from '@solana/web3.js';
+import { DLMM_PROGRAM_ID } from '../constants';
+import type { PositionEventKind } from '../types';
 
 /**
  * The single source of truth for "which DLMM instruction is this?".

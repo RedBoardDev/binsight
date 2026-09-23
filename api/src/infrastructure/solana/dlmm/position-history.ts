@@ -1,14 +1,19 @@
 import type { PositionEvent, PositionHistory } from '@binsight/shared';
+import {
+  DLMM_PROGRAM_ID,
+  decodeLbPair,
+  discriminatorOf,
+  LBPAIR_DISC,
+  positionKindOfDisc,
+} from '@binsight/solana-core';
 import type {
   Connection,
   ParsedTransactionWithMeta,
   PartiallyDecodedInstruction,
 } from '@solana/web3.js';
 import { PublicKey } from '@solana/web3.js';
-import { DLMM_PROGRAM_ID, decodeLbPair, LBPAIR_DISC } from './layout';
-import { discriminatorOf, positionKindOfDisc } from './position-instructions';
 
-const DLMM = DLMM_PROGRAM_ID.toBase58();
+const DLMM = DLMM_PROGRAM_ID;
 const SIG_PAGE = 1000;
 const MAX_PAGES = 20;
 const TOKEN_PROGRAMS = new Set(['spl-token', 'spl-token-2022']);

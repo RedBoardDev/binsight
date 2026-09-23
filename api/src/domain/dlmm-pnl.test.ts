@@ -1,6 +1,7 @@
-import { SOL_MINT, USDC_MINT, USDT_MINT } from '@binsight/shared';
+import type { DlmmLeg } from '@binsight/solana-core';
+import { SOL_MINT, USDC_MINT, USDT_MINT } from '@binsight/solana-core';
 import { describe, expect, it } from 'vitest';
-import type { DlmmLeg, PoolMeta } from './dlmm';
+import type { PoolMeta } from './dlmm';
 import {
   binPriceRaw,
   legValueSol,

@@ -1,7 +1,7 @@
-import { DLMM_PROGRAM_ID } from '@binsight/shared';
 import type { Logger } from 'pino';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { StreamActivity } from '@/domain/ports';
+import { DLMM_PROGRAM_ID } from '../constants';
+import type { StreamActivity } from '../types';
 import {
   parseLogsNotification,
   TransactionStream,

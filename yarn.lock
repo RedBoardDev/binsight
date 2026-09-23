@@ -67,6 +67,7 @@ __metadata:
   resolution: "@binsight/api@workspace:api"
   dependencies:
     "@binsight/shared": "workspace:*"
+    "@binsight/solana-core": "workspace:*"
     "@coral-xyz/anchor": "npm:^0.30.1"
     "@electric-sql/pglite": "npm:^0.5.2"
     "@fastify/cors": "npm:^10.0.1"
@@ -85,7 +86,6 @@ __metadata:
     tsx: "npm:^4.19.2"
     tweetnacl: "npm:1.0.3"
     typescript: "npm:^5.7.3"
-    undici: "npm:^7.2.0"
     vitest: "npm:^2.1.8"
     web-push: "npm:^3.6.7"
     zod: "npm:^3.24.1"
@@ -99,6 +99,20 @@ __metadata:
     tsup: "npm:^8.5.1"
     typescript: "npm:^5.7.3"
     zod: "npm:^3.24.1"
+  languageName: unknown
+  linkType: soft
+
+"@binsight/solana-core@workspace:*, @binsight/solana-core@workspace:packages/solana-core":
+  version: 0.0.0-use.local
+  resolution: "@binsight/solana-core@workspace:packages/solana-core"
+  dependencies:
+    "@coral-xyz/anchor": "npm:^0.30.1"
+    "@solana/web3.js": "npm:1.98.4"
+    "@types/node": "npm:^22.10.5"
+    pino: "npm:^9.6.0"
+    typescript: "npm:^5.7.3"
+    undici: "npm:^7.2.0"
+    vitest: "npm:^2.1.8"
   languageName: unknown
   linkType: soft
 

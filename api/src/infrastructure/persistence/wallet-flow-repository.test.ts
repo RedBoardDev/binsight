@@ -1,8 +1,8 @@
+import type { WalletFlowRow } from '@binsight/solana-core';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { describe, expect, it } from 'vitest';
-import type { WalletFlowRow } from '@/domain/dlmm';
 import type { Database } from './database';
 import * as schema from './schema';
 import { WalletFlowRepository } from './wallet-flow-repository';

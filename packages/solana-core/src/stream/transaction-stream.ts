@@ -1,6 +1,6 @@
-import { DLMM_PROGRAM_ID } from '@binsight/shared';
 import type { Logger } from 'pino';
-import type { StreamActivity, TransactionStreamPort } from '@/domain/ports';
+import { DLMM_PROGRAM_ID } from '../constants';
+import type { StreamActivity, TransactionStreamPort } from '../types';
 
 /**
  * Solana `logsSubscribe` backbone — the LATENCY path that tells the engine a watched wallet just did

@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
-import { DLMM_PROGRAM_ID, SOL_MINT, TOKEN_PROGRAM_ID } from '@binsight/shared';
 import { utils } from '@coral-xyz/anchor';
 import type { ParsedTransactionWithMeta } from '@solana/web3.js';
 import { describe, expect, it } from 'vitest';
+import { DLMM_PROGRAM_ID, SOL_MINT, TOKEN_PROGRAM_ID } from '../constants';
 
 const bs58encode = (b: Uint8Array): string => utils.bytes.bs58.encode(b);
 

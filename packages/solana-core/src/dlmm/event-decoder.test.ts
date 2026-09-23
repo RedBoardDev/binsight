@@ -1,7 +1,8 @@
 import { utils } from '@coral-xyz/anchor';
 import type { ParsedTransactionWithMeta } from '@solana/web3.js';
 import { describe, expect, it } from 'vitest';
-import { DLMM_PROGRAM_ID, decodeDlmmLegs } from './dlmm-event-decoder';
+import { DLMM_PROGRAM_ID } from '../constants';
+import { decodeDlmmLegs } from './event-decoder';
 
 // Build an Event-CPI inner-instruction payload: [8-byte self-CPI tag][8-byte event disc][borsh event].
 // Field layouts match the official IDL (verified). The decoder strips the tag and hands the rest to

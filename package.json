@@ -16,6 +16,7 @@
   "packageManager": "yarn@4.15.0",
   "workspaces": [
     "shared",
+    "packages/*",
     "api",
     "web"
   ],

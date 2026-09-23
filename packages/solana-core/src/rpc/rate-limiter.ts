@@ -1,5 +1,5 @@
 import type { FetchMiddleware } from '@solana/web3.js';
-import { sleep } from '@/util/sleep';
+import { sleep } from '../sleep';
 import { currentCodePath } from './code-path';
 import type { CreditMeter } from './credit-meter';
 

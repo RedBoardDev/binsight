@@ -1,4 +1,5 @@
 import type { Candle, PositionBins, PositionHistory } from '@binsight/shared';
+import type { CreditMeter } from '@binsight/solana-core';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
 import Fastify from 'fastify';
@@ -19,7 +20,6 @@ import type { PresenceTracker } from '@/infrastructure/notifications/presence';
 import type { NetworthSnapshotRepository } from '@/infrastructure/persistence/networth-snapshot-repository';
 import type { PushRepository } from '@/infrastructure/persistence/push-repository';
 import type { RpcCreditLedgerRepository } from '@/infrastructure/persistence/rpc-credit-ledger-repository';
-import type { CreditMeter } from '@/infrastructure/solana/credit-meter';
 import { verifyJwt } from './auth';
 import { registerAuthRoutes } from './routes/auth-routes';
 import { WatchScope } from './routes/context';

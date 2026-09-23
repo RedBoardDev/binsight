@@ -1,9 +1,5 @@
-import { DLMM_PROGRAM_ID } from '@binsight/shared';
 import { BorshCoder } from '@coral-xyz/anchor';
 import dlmmIdl from './dlmm-idl.json';
-
-/** The Meteora DLMM on-chain program. */
-export { DLMM_PROGRAM_ID };
 
 /**
  * One IDL-driven Borsh coder for the whole engine — decodes DLMM events AND accounts by name from the

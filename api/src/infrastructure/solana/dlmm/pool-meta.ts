@@ -1,8 +1,8 @@
+import { dlmmCoder } from '@binsight/solana-core';
 import { type Connection, PublicKey } from '@solana/web3.js';
 import type { LoadedPoolMeta } from '@/domain/dlmm';
 import { solSideOf } from '@/domain/dlmm-pnl';
 import type { PoolMetaReader } from '@/domain/ports';
-import { dlmmCoder } from './dlmm-coder';
 
 const fieldStr = (v: unknown): string =>
   v && typeof (v as { toString: () => string }).toString === 'function'

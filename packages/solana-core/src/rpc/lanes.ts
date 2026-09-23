@@ -1,6 +1,6 @@
 import { Connection } from '@solana/web3.js';
 import type { CreditMeter } from './credit-meter';
-import { SolanaRpcRateLimiter } from './rpc-rate-limiter';
+import { SolanaRpcRateLimiter } from './rate-limiter';
 
 /** The provider plan's per-second limits (Helius free tier by default). */
 export interface RpcPlan {

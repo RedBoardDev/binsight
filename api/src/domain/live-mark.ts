@@ -1,4 +1,5 @@
-import { type OpenPosition, SOL_MINT } from '@binsight/shared';
+import type { OpenPosition } from '@binsight/shared';
+import { SOL_MINT } from '@binsight/solana-core';
 import type { OnchainPositionValue, OnchainValued, OnchainWalletSnapshot } from './dlmm';
 import { resolveRangeStatus } from './position';
 import { valueSnapshot } from './snapshot-valuation';

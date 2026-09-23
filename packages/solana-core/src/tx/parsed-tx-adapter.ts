@@ -1,11 +1,11 @@
-import { SOL_MINT } from '@binsight/shared';
 import type {
   ParsedInstruction,
   ParsedTransactionWithMeta,
   PartiallyDecodedInstruction,
 } from '@solana/web3.js';
-import type { SwapFlowRow, WalletFlowRow } from '@/domain/dlmm';
-import { hasDlmmPositionInstruction } from './dlmm/position-instructions';
+import { SOL_MINT } from '../constants';
+import { hasDlmmPositionInstruction } from '../dlmm/position-instructions';
+import type { SwapFlowRow, WalletFlowRow } from '../types';
 import {
   type EnhancedTx,
   parseSwapBuy,

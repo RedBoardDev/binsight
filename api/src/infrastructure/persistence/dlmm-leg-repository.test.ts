@@ -1,8 +1,8 @@
+import type { DlmmLeg } from '@binsight/solana-core';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { describe, expect, it } from 'vitest';
-import type { DlmmLeg } from '@/domain/dlmm';
 import type { Database } from './database';
 import { DlmmLegRepository } from './dlmm-leg-repository';
 import * as schema from './schema';

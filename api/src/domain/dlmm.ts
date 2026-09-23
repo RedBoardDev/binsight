@@ -6,24 +6,6 @@ import type { PublicKey } from '@solana/web3.js';
  * adapters; the decoder/gateway classes live in infrastructure and import these DOWNWARD.
  */
 
-/** One normalized liquidity movement: tokens going INTO (deposit) or OUT OF (withdraw) the position. */
-export interface DlmmLeg {
-  signature: string;
-  blockTime: number | null;
-  position: string;
-  lbPair: string;
-  /** deposit = capital in (cost); withdraw = capital out; claim = fees out (income). */
-  kind: 'deposit' | 'withdraw' | 'claim';
-  /** Historical price anchor: the pool's active bin at this tx. null is valid for a legacy ClaimFee
-   * event with no sibling carrying a bin — the exact X/Y quantities are retained even though Meteora
-   * emitted no price anchor, so the quote-side amount survives and the rest is marked partial. */
-  activeBinId: number | null;
-  /** raw token-X lamports moved in this leg. */
-  amountX: bigint;
-  /** raw token-Y lamports moved in this leg. */
-  amountY: bigint;
-}
-
 /** A single position's on-chain holdings (raw base units; SOL valuation is layered on top). */
 export interface OnchainPositionValue {
   positionAddress: string;
@@ -181,51 +163,9 @@ export interface LoadedPoolMeta {
   mintY: string;
 }
 
-/** Per-wallet flow-ingest progress (same semantics as the DLMM ingest cursor). */
-export interface FlowCursor {
-  oldestSig: string | null;
-  newestSig: string | null;
-  complete: boolean;
-}
-
 /** One UTC day of aggregated wallet flow, summed in SQL (never transfers per-tx rows to the app). */
 export interface DailyFlow {
   date: string; // YYYY-MM-DD (UTC)
   trading: number; // net trading SOL that day
   external: number; // net external (CEX / non-trading) SOL that day
-}
-
-/** A wallet tx reduced for PERSISTENCE: net SOL+WSOL flow + trading flag, keyed by signature. */
-export interface WalletFlowRow {
-  signature: string;
-  timestamp: number; // unix seconds
-  type: string;
-  solFlow: number; // signed net SOL+WSOL change, in SOL
-  isTrading: boolean;
-}
-
-/** Which way a persisted swap leg went: SOL→token ('buy') or token→SOL ('sell'). */
-export type SwapSide = 'buy' | 'sell';
-
-/** A persisted FIFO input for realized-PnL: one clean token↔SOL leg of a tx, keyed by (wallet, signature,
- *  mint). Immutable; the FIFO walk reads these from the DB + deltas instead of re-paging the Enhanced API. */
-export interface SwapFlowRow {
-  wallet: string;
-  signature: string;
-  ts: number; // unix seconds
-  mint: string;
-  tokenAmount: number; // human token units (decimal-adjusted)
-  solAmount: number; // SOL paid (buy) / received (sell)
-  side: SwapSide;
-}
-
-/** A wallet's realized token→SOL sell (clean single-token swap), decimal-adjusted amount + SOL out. */
-export interface ResidualSell {
-  /** unix seconds */
-  ts: number;
-  mint: string;
-  /** residual token units sold (human, decimal-adjusted) */
-  tokenAmount: number;
-  /** SOL actually received for this sell */
-  solReceived: number;
 }

@@ -1,5 +1,6 @@
+import type { DlmmLeg } from '@binsight/solana-core';
 import { and, eq, inArray } from 'drizzle-orm';
-import type { DlmmLeg, LoadedPoolMeta, StoredLeg } from '@/domain/dlmm';
+import type { LoadedPoolMeta, StoredLeg } from '@/domain/dlmm';
 import type { LegRepository } from '@/domain/ports';
 import type { Database } from './database';
 import { dlmmLegs, dlmmPools } from './schema';

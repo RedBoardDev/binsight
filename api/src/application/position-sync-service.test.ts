@@ -1,10 +1,5 @@
-import {
-  type ClosedPosition,
-  type OpenPosition,
-  SOL_MINT,
-  type StrategyFamily,
-  USDC_MINT,
-} from '@binsight/shared';
+import type { ClosedPosition, OpenPosition, StrategyFamily } from '@binsight/shared';
+import { SOL_MINT, USDC_MINT } from '@binsight/solana-core';
 import { pino } from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 import type { OnchainPositionValue, OnchainValued, OnchainWalletSnapshot } from '@/domain/dlmm';

@@ -4,6 +4,7 @@ import {
   NotifRuleSchema,
   RuntimeSettingsSchema,
 } from '@binsight/shared';
+import type { CreditMeter } from '@binsight/solana-core';
 import type { FastifyInstance } from 'fastify';
 import type { WatchlistService } from '@/application/accounts/watchlist-service';
 import type { EventBus } from '@/application/event-bus';
@@ -11,7 +12,6 @@ import type { NotificationManager } from '@/application/notification/manager';
 import type { AccountRepository, ConfigRepository } from '@/domain/ports';
 import type { PresenceTracker } from '@/infrastructure/notifications/presence';
 import type { RpcCreditLedgerRepository } from '@/infrastructure/persistence/rpc-credit-ledger-repository';
-import type { CreditMeter } from '@/infrastructure/solana/credit-meter';
 import { isValidSolanaAddress } from '../auth';
 
 export interface OwnerRouteDeps {

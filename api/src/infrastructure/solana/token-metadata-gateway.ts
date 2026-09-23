@@ -1,8 +1,8 @@
-import { SOL_MINT, USDC_MINT, USDT_MINT } from '@binsight/shared';
+import type { CreditMeter } from '@binsight/solana-core';
+import { SOL_MINT, USDC_MINT, USDT_MINT } from '@binsight/solana-core';
 import type { Logger } from 'pino';
 import type { TokenMeta, TokenMetadataGateway } from '@/domain/ports';
 import { singleFlight, TokenBucket, TtlCache } from '@/util/cache';
-import type { CreditMeter } from './credit-meter';
 
 const DAS_BATCH = 1000; // getAssetBatch id cap
 const META_TTL_MS = 24 * 60 * 60 * 1000; // metadata is ~immutable → cache a full day

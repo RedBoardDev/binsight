@@ -1,4 +1,5 @@
-import { type RangeStatus, SOL_MINT, type StrategyFamily, USDC_MINT } from '@binsight/shared';
+import type { RangeStatus, StrategyFamily } from '@binsight/shared';
+import { SOL_MINT, USDC_MINT } from '@binsight/solana-core';
 import { describe, expect, it } from 'vitest';
 import type { OnchainPositionValue } from '@/domain/dlmm';
 import type { PositionPnl } from './dlmm-position-pnl';

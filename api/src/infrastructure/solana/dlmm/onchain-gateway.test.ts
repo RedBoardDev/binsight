@@ -1,8 +1,8 @@
-import { TOKEN_PROGRAM_ID } from '@binsight/shared';
+import type { RawRpc } from '@binsight/solana-core';
+import { TOKEN_PROGRAM_ID } from '@binsight/solana-core';
 import { type Connection, PublicKey } from '@solana/web3.js';
 import { describe, expect, it, vi } from 'vitest';
 import type { SnapshotPlan } from '@/domain/dlmm';
-import type { RawRpc } from './gpa-v2';
 import { OnchainDlmmGateway } from './onchain-gateway';
 import { fetchPositionBins } from './position-detail';
 
