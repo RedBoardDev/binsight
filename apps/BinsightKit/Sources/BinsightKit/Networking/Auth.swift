@@ -78,17 +78,19 @@ public actor Auth {
         return true
     }
 
-    /// Revoke the backend session (so the JWT can't be replayed within its TTL), then forget the
-    /// credentials and any cached token. Best-effort on the network call — the local credentials are
-    /// cleared first, and stay cleared even if the server is unreachable.
-    public func logout() async {
+    /// Forget the credentials and any cached token, and revoke the backend session (so the JWT can't
+    /// be replayed within its TTL). The revocation is best effort and runs in the background: the
+    /// local sign-out is done when this returns, even if the server is unreachable.
+    public func logout() {
         let revoked = cachedToken
         Keychain.set("authAddress", "")
         Keychain.set("authPassword", "")
         cachedToken = nil
         expiresAt = nil
         rejectedCredentials = nil
-        if let revoked { await postLogout(token: revoked) }
+        if let revoked {
+            Task { await postLogout(token: revoked) }
+        }
     }
 
     private func postLogout(token: String) async {
