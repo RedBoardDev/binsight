@@ -27,6 +27,10 @@ public final class LiveClient {
     private var generation = 0
     /// When the last periodic `state` frame was actually processed. See `shouldSkipStateFrame`.
     private var lastStateAppliedAt: Date?
+    /// Whether macOS lets this app show banners. The OS answers asynchronously, so it is cached here
+    /// for the synchronous presence frame and re-read on every heartbeat — a change in System Settings
+    /// lands within one tick. Starts false: never claim presence before we know.
+    private var notificationsAuthorized = false
 
     /// Whether this device counts as "present" right now. The host platform injects the real
     /// logic (macOS: not idle/asleep/locked). Default: always present.
@@ -72,8 +76,24 @@ public final class LiveClient {
 
     public func refreshNow() { onSync?() }
 
-    /// Send a presence update immediately (call on sleep/wake/lock/foreground transitions).
-    public func refreshPresence() { sendPresence() }
+    /// Send a presence update immediately (call on sleep/wake/lock/foreground transitions, or when
+    /// the notification toggle / permission changed). Sent at once from the cached permission — a
+    /// sleep can't wait on the OS — then again if re-reading the permission changed it.
+    public func refreshPresence() {
+        sendPresence()
+        Task { [weak self] in
+            guard let self, await self.refreshNotificationAuthorization() else { return }
+            self.sendPresence()
+        }
+    }
+
+    /// Re-reads the OS notification permission. True when it changed.
+    private func refreshNotificationAuthorization() async -> Bool {
+        let authorized = await NotifPermission.showsBanners()
+        guard authorized != notificationsAuthorized else { return false }
+        notificationsAuthorized = authorized
+        return true
+    }
 
     /// Force a fresh connection now. Call on wake / return-to-foreground: the old socket is
     /// stale (URLSession won't report it), so we drop it and reconnect rather than guess.
@@ -268,6 +288,7 @@ public final class LiveClient {
         heartbeat?.cancel()
         heartbeat = Task { [weak self] in
             while !Task.isCancelled {
+                _ = await self?.refreshNotificationAuthorization()
                 self?.sendPresence()
                 self?.ping() // detect a dead/half-open socket (e.g. after sleep) → reconnect
                 try? await Task.sleep(for: .seconds(10))
@@ -285,11 +306,11 @@ public final class LiveClient {
     }
 
     private func sendPresence() {
-        // Report active only when we'll actually SHOW a native banner: present (foreground/awake)
-        // AND notifications enabled here. Otherwise the server would route "native" to us and skip
-        // Bark — a muted device would swallow the alert (black hole). Reporting inactive lets
-        // routing fall through to another open app, or to Bark on the phone.
-        let active = presenceActive() && Config.notificationsEnabled
+        // Report active only when we'll actually SHOW a native banner: present (foreground/awake),
+        // notifications enabled here AND allowed by macOS. Otherwise the server would route "native"
+        // to us and skip Bark — a muted or unpermitted device would swallow the alert (black hole).
+        // Reporting inactive lets routing fall through to another open app, or to Bark on the phone.
+        let active = presenceActive() && Config.notificationsEnabled && notificationsAuthorized
         send(#"{"type":"presence","device":"\#(device.rawValue)","active":\#(active)}"#)
     }
 

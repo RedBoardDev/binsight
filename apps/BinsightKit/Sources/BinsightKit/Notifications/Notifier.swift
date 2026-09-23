@@ -10,10 +10,18 @@ public final class Notifier: NSObject, UNUserNotificationCenterDelegate, @unchec
 
     /// Call once at launch. Registers the delegate so notifications show even when the app is
     /// active/foreground — the exact case where the backend routes to native instead of Bark.
-    /// Does NOT request authorization: that prompt is owned by the user-initiated master toggle
-    /// in `NotificationsEditor`, so we never ask twice.
+    ///
+    /// Also asks for authorization when macOS has never been asked: the master toggle defaults to on,
+    /// so a fresh install would otherwise sit silently unpermitted until someone found Settings. The
+    /// OS shows that prompt once at most; after it is answered, `NotificationsEditor` owns the state.
     public static func bootstrap() {
         UNUserNotificationCenter.current().delegate = shared
+        Task {
+            guard await NotifPermission.status() == .notDetermined else { return }
+            _ = await NotifPermission.request()
+            // Re-report presence now that the answer is in, rather than on the next heartbeat.
+            NotificationCenter.default.post(name: .presenceShouldRefresh, object: nil)
+        }
     }
 
     public func userNotificationCenter(
