@@ -17,6 +17,10 @@ const PING_MS = 25000;
  * Live WebSocket client. Fetches a short-lived ticket from the BFF, connects to the API's `/live`
  * feed, and reconnects with capped backoff. Mirrors the server protocol (state/health/event/
  * notify/closed_changed). One instance per session, owned by the portfolio store.
+ *
+ * It never sends `presence`: the web renders no native alerts (Web Push does, from the service
+ * worker), so claiming presence would only route the owner's alerts away from Bark to a socket that
+ * ignores them.
  */
 export class LiveClient {
   private socket: WebSocket | null = null;
@@ -49,6 +53,9 @@ export class LiveClient {
     if (this.stopped) return;
     try {
       const ticket = await authApi.wsTicket();
+      // disconnect() may have run while the ticket was in flight (sign-out, StrictMode remount) —
+      // opening now would leave an orphan socket nobody closes.
+      if (this.stopped) return;
       if (!ticket) {
         this.scheduleReconnect();
         return;
@@ -56,20 +63,30 @@ export class LiveClient {
 
       const socket = new WebSocket(`${WS_BASE}/live?token=${encodeURIComponent(ticket)}`);
       this.socket = socket;
+      let ready = false;
 
-      socket.onopen = () => {
-        this.attempt = 0;
-        this.handlers.onConnectionChange(true);
-        this.send({ type: 'subscribe', scope: this.scope });
-        this.send({ type: 'presence', device: 'web', active: true });
-        this.pingTimer = setInterval(() => this.send({ type: 'ping' }), PING_MS);
+      // The server authenticates AFTER the upgrade (and may close with 1008), so an open socket is not
+      // yet a working one. Its first frame is the greeting state — only then is the connection live:
+      // reset the backoff, and subscribe (a frame sent before the server listens would be dropped).
+      socket.onmessage = (ev) => {
+        if (this.stopped) return;
+        if (!ready) {
+          ready = true;
+          this.attempt = 0;
+          this.handlers.onConnectionChange(true);
+          this.send({ type: 'subscribe', scope: this.scope });
+          this.pingTimer = setInterval(() => this.send({ type: 'ping' }), PING_MS);
+        }
+        this.dispatch(ev.data);
       };
-      socket.onmessage = (ev) => this.dispatch(ev.data);
       socket.onerror = () => socket.close();
+      // A rejected socket (1008) closes before any frame, so `attempt` keeps growing and the retry
+      // backs off instead of hammering the server every second.
       socket.onclose = () => {
         this.clearPing();
+        if (this.stopped) return;
         this.handlers.onConnectionChange(false);
-        if (!this.stopped) this.scheduleReconnect();
+        this.scheduleReconnect();
       };
     } catch {
       // A thrown ticket-fetch / socket-construction error must retry like a null ticket.
