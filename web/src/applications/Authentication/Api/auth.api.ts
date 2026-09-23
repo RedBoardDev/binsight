@@ -57,7 +57,10 @@ export const authApi = {
     };
   },
 
-  login(address: string, password: string): Promise<{ ok: boolean; error?: string }> {
+  login(
+    address: string,
+    password: string,
+  ): Promise<{ ok: boolean; error?: string; signatureRequired?: boolean }> {
     return postAuth('/api/auth/login', { address, password });
   },
 
