@@ -1,6 +1,6 @@
 'use client';
 
-import { fmtDate, fmtDateFull, fmtSolSigned } from '@app/applications/Shared/Domain/formatters';
+import { fmtDay, fmtDayFull, fmtSolSigned } from '@app/applications/Shared/Domain/formatters';
 import { AMOUNT_MASK } from '@app/applications/Shared/Domain/money';
 import { type Tone, toneOf, toneTextClass } from '@app/applications/Shared/Domain/tone';
 import { type Point, scale, smoothLinePath } from '@app/applications/Stats/Domain/chartScale';
@@ -252,7 +252,7 @@ export const PnlGraph = ({ buckets, netWorth, showBars, mode, svgRef }: PnlGraph
         }}
       >
         {xLabelIdx.map((i) => (
-          <span key={buckets[i]!.t}>{fmtDate(buckets[i]!.t)}</span>
+          <span key={buckets[i]!.t}>{fmtDay(buckets[i]!.t)}</span>
         ))}
       </div>
     </div>
@@ -288,7 +288,7 @@ const ChartReadout = ({
       variant="secondary"
       className={cn('rounded-lg border border-border px-3 py-2 shadow-lg', className)}
     >
-      <div className="mb-1.5 text-[11px] text-faint">{fmtDateFull(bucket.t)}</div>
+      <div className="mb-1.5 text-[11px] text-faint">{fmtDayFull(bucket.t)}</div>
       {mode !== 'positions' ? (
         <>
           <TipRow

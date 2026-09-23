@@ -70,18 +70,41 @@ export function fmtDateTime(epochMs: number | null): string {
   });
 }
 
+/** Calendar date of an instant, in the viewer's local time ("Mar 4"). */
 export function fmtDate(epochMs: number | null): string {
   if (epochMs == null) return '—';
   return new Date(epochMs).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-/** Like fmtDate but with the year — used in chart tooltips, whose curves span multiple years. */
+/** Like fmtDate but with the year. */
 export function fmtDateFull(epochMs: number | null): string {
   if (epochMs == null) return '—';
   return new Date(epochMs).toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
+  });
+}
+
+/**
+ * A day BUCKET ("Mar 4"), given as its UTC midnight. Formatted in UTC: the bucket names a UTC day,
+ * and local time would label it one day early anywhere west of UTC.
+ */
+export function fmtDay(dayMs: number): string {
+  return new Date(dayMs).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'UTC',
+  });
+}
+
+/** Like fmtDay but with the year — used in chart tooltips, whose curves span multiple years. */
+export function fmtDayFull(dayMs: number): string {
+  return new Date(dayMs).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'UTC',
   });
 }
 
