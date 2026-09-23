@@ -74,8 +74,6 @@ public final class LiveClient {
         connect(clearingRejection: true)
     }
 
-    public func refreshNow() { onSync?() }
-
     /// Send a presence update immediately (call on sleep/wake/lock/foreground transitions, or when
     /// the notification toggle / permission changed). Sent at once from the cached permission — a
     /// sleep can't wait on the OS — then again if re-reading the permission changed it.

@@ -31,7 +31,6 @@ public enum Theme {
 /// Corner-radius scale for the cinematic-terminal surfaces.
 public enum Radius {
     public static let md: CGFloat = 12
-    public static let lg: CGFloat = 16
 }
 
 extension Color {

@@ -103,8 +103,8 @@ public func binChartGeometry(_ data: PositionBins, maxBars: Int = binChartMaxBar
 }
 
 /// The open position's deposited-liquidity curve: one bar per bin bucket, coloured by side of the
-/// live price, with a marker on the active bin. Replaces the old single-line `RangeBar` — the range
-/// and where the price sits inside it are both read straight off the bars.
+/// live price, with a marker on the active bin. The range and where the price sits inside it are
+/// both read straight off the bars.
 ///
 /// `data` is nil until the on-demand fetch lands (or when it failed); the view then draws a flat
 /// baseline so the card never changes height between states.
