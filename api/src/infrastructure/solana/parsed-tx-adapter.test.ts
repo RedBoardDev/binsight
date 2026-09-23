@@ -6,8 +6,8 @@ import { describe, expect, it } from 'vitest';
 
 const bs58encode = (b: Uint8Array): string => utils.bytes.bs58.encode(b);
 
-import { type EnhancedTx, parseSwapBuy, parseSwapSell, walletSolFlow } from './helius-enhanced';
 import { extractFlowRow, extractSwapRows, parsedTxToEnhancedTx } from './parsed-tx-adapter';
+import { type EnhancedTx, parseSwapBuy, parseSwapSell, walletSolFlow } from './swap-legs';
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
 // Fixture builders — synthesize a `getParsedTransaction` (jsonParsed) result the SAME way the existing

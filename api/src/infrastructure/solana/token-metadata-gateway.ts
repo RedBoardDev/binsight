@@ -72,14 +72,17 @@ export class HeliusTokenMetadataGateway implements TokenMetadataGateway {
   constructor(
     httpUrl: string,
     private readonly logger: Logger,
-    dasRps = 2,
-    transport?: DasTransport,
-    // Shared credit meter (optional). Threaded into the default transport so DAS spend is metered; an
-    // injected test transport (no real fetch) needn't carry it.
-    meter?: CreditMeter,
+    opts: {
+      /** The plan's DAS sub-limit, already safety-scaled. */
+      dasRps?: number;
+      transport?: DasTransport;
+      /** Meters the default transport's DAS spend. */
+      meter?: CreditMeter;
+    } = {},
   ) {
-    const rps = Math.max(1, dasRps);
-    this.transport = transport ?? heliusTransport(httpUrl, new TokenBucket(rps, rps), meter);
+    const rps = Math.max(1, opts.dasRps ?? 2);
+    this.transport =
+      opts.transport ?? heliusTransport(httpUrl, new TokenBucket(rps, rps), opts.meter);
   }
 
   async resolve(mints: string[]): Promise<Map<string, TokenMeta>> {
@@ -101,7 +104,7 @@ export class HeliusTokenMetadataGateway implements TokenMetadataGateway {
 
     for (let i = 0; i < missing.length; i += DAS_BATCH) {
       const chunk = missing.slice(i, i + DAS_BATCH);
-      let fetched: Map<string, TokenMeta>;
+      let fetched: Map<string, TokenMeta> | null;
       try {
         // Key on the FULL sorted mint set — `${chunk[0]}:${len}` collided across wallets sharing the
         // first mint + length, collapsing two distinct fetches into one and caching the loser's mints
@@ -112,12 +115,14 @@ export class HeliusTokenMetadataGateway implements TokenMetadataGateway {
           { err, n: chunk.length },
           'token metadata fetch failed — using fallback symbols',
         );
-        fetched = new Map();
+        fetched = null;
       }
       for (const mint of chunk) {
-        // cache the fallback too: a metadata-less memecoin must not be re-fetched every sync (bounded cost).
-        const meta = fetched.get(mint) ?? fallback(mint);
-        this.cache.set(mint, meta);
+        const meta = fetched?.get(mint) ?? fallback(mint);
+        // A mint DAS answered for without metadata is cached as its fallback (a metadata-less memecoin
+        // must not be re-fetched every sync). A failed fetch is NOT cached: one outage used to pin every
+        // mint of the batch to a truncated address for a day.
+        if (fetched) this.cache.set(mint, meta);
         out.set(mint, meta);
       }
     }

@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { PublicKey } from '@solana/web3.js';
 import nacl from 'tweetnacl';
 
@@ -18,7 +18,12 @@ export interface JwtPayload {
   ver: number;
   /** Session id — the auth hook accepts the token only while this jti is still an active session. */
   jti: string;
+  /** Set to `ws` on a WebSocket ticket: it opens `/live` and is refused everywhere else. */
+  aud?: TokenAudience;
 }
+
+/** A session token works everywhere; a `ws` ticket only upgrades `/live` (it travels in a URL). */
+export type TokenAudience = 'session' | 'ws';
 
 const TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days — long-lived for a personal self-hosted tool
 const b64url = (b: Buffer): string => b.toString('base64url');
@@ -31,12 +36,19 @@ export function createJwt(
   ver: number,
   jti: string,
   ttlSeconds = TOKEN_TTL_SECONDS,
+  aud: TokenAudience = 'session',
 ): string {
   const header = b64url(Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })));
   const now = Math.floor(Date.now() / 1000);
-  const payload = b64url(
-    Buffer.from(JSON.stringify({ sub, iat: now, exp: now + ttlSeconds, ver, jti })),
-  );
+  const claims = {
+    sub,
+    iat: now,
+    exp: now + ttlSeconds,
+    ver,
+    jti,
+    ...(aud === 'ws' ? { aud } : {}),
+  };
+  const payload = b64url(Buffer.from(JSON.stringify(claims)));
   const sig = b64url(hmac(secret, `${header}.${payload}`));
   return `${header}.${payload}.${sig}`;
 }
@@ -60,21 +72,28 @@ export function verifyJwt(secret: string, token: string): JwtPayload | null {
   }
 }
 
+// scrypt runs on the libuv thread pool: the synchronous variant blocked the one event loop that also
+// runs the engine and every socket for ~60 ms per login, so a login flood froze the whole process.
+const scryptAsync = (password: string, salt: Buffer, keylen: number): Promise<Buffer> =>
+  new Promise((resolve, reject) =>
+    scrypt(password, salt, keylen, (err, key) => (err ? reject(err) : resolve(key))),
+  );
+
 /** Hash a password with scrypt + a random salt. Stored as `scrypt$<saltHex>$<hashHex>`. */
-export function hashPassword(password: string): string {
+export async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(16);
-  const hash = scryptSync(password, salt, 32);
+  const hash = await scryptAsync(password, salt, 32);
   return `scrypt$${salt.toString('hex')}$${hash.toString('hex')}`;
 }
 
 /** Constant-time verify against a stored scrypt hash. */
-export function verifyPassword(password: string, stored: string): boolean {
+export async function verifyPassword(password: string, stored: string): Promise<boolean> {
   const parts = stored.split('$');
   if (parts.length !== 3 || parts[0] !== 'scrypt') return false;
   const salt = Buffer.from(parts[1] as string, 'hex');
   const expected = Buffer.from(parts[2] as string, 'hex');
   if (expected.length === 0) return false;
-  const actual = scryptSync(password, salt, expected.length);
+  const actual = await scryptAsync(password, salt, expected.length);
   return timingSafeEqual(actual, expected);
 }
 

@@ -1,28 +1,21 @@
-import {
-  type OpenPosition,
-  type RuntimeSettings,
-  SOL_MINT,
-  type WalletState,
-} from '@binsight/shared';
+import { type OpenPosition, SOL_MINT, type WalletState } from '@binsight/shared';
 import type { Logger } from 'pino';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventBus } from '@/application/event-bus';
 import { HealthMonitor } from '@/application/health-monitor';
-import type { AppConfig } from '@/config/env';
 import type { OnchainWalletSnapshot, SnapshotPlan } from '@/domain/dlmm';
 import { Engine, type EngineDeps } from './index';
 
-// Step 6 — VALUE-ON-DEMAND. Proves, with ZERO network (every dep is a stub/spy):
-//   1. an idle wallet (0 open, no viewer) issues NO recurring on-chain read — the blind 30s
-//      WALLET_BALANCE_REFRESH_MS getMultipleAccounts snapshot is gone;
-//   2. the shared price tick re-marks a VIEWED open wallet from CACHED data + the live price WITHOUT
-//      any snapshotWallet/getMultipleAccounts call (the gateway is asserted untouched);
-//   3. that re-mark is emitted as an APPROXIMATE, NON-'fresh' state, so the NetworthRecorder never
-//      persists it (only an exact read is authoritative).
+// VALUE-ON-DEMAND, with ZERO network (every dep is a stub/spy). The exact on-chain read runs on a
+// per-wallet cadence (10 s with open positions, 60 s without); between two exact reads the shared
+// price mark re-prices the CACHED holdings at the live Jupiter price for no RPC at all, and emits that
+// approximation as non-'fresh' so the NetworthRecorder never persists it.
 
-const WALLET = 'Leader1111111111111111111111111111111111111';
+const W1 = 'Leader1111111111111111111111111111111111111';
+const W2 = 'Leader2222222222222222222222222222222222222';
 const TOKEN = 'Tok1111111111111111111111111111111111111111';
-const POS = 'Pos1111111111111111111111111111111111111111';
+const TOKEN2 = 'Tok2222222222222222222222222222222222222222';
+const POOL = 'Pool11111111111111111111111111111111111111';
 
 const logger = {
   debug() {},
@@ -34,30 +27,16 @@ const logger = {
   },
 } as unknown as Logger;
 
-// The poll knobs are inert now (nothing polls) but still part of the RuntimeSettings wire contract.
-const settings: RuntimeSettings = {
-  meteoraTargetRps: 15,
-  pollMinMs: 1_000,
-  pollMaxMs: 30_000,
-  pollIdleMs: 300_000,
-  barkKey: '',
-  presenceTimeoutSeconds: 30,
-};
-
-const noopAsync = () => Promise.resolve(undefined as never);
+const posOf = (wallet: string) => `Pos-${wallet}`;
+const mintOf = (wallet: string) => (wallet === W1 ? TOKEN : TOKEN2);
 
 /** A 1-position SOL-quote snapshot (Y=SOL) holding 1.0 token-X — `withOpen=false` → an idle empty wallet. */
-function snapshotFactory(withOpen: boolean): OnchainWalletSnapshot & { plan: SnapshotPlan } {
-  const plan = {
-    positionKeys: [],
-    lbPairByPos: new Map(),
-    coverageByPos: new Map(),
-    lbPairKeys: [],
-    binArrayKeys: [],
-    binArrayMeta: [],
-  } as unknown as SnapshotPlan;
+function snapshotOf(
+  owner: string,
+  withOpen: boolean,
+): OnchainWalletSnapshot & { plan: SnapshotPlan } {
   return {
-    owner: WALLET,
+    owner,
     slot: 100,
     slotSkew: 0,
     nativeLamports: 0n,
@@ -65,9 +44,9 @@ function snapshotFactory(withOpen: boolean): OnchainWalletSnapshot & { plan: Sna
     positions: withOpen
       ? [
           {
-            positionAddress: POS,
-            lbPair: 'Pool11111111111111111111111111111111111111',
-            tokenXMint: TOKEN,
+            positionAddress: posOf(owner),
+            lbPair: POOL,
+            tokenXMint: mintOf(owner),
             tokenYMint: SOL_MINT,
             amountX: 1_000_000n, // 1.0 token @ 6 dp
             amountY: 0n,
@@ -84,18 +63,19 @@ function snapshotFactory(withOpen: boolean): OnchainWalletSnapshot & { plan: Sna
         ]
       : [],
     complete: true,
-    plan,
+    positionsComplete: true,
+    plan: { positionKeys: [] } as unknown as SnapshotPlan,
   };
 }
 
-function openRow(): OpenPosition {
+function openRow(wallet: string): OpenPosition {
   return {
-    positionAddress: POS,
-    wallet: WALLET,
-    poolAddress: 'Pool11111111111111111111111111111111111111',
+    positionAddress: posOf(wallet),
+    wallet,
+    poolAddress: POOL,
     tokenX: 'TOK',
     tokenY: 'SOL',
-    tokenXMint: TOKEN,
+    tokenXMint: mintOf(wallet),
     strategy: null,
     sizeSol: 0.001,
     pnlSol: 0,
@@ -112,71 +92,71 @@ function openRow(): OpenPosition {
   };
 }
 
-function makeEngine(opts: { withOpen: boolean; priceRef: { v: number } }) {
-  const snapshotWallet = vi.fn(async () => snapshotFactory(opts.withOpen));
-  const getPricesSol = vi.fn(async () => new Map([[TOKEN, opts.priceRef.v]]));
-
-  const streamStub = {
-    watch: vi.fn(),
-    unwatch: vi.fn(),
-    isConnected: () => true,
-    onReconnect: vi.fn(),
-    onConnectionChange: vi.fn(),
-    start: vi.fn(),
-    stop: vi.fn(),
-  };
-
-  const appConfig = {
-    BACKFILL_CONCURRENCY: 3,
-    REALIZED_PNL_ENABLED: false,
-    historyDays: 365,
-  } as unknown as AppConfig;
-
+function makeEngine(opts: { withOpen: boolean; wallets?: string[]; priceRef: { v: number } }) {
+  const wallets = opts.wallets ?? [W1];
+  const snapshotWallet = vi.fn(async (owner: string) => snapshotOf(owner, opts.withOpen));
+  const getPricesSol = vi.fn(
+    async (mints: string[]) => new Map(mints.map((m) => [m, opts.priceRef.v] as const)),
+  );
   const bus = new EventBus();
   const states: WalletState[] = [];
   bus.on('state', (s) => states.push(s));
 
   const deps: EngineDeps = {
-    prices: { getPricesSol, getSolUsd: vi.fn(async () => null) } as unknown as EngineDeps['prices'],
-    stream: streamStub as unknown as EngineDeps['stream'],
+    prices: { getPricesSol, getSolUsd: vi.fn(async () => null) },
+    stream: {
+      watch: vi.fn(),
+      unwatch: vi.fn(),
+      isConnected: () => true,
+      onReconnect: vi.fn(),
+      onConnectionChange: vi.fn(),
+      start: vi.fn(),
+      stop: vi.fn(),
+    },
     onchain: {
       snapshotWallet,
       invalidateIdle: vi.fn(),
       positionBins: vi.fn(),
       positionHistory: vi.fn(),
       decimalsOf: vi.fn(),
-    } as unknown as EngineDeps['onchain'],
+    },
     health: new HealthMonitor(),
-    strategy: { init: noopAsync, backfill: noopAsync } as unknown as EngineDeps['strategy'],
-    repo: { getOpen: vi.fn(async () => []) } as unknown as EngineDeps['repo'],
-    config: {
-      getSettings: () => settings,
-      listNotifRules: () => [],
-      init: noopAsync,
-    } as unknown as EngineDeps['config'],
-    accounts: {
-      monitoredWallets: vi.fn(async () => [WALLET]),
-    } as unknown as EngineDeps['accounts'],
+    strategy: { backfill: vi.fn(async () => {}) } as unknown as EngineDeps['strategy'],
+    store: {
+      getOpen: vi.fn(async () => []),
+      setAuthoritativePnlMany: vi.fn(async () => 0),
+    } as unknown as EngineDeps['store'],
+    accounts: { monitoredWallets: vi.fn(async () => wallets) },
     bus,
     logger,
-    appConfig,
     walletTxIngest: {
-      ingest: vi.fn(async () => ({ legs: 0, txs: 0, flows: 0, swaps: 0, complete: true })),
-    } as unknown as EngineDeps['walletTxIngest'],
+      ingest: vi.fn(async () => ({
+        legs: 0,
+        txs: 0,
+        flows: 0,
+        swaps: 0,
+        complete: true,
+        wasComplete: true,
+      })),
+    },
     positionSync: {
-      sync: vi.fn(async () => ({
-        open: opts.withOpen ? 1 : 0,
+      sync: vi.fn(async (wallet: string) => ({
+        openPositions: opts.withOpen ? [openRow(wallet)] : [],
         closed: 0,
         closedRows: [],
-        openPositions: opts.withOpen ? [openRow()] : [],
+        transitions: { opened: [], outOfRange: [], backInRange: [], vanished: [] },
       })),
-      refreshOpen: vi.fn(async () => (opts.withOpen ? [openRow()] : [])),
+      refreshOpen: vi.fn(async (wallet: string) => ({
+        openPositions: opts.withOpen ? [openRow(wallet)] : [],
+        transitions: { opened: [], outOfRange: [], backInRange: [], vanished: [] },
+      })),
     } as unknown as EngineDeps['positionSync'],
-    realizedPnl: { computeForWallet: vi.fn() } as unknown as EngineDeps['realizedPnl'],
-    walletRealized: {
-      set: async () => {},
-      sumFor: async () => 0,
-    } as unknown as EngineDeps['walletRealized'],
+    realizedPnl: {
+      computeForWallet: vi.fn(async () => null),
+    } as unknown as EngineDeps['realizedPnl'],
+    walletRealized: { set: vi.fn(async () => {}), sumFor: vi.fn(async () => 0) },
+    backfillConcurrency: 3,
+    realizedPnlEnabled: false,
   };
 
   const engine = new Engine(deps);
@@ -186,56 +166,99 @@ function makeEngine(opts: { withOpen: boolean; priceRef: { v: number } }) {
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
-describe('Step 6: value-on-demand', () => {
-  it('an idle wallet (0 open, no viewer) reads on the SLOW beat — never on the 10s one', async () => {
-    // The blind 30s timer is gone, but "idle = 0 RPC" went too far: a wallet total is mostly idle SOL,
-    // which moves exactly when a close returns liquidity. Reading nothing left the headline Net Worth
-    // frozen at its last value, and the curve unsampled, for as long as nothing was open. An idle wallet
-    // now reads once a minute — two reads over two minutes — and still never on the open-position beat.
+describe('value-on-demand', () => {
+  it('an idle wallet (0 open) reads on the SLOW beat — never on the 10s one', async () => {
+    // "idle = 0 RPC" went too far once: a wallet total is mostly idle SOL, which moves exactly when a
+    // close returns liquidity, and reading nothing froze the headline Net Worth. An idle wallet reads
+    // once a minute — two reads over two minutes — and never on the open-position beat.
     const h = makeEngine({ withOpen: false, priceRef: { v: 0.001 } });
     await h.engine.start();
-    await vi.advanceTimersByTimeAsync(2_000); // drain the initial backfill (its single doSnapshot)
-    expect(h.snapshotWallet).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(2_000); // boot: the live read + the post-backfill projection read
     h.snapshotWallet.mockClear();
     h.getPricesSol.mockClear();
 
     await vi.advanceTimersByTimeAsync(120_000);
 
     expect(h.snapshotWallet).toHaveBeenCalledTimes(2); // 120s / 60s — NOT the 12 a 10s beat would give
-    // Each snapshot prices what it read, so there are exactly as many price fetches as snapshots. The
-    // shared price-mark tick still contributes none of its own: it skips the un-viewed wallet.
+    // Each exact read prices what it read; the shared price mark adds none of its own for a wallet
+    // with nothing to re-mark.
     expect(h.getPricesSol).toHaveBeenCalledTimes(2);
     h.engine.stop();
   });
 
-  it('a viewed open wallet per 10s tick: ONE aligned exact fee/size read, then a fresh-price re-mark', async () => {
-    // WHY: ccf00d8 aligned the open-position EXACT read (fees/size — the `doSnapshot` gate) to the 10s
-    // shared price-mark cadence, so a VIEWED open wallet costs exactly ONE gateway read per 10s tick
-    // (bounded to viewed wallets — the idle test proves un-viewed ones still cost 0 recurring RPC). The
-    // zero-RPC price-mark then re-prices off the Jupiter price and emits LAST as the display-only,
-    // NON-'fresh' approximate state, so the NetworthRecorder never persists it.
+  it('an open wallet gets an EXACT read every 10s, viewer or not (fees accrue, bins move)', async () => {
+    // WHY: the price mark only re-prices frozen amounts — without the exact read, a quiet open
+    // position's unclaimed fees stay pinned from open until the next on-chain event.
+    const h = makeEngine({ withOpen: true, priceRef: { v: 0.001 } });
+    await h.engine.start();
+    await vi.advanceTimersByTimeAsync(2_000);
+    h.snapshotWallet.mockClear();
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(h.snapshotWallet).toHaveBeenCalledTimes(3);
+    h.engine.stop();
+  });
+
+  it('between two exact reads the price mark re-prices from cache — zero RPC, emitted as NOT fresh', async () => {
+    // WHY: the mark keeps a viewed wallet's value live at the Jupiter price for no Helius credit, but
+    // it holds amounts fixed — an approximation. It must surface as 'syncing' so the NetworthRecorder
+    // never records it; only the exact read is 'fresh'.
     const priceRef = { v: 0.001 };
     const h = makeEngine({ withOpen: true, priceRef });
     await h.engine.start();
-    await vi.advanceTimersByTimeAsync(2_000); // backfill → caches lastSnapshot + open row
+    await vi.advanceTimersByTimeAsync(5_000);
 
-    // A client opens the wallet → refresh-on-connect EXACT read (allowed), emitted 'fresh'.
-    h.engine.setViewedWallets(new Set([WALLET]));
-    await vi.advanceTimersByTimeAsync(50);
-    const exactCalls = h.snapshotWallet.mock.calls.length;
-    expect(h.states.at(-1)!.freshness).toBe('fresh'); // exact read persists
-    expect(h.states.at(-1)!.totals.walletTotalSol).toBeCloseTo(0.001, 9);
+    // A client opens the wallet half-way through the exact cadence → a refresh-on-view EXACT read.
+    h.engine.setViewedWallets(new Set([W1]));
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(h.states.at(-1)?.freshness).toBe('fresh');
+    expect(h.states.at(-1)?.totals.walletTotalSol).toBeCloseTo(0.001, 9);
 
-    // Price moves; advance one 10s tick → the aligned exact fee/size read fires once, then the price-mark.
+    // The price moves; the shared price tick (t=10s) lands 5s after that read.
     priceRef.v = 0.002;
+    h.snapshotWallet.mockClear();
     h.states.length = 0;
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(4_000);
 
-    expect(h.snapshotWallet).toHaveBeenCalledTimes(exactCalls + 1); // exactly ONE aligned exact read per tick
-    expect(h.getPricesSol).toHaveBeenCalled(); // the free Jupiter fetch DID run
-    const marked = h.states.at(-1)!;
-    expect(marked.totals.walletTotalSol).toBeCloseTo(0.002, 9); // re-priced at the fresh price
-    expect(marked.freshness).not.toBe('fresh'); // price-mark emits LAST ⇒ display-only, not persisted
+    expect(h.snapshotWallet).not.toHaveBeenCalled(); // no RPC for the mark
+    expect(h.states).toHaveLength(1);
+    expect(h.states[0]?.totals.walletTotalSol).toBeCloseTo(0.002, 9); // re-priced at the live price
+    expect(h.states[0]?.freshness).toBe('syncing'); // display-only, never persisted
+    h.engine.stop();
+  });
+
+  it('marks each wallet half-way between two exact reads, never right after one', async () => {
+    // WHY: re-pricing a read taken a moment ago is a wasted emit per viewer, but a mark that always
+    // lands on a fresh read (both clocks in phase) would never run at all. The 5 s tick with a 5 s
+    // minimum age gives exactly one mark between two 10 s reads, whatever their phase.
+    const h = makeEngine({ withOpen: true, priceRef: { v: 0.001 } });
+    await h.engine.start();
+    await vi.advanceTimersByTimeAsync(2_000);
+    h.snapshotWallet.mockClear();
+    h.states.length = 0;
+
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(h.snapshotWallet).toHaveBeenCalledTimes(2);
+    expect(h.states.filter((s) => s.freshness === 'fresh')).toHaveLength(2); // the exact reads
+    expect(h.states.filter((s) => s.freshness === 'syncing')).toHaveLength(2); // one mark each
+    h.engine.stop();
+  });
+
+  it('one shared price fetch re-marks the whole fleet (not one Jupiter call per wallet)', async () => {
+    // WHY: the mark runs every 10s; per-wallet price fetches would scale Jupiter traffic with the fleet
+    // (and trip its rate limit). One fetch, over the union of the fleet's mints, serves every wallet.
+    const h = makeEngine({ withOpen: true, wallets: [W1, W2], priceRef: { v: 0.001 } });
+    await h.engine.start();
+    await vi.advanceTimersByTimeAsync(5_000);
+    h.engine.setViewedWallets(new Set([W1, W2])); // shift both exact reads half-way, as above
+    await vi.advanceTimersByTimeAsync(1_000);
+    h.getPricesSol.mockClear();
+    h.states.length = 0;
+
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(h.getPricesSol).toHaveBeenCalledTimes(1);
+    expect([...(h.getPricesSol.mock.calls[0]?.[0] ?? [])].sort()).toEqual([TOKEN, TOKEN2].sort());
+    expect(h.states.map((s) => s.scope).sort()).toEqual([W1, W2].sort());
     h.engine.stop();
   });
 });

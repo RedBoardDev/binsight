@@ -91,7 +91,6 @@ describe('buildPositionRows — membership in the snapshot decides open vs close
     expect(c.tokenXMint).toBe('MEMEmint');
     expect(c.closedAt).toBe(3_601_000);
     expect(c.durationSeconds).toBe(3600);
-    expect(c.pnlSource).toBe('pool');
   });
 
   it('emits an OPEN row (snapshot ⊕ legs) for a position present in the live snapshot', () => {

@@ -2,17 +2,18 @@ import { SOL_MINT } from '@binsight/shared';
 import type { Logger } from 'pino';
 import type { LoadedPoolMeta, ResidualSell } from '@/domain/dlmm';
 import { binPriceRaw, LAMPORTS_PER_SOL } from '@/domain/dlmm-pnl';
-import type { LegRepository, PositionRepository, SwapFlowRepository } from '@/domain/ports';
+import type {
+  IngestCursorStore,
+  LegRepository,
+  PositionStore,
+  SwapFlowRepository,
+} from '@/domain/ports';
 import { withCodePath } from '@/infrastructure/solana/code-path';
 
 /**
  * Per-position realized PnL via a CHAINED FIFO COST-BASIS engine — 100% on-chain (no Meteora datapi).
- * This is the authoritative `market_pnl_sol` writer for CLOSED positions and the production port of the
- * proven `scripts/fifo-cost-basis.ts` (its `--held current` path): the FIFO math is IDENTICAL, only the
- * I/O is routed through the application ports (leg repository, the PERSISTED `swap_flows` table for
- * buys/sells, the shared price gateway for the held-residual current mark) instead of raw SQL +
- * DexScreener. Reading the persisted swaps (instead of re-paging the Helius Enhanced API) is what makes a
- * restart/close cost ~0 credits — no re-seed, no re-page.
+ * This is the only `market_pnl_sol` writer for CLOSED positions. Its inputs are the persisted DLMM legs
+ * and the persisted `swap_flows` buys/sells, so a restart or a close costs no credits.
  *
  * MODEL (per non-SOL mint M, a global FIFO inventory of lots {qty, costPerUnit, origin}):
  *   Merge ALL events of M chronologically — buys (SOL→M), sells (M→SOL), and the wallet's DLMM legs
@@ -25,8 +26,9 @@ import { withCodePath } from '@/infrastructure/solana/code-path';
  *                  solLeg[P] -= dSol; track P's running inQty/inCost for avg      of tokens it locks up)
  *     • sell     → consume FIFO qty → gain = proceedsShare − consumedCost,      (market gain routed to
  *                  routed to the consumed lot's origin position (or trading)      the producing position)
- *   Leftover inventory at the end = held residual, marked at min(current price, close-bin) for a fresh
- *   bag (<7d) or min(local realized price near close, close-bin) for an aged one.
+ *   Leftover inventory at the end = held residual, marked at the close-bin price for a fresh bag (<7d)
+ *   or min(local realized price near close, close-bin) for an aged one. Like a sale, a held lot counts
+ *   only its gain over its basis: heldValue[P] += qty × (mark − costPerUnit).
  *
  *   PnL(P) = solLeg[P] − entryCost[P] + exitCredit[P] + realizedGain[P] + heldValue[P]
  */
@@ -113,11 +115,9 @@ const KIND_ORDER: Record<Ev['kind'], number> = {
 /** The leg repository surface this engine needs (narrowed for testability). */
 export type RealizedLegSource = Pick<LegRepository, 'legsByWallet' | 'getPoolMetas'>;
 /** The position repository surface this engine needs (status + closedAt of every position). */
-export type RealizedPositionSource = Pick<PositionRepository, 'positionStatusForWallet'>;
-/** The swap-flow repository surface this engine needs: the persisted FIFO buy/sell inputs + the seed
- *  cursor (completeness). Reading these (instead of re-paging the Enhanced API) is what makes a
- *  restart/close cost ~0 credits. */
-export type RealizedSwapSource = Pick<SwapFlowRepository, 'byWallet' | 'getCursor'>;
+export type RealizedPositionSource = Pick<PositionStore, 'positionStatusForWallet'>;
+/** The persisted FIFO buy/sell inputs. */
+export type RealizedSwapSource = Pick<SwapFlowRepository, 'byWallet'>;
 
 /**
  * Computes the chained-FIFO realized PnL of a wallet's CLOSED positions, fully on-chain. All inputs come
@@ -128,17 +128,16 @@ export class RealizedPnlEngine {
     private readonly legs: RealizedLegSource,
     private readonly positions: RealizedPositionSource,
     private readonly swaps: RealizedSwapSource,
+    private readonly cursors: Pick<IngestCursorStore, 'get'>,
     private readonly decimalsOfMany: (mints: string[]) => Promise<Map<string, number>>,
     private readonly logger: Logger,
   ) {}
 
   /**
-   * Load the wallet's buys+sells from the PERSISTED `swap_flows` table (populated by SwapFlowIngest),
-   * NOT the Enhanced API — so a restart/close re-reads cheap local rows instead of re-paging the whole
-   * SWAP history. Completeness comes from the swap-flow cursor: a missing cursor or `complete=false` means
-   * the seed hasn't finished, so the persisted history is partial → return `complete=false` and the caller
-   * skips persist (an under-consumed FIFO would leave too much "held" residual and inflate PnL — exactly
-   * the protection the old incomplete-Enhanced-fetch guard gave).
+   * Load the wallet's buys+sells from the persisted `swap_flows` table. Completeness comes from the
+   * ingest cursor: until the history is read to genesis the persisted swaps are partial, so return
+   * `complete=false` and the caller skips persisting (an under-consumed FIFO leaves too much "held"
+   * residual and inflates PnL).
    *
    * Each row maps to the existing ResidualSell shape the FIFO expects: `solReceived = solAmount` (SOL
    * SPENT for a 'buy', SOL RECEIVED for a 'sell') and `tokenAmount` already in human units.
@@ -146,7 +145,7 @@ export class RealizedPnlEngine {
   private async loadFlows(
     wallet: string,
   ): Promise<{ buys: ResidualSell[]; sells: ResidualSell[]; complete: boolean }> {
-    const cursor = await this.swaps.getCursor(wallet);
+    const cursor = await this.cursors.get(wallet);
     if (cursor == null || !cursor.complete) return { buys: [], sells: [], complete: false };
     const rows = await this.swaps.byWallet(wallet);
     const buys: ResidualSell[] = [];
@@ -167,7 +166,7 @@ export class RealizedPnlEngine {
    * Realized `market_pnl_sol` per CLOSED position of `wallet` (open positions feed the inventory but are
    * not reported). Empty map when the wallet has no legs on a SOL-paired pool — callers leave existing
    * values untouched in that case. Returns `null` when the PERSISTED swap history is INCOMPLETE (the
-   * swap_flow cursor is missing or `complete=false` — the seed hasn't finished): an incomplete buy OR sell
+   * ingest cursor is missing or `complete=false` — the backfill hasn't finished): an incomplete buy OR sell
    * history makes FIFO under-consume inventory → too much leftover "held" → inflation, so the engine must
    * NOT hand back values to persist (it would overwrite good data with inflated ones). Both legs matter:
    * missing buys lose cost basis, missing sells leave residual unsold.
@@ -449,7 +448,10 @@ export class RealizedPnlEngine {
           // are wallet-level trading, not this position's close PnL.
           markPerTok = binTok;
         }
-        accOf(lot.origin).heldValue += lot.qty * markPerTok;
+        // A withdrawn lot came back carrying its basis, already credited as exitCredit — so only its
+        // gain over that basis is PnL, exactly as the sell path counts (proceeds − basis). Claimed fee
+        // tokens have a zero basis and count in full.
+        accOf(lot.origin).heldValue += lot.qty * (markPerTok - lot.costPerUnit);
       }
     }
 

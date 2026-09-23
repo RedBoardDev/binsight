@@ -1,4 +1,10 @@
-import { type ClosedPosition, type OpenPosition, SOL_MINT } from '@binsight/shared';
+import {
+  type ClosedPosition,
+  type OpenPosition,
+  SOL_MINT,
+  type StrategyFamily,
+  USDC_MINT,
+} from '@binsight/shared';
 import { pino } from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 import type { OnchainPositionValue, OnchainValued, OnchainWalletSnapshot } from '@/domain/dlmm';
@@ -100,7 +106,7 @@ describe('PositionSync — chain → positions table', () => {
       replaceOpenForWallet,
       upsertClosed,
       getOpenOrPendingClose: vi.fn(async (): Promise<OpenPosition[]> => []),
-      getStrategies: vi.fn(async () => new Map<string, never>()),
+      strategiesOf: vi.fn(async () => new Map<string, never>()),
     };
 
     const snapshot: OnchainWalletSnapshot = {
@@ -111,6 +117,7 @@ describe('PositionSync — chain → positions table', () => {
       idleTokens: [],
       positions: [opv('OPEN')],
       complete: true,
+      positionsComplete: true,
     };
 
     const sync = new PositionSync(legPnl, metadata, repo, silent);
@@ -118,7 +125,6 @@ describe('PositionSync — chain → positions table', () => {
 
     // No prior persisted open row for CLOSED (getOpenOrPendingClose → []), so it's NOT a newly-closed transition:
     // closedRows is empty even though the closed COUNT is 1 (this is the backfill-safety property).
-    expect(res.open).toBe(1);
     expect(res.closed).toBe(1);
     expect(res.closedRows).toEqual([]);
     // The open rows are returned so the engine can refresh its in-memory open set (the live /state).
@@ -159,7 +165,7 @@ describe('PositionSync — chain → positions table', () => {
       getOpenOrPendingClose: vi.fn(async () => [
         { positionAddress: 'OPEN', outOfRangeSince: 1234 },
       ]),
-      getStrategies: vi.fn(async () => new Map()),
+      strategiesOf: vi.fn(async () => new Map()),
     };
     // active bin above range → out_up → OOR clock applies, must keep 1234 not reset to now
     const snapshot: OnchainWalletSnapshot = {
@@ -170,6 +176,7 @@ describe('PositionSync — chain → positions table', () => {
       idleTokens: [],
       positions: [{ ...opv('OPEN'), activeId: 50 }],
       complete: true,
+      positionsComplete: true,
     };
     // biome-ignore lint/suspicious/noExplicitAny: partial repo stub for a focused unit test
     await new PositionSync(legPnl, metadata, repo as any, silent).sync('W', snapshot, valued());
@@ -192,7 +199,7 @@ describe('PositionSync — chain → positions table', () => {
       replaceOpenForWallet,
       upsertClosed,
       getOpenOrPendingClose: vi.fn(async () => []),
-      getStrategies: vi.fn(async () => new Map<string, never>()),
+      strategiesOf: vi.fn(async () => new Map<string, never>()),
     };
     const snapshot: OnchainWalletSnapshot = {
       owner: 'W',
@@ -202,8 +209,9 @@ describe('PositionSync — chain → positions table', () => {
       idleTokens: [],
       positions: [opv('OPEN')],
       complete: true,
+      positionsComplete: true,
     };
-    const open = await new PositionSync(
+    const { openPositions: open } = await new PositionSync(
       legPnl,
       metadata,
       // biome-ignore lint/suspicious/noExplicitAny: partial repo stub for a focused unit test
@@ -254,7 +262,7 @@ describe('PositionSync — close-notification wiring (no backfill spam, no dupli
         }
       }),
       getOpenOrPendingClose: vi.fn(async () => withStatus('open', 'pending_close')),
-      getStrategies: vi.fn(async () => new Map<string, never>()),
+      strategiesOf: vi.fn(async () => new Map<string, never>()),
       /** Test-only helper to force the cadence's pending_close mark without a full refreshOpen. */
       _markPendingClose: (addr: string) => {
         const v = byAddr.get(addr);
@@ -262,16 +270,6 @@ describe('PositionSync — close-notification wiring (no backfill spam, no dupli
       },
     };
   };
-
-  const snap = (openAddrs: string[]): OnchainWalletSnapshot => ({
-    owner: 'W',
-    slot: 1,
-    slotSkew: 0,
-    nativeLamports: 0n,
-    idleTokens: [],
-    positions: openAddrs.map((a) => opv(a)),
-    complete: true,
-  });
 
   /** Mirror of the engine seam AFTER the #98 fix: sync, then emit one `closed` per newly-closed row —
    *  UNCONDITIONALLY (the prior-open diff is the sole spam guard). Returns the emitted closed addresses. */
@@ -396,3 +394,202 @@ describe('PositionSync — close-notification wiring (no backfill spam, no dupli
     expect(await runSync(sync, snap([]))).toEqual(['RACE']);
   });
 });
+
+describe('PositionSync — labels, strategies and stillOpen', () => {
+  const noPrior = async (): Promise<OpenPosition[]> => [];
+
+  it('labels a USDC pool\'s quote side from the quote mint\'s metadata — "USDC", not a truncated mint', async () => {
+    // WHY: only the base mints used to be resolved, so a non-SOL pool's quote label fell back to the
+    // short-mint placeholder ("EPjF…Dt1v") on every row of its history.
+    const legPnl: LegProjectionSource = {
+      pnlByPosition: vi.fn(async () => [
+        proj({
+          position: 'U',
+          quoteMint: USDC_MINT,
+          quoteSymbol: 'USDC',
+          quoteDecimals: 6,
+          mintY: USDC_MINT,
+          solDenominated: false,
+        }),
+      ]),
+      pnlForPositions: vi.fn(async () => []),
+    };
+    const known: Record<string, string> = {
+      MEMEmint: 'MEME',
+      [USDC_MINT]: 'USDC',
+      [SOL_MINT]: 'SOL',
+    };
+    const resolve = vi.fn(
+      async (mints: string[]) =>
+        new Map(mints.filter((m) => known[m]).map((m) => [m, { symbol: known[m]! }])),
+    );
+    const upsertClosed = vi.fn<(rows: ClosedPosition[]) => Promise<void>>(async () => {});
+    const repo = {
+      replaceOpenForWallet: vi.fn(async () => {}),
+      upsertClosed,
+      getOpenOrPendingClose: vi.fn(noPrior),
+      strategiesOf: vi.fn(async () => new Map<string, StrategyFamily>()),
+    };
+    await new PositionSync(legPnl, { resolve }, repo, silent).sync(
+      'W',
+      { ...snap([]), positions: [] },
+      valued(),
+    );
+
+    expect(resolve.mock.calls[0]![0]).toEqual(expect.arrayContaining(['MEMEmint', USDC_MINT]));
+    const row = upsertClosed.mock.calls[0]![0][0]!;
+    expect(row.tokenX).toBe('MEME');
+    expect(row.tokenY).toBe('USDC');
+    expect(row.quoteSymbol).toBe('USDC');
+  });
+
+  it('attaches strategies looked up for exactly the projected positions', async () => {
+    // strategiesOf is a primary-key lookup of the projected set, not a scan of the table.
+    const legPnl: LegProjectionSource = {
+      pnlByPosition: vi.fn(async () => [proj({ position: 'OPEN' }), proj({ position: 'C1' })]),
+      pnlForPositions: vi.fn(async () => []),
+    };
+    const upsertClosed = vi.fn<(rows: ClosedPosition[]) => Promise<void>>(async () => {});
+    const strategiesOf = vi.fn(
+      async (_p: string[]) =>
+        new Map<string, StrategyFamily>([
+          ['OPEN', 'Spot'],
+          ['C1', 'BidAsk'],
+        ]),
+    );
+    const res = await new PositionSync(
+      legPnl,
+      metadataOf('S'),
+      {
+        replaceOpenForWallet: vi.fn(async () => {}),
+        upsertClosed,
+        getOpenOrPendingClose: vi.fn(noPrior),
+        strategiesOf,
+      },
+      silent,
+    ).sync('W', snap(['OPEN']), valued());
+
+    expect(strategiesOf).toHaveBeenCalledWith(['OPEN', 'C1']);
+    expect(res.openPositions[0]!.strategy).toBe('Spot');
+    expect(upsertClosed.mock.calls[0]![0][0]!.strategy).toBe('BidAsk');
+  });
+
+  it('passes live positions the projection could not build as stillOpen, on both paths', async () => {
+    // WHY: a position whose legs are not ingested yet (or whose pool metadata failed) is still open
+    // on-chain. Without stillOpen, replaceOpenForWallet would flag it pending_close — read downstream
+    // as a close.
+    const legPnl: LegProjectionSource = {
+      pnlByPosition: vi.fn(async () => [proj({ position: 'OPEN' })]),
+      pnlForPositions: vi.fn(async () => [proj({ position: 'OPEN' })]),
+    };
+    const replaceOpenForWallet = vi.fn(
+      async (_w: string, _rows: OpenPosition[], _still?: string[]) => {},
+    );
+    const sync = new PositionSync(
+      legPnl,
+      metadataOf('S'),
+      {
+        replaceOpenForWallet,
+        upsertClosed: vi.fn(async () => {}),
+        getOpenOrPendingClose: vi.fn(noPrior),
+        strategiesOf: vi.fn(async () => new Map<string, StrategyFamily>()),
+      },
+      silent,
+    );
+    await sync.sync('W', snap(['OPEN', 'NEW']), valued());
+    await sync.refreshOpen('W', snap(['OPEN', 'NEW']), valued());
+    for (const [, rows, still] of replaceOpenForWallet.mock.calls) {
+      expect(rows.map((r) => r.positionAddress)).toEqual(['OPEN']);
+      expect(still).toEqual(['NEW']);
+    }
+    expect(replaceOpenForWallet).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('PositionSync — open-set transitions', () => {
+  // opv(): bins −10..10 at binStep 100. activeId 0 → in range; 50 → out of range (above).
+  const prior = (address: string, rangeStatus: OpenPosition['rangeStatus']) =>
+    ({ positionAddress: address, rangeStatus, outOfRangeSince: null }) as OpenPosition;
+  const makeSync = (projected: string[], priorRows: OpenPosition[]) =>
+    new PositionSync(
+      {
+        pnlByPosition: vi.fn(async () => projected.map((position) => proj({ position }))),
+        pnlForPositions: vi.fn(async (ps: string[]) =>
+          projected.filter((p) => ps.includes(p)).map((position) => proj({ position })),
+        ),
+      },
+      metadataOf('S'),
+      {
+        replaceOpenForWallet: vi.fn(async () => {}),
+        upsertClosed: vi.fn(async () => {}),
+        getOpenOrPendingClose: vi.fn(async () => priorRows),
+        strategiesOf: vi.fn(async () => new Map<string, StrategyFamily>()),
+      },
+      silent,
+    );
+
+  it('reports opened, outOfRange, backInRange and vanished against the persisted open set', async () => {
+    // These drive the position_open / oor_enter / oor_return notifications and the vanished-position
+    // reprojection, so each must be exact — a missed one is a silent notification, an extra one spam.
+    const sync = makeSync(
+      ['NEW', 'GOES_OUT', 'COMES_BACK', 'STAYS'],
+      [
+        prior('GOES_OUT', 'in'),
+        prior('COMES_BACK', 'out_up'),
+        prior('STAYS', 'in'),
+        prior('GONE', 'in'),
+      ],
+    );
+    const snapshot = {
+      ...snap([]),
+      positions: [
+        opv('NEW'),
+        { ...opv('GOES_OUT'), activeId: 50 },
+        opv('COMES_BACK'),
+        opv('STAYS'),
+      ],
+    };
+    const { transitions: t } = await sync.refreshOpen('W', snapshot, valued());
+    expect(t.opened.map((p) => p.positionAddress)).toEqual(['NEW']);
+    expect(t.outOfRange.map((p) => p.positionAddress)).toEqual(['GOES_OUT']);
+    expect(t.backInRange.map((p) => p.positionAddress)).toEqual(['COMES_BACK']);
+    expect(t.vanished).toEqual(['GONE']);
+  });
+
+  it('an unknown range on either side is not a crossing', async () => {
+    const sync = makeSync(['A'], [prior('A', 'unknown')]);
+    const { transitions: t } = await sync.refreshOpen(
+      'W',
+      { ...snap([]), positions: [{ ...opv('A'), activeId: 50 }] },
+      valued(),
+    );
+    expect(t.outOfRange).toEqual([]);
+    expect(t.backInRange).toEqual([]);
+  });
+
+  it('a vanished position that the full sync projects as closed is a close, not "vanished"', async () => {
+    // The full sync knows the close; only the cadence refresh (which never reads closed legs) reports a
+    // vanished position, so the actor can ingest + reproject it.
+    const sync = makeSync(['GONE'], [prior('GONE', 'in')]);
+    const res = await sync.sync('W', snap([]), valued());
+    expect(res.closedRows.map((r) => r.positionAddress)).toEqual(['GONE']);
+    expect(res.transitions.vanished).toEqual([]);
+  });
+});
+
+function metadataOf(symbol: string) {
+  return { resolve: vi.fn(async (m: string[]) => new Map(m.map((x) => [x, { symbol }]))) };
+}
+
+function snap(openAddrs: string[]): OnchainWalletSnapshot {
+  return {
+    owner: 'W',
+    slot: 1,
+    slotSkew: 0,
+    nativeLamports: 0n,
+    idleTokens: [],
+    positions: openAddrs.map((a) => opv(a)),
+    complete: true,
+    positionsComplete: true,
+  };
+}

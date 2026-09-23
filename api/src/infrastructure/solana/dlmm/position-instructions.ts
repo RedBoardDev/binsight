@@ -38,17 +38,20 @@ const define = (kind: PositionEventKind, names: string[]): void => {
 };
 define('open', [
   'initialize_position',
+  'initialize_position2',
   'initialize_position_pda',
   'initialize_position_by_operator',
 ]);
 define('deposit', [
   'add_liquidity',
-  'add_liquidity_by_weight',
-  'add_liquidity_by_strategy',
-  'add_liquidity_by_strategy_one_side',
-  'add_liquidity_one_side_precise',
   'add_liquidity2',
+  'add_liquidity_by_weight',
+  'add_liquidity_by_weight2',
+  'add_liquidity_by_strategy',
   'add_liquidity_by_strategy2',
+  'add_liquidity_by_strategy_one_side',
+  'add_liquidity_one_side',
+  'add_liquidity_one_side_precise',
   'add_liquidity_one_side_precise2',
 ]);
 define('withdraw', [
@@ -61,9 +64,34 @@ define('withdraw', [
 define('claim', ['claim_fee', 'claim_fee2']);
 define('close', ['close_position', 'close_position2', 'close_position_if_empty']);
 
+/**
+ * Instructions that move the wallet's tokens in or out of its OWN liquidity without being one of the
+ * timeline kinds above. A rebalance withdraws and re-adds in one go (its legs are in `dlmm_legs`);
+ * limit orders park tokens in bins; reward claims pay the owner. None of them is a market swap, so
+ * reading one as a swap would count the same tokens twice in the realized-PnL walk.
+ */
+const OTHER_POSITION_ACTIVITY = new Set(
+  [
+    'rebalance_liquidity',
+    'increase_position_length',
+    'increase_position_length2',
+    'decrease_position_length',
+    'place_limit_order',
+    'cancel_limit_order',
+    'close_limit_order_if_empty',
+    'claim_reward',
+    'claim_reward2',
+  ].map(disc),
+);
+
 /** Position-lifecycle kind for an instruction discriminator, or null (swap / event-CPI / unknown). */
 export function positionKindOfDisc(discriminator: string): PositionEventKind | null {
   return KIND_BY_DISC.get(discriminator) ?? null;
+}
+
+/** Does this discriminator act on the wallet's own DLMM liquidity (anything but a swap)? */
+function isPositionActivity(discriminator: string): boolean {
+  return KIND_BY_DISC.has(discriminator) || OTHER_POSITION_ACTIVITY.has(discriminator);
 }
 
 /** First 8 bytes of a partially-decoded instruction's data, hex — the Anchor discriminator. */
@@ -74,7 +102,7 @@ export function discriminatorOf(ix: PartiallyDecodedInstruction): string {
 type AnyIx = ParsedInstruction | PartiallyDecodedInstruction;
 
 /** Every instruction of a tx: top-level message instructions + all inner (CPI) instructions. */
-function allInstructions(tx: ParsedTransactionWithMeta): AnyIx[] {
+export function allInstructions(tx: ParsedTransactionWithMeta): AnyIx[] {
   return [
     ...(tx?.transaction?.message?.instructions ?? []),
     ...(tx?.meta?.innerInstructions ?? []).flatMap((g) => g.instructions),
@@ -82,7 +110,8 @@ function allInstructions(tx: ParsedTransactionWithMeta): AnyIx[] {
 }
 
 /**
- * Does this transaction act on one of the wallet's DLMM POSITIONS (open/deposit/withdraw/claim/close)?
+ * Does this transaction act on one of the wallet's DLMM POSITIONS (lifecycle, rebalance, limit order,
+ * reward claim)?
  *
  * False for a transaction whose only DLMM instruction is a `swap` — an aggregator routing a trade
  * through a Meteora pool. That case is a genuine market swap and must stay visible to the swap
@@ -97,8 +126,7 @@ export function hasDlmmPositionInstruction(tx: ParsedTransactionWithMeta): boole
     const data = (ix as PartiallyDecodedInstruction).data;
     if (typeof data !== 'string') continue;
     try {
-      if (positionKindOfDisc(discriminatorOf(ix as PartiallyDecodedInstruction)) != null)
-        return true;
+      if (isPositionActivity(discriminatorOf(ix as PartiallyDecodedInstruction))) return true;
     } catch {
       // not base58 / too short — not a recognisable position instruction
     }

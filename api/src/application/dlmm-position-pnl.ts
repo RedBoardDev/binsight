@@ -48,7 +48,7 @@ export interface PositionPnl {
  * Pool metadata (binStep/SOL side) is loaded once per pool and cached.
  */
 export class DlmmPositionPnl {
-  private readonly poolCache = new Map<string, LoadedPoolMeta | null>();
+  private readonly poolCache = new Map<string, LoadedPoolMeta>();
 
   constructor(
     private readonly repo: LegRepository,
@@ -56,18 +56,21 @@ export class DlmmPositionPnl {
     private readonly logger: Logger,
   ) {}
 
+  /** Pool metadata is immutable, so a loaded one is cached for good — but a miss never is: a single
+   *  RPC blip used to hide every position of the pool from every projection until the next restart. */
   private async poolMeta(pool: string): Promise<LoadedPoolMeta | null> {
     const hit = this.poolCache.get(pool);
-    if (hit !== undefined) return hit;
+    if (hit) return hit;
     let meta: LoadedPoolMeta | null = null;
     try {
       meta = await this.poolReader.loadPoolMeta(pool);
     } catch (err) {
-      this.logger.debug({ err, pool }, 'loadPoolMeta failed');
+      this.logger.warn({ err, pool }, 'loadPoolMeta failed — retried on the next projection');
     }
+    if (!meta) return null;
     this.poolCache.set(pool, meta);
-    // Persist immutable metadata so the next boot batch-reads it instead of re-fetching from chain.
-    if (meta) await this.repo.putPoolMeta(pool, meta).catch(() => undefined);
+    // Persist it so the next boot batch-reads it instead of re-fetching from chain.
+    await this.repo.putPoolMeta(pool, meta).catch(() => undefined);
     return meta;
   }
 

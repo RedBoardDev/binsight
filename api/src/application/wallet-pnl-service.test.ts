@@ -1,85 +1,60 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { WalletTxFlow } from '@/domain/cashflow';
-import type { DailyFlow, FlowCursor } from '@/domain/dlmm';
-import type { WalletFlowRepository } from '@/domain/ports';
-import { buildCashflowCurve, buildCashflowCurveFromDaily } from './wallet-cashflow';
+import type { DailyFlow, IngestCursor } from '@/domain/dlmm';
+import type { IngestCursorStore, WalletFlowRepository } from '@/domain/ports';
 import { WalletPnlService } from './wallet-pnl-service';
 
-const dayTs = (d: number) => Math.floor(Date.UTC(2026, 5, d, 12) / 1000);
-const tx = (t: number, solFlow: number, isTrading: boolean): WalletTxFlow => ({
-  timestamp: t,
-  type: isTrading ? 'SWAP' : 'TRANSFER',
-  solFlow,
-  isTrading,
-});
-
-describe('buildCashflowCurveFromDaily', () => {
-  it('produces the SAME continuous curve as the per-tx builder (gap-fill + cumulative)', () => {
-    const flows: WalletTxFlow[] = [
-      tx(dayTs(1), 5, true),
-      tx(dayTs(1), 1, true),
-      tx(dayTs(2), 10, false), // external
-      tx(dayTs(3), -2, true),
-    ];
-    const fromFlows = buildCashflowCurve(flows);
-    const fromDaily = buildCashflowCurveFromDaily([
-      { date: '2026-06-01', trading: 6, external: 0 },
-      { date: '2026-06-02', trading: 0, external: 10 },
-      { date: '2026-06-03', trading: -2, external: 0 },
-    ]);
-    expect(fromDaily).toEqual(fromFlows);
-    // sanity on the curve itself: day 2 is gap-filled flat (cum stays 6), final cum = 4.
-    expect(fromDaily.days.map((d) => d.cumulativeSol)).toEqual([6, 6, 4]);
-    expect(fromDaily.totalTradingSol).toBe(4);
-    expect(fromDaily.totalExternalSol).toBe(10);
-  });
-});
-
-function stubRepo(daily: DailyFlow[], cursors: Record<string, FlowCursor | null>) {
+function stubFlows(daily: DailyFlow[]) {
   return {
-    dailyFlows: vi.fn(async () => daily),
-    allCursorsComplete: vi.fn(async (ws: string[]) =>
-      ws.every((w) => cursors[w]?.complete === true),
-    ),
-  } as unknown as WalletFlowRepository & {
-    dailyFlows: ReturnType<typeof vi.fn>;
-    allCursorsComplete: ReturnType<typeof vi.fn>;
-  };
+    dailyFlows: vi.fn(async (_wallets: string[], _sinceSec: number) => daily),
+  } satisfies Pick<WalletFlowRepository, 'dailyFlows'>;
 }
 
-const complete = (): FlowCursor => ({ oldestSig: 'g', newestSig: 'n', complete: true });
+/** In-memory ingest cursors with the same `allComplete` contract as the Postgres store: a wallet with no
+ *  cursor yet (still backfilling) fails it, as does one whose history is not read to genesis. */
+function stubCursors(cursors: Record<string, IngestCursor | null>) {
+  return {
+    allComplete: vi.fn(async (ws: string[]) => ws.every((w) => cursors[w]?.complete === true)),
+  } satisfies Pick<IngestCursorStore, 'allComplete'>;
+}
+
+const complete = (): IngestCursor => ({ oldestSig: 'g', newestSig: 'n', complete: true });
 
 describe('WalletPnlService.curve', () => {
   it('aggregates ALL passed wallets and queries them together (wallet=all is a real SUM)', async () => {
-    const repo = stubRepo([{ date: '2026-06-01', trading: 7, external: 0 }], {
-      w1: complete(),
-      w2: complete(),
-    });
+    const flows = stubFlows([{ date: '2026-06-01', trading: 7, external: 0 }]);
+    const cursors = stubCursors({ w1: complete(), w2: complete() });
     const now = () => Date.UTC(2026, 5, 10, 12);
-    const res = await new WalletPnlService(repo, now).curve(['w1', 'w2'], 30);
+    const res = await new WalletPnlService(flows, cursors, now).curve(['w1', 'w2'], 30);
 
-    expect(repo.dailyFlows).toHaveBeenCalledTimes(1);
-    const [wallets, sinceSec] = repo.dailyFlows.mock.calls[0]!;
+    expect(flows.dailyFlows).toHaveBeenCalledTimes(1);
+    const [wallets, sinceSec] = flows.dailyFlows.mock.calls[0]!;
     expect(wallets).toEqual(['w1', 'w2']);
     expect(sinceSec).toBe(Math.floor((now() - 30 * 86_400_000) / 1000));
+    // Completeness is asked for the whole set at once (one COUNT in Postgres, not N lookups).
+    expect(cursors.allComplete).toHaveBeenCalledWith(['w1', 'w2']);
     expect(res.totalTradingSol).toBe(7);
     expect(res.complete).toBe(true);
   });
 
   it('complete=false while any wallet is still backfilling (cursor missing or not complete)', async () => {
-    const stillBackfilling = stubRepo([], { w1: complete(), w2: null });
-    expect((await new WalletPnlService(stillBackfilling).curve(['w1', 'w2'], 30)).complete).toBe(
-      false,
-    );
+    // The UI keeps its "indexing…" state on complete=false — a half-built curve must never read as final.
+    const flows = stubFlows([]);
+    const stillBackfilling = stubCursors({ w1: complete(), w2: null });
+    expect(
+      (await new WalletPnlService(flows, stillBackfilling).curve(['w1', 'w2'], 30)).complete,
+    ).toBe(false);
 
-    const partial = stubRepo([], { w1: { oldestSig: 'g', newestSig: 'n', complete: false } });
-    expect((await new WalletPnlService(partial).curve(['w1'], 30)).complete).toBe(false);
+    const partial = stubCursors({ w1: { oldestSig: 'g', newestSig: 'n', complete: false } });
+    expect((await new WalletPnlService(flows, partial).curve(['w1'], 30)).complete).toBe(false);
   });
 
   it('returns an empty, complete curve for an empty wallet set', async () => {
-    const repo = stubRepo([], {});
-    const res = await new WalletPnlService(repo).curve([], 30);
+    const flows = stubFlows([]);
+    const cursors = stubCursors({});
+    const res = await new WalletPnlService(flows, cursors).curve([], 30);
     expect(res).toEqual({ days: [], totalTradingSol: 0, totalExternalSol: 0, complete: true });
-    expect(repo.dailyFlows).not.toHaveBeenCalled();
+    // Short-circuits: no query at all for nothing to show.
+    expect(flows.dailyFlows).not.toHaveBeenCalled();
+    expect(cursors.allComplete).not.toHaveBeenCalled();
   });
 });

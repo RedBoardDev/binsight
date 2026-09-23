@@ -1,12 +1,11 @@
 import { randomUUID } from 'node:crypto';
+import type { AccessEntry, WalletOverview } from '@binsight/shared';
 import { and, eq, gt, lte, sql } from 'drizzle-orm';
 import type {
-  AccessEntry,
   AccountRepository,
   AccountSummary,
   AccountUser,
   NoncePurpose,
-  WalletOverview,
   WhitelistEntry,
 } from '@/domain/ports';
 import type { Database } from './database';

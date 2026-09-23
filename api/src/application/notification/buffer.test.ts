@@ -3,7 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BulkBuffer } from './buffer';
 
 const WINDOW_MS = 8000;
-const ev = (over: { id?: string; kind: LiveEvent['kind']; pair?: string }): LiveEvent =>
+const ev = (over: {
+  id?: string;
+  kind: LiveEvent['kind'];
+  pair?: string;
+  wallet?: string | null;
+}): LiveEvent =>
   ({ id: 'e', title: 't', body: 'b', pair: 'SOL/USDC', ...over }) as unknown as LiveEvent;
 const flushFn = () => vi.fn((_e: LiveEvent): Promise<void> => Promise.resolve());
 
@@ -13,9 +18,9 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
-// BulkBuffer debounces same-kind notifications over an 8s window so a burst of N closes becomes ONE summary banner
-// instead of N. The behavior that matters: a lone event flushes verbatim; a burst coalesces into "N × kind"; each
-// kind has its own independent window; and a fresh event after a flush opens a NEW window.
+// BulkBuffer debounces same-kind notifications of one wallet over an 8s window so a burst of N closes becomes ONE
+// summary banner instead of N. The behavior that matters: a lone event flushes verbatim; a burst coalesces into
+// "N × kind"; each (kind, wallet) has its own independent window; and a fresh event after a flush opens a NEW window.
 describe('BulkBuffer — same-kind notification coalescing', () => {
   it('a single event flushes AS-IS after the window (no summary)', async () => {
     const onFlush = flushFn();
@@ -62,5 +67,22 @@ describe('BulkBuffer — same-kind notification coalescing', () => {
     buf.add(ev({ id: '2', kind: 'position_close' })); // a later same-kind event must NOT be dropped
     await vi.advanceTimersByTimeAsync(WINDOW_MS);
     expect(onFlush).toHaveBeenCalledTimes(2);
+  });
+
+  it('the same kind from two wallets flushes as two groups, each carrying its own wallet', async () => {
+    // Every channel routes by `event.wallet`: one group spanning W1 and W2 would reach only W1's subscribers
+    // and list W2's pairs to them. Grouping per (kind, wallet) keeps each summary with its owner.
+    const onFlush = flushFn();
+    const buf = new BulkBuffer(onFlush);
+    buf.add(ev({ id: '1', kind: 'position_close', wallet: 'W1', pair: 'AAA/SOL' }));
+    buf.add(ev({ id: '2', kind: 'position_close', wallet: 'W2', pair: 'BBB/SOL' }));
+    buf.add(ev({ id: '3', kind: 'position_close', wallet: 'W1', pair: 'CCC/SOL' }));
+    await vi.advanceTimersByTimeAsync(WINDOW_MS);
+
+    expect(onFlush).toHaveBeenCalledTimes(2);
+    const byWallet = new Map(onFlush.mock.calls.map((c) => [(c[0] as LiveEvent).wallet, c[0]]));
+    expect(byWallet.get('W1')?.title).toBe('2 × position close');
+    expect(byWallet.get('W1')?.body).toBe('AAA/SOL, CCC/SOL'); // never W2's pair
+    expect(byWallet.get('W2')).toMatchObject({ id: '2', pair: 'BBB/SOL' }); // a lone event, verbatim
   });
 });

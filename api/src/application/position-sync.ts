@@ -148,7 +148,6 @@ export function buildPositionRows(input: BuildPositionRowsInput): {
         openedAt: p.openedAt || null,
         closedAt: p.closedAt || null,
         durationSeconds: p.durationSeconds || null,
-        pnlSource: 'pool',
       });
     }
   }

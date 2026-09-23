@@ -42,6 +42,31 @@ describe('buildTotals', () => {
     expect(t.walletTotalSol).toBe(17.5);
   });
 
+  it('converts a non-SOL position’s pnl / claimed fees to SOL at its own sizeSol/sizeQuote rate', () => {
+    // A USDC pool's economics are USDC-denominated: adding 15 USDC of PnL to SOL PnL as "15 SOL" (or
+    // counting it as zero) would corrupt the portfolio totals. Its valuation implies 10 SOL = 1500 USDC.
+    const usdc = pos({
+      positionAddress: 'u',
+      tokenY: 'USDC',
+      quoteSymbol: 'USDC',
+      sizeSol: 10,
+      sizeQuote: 1500, // ⇒ 1 USDC = 1/150 SOL
+      pnlSol: 99, // must be ignored: the quote figure is the source of truth for a non-SOL pool
+      pnlQuote: 15,
+      claimedFeesSol: 99,
+      claimedFeesQuote: 3,
+    });
+    const t = buildTotals([pos(), usdc]); // pos(): SOL pool, pnl 1, claimed 0.1
+    expect(t.uPnlSol).toBeCloseTo(1 + 15 / 150, 12);
+    expect(t.claimedFeesSol).toBeCloseTo(0.1 + 3 / 150, 12);
+    expect(t.tvlSol).toBe(20); // sizeSol is already SOL for every pool
+  });
+
+  it('a non-SOL position with no quote size contributes no pnl rather than a unit-mixed guess', () => {
+    const t = buildTotals([pos({ quoteSymbol: 'USDC', sizeQuote: undefined, pnlQuote: 15 })]);
+    expect(t.uPnlSol).toBe(0);
+  });
+
   it('empty portfolio yields zeros, no divide-by-zero', () => {
     const t = buildTotals([], 0);
     expect(t.openCount).toBe(0);

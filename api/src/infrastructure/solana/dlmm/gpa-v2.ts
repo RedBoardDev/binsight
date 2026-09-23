@@ -2,8 +2,7 @@ import type { GetProgramAccountsFilter } from '@solana/web3.js';
 
 /**
  * Pure request-builder + response-parser for Helius `getProgramAccountsV2` — the 1-credit, cursor-paged
- * replacement for the legacy 10-credit `getProgramAccounts` (see the Helius credit model in
- * docs/research/near-zero-watcher-PLAN.md). web3.js's `Connection` exposes no `getProgramAccountsV2`
+ * replacement for the legacy 10-credit `getProgramAccounts` (Helius credit model). web3.js's `Connection` exposes no `getProgramAccountsV2`
  * method, so the gateway issues it as a RAW JSON-RPC call through the SAME rate-limited Connection (so
  * the credit meter still sees method `'getProgramAccountsV2'` → 1 credit). This module keeps that call's
  * params/response shape PURE so it's unit-tested with no network. No I/O here.

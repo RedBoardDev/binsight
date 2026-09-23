@@ -182,16 +182,6 @@ export const networthSnapshots = pgTable(
   (t) => [primaryKey({ columns: [t.wallet, t.bucket] })],
 );
 
-// Per-wallet flow-ingest progress — same shape/semantics as dlmm_ingest_cursor (page newest→genesis,
-// resume from oldestSig, top-up until the previously-seen newestSig).
-export const walletFlowCursor = pgTable('wallet_flow_cursor', {
-  wallet: text('wallet').primaryKey(),
-  oldestSig: text('oldest_sig'),
-  newestSig: text('newest_sig'),
-  complete: boolean('complete').notNull().default(false),
-  updatedAt: ms('updated_at').notNull(),
-});
-
 // Browser Web Push subscriptions, per account. An event for a wallet pushes to the subscriptions of
 // every account that watches it (join with user_watched_wallets); expired endpoints (404/410) are pruned.
 export const pushSubscriptions = pgTable(
@@ -314,26 +304,6 @@ export const swapFlows = pgTable(
     index('idx_swap_flows_wallet_ts').on(t.wallet, t.ts),
   ],
 );
-
-// Per-wallet swap-flow ingest progress — same shape/semantics as wallet_flow_cursor (page newest→genesis,
-// resume from oldestSig, top-up until the previously-seen newestSig).
-export const swapFlowCursor = pgTable('swap_flow_cursor', {
-  wallet: text('wallet').primaryKey(),
-  oldestSig: text('oldest_sig'),
-  newestSig: text('newest_sig'),
-  complete: boolean('complete').notNull().default(false),
-  updatedAt: ms('updated_at').notNull(),
-});
-
-// Durable transactionSubscribe checkpoint: the last signature + slot ingested for a wallet. A WS
-// reconnect/replay resumes from this persisted slot (fromSlot) and dedups by signature, so a crash or a
-// dropped socket never misses a leader open/close — the #1 no-miss guarantee of the watcher.
-export const walletStreamCursor = pgTable('wallet_stream_cursor', {
-  wallet: text('wallet').primaryKey(),
-  lastSignature: text('last_signature'),
-  lastSlot: bigint('last_slot', { mode: 'number' }), // Solana slot (fits a JS number)
-  updatedAt: ms('updated_at').notNull(),
-});
 
 // Persisted RPC-credit telemetry rollup — one row per (UTC-day, exact method, wallet, code path) holding
 // that bucket's summed call count + credit cost. The CreditMeter flushes its since-last-drain deltas here

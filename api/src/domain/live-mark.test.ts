@@ -1,4 +1,4 @@
-import { type OpenPosition, SOL_MINT } from '@binsight/shared';
+import { type OpenPosition, SOL_MINT, USDC_MINT } from '@binsight/shared';
 import { describe, expect, it } from 'vitest';
 import type { OnchainPositionValue, OnchainWalletSnapshot } from './dlmm';
 import { binPriceRaw } from './dlmm-pnl';
@@ -44,6 +44,7 @@ function snapshot(): OnchainWalletSnapshot {
     idleTokens: [],
     positions: [pos],
     complete: true,
+    positionsComplete: true,
   };
 }
 
@@ -136,5 +137,65 @@ describe('liveMarkWallet — in/out-of-range from the live price vs the cached [
     const { open } = liveMarkWallet(snapshot(), [openRow()], new Map());
     expect(open[0]!.rangeStatus).toBe('in'); // cached poolPrice (mid-range) is retained
     expect(open[0]!.poolPrice).toBe(uiPrice(0));
+  });
+});
+
+describe('liveMarkWallet — native-quote fields (what the rows actually display)', () => {
+  it('SOL pool: the quote fields ARE the re-marked SOL fields', () => {
+    // A SOL pool shows sizeQuote/pnlQuote in the UI; re-marking only the SOL fields would leave the row
+    // frozen at the last exact read while the totals move.
+    const stale = { ...openRow(), sizeQuote: 0.001, unclaimedFeesQuote: 0, pnlQuote: 0.0002 };
+    const { open } = liveMarkWallet(snapshot(), [stale], new Map([[TOKEN, 0.002]]));
+    const row = open[0]!;
+    expect(row.sizeQuote).toBeCloseTo(0.002, 12);
+    expect(row.unclaimedFeesQuote).toBe(0);
+    expect(row.pnlQuote).toBeCloseTo(row.pnlSol, 12);
+    expect(row.pnlPctQuote).toBeCloseTo(row.pnlPctSol, 9);
+  });
+
+  /** The same 1.0 token-X position, but quoted in USDC (6 dp). */
+  function usdcSnapshot(): OnchainWalletSnapshot {
+    const s = snapshot();
+    return { ...s, positions: [{ ...s.positions[0]!, tokenYMint: USDC_MINT, decimalsY: 6 }] };
+  }
+  function usdcRow(): OpenPosition {
+    return {
+      ...openRow(),
+      tokenY: 'USDC',
+      tokenYMint: USDC_MINT,
+      quoteMint: USDC_MINT,
+      quoteSymbol: 'USDC',
+      // Last exact read at 1 USDC = 0.01 SOL: 0.001 SOL = 0.1 USDC.
+      sizeQuote: 0.1,
+      unclaimedFeesQuote: 0,
+      pnlQuote: 0.02,
+      pnlPctQuote: 25, // ⇒ recovered quote deposit basis = 0.08 USDC
+    };
+  }
+
+  it('non-SOL pool: the quote fields convert through the quote mint’s SOL price', () => {
+    // Token X doubles against SOL (0.001 → 0.002); USDC holds at 0.01 SOL. The size in USDC doubles to
+    // 0.2 and the USDC uPnL moves by the same +0.1 linear delta.
+    const prices = new Map([
+      [TOKEN, 0.002],
+      [USDC_MINT, 0.01],
+    ]);
+    const { open } = liveMarkWallet(usdcSnapshot(), [usdcRow()], prices);
+    const row = open[0]!;
+    expect(row.sizeSol).toBeCloseTo(0.002, 12);
+    expect(row.sizeQuote).toBeCloseTo(0.2, 12);
+    expect(row.pnlQuote).toBeCloseTo(0.12, 12); // 0.02 + (0.2 - 0.1)
+    expect(row.pnlPctQuote).toBeCloseTo(150, 9); // 0.12 / 0.08 * 100
+    // The SOL pnl of a non-SOL pool is not re-derived here (its basis is in USDC); it keeps its last value.
+    expect(row.pnlSol).toBe(usdcRow().pnlSol);
+  });
+
+  it('non-SOL pool without a quote-mint price keeps the quote fields at their last exact values', () => {
+    // No USDC quote → converting would divide by nothing; a stale-but-exact figure beats a made-up one.
+    const { open } = liveMarkWallet(usdcSnapshot(), [usdcRow()], new Map([[TOKEN, 0.002]]));
+    const row = open[0]!;
+    expect(row.sizeQuote).toBe(0.1);
+    expect(row.pnlQuote).toBe(0.02);
+    expect(row.pnlPctQuote).toBe(25);
   });
 });

@@ -36,19 +36,6 @@ const flow = (
   isTrading,
 });
 
-describe('WalletFlowRepository — allCursorsComplete (O13 batch)', () => {
-  const cur = (complete: boolean) => ({ oldestSig: 'g', newestSig: 'n', complete });
-  it('is true only when EVERY wallet has a complete cursor; missing/partial → false; [] → true', async () => {
-    const repo = await newRepo();
-    await repo.setCursor('w1', cur(true));
-    await repo.setCursor('w2', cur(false));
-    expect(await repo.allCursorsComplete([])).toBe(true);
-    expect(await repo.allCursorsComplete(['w1'])).toBe(true);
-    expect(await repo.allCursorsComplete(['w1', 'w2'])).toBe(false); // w2 not complete
-    expect(await repo.allCursorsComplete(['w1', 'w3'])).toBe(false); // w3 has no cursor row
-  });
-});
-
 describe('WalletFlowRepository — daily aggregation', () => {
   it('sums trading and external flows per UTC day, separately', async () => {
     const repo = await newRepo();
@@ -108,7 +95,7 @@ describe('WalletFlowRepository — daily aggregation', () => {
 
     // Wipe the rollup and rebuild it purely from the raw flows; the served curve must be identical.
     await db.delete(schema.walletFlowDaily);
-    await repo.ensureDailyBackfilled();
+    await repo.rebuildDaily();
     const rebuilt = await repo.dailyFlows(['w1', 'w2'], 0);
 
     expect(rebuilt).toEqual(incremental);
@@ -118,7 +105,7 @@ describe('WalletFlowRepository — daily aggregation', () => {
     ]);
   });
 
-  it('ensureDailyBackfilled rebuilds the FULL history even when the rollup is partially populated', async () => {
+  it('rebuildDaily rebuilds the FULL history even when the rollup is partially populated', async () => {
     // Regression: the old "skip if non-empty" guard left the back-history unbuilt when an incremental
     // upsert had already written today's row — the curve then showed only today. Boot must rebuild ALL.
     const { repo, db } = await newRepoWithDb();
@@ -134,27 +121,10 @@ describe('WalletFlowRepository — daily aggregation', () => {
       trading: 3,
       external: 0,
     });
-    await repo.ensureDailyBackfilled(); // must NOT skip just because the rollup is non-empty
+    await repo.rebuildDaily(); // must NOT skip just because the rollup is non-empty
     expect(await repo.dailyFlows(['w1'], 0)).toEqual([
       { date: '2026-06-01', trading: 5, external: 0 }, // back-history restored, not just today
       { date: '2026-06-10', trading: 3, external: 0 },
     ]);
-  });
-
-  it('round-trips the ingest cursor', async () => {
-    const repo = await newRepo();
-    expect(await repo.getCursor('w1')).toBeNull();
-    await repo.setCursor('w1', { oldestSig: 'old', newestSig: 'new', complete: false });
-    expect(await repo.getCursor('w1')).toEqual({
-      oldestSig: 'old',
-      newestSig: 'new',
-      complete: false,
-    });
-    await repo.setCursor('w1', { oldestSig: 'old', newestSig: 'newer', complete: true });
-    expect(await repo.getCursor('w1')).toEqual({
-      oldestSig: 'old',
-      newestSig: 'newer',
-      complete: true,
-    });
   });
 });

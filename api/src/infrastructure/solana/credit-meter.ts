@@ -1,15 +1,14 @@
 /**
- * CreditMeter — the credit-precise telemetry foundation of the near-zero-RPC watcher.
+ * CreditMeter — credit-precise RPC telemetry.
  *
  * Every billable Helius call is reported via `record()`; the meter attributes its CREDIT cost (not just
  * a call count) per exact method, per code path, and per wallet, keeps a bounded ring of recent calls
  * for a live feed, and derives pure STRUCTURAL anomaly signals (an Enhanced call happened, a legacy
  * getProgramAccounts happened) — pure visibility, never call-blocking. It holds NO I/O — the clock is
- * injected so the flush day-bucket is unit testable, and the in-memory ledger is the source of truth
- * for `/debug/rpc` (the DB rollup is Step 2).
+ * injected so the flush day-bucket is unit testable, and the in-memory ledger (plus its persisted daily
+ * rollup) is what `/debug/rpc` serves.
  *
- * Credit costs are the Helius credit model (docs/research/near-zero-watcher-PLAN.md → "Helius credit
- * model" table). Each entry below cites that table.
+ * Credit costs follow the Helius credit model.
  */
 
 /** Per-method credit cost — Helius credit model. `default` covers any std JSON-RPC method not listed. */
@@ -187,7 +186,7 @@ export class CreditMeter {
   ): void {
     const day = utcDay(at);
     const w = wallet ?? '';
-    const key = `${day} ${method} ${w} ${codePath}`;
+    const key = `${day}\u0000${method}\u0000${w}\u0000${codePath}`;
     const cur = this.flushBuffer.get(key);
     if (cur) {
       cur.calls += 1;

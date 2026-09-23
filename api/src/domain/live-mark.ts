@@ -50,19 +50,54 @@ function remarkRow(
   const unclaimedFeesSol = valued.feeSolByPosition.get(o.positionAddress) ?? o.unclaimedFeesSol;
   const poolPrice = livePoolPrice(raw, priceSol) ?? o.poolPrice;
   const rangeStatus = resolveRangeStatus(poolPrice, o.minPrice, o.maxPrice);
-  const pnlSol = o.pnlSol + (sizeSol - o.sizeSol) + (unclaimedFeesSol - o.unclaimedFeesSol);
-  const depositSol = o.pnlPctSol !== 0 ? (o.pnlSol / o.pnlPctSol) * 100 : 0;
-  const pnlPctSol = depositSol > 0 ? (pnlSol / depositSol) * 100 : o.pnlPctSol;
+  const isSolQuote = (o.quoteSymbol ?? 'SOL') === 'SOL';
+  const sol = shiftPnl(
+    o.pnlSol,
+    o.pnlPctSol,
+    sizeSol - o.sizeSol,
+    unclaimedFeesSol - o.unclaimedFeesSol,
+  );
+  // The rows show the native-quote fields: re-mark them too. A non-SOL quote converts through its own
+  // SOL price; without one the quote figures keep their last exact values.
+  let quote: Partial<OpenPosition> = {};
+  if (isSolQuote) {
+    quote = {
+      sizeQuote: sizeSol,
+      unclaimedFeesQuote: unclaimedFeesSol,
+      pnlQuote: sol.pnl,
+      pnlPctQuote: sol.pct,
+    };
+  } else {
+    const quotePriceSol = o.quoteMint ? priceSol.get(o.quoteMint) : undefined;
+    if (quotePriceSol && quotePriceSol > 0 && o.sizeQuote != null && o.unclaimedFeesQuote != null) {
+      const sizeQuote = sizeSol / quotePriceSol;
+      const unclaimedFeesQuote = unclaimedFeesSol / quotePriceSol;
+      const q = shiftPnl(
+        o.pnlQuote ?? 0,
+        o.pnlPctQuote ?? 0,
+        sizeQuote - o.sizeQuote,
+        unclaimedFeesQuote - o.unclaimedFeesQuote,
+      );
+      quote = { sizeQuote, unclaimedFeesQuote, pnlQuote: q.pnl, pnlPctQuote: q.pct };
+    }
+  }
   return {
     ...o,
     sizeSol,
     unclaimedFeesSol,
     poolPrice,
     rangeStatus,
-    pnlSol,
-    pnlPctSol,
-    updatedAt: o.updatedAt,
+    ...(isSolQuote ? { pnlSol: sol.pnl, pnlPctSol: sol.pct } : {}),
+    ...quote,
   };
+}
+
+/** uPnL moves by exactly the change in size + unclaimed fees (the deposit basis is fixed); the percent
+ *  rescales on that basis, recovered from the last exact pnl/pct pair. */
+function shiftPnl(pnl: number, pct: number, dSize: number, dFees: number) {
+  const next = pnl + dSize + dFees;
+  const basis = pct !== 0 ? (pnl / pct) * 100 : 0;
+  return { pnl: next, pct: basis > 0 ? (next / basis) * 100 : pct };
 }
 
 /**

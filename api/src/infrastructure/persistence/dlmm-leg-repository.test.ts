@@ -66,23 +66,6 @@ describe('DlmmLegRepository', () => {
     expect(legs.map((l) => l.kind)).toEqual(['withdraw']); // sigA cleared, sigB kept
   });
 
-  it('round-trips the ingest cursor (incremental resume state)', async () => {
-    const repo = await newRepo();
-    expect(await repo.getCursor('w')).toBeNull();
-    await repo.setCursor('w', { oldestSig: 'old', newestSig: 'new', complete: false });
-    expect(await repo.getCursor('w')).toEqual({
-      oldestSig: 'old',
-      newestSig: 'new',
-      complete: false,
-    });
-    await repo.setCursor('w', { oldestSig: 'older', newestSig: 'new', complete: true });
-    expect(await repo.getCursor('w')).toEqual({
-      oldestSig: 'older',
-      newestSig: 'new',
-      complete: true,
-    });
-  });
-
   it('caches pool metadata immutably and reads back only known pools', async () => {
     const repo = await newRepo();
     expect(await repo.getPoolMetas(['POOL1'])).toEqual(new Map());

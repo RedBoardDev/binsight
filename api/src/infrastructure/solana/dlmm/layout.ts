@@ -6,8 +6,7 @@ import { PublicKey } from '@solana/web3.js';
 
 /**
  * On-chain DLMM account layouts (lb_clmm program). Byte offsets validated against the datapi
- * to the lamport on 13+ live positions (see docs/research/backend-validation-report.md §1).
- * Ported from scripts/spike/onchain_value.py (the canonical, report-endorsed spike).
+ * to the lamport on 13+ live positions.
  */
 
 export const DLMM_PROGRAM_ID = new PublicKey(DLMM_PROGRAM_ID_STR);

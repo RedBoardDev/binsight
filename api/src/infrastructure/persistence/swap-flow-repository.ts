@@ -1,8 +1,8 @@
 import { eq } from 'drizzle-orm';
-import type { FlowCursor, SwapFlowRow, SwapSide } from '@/domain/dlmm';
+import type { SwapFlowRow, SwapSide } from '@/domain/dlmm';
 import type { SwapFlowRepository as SwapFlowRepositoryPort } from '@/domain/ports';
 import type { Database } from './database';
-import { swapFlowCursor, swapFlows } from './schema';
+import { swapFlows } from './schema';
 
 /** Max rows per insert chunk — keeps each statement well under the Postgres bind-parameter limit
  *  (7 cols × rows). Mirrors the chunking the wallet-flow / dlmm-leg repos use. */
@@ -54,36 +54,5 @@ export class SwapFlowRepository implements SwapFlowRepositoryPort {
       solAmount: r.solAmount,
       side: r.side as SwapSide,
     }));
-  }
-
-  async getCursor(wallet: string): Promise<FlowCursor | null> {
-    const [row] = await this.db
-      .select()
-      .from(swapFlowCursor)
-      .where(eq(swapFlowCursor.wallet, wallet));
-    return row
-      ? { oldestSig: row.oldestSig, newestSig: row.newestSig, complete: row.complete }
-      : null;
-  }
-
-  async setCursor(wallet: string, cursor: FlowCursor): Promise<void> {
-    await this.db
-      .insert(swapFlowCursor)
-      .values({
-        wallet,
-        oldestSig: cursor.oldestSig,
-        newestSig: cursor.newestSig,
-        complete: cursor.complete,
-        updatedAt: Date.now(),
-      })
-      .onConflictDoUpdate({
-        target: swapFlowCursor.wallet,
-        set: {
-          oldestSig: cursor.oldestSig,
-          newestSig: cursor.newestSig,
-          complete: cursor.complete,
-          updatedAt: Date.now(),
-        },
-      });
   }
 }

@@ -1,7 +1,14 @@
 import { type Connection, type ParsedTransactionWithMeta, PublicKey } from '@solana/web3.js';
 import type { Logger } from 'pino';
 import type { DlmmLeg, SwapFlowRow, WalletFlowRow } from '@/domain/dlmm';
-import type { LegRepository, SwapFlowRepository, WalletFlowRepository } from '@/domain/ports';
+import type {
+  IngestCursorStore,
+  IngestResult,
+  LegRepository,
+  SwapFlowRepository,
+  WalletFlowRepository,
+  WalletTxIngestPort,
+} from '@/domain/ports';
 import { sleep } from '@/util/sleep';
 import { withCodePath } from './code-path';
 import { decodeDlmmLegs } from './dlmm/dlmm-event-decoder';
@@ -10,16 +17,15 @@ import { extractFlowRow, extractSwapRows } from './parsed-tx-adapter';
 const SIG_PAGE = 1000; // getSignaturesForAddress hard cap — 1 credit per page, whatever its size
 const SIG_RETRIES = 10;
 const TX_RETRIES = 4;
-// Bound the backfill to a recent window (days) — 0 = full history. Kept as an operator escape hatch
-// for onboarding a very old wallet incrementally.
-const SINCE_DAYS = Number(process.env.INGEST_SINCE_DAYS) || 0;
+/** A listed signature younger than this that the RPC returns as `null` is not yet visible on the node
+ *  that answered (load-balanced nodes lag by a slot or two) — never "pruned". */
+const FRESH_TX_WINDOW_SEC = 60 * 60;
 
-export interface WalletTxIngestResult {
-  txs: number;
-  legs: number;
-  flows: number;
-  swaps: number;
-  complete: boolean;
+export interface WalletTxIngestOptions {
+  /** Bound the backfill to a recent window, in days (0 = full history). An operator escape hatch for
+   *  onboarding a very old wallet incrementally. */
+  sinceDays?: number;
+  sleep?: (ms: number) => Promise<void>;
 }
 
 /**
@@ -48,39 +54,41 @@ export interface WalletTxIngestResult {
  *   - cursor !complete → resume from where it stopped (oldestSig) onward to genesis
  *   - cursor complete  → top-up: newest → the previously-ingested newest
  */
-export class WalletTxIngest {
-  /** `sleepFn` is injected so retry backoff is instant under test — same idiom as the injected clocks
-   *  elsewhere in this layer. Production always gets the real sleep. */
+export class WalletTxIngest implements WalletTxIngestPort {
+  /** Retry backoff is injectable so it is instant under test. */
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly sinceDays: number;
 
   constructor(
     private readonly conn: Connection,
     private readonly legs: LegRepository,
     private readonly flows: WalletFlowRepository,
     private readonly swaps: SwapFlowRepository,
+    private readonly cursors: IngestCursorStore,
     private readonly logger: Logger,
-    sleepFn: (ms: number) => Promise<void> = sleep,
+    opts: WalletTxIngestOptions = {},
   ) {
-    this.sleep = sleepFn;
+    this.sleep = opts.sleep ?? sleep;
+    this.sinceDays = opts.sinceDays ?? 0;
   }
 
-  ingest(
-    wallet: string,
-    opts: { onProgress?: (txs: number) => void; maxPages?: number } = {},
-  ): Promise<WalletTxIngestResult> {
+  ingest(wallet: string, opts: { onProgress?: (txs: number) => void } = {}): Promise<IngestResult> {
     return withCodePath('ingest', () => this.ingestInner(wallet, opts));
   }
 
   private async ingestInner(
     wallet: string,
-    opts: { onProgress?: (txs: number) => void; maxPages?: number } = {},
-  ): Promise<WalletTxIngestResult> {
-    const maxPages = opts.maxPages ?? Number.POSITIVE_INFINITY;
-    const cursor = await this.legs.getCursor(wallet);
+    opts: { onProgress?: (txs: number) => void },
+  ): Promise<IngestResult> {
+    const cursor = await this.cursors.get(wallet);
     const owner = new PublicKey(wallet);
-    const sinceSec = SINCE_DAYS > 0 ? Date.now() / 1000 - SINCE_DAYS * 86_400 : 0;
+    const sinceSec = this.sinceDays > 0 ? Date.now() / 1000 - this.sinceDays * 86_400 : 0;
 
-    const resuming = cursor != null && !cursor.complete;
+    // A cursor that never got past its first page (it failed) holds no position at all: treat that run
+    // as the fresh backfill it still is, or the stored top would stay null and every later top-up would
+    // have no stop signature — re-paging the wallet's entire history each time.
+    const started = cursor != null && (cursor.complete || cursor.oldestSig != null);
+    const resuming = started && !cursor.complete;
     const toppingUp = cursor?.complete === true;
     const stopSig = toppingUp ? cursor.newestSig : null;
     let before: string | undefined = resuming ? (cursor.oldestSig ?? undefined) : undefined;
@@ -93,7 +101,6 @@ export class WalletTxIngest {
     let reachedGenesis = false;
     // Run-level: a top-up reconnected to the previously-ingested top. Only then may the stored top move.
     let hitKnownTop = false;
-    let pages = 0;
     const totals = { txs: 0, legs: 0, flows: 0, swaps: 0 };
 
     while (true) {
@@ -103,7 +110,7 @@ export class WalletTxIngest {
         break;
       }
 
-      const sigs: string[] = [];
+      const sigs: { signature: string; blockTime?: number | null }[] = [];
       let pageReachedKnownTop = false;
       for (const s of page) {
         if (stopSig && s.signature === stopSig) {
@@ -111,7 +118,7 @@ export class WalletTxIngest {
           break;
         }
         if (s.err) continue; // failed tx — no state change to decode
-        sigs.push(s.signature);
+        sigs.push(s);
       }
 
       // CRITICAL: a FAILED fetch must NOT delete existing legs. `decodePage` throws if any transaction
@@ -125,7 +132,11 @@ export class WalletTxIngest {
         break;
       }
 
-      await this.persist(wallet, sigs, decoded);
+      await this.persist(
+        wallet,
+        sigs.map((s) => s.signature),
+        decoded,
+      );
 
       // Record the run's top ONLY AFTER a page is fetched AND persisted. Setting it before the fetch let
       // a failed page move the top PAST un-ingested transactions, which were then never re-fetched — a
@@ -155,7 +166,6 @@ export class WalletTxIngest {
         reachedGenesis = true;
         break;
       }
-      if (++pages >= maxPages) break; // bounded run (verification / resume in slices)
     }
 
     // A top-up may ONLY advance the stored top once it reconnected to the previously-ingested top, or ran
@@ -173,14 +183,14 @@ export class WalletTxIngest {
         : (runTopSig ?? cursor?.newestSig ?? null); // fresh backfill: the first page's top is the true top
 
     const complete = reachedGenesis || cursor?.complete === true;
-    await this.advanceCursors(wallet, {
+    await this.cursors.set(wallet, {
       newestSig,
       // A top-up stops above genesis, so it must not clobber the true oldest recorded at backfill.
       oldestSig: toppingUp ? (cursor?.oldestSig ?? null) : oldestSig,
       complete,
     });
     this.logger.info({ wallet, ...totals, complete }, 'wallet tx ingest: done');
-    return { ...totals, complete };
+    return { ...totals, complete, wasComplete: toppingUp };
   }
 
   /** One page of signatures, newest-first, with retry. */
@@ -205,11 +215,14 @@ export class WalletTxIngest {
    * limiter paces them, and a per-signature hard failure throws so the caller aborts the page rather
    * than persisting a partial view.
    */
-  private async decodePage(wallet: string, sigs: string[]): Promise<DecodedPage> {
+  private async decodePage(
+    wallet: string,
+    sigs: { signature: string; blockTime?: number | null }[],
+  ): Promise<DecodedPage> {
     const out: DecodedPage = { txs: 0, legs: [], flows: [], swaps: [] };
-    for (const sig of sigs) {
-      const tx = await this.parsedTransaction(sig);
-      if (!tx) continue; // RPC has no record of it (pruned/unavailable) — nothing to decode
+    for (const { signature, blockTime } of sigs) {
+      const tx = await this.parsedTransaction(signature, isFresh(blockTime));
+      if (!tx) continue; // an old signature the RPC no longer has — nothing to decode
       out.txs++;
       out.legs.push(...decodeDlmmLegs(tx));
       const flow = extractFlowRow(tx, wallet);
@@ -219,19 +232,29 @@ export class WalletTxIngest {
     return out;
   }
 
-  private async parsedTransaction(sig: string): Promise<ParsedTransactionWithMeta | null> {
+  /**
+   * One transaction, with retry. A `null` for a FRESH signature is retried and then thrown like any
+   * other failure: the node that answered simply hasn't seen it yet, and skipping it would move the
+   * cursor past a close whose legs would then never be read. Only an old signature may come back null.
+   */
+  private async parsedTransaction(
+    sig: string,
+    fresh: boolean,
+  ): Promise<ParsedTransactionWithMeta | null> {
     let lastErr: unknown;
     for (let i = 0; i < TX_RETRIES; i++) {
       try {
         // maxSupportedTransactionVersion is mandatory: most DLMM txs are v0 and omitting it hard-fails.
-        return await this.conn.getParsedTransaction(sig, {
+        const tx = await this.conn.getParsedTransaction(sig, {
           maxSupportedTransactionVersion: 0,
           commitment: 'confirmed',
         });
+        if (tx || !fresh) return tx;
+        lastErr = new Error(`transaction ${sig} not visible yet`);
       } catch (err) {
         lastErr = err;
-        await this.sleep(Math.min(8000, 500 * (i + 1)));
       }
+      await this.sleep(Math.min(8000, 500 * (i + 1)));
     }
     throw lastErr ?? new Error(`getParsedTransaction failed for ${sig}`);
   }
@@ -243,21 +266,6 @@ export class WalletTxIngest {
     if (page.flows.length > 0) await this.flows.upsertFlows(wallet, page.flows);
     if (page.swaps.length > 0) await this.swaps.upsertMany(page.swaps);
   }
-
-  /**
-   * Advance all three cursors to the SAME position. They stay separate tables because each still gates
-   * something distinct downstream — the swap cursor's `complete` decides whether realized PnL may be
-   * computed, the flow cursor's backs the "indexing…" state on the PnL curve — but a single ingest now
-   * writes all three from one pagination, so they can no longer disagree about what has been read.
-   */
-  private async advanceCursors(
-    wallet: string,
-    cursor: { newestSig: string | null; oldestSig: string | null; complete: boolean },
-  ): Promise<void> {
-    await this.legs.setCursor(wallet, cursor);
-    await this.flows.setCursor(wallet, cursor);
-    await this.swaps.setCursor(wallet, cursor);
-  }
 }
 
 interface DecodedPage {
@@ -266,3 +274,6 @@ interface DecodedPage {
   flows: WalletFlowRow[];
   swaps: SwapFlowRow[];
 }
+
+const isFresh = (blockTime: number | null | undefined): boolean =>
+  blockTime == null || Date.now() / 1000 - blockTime < FRESH_TX_WINDOW_SEC;

@@ -3,7 +3,12 @@ import { type Connection, type ParsedTransactionWithMeta, PublicKey } from '@sol
 import { pino } from 'pino';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IngestCursor, SwapFlowRow, WalletFlowRow } from '@/domain/dlmm';
-import type { LegRepository, SwapFlowRepository, WalletFlowRepository } from '@/domain/ports';
+import type {
+  IngestCursorStore,
+  LegRepository,
+  SwapFlowRepository,
+  WalletFlowRepository,
+} from '@/domain/ports';
 import { WalletTxIngest } from './wallet-tx-ingest';
 
 // A syntactically valid pubkey standing in for a wallet — never a real address.
@@ -107,26 +112,24 @@ function harness(opts: {
   cursor?: IngestCursor | null;
   txError?: () => boolean;
 }) {
-  const getSignaturesForAddress = vi.fn(async () => opts.pages.shift() ?? []);
+  const getSignaturesForAddress = vi.fn(
+    async (_owner: PublicKey, _opts?: { limit?: number; before?: string }) =>
+      opts.pages.shift() ?? [],
+  );
   const getParsedTransaction = vi.fn(async (s: string) => {
     if (opts.txError?.()) throw new Error('rpc down');
     return opts.txs?.[s] ?? null;
   });
   const conn = { getSignaturesForAddress, getParsedTransaction } as unknown as Connection;
 
-  const legCursor: { value: IngestCursor | null } = { value: opts.cursor ?? null };
   const written = {
     legs: [] as { sigs: string[]; count: number }[],
     flows: [] as WalletFlowRow[],
     swaps: [] as SwapFlowRow[],
-    cursors: [] as { repo: string; cursor: IngestCursor }[],
+    cursors: [] as IngestCursor[],
   };
 
   const legs = {
-    getCursor: async () => legCursor.value,
-    setCursor: async (_w: string, c: IngestCursor) => {
-      written.cursors.push({ repo: 'legs', cursor: c });
-    },
     replaceForSignatures: async (_w: string, sigs: string[], rows: unknown[]) => {
       written.legs.push({ sigs, count: rows.length });
     },
@@ -135,22 +138,25 @@ function harness(opts: {
     upsertFlows: async (_w: string, rows: WalletFlowRow[]) => {
       written.flows.push(...rows);
     },
-    setCursor: async (_w: string, c: IngestCursor) => {
-      written.cursors.push({ repo: 'flows', cursor: c });
-    },
   } as unknown as WalletFlowRepository;
   const swaps = {
     upsertMany: async (rows: SwapFlowRow[]) => {
       written.swaps.push(...rows);
     },
-    setCursor: async (_w: string, c: IngestCursor) => {
-      written.cursors.push({ repo: 'swaps', cursor: c });
-    },
   } as unknown as SwapFlowRepository;
+  const cursors: IngestCursorStore = {
+    get: async () => opts.cursor ?? null,
+    set: async (_w, c) => {
+      written.cursors.push(c);
+    },
+    allComplete: async () => false,
+  };
 
   return {
     // Instant backoff: these tests assert retry SEMANTICS, not wall-clock patience.
-    ingest: new WalletTxIngest(conn, legs, flows, swaps, logger, async () => {}),
+    ingest: new WalletTxIngest(conn, legs, flows, swaps, cursors, logger, {
+      sleep: async () => {},
+    }),
     getSignaturesForAddress,
     getParsedTransaction,
     written,
@@ -200,20 +206,18 @@ describe('WalletTxIngest', () => {
     expect(h.getParsedTransaction).not.toHaveBeenCalled();
   });
 
-  it('advances all three cursors to the SAME position', async () => {
-    // They stay separate tables because each gates something different downstream, but one pagination
-    // writes them all — so they cannot drift into disagreeing about what has been read.
+  it('writes ONE cursor for legs, flows and swaps', async () => {
+    // The three products are decoded from the same pagination, so a single cursor describes what all
+    // of them have read — they structurally cannot drift into disagreeing.
     const h = harness({
       cursor: { newestSig: 'TOP', oldestSig: 'BOTTOM', complete: true },
       pages: [[sig('NEW1'), sig('TOP')]],
       txs: { NEW1: transferTx('NEW1') },
     });
-    await h.ingest.ingest(WALLET);
+    const res = await h.ingest.ingest(WALLET);
 
-    expect(h.written.cursors.map((c) => c.repo).sort()).toEqual(['flows', 'legs', 'swaps']);
-    const values = h.written.cursors.map((c) => JSON.stringify(c.cursor));
-    expect(new Set(values).size).toBe(1);
-    expect(h.written.cursors[0]?.cursor).toMatchObject({ newestSig: 'NEW1', complete: true });
+    expect(h.written.cursors).toEqual([{ newestSig: 'NEW1', oldestSig: 'BOTTOM', complete: true }]);
+    expect(res.wasComplete).toBe(true); // a known wallet's top-up
   });
 
   it('aborts the page WITHOUT writing or advancing when a transaction cannot be fetched', async () => {
@@ -229,7 +233,7 @@ describe('WalletTxIngest', () => {
     expect(h.written.legs).toEqual([]);
     expect(h.written.flows).toEqual([]);
     // The cursor is rewritten, but to its PREVIOUS top — never past the un-ingested transaction.
-    expect(h.written.cursors.every((c) => c.cursor.newestSig === 'TOP')).toBe(true);
+    expect(h.written.cursors.every((c) => c.newestSig === 'TOP')).toBe(true);
   });
 
   it('keeps the OLD top when a later top-up page fails before reaching it (#35)', async () => {
@@ -249,7 +253,7 @@ describe('WalletTxIngest', () => {
     await h.ingest.ingest(WALLET);
 
     expect(h.written.legs).toHaveLength(1); // page 1 WAS persisted — progress is not thrown away…
-    for (const { cursor } of h.written.cursors) {
+    for (const cursor of h.written.cursors) {
       expect(cursor.newestSig).toBe('TOP'); // …but the stored top does not jump past the gap
       expect(cursor.oldestSig).toBe('BOTTOM');
     }
@@ -263,7 +267,7 @@ describe('WalletTxIngest', () => {
       txs: { NEW1: transferTx('NEW1') },
     });
     await h.ingest.ingest(WALLET);
-    expect(h.written.cursors[0]?.cursor).toMatchObject({
+    expect(h.written.cursors[0]).toMatchObject({
       newestSig: 'NEW1',
       oldestSig: 'BOTTOM',
       complete: true,
@@ -278,12 +282,97 @@ describe('WalletTxIngest', () => {
     });
     const res = await h.ingest.ingest(WALLET);
     expect(res.complete).toBe(true);
-    expect(h.written.cursors[0]?.cursor).toMatchObject({ newestSig: 'ONLY', oldestSig: 'ONLY' });
+    expect(h.written.cursors[0]).toMatchObject({ newestSig: 'ONLY', oldestSig: 'ONLY' });
   });
 
   it('keeps complete=false when a page fails mid-backfill, so a re-run resumes', async () => {
     const h = harness({ cursor: null, pages: [[sig('A')]], txError: () => true });
     const res = await h.ingest.ingest(WALLET);
     expect(res.complete).toBe(false);
+  });
+
+  it('reports wasComplete=false on a first-ever backfill', async () => {
+    // Downstream, a first backfill must not replay the wallet's whole history as live notifications.
+    const h = harness({ cursor: null, pages: [[sig('ONLY')]], txs: { ONLY: transferTx('ONLY') } });
+    expect(await h.ingest.ingest(WALLET)).toMatchObject({ complete: true, wasComplete: false });
+  });
+
+  it('retries a RECENT signature that comes back null, then aborts the page without advancing', async () => {
+    // WHY: getSignaturesForAddress and getParsedTransaction can land on different load-balanced nodes;
+    // one that lags a slot returns null for a tx the other just listed. Skipping it would move the
+    // cursor past a close whose legs would then never be read — a silently-lost close.
+    const recent = Math.floor(Date.now() / 1000) - 60;
+    const h = harness({
+      cursor: { newestSig: 'TOP', oldestSig: 'BOTTOM', complete: true },
+      pages: [[{ signature: 'FRESH', err: null, blockTime: recent }, sig('TOP')]],
+      txs: {}, // the node never returns it during this run
+    });
+    await h.ingest.ingest(WALLET);
+
+    expect(h.getParsedTransaction.mock.calls.length).toBeGreaterThan(1); // retried, not skipped
+    expect(h.getParsedTransaction.mock.calls.every((c) => c[0] === 'FRESH')).toBe(true);
+    expect(h.written.legs).toEqual([]); // the page was aborted
+    expect(h.written.cursors).toEqual([{ newestSig: 'TOP', oldestSig: 'BOTTOM', complete: true }]);
+  });
+
+  it('a recent null that becomes visible on retry is ingested normally', async () => {
+    const recent = Math.floor(Date.now() / 1000) - 60;
+    const h = harness({
+      cursor: { newestSig: 'TOP', oldestSig: 'BOTTOM', complete: true },
+      pages: [[{ signature: 'FRESH', err: null, blockTime: recent }, sig('TOP')]],
+    });
+    let calls = 0;
+    h.getParsedTransaction.mockImplementation(async () =>
+      ++calls < 2 ? null : transferTx('FRESH'),
+    );
+    const res = await h.ingest.ingest(WALLET);
+    expect(res.txs).toBe(1);
+    expect(h.written.cursors[0]).toMatchObject({ newestSig: 'FRESH' });
+  });
+
+  it('skips an OLD signature the RPC returns null for, and keeps paging', async () => {
+    // A years-old signature can be genuinely gone from the node's history; retrying it forever would
+    // wedge the wallet's ingest on one unreadable transaction.
+    const h = harness({
+      cursor: { newestSig: 'TOP', oldestSig: 'BOTTOM', complete: true },
+      pages: [[sig('NEW1'), sig('OLD_GONE'), sig('TOP')]], // sig() blockTimes are from 2023
+      txs: { NEW1: transferTx('NEW1') },
+    });
+    const res = await h.ingest.ingest(WALLET);
+
+    expect(h.getParsedTransaction.mock.calls.filter((c) => c[0] === 'OLD_GONE')).toHaveLength(1);
+    expect(res.txs).toBe(1);
+    expect(h.written.legs).toEqual([{ sigs: ['NEW1', 'OLD_GONE'], count: 0 }]);
+    expect(h.written.cursors[0]).toMatchObject({ newestSig: 'NEW1', complete: true });
+  });
+
+  it('treats a cursor whose first page failed as a fresh backfill, storing the true top', async () => {
+    // WHY: {newestSig:null, oldestSig:null, complete:false} is what a backfill leaves when its very first
+    // page failed. Reading it as a "resume" would keep newestSig null forever, and every later top-up
+    // would have no stop signature — re-paging the wallet's entire history on each trigger.
+    const h = harness({
+      cursor: { newestSig: null, oldestSig: null, complete: false },
+      pages: [[sig('TOP2'), sig('MID'), sig('GENESIS')]],
+      txs: { TOP2: transferTx('TOP2') },
+    });
+    const res = await h.ingest.ingest(WALLET);
+
+    expect(h.getSignaturesForAddress.mock.calls[0]?.[1]).toMatchObject({ before: undefined });
+    expect(h.written.cursors).toEqual([
+      { newestSig: 'TOP2', oldestSig: 'GENESIS', complete: true },
+    ]);
+    expect(res.wasComplete).toBe(false);
+  });
+
+  it('a genuine resume keeps the top recorded by the first page and pages on from oldestSig', async () => {
+    // Counterpart of the case above: once a first page landed, a resume must continue below it and
+    // must not overwrite the top with an older page's first signature.
+    const h = harness({
+      cursor: { newestSig: 'TOP', oldestSig: 'MIDDLE', complete: false },
+      pages: [[sig('OLDER'), sig('GENESIS')]],
+    });
+    await h.ingest.ingest(WALLET);
+    expect(h.getSignaturesForAddress.mock.calls[0]?.[1]).toMatchObject({ before: 'MIDDLE' });
+    expect(h.written.cursors).toEqual([{ newestSig: 'TOP', oldestSig: 'GENESIS', complete: true }]);
   });
 });

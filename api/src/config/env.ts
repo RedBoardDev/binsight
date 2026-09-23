@@ -29,10 +29,8 @@ const EnvSchema = z.object({
     .transform((v) => v === 'true'),
 
   /** Master switch for the on-chain realized-PnL pass (the chained-FIFO `market_pnl_sol` writer). It
-   *  needs the wallet's FULL buys/sells history, fetched from Helius and NOT persisted, so on a cold
-   *  in-memory cache (every restart) it re-pages the entire SWAP history — prohibitively expensive on a
-   *  very active wallet and unscalable to many wallets. Set 'false' to disable: closed positions keep
-   *  their already-persisted `market_pnl_sol`, new closes fall back to the pool mark, RPC cost ≈ 0. */
+   *  reads the persisted legs and swaps (no RPC beyond its top-up ingest). 'false' disables it: closed
+   *  positions keep their persisted `market_pnl_sol`, new closes show the pool mark. */
   REALIZED_PNL_ENABLED: z
     .enum(['true', 'false'])
     .default('true')
@@ -55,23 +53,11 @@ const EnvSchema = z.object({
    *  the per-wallet history sweep; raise this only with the RPC tier's headroom (the backfill lane). */
   BACKFILL_CONCURRENCY: z.coerce.number().int().positive().default(3),
 
-  /** DEPRECATED poll-budget knobs. Nothing polls anymore (the on-chain DLMM engine is the single
-   *  positions source), but they still seed the `RuntimeSettings` the Settings page reads/writes and
-   *  the `pollIntervalMs` field of the Health wire that deployed native clients decode. */
-  METEORA_TARGET_RPS: z.coerce.number().positive().default(15),
-  POLL_MIN_MS: z.coerce.number().int().positive().default(1000),
-  POLL_MAX_MS: z.coerce.number().int().positive().default(30_000),
-  POLL_IDLE_MS: z.coerce.number().int().positive().default(300_000),
-
   /** Postgres connection string (self-hosted via docker-compose). */
   DATABASE_URL: z.string().default('postgres://meteora:meteora@localhost:5435/meteora'),
-  // History depth: either a rolling window (HISTORY_DAYS) OR an absolute floor date
-  // (HISTORY_SINCE, e.g. 2026-05-01) — when set, HISTORY_SINCE wins (everything after it).
-  HISTORY_DAYS: z.coerce.number().int().min(1).max(365).default(365),
-  HISTORY_SINCE: z
-    .string()
-    .refine((v) => !Number.isNaN(Date.parse(v)), 'HISTORY_SINCE must be a date, e.g. 2026-05-01')
-    .optional(),
+  /** Bound a wallet's history backfill to its last N days (0 = full history). An operator escape
+   *  hatch for onboarding a very old wallet incrementally. */
+  INGEST_SINCE_DAYS: z.coerce.number().int().min(0).default(0),
 
   BARK_KEY: z.string().default(''),
   BARK_BASE_URL: z.string().url().default('https://api.day.app'),
@@ -85,7 +71,7 @@ const EnvSchema = z.object({
   VAPID_SUBJECT: z.string().default('mailto:admin@binsight.local'),
 
   /** Browser origins allowed by CORS (comma-separated). Native clients send no Origin. */
-  WEB_ORIGINS: z.string().default('http://localhost:3000,http://localhost:5173'),
+  WEB_ORIGINS: z.string().default('http://localhost:3000'),
 
   /** Jupiter Price API v3 (free, no key) — live market price to revalue OPEN positions' token
    *  holdings (Meteora's pool-spot mark misprices illiquid/out-of-range tokens). */
@@ -96,8 +82,6 @@ const EnvSchema = z.object({
 
 export type AppConfig = z.infer<typeof EnvSchema> & {
   solanaHttpUrl: string;
-  /** Effective history window in days for the full sync (derived from HISTORY_SINCE or HISTORY_DAYS). */
-  historyDays: number;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -112,9 +96,5 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const solanaHttpUrl =
     data.SOLANA_HTTP_URL ??
     data.SOLANA_WS_URL.replace(/^wss?:/, (m) => (m === 'wss:' ? 'https:' : 'http:'));
-  // HISTORY_SINCE (absolute floor date) overrides HISTORY_DAYS (rolling window) when set.
-  const historyDays = data.HISTORY_SINCE
-    ? Math.max(1, Math.ceil((Date.now() - Date.parse(data.HISTORY_SINCE)) / 86_400_000))
-    : data.HISTORY_DAYS;
-  return { ...data, solanaHttpUrl, historyDays };
+  return { ...data, solanaHttpUrl };
 }

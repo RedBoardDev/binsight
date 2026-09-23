@@ -1,6 +1,4 @@
-import { createHash } from 'node:crypto';
-import type { PositionEvent, PositionEventKind, PositionHistory } from '@binsight/shared';
-import { utils } from '@coral-xyz/anchor';
+import type { PositionEvent, PositionHistory } from '@binsight/shared';
 import type {
   Connection,
   ParsedTransactionWithMeta,
@@ -8,72 +6,30 @@ import type {
 } from '@solana/web3.js';
 import { PublicKey } from '@solana/web3.js';
 import { DLMM_PROGRAM_ID, decodeLbPair, LBPAIR_DISC } from './layout';
-
-/** base58 decode for instruction data; throws on a non-base58 character. */
-const bs58 = (s: string): Uint8Array => utils.bytes.bs58.decode(s);
-
-const discMatches = (b: Uint8Array, d: readonly number[]): boolean => d.every((v, i) => b[i] === v);
-
-/** Anchor instruction discriminator = sha256("global:<snake_name>")[:8], hex. */
-const disc = (name: string): string =>
-  createHash('sha256').update(`global:${name}`).digest().subarray(0, 8).toString('hex');
-
-/**
- * Maps each relevant DLMM instruction (all known variants) to a timeline event kind.
- * Discriminators are derived deterministically and were validated byte-exact against real
- * on-chain transactions + the datapi aggregates (see discover-history.spike.ts).
- */
-const KIND_BY_DISC = new Map<string, PositionEventKind>();
-const define = (kind: PositionEventKind, names: string[]): void => {
-  for (const n of names) KIND_BY_DISC.set(disc(n), kind);
-};
-define('open', [
-  'initialize_position',
-  'initialize_position_pda',
-  'initialize_position_by_operator',
-]);
-define('deposit', [
-  'add_liquidity',
-  'add_liquidity_by_weight',
-  'add_liquidity_by_strategy',
-  'add_liquidity_by_strategy_one_side',
-  'add_liquidity_one_side_precise',
-  'add_liquidity2',
-  'add_liquidity_by_strategy2',
-  'add_liquidity_one_side_precise2',
-]);
-define('withdraw', [
-  'remove_liquidity',
-  'remove_liquidity_by_range',
-  'remove_liquidity2',
-  'remove_liquidity_by_range2',
-  'remove_all_liquidity',
-]);
-define('claim', ['claim_fee', 'claim_fee2']);
-define('close', ['close_position', 'close_position2', 'close_position_if_empty']);
+import { discriminatorOf, positionKindOfDisc } from './position-instructions';
 
 const DLMM = DLMM_PROGRAM_ID.toBase58();
 const SIG_PAGE = 1000;
 const MAX_PAGES = 20;
+const TOKEN_PROGRAMS = new Set(['spl-token', 'spl-token-2022']);
 
 const isDlmm = (ix: { programId: PublicKey }): boolean => ix.programId.toBase58() === DLMM;
-const discOf = (ix: PartiallyDecodedInstruction): string =>
-  Buffer.from(bs58(ix.data)).subarray(0, 8).toString('hex');
+const discMatches = (b: Uint8Array, d: readonly number[]): boolean => d.every((v, i) => b[i] === v);
 
 type Pool = { tokenXMint: string; tokenYMint: string; decX: number; decY: number };
 
 /**
- * Reconstructs a position's full event timeline (open / deposit / withdraw / claim / close) from
- * its on-chain transaction history via Helius. Works for closed positions too (the position
- * account may be gone, but its transactions and the lb_pair account persist). Returns null when
- * the address has no transaction history. No LPAgent dependency.
+ * A position's event timeline (open / deposit / withdraw / claim / close) from its on-chain transaction
+ * history. Works for closed positions too (the account may be gone, its transactions and the lb_pair
+ * persist). Failed transactions changed nothing and are skipped — one failed close attempt used to show
+ * as a real close. Null when the address has no history.
  */
 export async function fetchPositionHistory(
   conn: Connection,
+  decimalsOf: (mint: string) => Promise<number>,
   positionAddress: string,
 ): Promise<PositionHistory | null> {
-  const pk = new PublicKey(positionAddress);
-  const signatures = await allSignatures(conn, pk);
+  const signatures = await allSignatures(conn, new PublicKey(positionAddress));
   if (signatures.length === 0) return null;
 
   let pool: Pool | null = null;
@@ -84,23 +40,22 @@ export async function fetchPositionHistory(
       maxSupportedTransactionVersion: 0,
       commitment: 'confirmed',
     });
-    if (!tx) continue;
+    if (!tx || tx.meta?.err != null) continue;
     const at = (tx.blockTime ?? 0) * 1000;
     const top = tx.transaction.message.instructions;
 
     for (let i = 0; i < top.length; i++) {
       const ix = top[i]!;
       if (!isDlmm(ix) || !('data' in ix)) continue;
-      const kind = KIND_BY_DISC.get(discOf(ix));
+      const kind = kindOf(ix);
       if (!kind) continue;
 
-      pool ??= await resolvePool(conn, ix);
+      pool ??= await resolvePool(conn, decimalsOf, ix);
       if (!pool) continue;
 
-      const transfers = transfersForInstruction(tx, i);
       let amountX = 0;
       let amountY = 0;
-      for (const t of transfers) {
+      for (const t of transfersForInstruction(tx, i)) {
         if (t.mint === pool.tokenXMint) amountX += Number(t.amount) / 10 ** pool.decX;
         else if (t.mint === pool.tokenYMint) amountY += Number(t.amount) / 10 ** pool.decY;
       }
@@ -109,31 +64,35 @@ export async function fetchPositionHistory(
   }
 
   if (!pool) return null;
-  return {
-    positionAddress,
-    tokenXMint: pool.tokenXMint,
-    tokenYMint: pool.tokenYMint,
-    events,
-  };
+  return { positionAddress, tokenXMint: pool.tokenXMint, tokenYMint: pool.tokenYMint, events };
 }
 
-/** All confirmed signatures touching the position account, oldest → newest. */
+function kindOf(ix: PartiallyDecodedInstruction) {
+  try {
+    return positionKindOfDisc(discriminatorOf(ix));
+  } catch {
+    return null; // not base58 / too short
+  }
+}
+
+/** Every successful signature touching the position account, oldest → newest. */
 async function allSignatures(conn: Connection, pk: PublicKey): Promise<string[]> {
   const out: string[] = [];
   let before: string | undefined;
   for (let page = 0; page < MAX_PAGES; page++) {
     const batch = await conn.getSignaturesForAddress(pk, { before, limit: SIG_PAGE }, 'confirmed');
     if (batch.length === 0) break;
-    for (const s of batch) out.push(s.signature);
+    for (const s of batch) if (s.err == null) out.push(s.signature);
     before = batch[batch.length - 1]!.signature;
     if (batch.length < SIG_PAGE) break;
   }
   return out.reverse();
 }
 
-/** Find the lb_pair among the instruction's accounts (by discriminator) and decode pool mints + decimals. */
+/** Find the lb_pair among the instruction's accounts (by discriminator) and decode its mints. */
 async function resolvePool(
   conn: Connection,
+  decimalsOf: (mint: string) => Promise<number>,
   ix: PartiallyDecodedInstruction,
 ): Promise<Pool | null> {
   const infos = await conn.getMultipleAccountsInfo(ix.accounts, 'confirmed');
@@ -141,18 +100,13 @@ async function resolvePool(
   if (!lbPair) return null;
   const { tokenXMint, tokenYMint } = decodeLbPair(lbPair.data);
   const [decX, decY] = await Promise.all([
-    decimalsOf(conn, tokenXMint),
-    decimalsOf(conn, tokenYMint),
+    decimalsOf(tokenXMint.toBase58()),
+    decimalsOf(tokenYMint.toBase58()),
   ]);
   return { tokenXMint: tokenXMint.toBase58(), tokenYMint: tokenYMint.toBase58(), decX, decY };
 }
 
-async function decimalsOf(conn: Connection, mint: PublicKey): Promise<number> {
-  const info = await conn.getAccountInfo(mint, 'confirmed');
-  return info ? info.data[44]! : 0; // SPL Mint: decimals @ offset 44
-}
-
-/** SPL token transfers nested under the top-level instruction at `index` (by innerInstructions.index). */
+/** Token transfers (classic SPL and Token-2022) nested under the top-level instruction at `index`. */
 function transfersForInstruction(
   tx: ParsedTransactionWithMeta,
   index: number,
@@ -161,7 +115,7 @@ function transfersForInstruction(
   for (const grp of tx.meta?.innerInstructions ?? []) {
     if (grp.index !== index) continue;
     for (const ix of grp.instructions) {
-      if (!('parsed' in ix) || ix.program !== 'spl-token') continue;
+      if (!('parsed' in ix) || !TOKEN_PROGRAMS.has(ix.program)) continue;
       const p = ix.parsed as { type?: string; info?: Record<string, unknown> };
       if (p.type !== 'transfer' && p.type !== 'transferChecked') continue;
       const info = p.info ?? {};

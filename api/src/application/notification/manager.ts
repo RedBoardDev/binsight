@@ -3,6 +3,7 @@ import type {
   EventKind,
   LiveEvent,
   NotifRule,
+  OpenPosition,
   WalletState,
 } from '@binsight/shared';
 import type { Logger } from 'pino';
@@ -10,6 +11,7 @@ import type { EventBus } from '@/application/event-bus';
 import type { ConfigRepository, NotificationChannel, PresenceReader } from '@/domain/ports';
 import { BulkBuffer } from './buffer';
 
+/** Clients reconnect after a restart: until their presence is known, delivery waits. */
 const STARTUP_GRACE_MS = 10_000;
 
 const fmt = (n: number) => (n >= 0 ? `+${n.toFixed(4)}` : n.toFixed(4));
@@ -20,6 +22,8 @@ export class NotificationManager {
   private startAt = 0;
   private readonly notifiedThreshold = new Set<string>();
   private readonly buffer: BulkBuffer;
+  /** Deliveries requested during the startup grace, sent once it ends. */
+  private held: LiveEvent[] | null = [];
 
   constructor(
     private readonly bus: EventBus,
@@ -39,7 +43,12 @@ export class NotificationManager {
     this.reloadRules();
     this.bus.on('event', (e) => this.handle(e));
     this.bus.on('closed', (c) => this.handleClosed(c));
+    this.bus.on('opened', (p) => this.handleOpened(p));
+    this.bus.on('rangeChanged', (r) => this.handleRange(r.position, r.outOfRange));
     this.bus.on('state', (s) => this.deriveFromState(s));
+    // Downtime closes are found by the first sync after boot, typically inside the grace: they are
+    // held, never dropped, and go out as soon as presence is known.
+    setTimeout(() => this.releaseHeld(), STARTUP_GRACE_MS).unref();
   }
 
   reloadRules(): void {
@@ -85,6 +94,31 @@ export class NotificationManager {
       },
       createdAt: Date.now(),
     });
+  }
+
+  private handleOpened(p: OpenPosition): void {
+    const quote = p.quoteSymbol ?? 'SOL';
+    this.emitDerived(
+      'position_open',
+      p.wallet,
+      p.positionAddress,
+      `${p.tokenX}/${p.tokenY}`,
+      `opened · ${fmt(p.sizeQuote ?? p.sizeSol)} ${quote}`,
+      { sizeSol: p.sizeSol, quoteSymbol: quote },
+    );
+  }
+
+  private handleRange(p: OpenPosition, outOfRange: boolean): void {
+    const side =
+      p.rangeStatus === 'out_up' ? 'above' : p.rangeStatus === 'out_down' ? 'below' : null;
+    this.emitDerived(
+      outOfRange ? 'oor_enter' : 'oor_return',
+      p.wallet,
+      p.positionAddress,
+      `${p.tokenX}/${p.tokenY}`,
+      outOfRange ? `out of range${side ? ` (${side})` : ''}` : 'back in range',
+      { side },
+    );
   }
 
   private deriveFromState(state: WalletState): void {
@@ -194,6 +228,12 @@ export class NotificationManager {
     return Date.now() - this.startAt < STARTUP_GRACE_MS;
   }
 
+  private releaseHeld(): void {
+    const held = this.held ?? [];
+    this.held = null;
+    for (const event of held) void this.deliver(event);
+  }
+
   /**
    * Routing for the PWA-first world:
    *  • Web Push — the UNIVERSAL channel. Per-account and wallet-routed, sent independently of any one
@@ -203,8 +243,9 @@ export class NotificationManager {
    *  • Bark — the owner's external fallback, only when no client is active.
    */
   private async deliver(event: LiveEvent): Promise<void> {
-    if (this.inStartupGrace()) {
+    if (this.held) {
       this.logger.info({ kind: event.kind }, 'route: held (startup grace)');
+      this.held.push(event);
       return;
     }
     await this.pushChannel.deliver(event);

@@ -12,39 +12,16 @@
  */
 
 import type { WalletPnlDay } from '@binsight/shared';
-import type { WalletTxFlow } from '@/domain/cashflow';
-
-/** One day of the wallet PnL curve — the api→web contract type, canonical in @binsight/shared. */
-export type CashflowDay = WalletPnlDay;
 
 const dayOf = (tsSec: number): string => new Date(tsSec * 1000).toISOString().slice(0, 10);
 
 /**
- * Aggregate per-tx flows into the daily PnL curve. Pure & deterministic. Days with no activity are
- * filled in (a flat curve segment) so the series is continuous — like LPAgent's graph.
- */
-export function buildCashflowCurve(flows: WalletTxFlow[]): {
-  days: CashflowDay[];
-  totalTradingSol: number;
-  totalExternalSol: number;
-} {
-  const trading = new Map<string, number>();
-  const external = new Map<string, number>();
-  for (const f of flows) {
-    const d = dayOf(f.timestamp);
-    const bucket = f.isTrading ? trading : external;
-    bucket.set(d, (bucket.get(d) ?? 0) + f.solFlow);
-  }
-  return fillCurve(trading, external);
-}
-
-/**
- * Build the same continuous curve from per-day aggregates (the SQL-summed `wallet_flows` rows) instead
- * of raw per-tx flows. Lets the curve be served by a GROUP-BY-day query rather than re-paging the chain.
+ * The continuous curve from per-day aggregates (the SQL-summed `wallet_flows` rows). Days with no
+ * activity are filled in (a flat segment) so the series is continuous.
  */
 export function buildCashflowCurveFromDaily(
   daily: { date: string; trading: number; external: number }[],
-): { days: CashflowDay[]; totalTradingSol: number; totalExternalSol: number } {
+): { days: WalletPnlDay[]; totalTradingSol: number; totalExternalSol: number } {
   const trading = new Map<string, number>();
   const external = new Map<string, number>();
   for (const d of daily) {
@@ -58,7 +35,7 @@ export function buildCashflowCurveFromDaily(
 function fillCurve(
   trading: Map<string, number>,
   external: Map<string, number>,
-): { days: CashflowDay[]; totalTradingSol: number; totalExternalSol: number } {
+): { days: WalletPnlDay[]; totalTradingSol: number; totalExternalSol: number } {
   let minDay: string | null = null;
   let maxDay: string | null = null;
   for (const d of trading.keys()) {
@@ -70,7 +47,7 @@ function fillCurve(
     if (maxDay === null || d > maxDay) maxDay = d;
   }
 
-  const days: CashflowDay[] = [];
+  const days: WalletPnlDay[] = [];
   let cumulative = 0;
   let cumulativeTotal = 0;
   let totalTradingSol = 0;

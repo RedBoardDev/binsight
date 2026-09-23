@@ -5,7 +5,7 @@ import { type DasTransport, HeliusTokenMetadataGateway } from './token-metadata-
 
 const silent = pino({ level: 'silent' });
 const make = (transport: DasTransport) =>
-  new HeliusTokenMetadataGateway('http://x', silent, 2, transport);
+  new HeliusTokenMetadataGateway('http://x', silent, { dasRps: 2, transport });
 
 describe('HeliusTokenMetadataGateway', () => {
   it('serves stable mints (SOL) locally without touching the transport', async () => {

@@ -129,10 +129,9 @@ export class NetworthSnapshotRepository {
       realpnl: string;
     }>(sql`
       with flow as (
-        select floor(ts / 86400)::int as day,
-          sum(sol_flow) filter (where is_trading) as net_trading,
-          sum(sol_flow) filter (where not is_trading) as net_ext
-        from wallet_flows
+        -- The per-day rollup maintained alongside wallet_flows: a few hundred rows, not every flow.
+        select day, sum(trading) as net_trading, sum(external) as net_ext
+        from wallet_flow_daily
         where wallet = any(string_to_array(${walletsCsv}, ','))
         group by 1
       ),

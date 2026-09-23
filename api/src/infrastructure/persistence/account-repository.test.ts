@@ -15,17 +15,19 @@ async function setup() {
   return { db, accounts: new PostgresAccountRepository(db) };
 }
 
+const PASSWORD_HASH = await hashPassword('correct horse battery');
+
 const mkUser = (address: string, isOwner = false) => ({
   address,
-  passwordHash: hashPassword('correct horse battery'),
+  passwordHash: PASSWORD_HASH,
   isOwner,
 });
 
 describe('password hashing', () => {
-  it('verifies the right password and rejects the wrong one', () => {
-    const h = hashPassword('correct horse battery');
-    expect(verifyPassword('correct horse battery', h)).toBe(true);
-    expect(verifyPassword('wrong', h)).toBe(false);
+  it('verifies the right password and rejects the wrong one', async () => {
+    const h = await hashPassword('correct horse battery');
+    expect(await verifyPassword('correct horse battery', h)).toBe(true);
+    expect(await verifyPassword('wrong', h)).toBe(false);
   });
 });
 

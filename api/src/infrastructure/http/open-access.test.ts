@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { WatchlistService } from '@/application/accounts/watchlist-service';
 import { loadConfig } from '@/config/env';
 import type { AccountRepository, AccountUser } from '@/domain/ports';
 import { buildServer, type ServerDeps } from './server';
@@ -12,7 +13,7 @@ const PASSWORD = 'password123';
  * In-memory AccountRepository covering only the methods the auth/register/login/watch paths touch.
  * Anything else is intentionally absent — a hit would throw and surface an unexpected dependency.
  */
-function makeAccounts(): AccountRepository {
+function makeAccounts(whitelist: ReadonlySet<string> = new Set()): AccountRepository {
   const byAddress = new Map<string, { user: AccountUser; passwordHash: string }>();
   const byId = new Map<string, { user: AccountUser; passwordHash: string }>();
   const watches = new Map<string, Set<string>>();
@@ -63,9 +64,9 @@ function makeAccounts(): AccountRepository {
     async watchedAddresses(userId) {
       return [...(watches.get(userId) ?? [])];
     },
-    // Open mode never consults the whitelist; secure mode would 403 a non-whitelisted address.
-    async isWhitelisted() {
-      return false;
+    // Open mode never consults the whitelist; secure mode 403s a non-whitelisted address.
+    async isWhitelisted(address) {
+      return whitelist.has(address);
     },
     async monitoredWallets() {
       const all = new Set<string>();
@@ -76,31 +77,42 @@ function makeAccounts(): AccountRepository {
   return repo as AccountRepository;
 }
 
-function build(openAccess: boolean) {
+function build(openAccess: boolean, opts: { ownerAddress?: string; whitelist?: string[] } = {}) {
   const config = loadConfig({
     AUTH_SECRET: 'a'.repeat(32),
     SOLANA_WS_URL: 'wss://rpc.example.com',
     WEB_ORIGINS: 'http://localhost:3000',
     OPEN_ACCESS_MODE: openAccess ? 'true' : 'false',
+    OWNER_ADDRESS: opts.ownerAddress ?? '',
+    LOG_LEVEL: 'error',
   });
+  const accounts = makeAccounts(new Set(opts.whitelist));
+  // The real WatchlistService: the single-wallet cap of open mode lives there, so faking it would
+  // test the fake. Only the engine side (start/stop monitoring) is stubbed.
+  const watchlist = new WatchlistService(
+    accounts,
+    { addWallet: vi.fn(async () => {}), removeWallet: vi.fn() },
+    openAccess,
+  );
   const deps = {
     config,
     bus: { on: () => {}, emit: () => {} },
-    engine: { addWallet: vi.fn(async () => {}), ingestStatus: () => ({ ready: true }) },
-    accounts: makeAccounts(),
+    engine: { ingestStatus: () => ({ ready: true, indexedTxs: 0 }) },
+    accounts,
+    watchlist,
     presence: { activeDevices: () => [] },
     pushRepo: { save: vi.fn(async () => {}) },
-    vapidPublicKey: '',
     sendTestPush: async () => 0,
-    openAccess,
     // The rest are unused by the routes these tests exercise.
-    repo: {},
+    store: {},
+    queries: {},
     configRepo: {},
-    backfill: {},
     walletPnl: {},
     networthSnapshots: {},
+    walletRealized: {},
     notifications: {},
-    gecko: {},
+    meter: {},
+    creditLedger: {},
   } as unknown as ServerDeps;
   return buildServer(deps);
 }
@@ -164,7 +176,8 @@ describe('OPEN_ACCESS_MODE', () => {
   });
 
   it('secure mode: registration still requires a wallet signature (address + password alone is rejected)', async () => {
-    const app = await build(false);
+    // Whitelisted, so the only thing missing is the proof of ownership — that alone must be fatal.
+    const app = await build(false, { whitelist: [WALLET_A] });
     const res = await register(app, WALLET_A);
     expect(res.statusCode).toBe(400); // signature + nonce are mandatory
     // And no account was created as a side effect.
@@ -174,5 +187,29 @@ describe('OPEN_ACCESS_MODE', () => {
       payload: { address: WALLET_A, password: PASSWORD },
     });
     expect(login.statusCode).toBe(401);
+  });
+
+  it('secure mode: a non-whitelisted address is refused before any signature is looked at', async () => {
+    const app = await build(false);
+    const res = await register(app, WALLET_A);
+    expect(res.statusCode).toBe(403);
+    expect(res.json().notWhitelisted).toBe(true);
+  });
+
+  it('open mode: the OWNER_ADDRESS cannot register without a signature (400 signatureRequired)', async () => {
+    // Owner rights are granted by address. Were the open-mode shortcut (address + password) to apply
+    // to it, anyone knowing the public owner address could claim the admin account before the owner.
+    const app = await build(true, { ownerAddress: WALLET_B });
+    const res = await register(app, WALLET_B);
+    expect(res.statusCode).toBe(400);
+    expect(res.json().signatureRequired).toBe(true);
+    const login = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { address: WALLET_B, password: PASSWORD },
+    });
+    expect(login.statusCode).toBe(401); // nothing was created
+    // Every other address keeps the open-mode shortcut.
+    expect((await register(app, WALLET_A)).statusCode).toBe(200);
   });
 });

@@ -6,7 +6,18 @@ import { isOutOfRange } from '@/domain/position';
 // across a few slots rather than one — surface it as "syncing" instead of a possibly-inconsistent number.
 const SYNCING_SKEW_SLOTS = 25;
 
-/** Fallback totals from Meteora positions + a plain idle figure (used before the first on-chain snapshot). */
+/**
+ * A position's figure in SOL. SOL pools carry it directly; any other pool's native-quote figure is
+ * converted at the rate its own valuation implies (its SOL-valued size over its quote-valued size), so
+ * the portfolio totals never add USDC to SOL — nor count a USDC position's PnL as zero.
+ */
+function inSol(p: OpenPosition, solValue: number, quoteValue: number | undefined): number {
+  if ((p.quoteSymbol ?? 'SOL') === 'SOL') return solValue;
+  const rate = p.sizeQuote && p.sizeQuote > 0 ? p.sizeSol / p.sizeQuote : 0;
+  return (quoteValue ?? 0) * rate;
+}
+
+/** Totals from the open positions + a plain idle figure (used as is before the first snapshot). */
 export function buildTotals(positions: OpenPosition[], idleSol = 0): PortfolioTotals {
   let tvl = 0;
   let pnl = 0;
@@ -16,8 +27,8 @@ export function buildTotals(positions: OpenPosition[], idleSol = 0): PortfolioTo
   let outOfRange = 0;
   for (const p of positions) {
     tvl += p.sizeSol;
-    pnl += p.pnlSol;
-    claimed += p.claimedFeesSol;
+    pnl += inSol(p, p.pnlSol, p.pnlQuote);
+    claimed += inSol(p, p.claimedFeesSol, p.claimedFeesQuote);
     unclaimed += p.unclaimedFeesSol;
     if (isOutOfRange(p.rangeStatus)) outOfRange++;
     else if (p.rangeStatus === 'in') inRange++;

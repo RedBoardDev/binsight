@@ -33,6 +33,7 @@ const snap = (
   idleTokens: [],
   positions,
   complete: true,
+  positionsComplete: true,
   ...over,
 });
 

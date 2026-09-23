@@ -1,41 +1,23 @@
-import type { StrategyFamily } from '@binsight/shared';
 import type { Logger } from 'pino';
-import type { PositionRepository, StrategyResolver } from '@/domain/ports';
+import type { PositionStore, StrategyResolver } from '@/domain/ports';
 import { withCodePath } from '@/infrastructure/solana/code-path';
 import { sleep } from '@/util/sleep';
 
 const BACKFILL_PAUSE_MS = 400; // gentle pacing for the historical backfill (~2-3 positions/s of RPC)
 
 /**
- * Resolves each position's strategy family (Spot/Curve/BidAsk) ONCE from its on-chain open tx, caches
- * it in memory and persists it (so it survives restarts and travels with the position into closed
- * history). `get()` is synchronous for the hot path: it returns the cached value and kicks off a
- * one-time background resolution for positions it hasn't seen.
+ * Resolves each OPEN position's strategy family (Spot/Curve/BidAsk) once from its on-chain open tx and
+ * persists it, so it survives restarts and travels with the position into closed history.
  */
 export class StrategyService {
-  private readonly cache: Map<string, StrategyFamily>;
   private readonly attempted = new Set<string>();
   private backfilling = false;
 
   constructor(
     private readonly resolver: StrategyResolver,
-    private readonly repo: PositionRepository,
+    private readonly repo: Pick<PositionStore, 'addressesMissingStrategy' | 'setStrategy'>,
     private readonly logger: Logger,
-  ) {
-    this.cache = new Map();
-  }
-
-  /** Warm the in-memory strategy cache from persisted families. Call once before serving. */
-  async init(): Promise<void> {
-    for (const [addr, family] of await this.repo.getStrategies()) this.cache.set(addr, family);
-  }
-
-  get(positionAddress: string): StrategyFamily | null {
-    const cached = this.cache.get(positionAddress);
-    if (cached) return cached;
-    if (!this.attempted.has(positionAddress)) void this.resolve(positionAddress);
-    return null;
-  }
+  ) {}
 
   /**
    * Resolve strategy for OPEN positions still missing it (the repo now returns open-only) — so the live
@@ -50,9 +32,7 @@ export class StrategyService {
     this.backfilling = true;
     try {
       const candidates = await this.repo.addressesMissingStrategy(maxPerRun * 4);
-      const todo = candidates
-        .filter((a) => !this.cache.has(a) && !this.attempted.has(a))
-        .slice(0, maxPerRun);
+      const todo = candidates.filter((a) => !this.attempted.has(a)).slice(0, maxPerRun);
       for (const addr of todo) {
         await this.resolve(addr);
         await sleep(BACKFILL_PAUSE_MS);
@@ -67,13 +47,9 @@ export class StrategyService {
   private async resolve(positionAddress: string): Promise<void> {
     this.attempted.add(positionAddress);
     try {
-      // Strategy path: tag the resolver's getSignaturesForAddress + getParsedTransaction spend. Both the
-      // live get() and the bounded backfill() funnel through here, so this one wrap covers both callers.
+      // Tag the resolver's getSignaturesForAddress + getParsedTransaction spend.
       const family = await withCodePath('strategy', () => this.resolver.resolve(positionAddress));
-      if (family) {
-        this.cache.set(positionAddress, family);
-        await this.repo.setStrategy(positionAddress, family);
-      }
+      if (family) await this.repo.setStrategy(positionAddress, family);
     } catch (err) {
       this.attempted.delete(positionAddress); // transient failure — let a later poll retry
       this.logger.debug({ err, positionAddress }, 'strategy resolution failed (will retry)');

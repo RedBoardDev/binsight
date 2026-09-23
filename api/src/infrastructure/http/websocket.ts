@@ -1,4 +1,4 @@
-import { ClientMessageSchema } from '@binsight/shared';
+import { ClientMessageSchema, type ServerMessage } from '@binsight/shared';
 import type { FastifyInstance } from 'fastify';
 import type { WebSocket } from 'ws';
 import type { Engine } from '@/application/engine';
@@ -18,7 +18,21 @@ interface WsClient {
   watched: Set<string>;
   /** What the client is viewing: 'all' (its whole watchlist) or one watched address. */
   view: string;
+  /** Messages are handled one at a time, in arrival order (a subscribe awaits the watchlist). */
+  queue: Promise<void>;
 }
+
+export interface LiveDeps {
+  secret: string;
+  engine: Pick<Engine, 'getState' | 'healthSnapshot' | 'setViewedWallets'>;
+  bus: EventBus;
+  presence: PresenceTracker;
+  accounts: AccountRepository;
+  allowedOrigins: string[];
+}
+
+/** Messages a socket may send before its authentication resolves; they are replayed once it does. */
+const MAX_EARLY_MESSAGES = 16;
 
 /** How often live sockets are re-checked against the account store (revocation + watchlist drift). */
 const REVALIDATE_MS = 30_000;
@@ -45,7 +59,7 @@ export async function sessionStillValid(
 // than letting one stuck client OOM the process at 50–100 connections.
 const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
 
-function send(socket: WebSocket, data: unknown): void {
+function send(socket: WebSocket, data: ServerMessage): void {
   if (socket.readyState === socket.OPEN && socket.bufferedAmount <= MAX_BUFFERED_BYTES)
     socket.send(JSON.stringify(data));
 }
@@ -78,22 +92,14 @@ export function liveToken(
   return queryToken;
 }
 
-export function registerWebSocket(
-  app: FastifyInstance,
-  secret: string,
-  engine: Engine,
-  bus: EventBus,
-  presence: PresenceTracker,
-  accounts: AccountRepository,
-  allowedOrigins: string[],
-): void {
+export function registerWebSocket(app: FastifyInstance, deps: LiveDeps): void {
+  const { engine, bus, presence, accounts } = deps;
   const clients = new Set<WsClient>();
   const watchedOf = async (userId: string): Promise<Set<string>> =>
     new Set(await accounts.watchedAddresses(userId));
 
-  // Recompute the wallets currently being viewed (an 'all'-scope client views its whole watchlist; a
-  // focused client views one) and hand them to the engine, which gates the recurring net-worth snapshot
-  // on this set — idle/unwatched wallets then cost no RPC.
+  // The wallets currently on screen ('all' views a whole watchlist, a focused client one wallet): a
+  // wallet that gains a viewer is re-read at once, so a returning viewer never sees a stale total.
   const pushViewers = (): void => {
     const viewed = new Set<string>();
     for (const c of clients) {
@@ -103,92 +109,108 @@ export function registerWebSocket(
     engine.setViewedWallets(viewed);
   };
 
-  // logLevel:silent — a browser passes a short-lived ws-ticket in ?token=; keep it out of request logs.
-  app.get('/live', { websocket: true, logLevel: 'silent' }, async (socket: WebSocket, req) => {
-    // Browsers send Origin on a WS upgrade; reject any that isn't allow-listed (defence-in-depth on top
-    // of the SameSite cookie that gates the ws-ticket). Native clients send no Origin → allowed.
-    const origin = req.headers.origin;
-    if (typeof origin === 'string' && !allowedOrigins.includes(origin)) {
-      app.log.warn(
-        { origin, allowedOrigins },
-        'live WS upgrade rejected: origin not allow-listed (set WEB_ORIGINS)',
-      );
-      socket.close(1008, 'forbidden origin');
-      return;
-    }
-    // Native clients send the JWT in the Authorization header (kept out of URLs/logs, S10); browsers
-    // can't set WS headers, so they pass a short-lived ws-ticket in ?token=.
-    const token = liveToken(req.headers.authorization, (req.query as { token?: string }).token);
-    const payload = token ? verifyJwt(secret, token) : null;
-    if (!payload) {
-      socket.close(1008, 'unauthorized');
-      return;
-    }
-    const userId = payload.sub;
-    const me = await accounts.findById(userId);
-    // /live bypasses the Bearer hook, so enforce the SAME revocation checks here (token version + jti
-    // allowlist), not just the JWT signature — else a logged-out / reset / revoked token streams to exp.
-    if (!me || me.tokenVersion !== payload.ver || !(await accounts.isSessionValid(payload.jti))) {
-      socket.close(1008, 'unauthorized');
-      return;
-    }
-    const client: WsClient = {
-      socket,
-      userId,
-      jti: payload.jti,
-      ver: payload.ver,
-      isOwner: me.isOwner,
-      watched: await watchedOf(userId),
-      view: 'all',
-    };
-    clients.add(client);
-    pushViewers();
-    send(socket, { type: 'state', payload: engine.getState([...client.watched], 'all') });
-    // Health is emit-on-change (no longer every 1s), so a client that connects while health is stable
-    // would sit with no status until the next real change. Hand it the CURRENT health immediately,
-    // filtered to its watchlist — mirroring the per-client filtering in the bus.on('health') handler.
-    const health = engine.healthSnapshot();
-    send(socket, {
-      type: 'health',
-      payload: { ...health, wallets: health.wallets.filter((w) => client.watched.has(w.wallet)) },
-    });
-
-    socket.on('message', async (raw: Buffer) => {
-      const parsed = ClientMessageSchema.safeParse(safeJson(raw.toString()));
-      if (!parsed.success) return;
-      const msg = parsed.data;
-      if (msg.type === 'subscribe') {
-        client.watched = await watchedOf(userId); // pick up watchlist changes
-        if (msg.scope === 'all') {
-          client.view = 'all';
-          send(socket, { type: 'state', payload: engine.getState([...client.watched], 'all') });
-        } else if (client.watched.has(msg.scope)) {
-          client.view = msg.scope;
-          send(socket, { type: 'state', payload: engine.getState([msg.scope], msg.scope) });
-        }
-        pushViewers();
-      } else if (msg.type === 'presence' && client.isOwner) {
-        // Notifications are owner-only, so ONLY the owner's devices gate Bark. Without this guard a
-        // public web viewer's heartbeat marks presence "active" and silently suppresses the owner's
-        // Bark push (cross-tenant alert loss).
-        presence.heartbeat(msg.device, msg.active);
+  const handleMessage = async (client: WsClient, raw: Buffer): Promise<void> => {
+    const parsed = ClientMessageSchema.safeParse(safeJson(raw.toString()));
+    if (!parsed.success) return;
+    const msg = parsed.data;
+    if (msg.type === 'subscribe') {
+      client.watched = await watchedOf(client.userId); // pick up watchlist changes
+      if (msg.scope === 'all') {
+        client.view = 'all';
+        send(client.socket, {
+          type: 'state',
+          payload: engine.getState([...client.watched], 'all'),
+        });
+      } else if (client.watched.has(msg.scope)) {
+        client.view = msg.scope;
+        send(client.socket, { type: 'state', payload: engine.getState([msg.scope], msg.scope) });
       }
-    });
-
-    socket.on('close', () => {
-      clients.delete(client);
       pushViewers();
-    });
-    socket.on('error', () => {
-      clients.delete(client);
-      pushViewers();
-    });
-  });
+    } else if (msg.type === 'presence' && client.isOwner) {
+      // Notifications are owner-only, so only the owner's devices gate Bark — a viewer's heartbeat
+      // must never suppress the owner's push.
+      presence.heartbeat(msg.device, msg.active);
+    }
+  };
 
-  // Per-wallet state emit (scope = the wallet address) → only clients watching that wallet.
+  // logLevel silent: a browser's ws ticket travels in ?token=, keep it out of request logs.
+  app.get(
+    '/live',
+    { websocket: true, logLevel: 'silent', config: { public: true } },
+    (socket: WebSocket, req) => {
+      // Browsers send Origin on an upgrade; refuse any that isn't allow-listed. Native clients send none.
+      const origin = req.headers.origin;
+      if (typeof origin === 'string' && !deps.allowedOrigins.includes(origin)) {
+        app.log.warn({ origin }, 'live WS upgrade rejected: origin not allow-listed (WEB_ORIGINS)');
+        socket.close(1008, 'forbidden origin');
+        return;
+      }
+
+      // Listeners go on synchronously: ws emits nothing to a listener attached later, so a subscribe
+      // sent on open was lost and a socket closed during authentication stayed in `clients` forever.
+      let client: WsClient | null = null;
+      let closed = false;
+      const early: Buffer[] = [];
+      socket.on('message', (raw: Buffer) => {
+        if (!client) {
+          if (early.length < MAX_EARLY_MESSAGES) early.push(raw);
+          return;
+        }
+        const c = client;
+        c.queue = c.queue.then(() => handleMessage(c, raw)).catch(() => undefined);
+      });
+      const drop = (): void => {
+        closed = true;
+        if (client && clients.delete(client)) pushViewers();
+      };
+      socket.on('close', drop);
+      socket.on('error', drop);
+
+      void (async () => {
+        const token = liveToken(req.headers.authorization, (req.query as { token?: string }).token);
+        const payload = token ? verifyJwt(deps.secret, token) : null;
+        const me = payload ? await accounts.findById(payload.sub) : null;
+        // /live bypasses the Bearer hook, so enforce the same revocation checks here.
+        if (
+          !payload ||
+          !me ||
+          me.tokenVersion !== payload.ver ||
+          !(await accounts.isSessionValid(payload.jti))
+        ) {
+          socket.close(1008, 'unauthorized');
+          return;
+        }
+        const watched = await watchedOf(me.id);
+        if (closed) return;
+        const c: WsClient = {
+          socket,
+          userId: me.id,
+          jti: payload.jti,
+          ver: payload.ver,
+          isOwner: me.isOwner,
+          watched,
+          view: 'all',
+          queue: Promise.resolve(),
+        };
+        client = c;
+        clients.add(c);
+        pushViewers();
+        send(socket, { type: 'state', payload: engine.getState([...watched], 'all') });
+        // Health is emit-on-change: hand a new client the current status right away.
+        send(socket, { type: 'health', payload: engine.healthSnapshot() });
+        for (const raw of early.splice(0)) {
+          c.queue = c.queue.then(() => handleMessage(c, raw)).catch(() => undefined);
+        }
+      })().catch((err) => {
+        app.log.warn({ err }, 'live WS setup failed');
+        socket.close(1011, 'setup failed');
+      });
+    },
+  );
+
+  // Per-wallet state → clients watching that wallet. The 'all' aggregate is identical for every client
+  // sharing a watchlist, so it is computed once per distinct watchlist per emit.
   bus.on('state', (state) => {
-    // The 'all'-scope aggregate is identical for every client sharing a watchlist — compute it ONCE per
-    // distinct watched-set per emit (the owner's open tabs + macOS all watch the same list), not N times.
     const aggByWatch = new Map<string, ReturnType<typeof engine.getState>>();
     for (const c of clients) {
       if (!c.watched.has(state.scope)) continue;
@@ -205,47 +227,19 @@ export function registerWebSocket(
       }
     }
   });
-  // Raw live feed — drives history refetch on the client, never a banner. Scoped to the wallet.
-  bus.on('event', (event) => {
-    const frame = JSON.stringify({ type: 'event', payload: event });
-    for (const c of clients) {
-      if (event.wallet === null || c.watched.has(event.wallet)) sendRaw(c.socket, frame);
-    }
-  });
-  // Rule-gated notifications (owner-driven). Scoped to the wallet so they never leak across tenants.
-  bus.on('notify', (event) => {
-    const frame = JSON.stringify({ type: 'notify', payload: event });
-    for (const c of clients) {
-      if (event.wallet === null || c.watched.has(event.wallet)) sendRaw(c.socket, frame);
-    }
-  });
-  // Prompt clients to refetch closed history the instant a close lands on a wallet they watch.
-  bus.on('closedChanged', (e) => {
-    const frame = JSON.stringify({ type: 'closed_changed' });
-    for (const c of clients) if (c.watched.has(e.wallet)) sendRaw(c.socket, frame);
-  });
-  // Health — filter the per-wallet sync list to the client's watchlist (no global wallet leak). The
-  // filtered frame is identical for clients sharing a watchlist, so serialize it ONCE per distinct
-  // watched-set (this fires every 1s for every client, so the per-client re-stringify added up).
-  bus.on('health', (health) => {
-    const frameByWatch = new Map<string, string>();
-    for (const c of clients) {
-      const key = [...c.watched].sort().join(',');
-      let frame = frameByWatch.get(key);
-      if (frame === undefined) {
-        frame = JSON.stringify({
-          type: 'health',
-          payload: { ...health, wallets: health.wallets.filter((w) => c.watched.has(w.wallet)) },
-        });
-        frameByWatch.set(key, frame);
-      }
-      sendRaw(c.socket, frame);
-    }
-  });
+  // Frames identical for every recipient are serialized once. Events and notifications are scoped to
+  // their wallet so they never leak across tenants.
+  const broadcast = (message: ServerMessage, wallet: string | null): void => {
+    const frame = JSON.stringify(message);
+    for (const c of clients) if (wallet === null || c.watched.has(wallet)) sendRaw(c.socket, frame);
+  };
+  bus.on('event', (event) => broadcast({ type: 'event', payload: event }, event.wallet));
+  bus.on('notify', (event) => broadcast({ type: 'notify', payload: event }, event.wallet));
+  bus.on('closedChanged', (e) => broadcast({ type: 'closed_changed', wallet: e.wallet }, e.wallet));
+  bus.on('health', (health) => broadcast({ type: 'health', payload: health }, null));
 
-  // Revocation + watchlist changes don't reach an already-open socket (it authenticates once at
-  // upgrade), so re-check every client on a timer: close any whose account/session was revoked, and
-  // refresh each client's watched set so a removed wallet stops streaming (a newly-added one starts).
+  // Revocation and watchlist changes don't reach an open socket (it authenticates once), so re-check
+  // every client on a timer: close revoked ones, refresh each watched set.
   const revalidate = setInterval(async () => {
     if (clients.size === 0) return;
     const watchedByUser = new Map<string, Set<string>>();

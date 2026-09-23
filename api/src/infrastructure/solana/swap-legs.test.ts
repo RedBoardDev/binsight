@@ -1,0 +1,155 @@
+import { SOL_MINT } from '@binsight/shared';
+import { describe, expect, it } from 'vitest';
+import { type EnhancedTx, parseSwapBuy, parseSwapSell } from './swap-legs';
+
+const W = 'WALLET';
+const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+const TOK = 'TOKENmint';
+const tt = (mint: string, from: string, to: string, amt: number) => ({
+  mint,
+  fromUserAccount: from,
+  toUserAccount: to,
+  tokenAmount: amt,
+});
+
+describe('parseSwapSell — clean token→SOL sell extraction (all NET)', () => {
+  it('parses a simple sell: token out, WSOL in', () => {
+    const tx = {
+      timestamp: 100,
+      signature: 's',
+      type: 'SWAP',
+      tokenTransfers: [tt(TOK, W, 'pool', 1000), tt(SOL_MINT, 'pool', W, 9)],
+    } as unknown as EnhancedTx;
+    const s = parseSwapSell(tx, W)!;
+    expect(s.mint).toBe(TOK);
+    expect(s.tokenAmount).toBe(1000);
+    expect(s.solReceived).toBe(9);
+  });
+
+  it('nets a WSOL routing round-trip (gross inflow would over-count proceeds)', () => {
+    // wallet receives 0.5 WSOL but sends 0.127 back into the route → real proceeds = 0.373
+    const tx = {
+      timestamp: 100,
+      signature: 's',
+      type: 'SWAP',
+      tokenTransfers: [
+        tt(TOK, W, 'p', 1000),
+        tt(SOL_MINT, 'p', W, 0.5),
+        tt(SOL_MINT, W, 'p', 0.127),
+      ],
+    } as unknown as EnhancedTx;
+    const s = parseSwapSell(tx, W)!;
+    expect(s.solReceived).toBeCloseTo(0.373, 9);
+  });
+
+  it('captures a route whose USDC intermediate TRANSITS the wallet ATA (the B2 bug)', () => {
+    // Jotchua → USDC → WSOL: USDC is received then sent onward (out==back, nets to 0). The sold mint
+    // is TOK only; the swap must NOT be dropped as "2 out-mints".
+    const tx = {
+      timestamp: 100,
+      signature: 's',
+      type: 'SWAP',
+      tokenTransfers: [
+        tt(TOK, W, 'p1', 176032),
+        tt(USDC, 'p1', W, 109.04),
+        tt(USDC, W, 'p2', 109.04), // transit: out == back → net 0
+        tt(SOL_MINT, 'p2', W, 7.05),
+      ],
+    } as unknown as EnhancedTx;
+    const s = parseSwapSell(tx, W)!;
+    expect(s.mint).toBe(TOK);
+    expect(s.tokenAmount).toBe(176032);
+    expect(s.solReceived).toBeCloseTo(7.05, 9);
+  });
+
+  it('returns null for a GENUINE 2-token batched sell (unattributable)', () => {
+    const tx = {
+      timestamp: 100,
+      signature: 's',
+      type: 'SWAP',
+      tokenTransfers: [tt(TOK, W, 'p', 1000), tt('OTHER', W, 'p', 500), tt(SOL_MINT, 'p', W, 9)],
+    } as unknown as EnhancedTx;
+    expect(parseSwapSell(tx, W)).toBeNull();
+  });
+
+  it('falls back to net native SOL when proceeds are unwrapped', () => {
+    const tx = {
+      timestamp: 100,
+      signature: 's',
+      type: 'SWAP',
+      tokenTransfers: [tt(TOK, W, 'p', 1000)],
+      nativeTransfers: [{ fromUserAccount: 'p', toUserAccount: W, amount: 8_000_000_000 }],
+    } as unknown as EnhancedTx;
+    const s = parseSwapSell(tx, W)!;
+    expect(s.solReceived).toBeCloseTo(8, 9);
+  });
+});
+
+describe('parseSwapBuy — clean SOL→token buy extraction, mirror of parseSwapSell (all NET)', () => {
+  it('parses a simple buy: WSOL out, token in (solReceived = SOL spent)', () => {
+    const tx = {
+      timestamp: 100,
+      signature: 's',
+      type: 'SWAP',
+      tokenTransfers: [tt(SOL_MINT, W, 'pool', 9), tt(TOK, 'pool', W, 1000)],
+    } as unknown as EnhancedTx;
+    const b = parseSwapBuy(tx, W)!;
+    expect(b.mint).toBe(TOK);
+    expect(b.tokenAmount).toBe(1000);
+    expect(b.solReceived).toBe(9); // = SOL spent
+  });
+
+  it('nets a WSOL routing round-trip (gross outflow would over-count the cost)', () => {
+    // wallet sends 0.5 WSOL but gets 0.127 back from the route → real cost = 0.373
+    const tx = {
+      timestamp: 100,
+      signature: 's',
+      type: 'SWAP',
+      tokenTransfers: [
+        tt(TOK, 'p', W, 1000),
+        tt(SOL_MINT, W, 'p', 0.5),
+        tt(SOL_MINT, 'p', W, 0.127),
+      ],
+    } as unknown as EnhancedTx;
+    expect(parseSwapBuy(tx, W)!.solReceived).toBeCloseTo(0.373, 9);
+  });
+
+  it('captures a route whose USDC intermediate TRANSITS the wallet ATA', () => {
+    const tx = {
+      timestamp: 100,
+      signature: 's',
+      type: 'SWAP',
+      tokenTransfers: [
+        tt(TOK, 'p1', W, 176032),
+        tt(USDC, 'p1', W, 109.04),
+        tt(USDC, W, 'p2', 109.04), // transit: in == back → net 0
+        tt(SOL_MINT, W, 'p2', 7.05),
+      ],
+    } as unknown as EnhancedTx;
+    const b = parseSwapBuy(tx, W)!;
+    expect(b.mint).toBe(TOK);
+    expect(b.tokenAmount).toBe(176032);
+    expect(b.solReceived).toBeCloseTo(7.05, 9);
+  });
+
+  it('returns null for a GENUINE 2-token batched buy (unattributable)', () => {
+    const tx = {
+      timestamp: 100,
+      signature: 's',
+      type: 'SWAP',
+      tokenTransfers: [tt(TOK, 'p', W, 1000), tt('OTHER', 'p', W, 500), tt(SOL_MINT, W, 'p', 9)],
+    } as unknown as EnhancedTx;
+    expect(parseSwapBuy(tx, W)).toBeNull();
+  });
+
+  it('falls back to net native SOL when the cost is paid unwrapped', () => {
+    const tx = {
+      timestamp: 100,
+      signature: 's',
+      type: 'SWAP',
+      tokenTransfers: [tt(TOK, 'p', W, 1000)],
+      nativeTransfers: [{ fromUserAccount: W, toUserAccount: 'p', amount: 8_000_000_000 }],
+    } as unknown as EnhancedTx;
+    expect(parseSwapBuy(tx, W)!.solReceived).toBeCloseTo(8, 9);
+  });
+});

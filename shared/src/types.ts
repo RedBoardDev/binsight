@@ -82,11 +82,6 @@ export const OpenPositionSchema = z.object({
   outOfRangeSince: z.number().int().nullable(),
   openedAt: z.number().int().nullable(),
   updatedAt: z.number().int(),
-  // Non-SOL token currently held (from unrealizedPnl) — transient, used to revalue pnl/size at the
-  // live market price. Not persisted.
-  holdMint: z.string().optional(),
-  holdAmount: z.number().optional(),
-  holdMarkSol: z.number().optional(),
 });
 export type OpenPosition = z.infer<typeof OpenPositionSchema>;
 
@@ -127,13 +122,6 @@ export const ClosedPositionSchema = z.object({
   // very old rows predating range capture.
   minPrice: z.number().optional(),
   maxPrice: z.number().optional(),
-  // Residual (non-SOL) token left at close — used to revalue PnL at the market price.
-  // Transient on capture (not persisted); `pnlSol` already reflects the chosen source.
-  residualMint: z.string().optional(),
-  residualAmount: z.number().optional(),
-  residualMarkSol: z.number().optional(),
-  // 'market' = residual revalued at the live Jupiter price (fresh close); 'pool' = Meteora spot.
-  pnlSource: z.enum(['pool', 'market']).optional(),
 });
 export type ClosedPosition = z.infer<typeof ClosedPositionSchema>;
 
@@ -236,17 +224,6 @@ export type WalletState = z.infer<typeof WalletStateSchema>;
  * Engine / sync health
  * ──────────────────────────────────────────────────────────────────────── */
 
-export const WalletHealthSchema = z.object({
-  wallet: z.string(),
-  wsConnected: z.boolean(),
-  lastPollAt: z.number().int().nullable(),
-  lastPollOk: z.boolean(),
-  pollIntervalMs: z.number().int(),
-  syncing: z.boolean(),
-  syncProgress: z.number().min(0).max(1).nullable(),
-});
-export type WalletHealth = z.infer<typeof WalletHealthSchema>;
-
 /** Per-source health for the live status indicator (hover → per-service detail). */
 export const SourceStatusSchema = z.enum(['ok', 'lagging', 'down']);
 export type SourceStatus = z.infer<typeof SourceStatusSchema>;
@@ -266,17 +243,10 @@ export type SourceHealth = z.infer<typeof SourceHealthSchema>;
 export const HealthSchema = z.object({
   ok: z.boolean(),
   wsConnected: z.boolean(),
-  /** @deprecated Always `true`. The legacy Meteora datapi source this reported on has been removed, so
-   *  the field no longer has a source. It is KEPT ON THE WIRE because already-deployed native clients
-   *  (BinsightKit decodes it as a NON-optional `Bool`) would fail to decode the whole health payload
-   *  without it. Remove only once those clients are retired. */
-  meteoraOk: z.boolean(),
-  effectiveRps: z.number(),
   /** latest Solana slot the engine has observed (for indexer-lag display). */
   chainTipSlot: z.number().int().nullable().default(null),
   /** per-source breakdown the client renders on hover. */
   sources: z.array(SourceHealthSchema).default([]),
-  wallets: z.array(WalletHealthSchema),
   uptimeSeconds: z.number(),
 });
 export type Health = z.infer<typeof HealthSchema>;
@@ -331,19 +301,12 @@ export const NotifRuleSchema = z.object({
 export type NotifRule = z.infer<typeof NotifRuleSchema>;
 
 /* ────────────────────────────────────────────────────────────────────────
- * Runtime settings (overridable from the Settings page)
+ * Runtime settings (owner-only, overridable without a redeploy via /config/settings)
  * ──────────────────────────────────────────────────────────────────────── */
 
 export const RuntimeSettingsSchema = z.object({
-  /** @deprecated Inert poll-budget knobs kept on the wire: the Meteora poller they throttled is gone,
-   *  but they are still persisted/served to the Settings page and feed the Health `pollIntervalMs`
-   *  field that deployed native clients decode. */
-  meteoraTargetRps: z.number().positive(),
-  pollMinMs: z.number().int().positive(),
-  pollMaxMs: z.number().int().positive(),
-  pollIdleMs: z.number().int().positive(),
+  /** Bark device key for the push fallback ('' disables it). Defaults to BARK_KEY from the env. */
   barkKey: z.string(),
-  presenceTimeoutSeconds: z.number().int().positive(),
 });
 export type RuntimeSettings = z.infer<typeof RuntimeSettingsSchema>;
 
@@ -409,8 +372,17 @@ export type ProfitBucket = z.infer<typeof ProfitBucketSchema>;
  * WebSocket protocol (server ↔ client)
  * ──────────────────────────────────────────────────────────────────────── */
 
-// Server → client messages are produced by the server directly and consumed by a trusted first-party
-// client, so they carry no runtime schema. Inbound client → server messages ARE validated below.
+// Server → client messages are produced by the server and consumed by first-party clients, so they
+// are a compile-time type only (no runtime schema). Inbound client → server messages ARE validated.
+
+/** Server → client messages on /live. */
+export type ServerMessage =
+  | { type: 'state'; payload: WalletState }
+  | { type: 'health'; payload: Health }
+  | { type: 'event'; payload: LiveEvent }
+  | { type: 'notify'; payload: LiveEvent }
+  /** A wallet's closed history changed — refetch what depends on it. */
+  | { type: 'closed_changed'; wallet: string };
 
 /** Client → server messages. */
 export const ClientMessageSchema = z.discriminatedUnion('type', [

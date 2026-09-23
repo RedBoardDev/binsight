@@ -66,6 +66,9 @@ export interface OnchainWalletSnapshot {
    *  mis-scale the amount) or a share>0 bin's bin-array was absent (amounts under-counted). Bubbles up
    *  to `OnchainValued.complete` → freshness → and gates Net Worth persistence. */
   complete: boolean;
+  /** Every live position was valued. When false, some open position is missing from `positions` and
+   *  the snapshot must not decide which positions closed. */
+  positionsComplete: boolean;
 }
 
 /**
@@ -225,16 +228,4 @@ export interface ResidualSell {
   tokenAmount: number;
   /** SOL actually received for this sell */
   solReceived: number;
-}
-
-export function classifyInstruction(
-  instr: string,
-): 'open' | 'close' | 'add' | 'remove' | 'claim' | null {
-  const i = instr.toLowerCase();
-  if (i.startsWith('initializeposition') || i.startsWith('openposition')) return 'open';
-  if (i.startsWith('closeposition')) return 'close';
-  if (i.startsWith('addliquidity')) return 'add';
-  if (i.startsWith('removeliquidity')) return 'remove';
-  if (i.startsWith('claimfee') || i.startsWith('claimreward')) return 'claim';
-  return null;
 }

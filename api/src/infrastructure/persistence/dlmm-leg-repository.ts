@@ -1,8 +1,8 @@
 import { and, eq, inArray } from 'drizzle-orm';
-import type { DlmmLeg, IngestCursor, LoadedPoolMeta, StoredLeg } from '@/domain/dlmm';
+import type { DlmmLeg, LoadedPoolMeta, StoredLeg } from '@/domain/dlmm';
 import type { LegRepository } from '@/domain/ports';
 import type { Database } from './database';
-import { dlmmIngestCursor, dlmmLegs, dlmmPools } from './schema';
+import { dlmmLegs, dlmmPools } from './schema';
 
 const toStored = (r: typeof dlmmLegs.$inferSelect): StoredLeg => ({
   signature: r.signature,
@@ -101,36 +101,5 @@ export class DlmmLegRepository implements LegRepository {
         mintY: meta.mintY,
       })
       .onConflictDoNothing();
-  }
-
-  async getCursor(wallet: string): Promise<IngestCursor | null> {
-    const [row] = await this.db
-      .select()
-      .from(dlmmIngestCursor)
-      .where(eq(dlmmIngestCursor.wallet, wallet));
-    return row
-      ? { oldestSig: row.oldestSig, newestSig: row.newestSig, complete: row.complete }
-      : null;
-  }
-
-  async setCursor(wallet: string, cursor: IngestCursor): Promise<void> {
-    await this.db
-      .insert(dlmmIngestCursor)
-      .values({
-        wallet,
-        oldestSig: cursor.oldestSig,
-        newestSig: cursor.newestSig,
-        complete: cursor.complete,
-        updatedAt: Date.now(),
-      })
-      .onConflictDoUpdate({
-        target: dlmmIngestCursor.wallet,
-        set: {
-          oldestSig: cursor.oldestSig,
-          newestSig: cursor.newestSig,
-          complete: cursor.complete,
-          updatedAt: Date.now(),
-        },
-      });
   }
 }

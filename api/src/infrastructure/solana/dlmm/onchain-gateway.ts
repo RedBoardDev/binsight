@@ -35,7 +35,6 @@ import { binsFromAccounts, fetchPositionBins, type PositionBinsSource } from './
 import { fetchPositionHistory } from './position-history';
 import { coverageIndices, valuePosition } from './valuation';
 
-const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
 const TOKEN_PROGRAM = new PublicKey(TOKEN_PROGRAM_ID);
 const TOKEN_2022_PROGRAM = new PublicKey(TOKEN_2022_PROGRAM_ID);
 const GMA_CHUNK = 100;
@@ -46,7 +45,7 @@ const MIN_CONTEXT_RETRIES = 3;
 /**
  * How long an idle-token read stays reusable. Position amounts and fees move on their own every block,
  * which is why the snapshot cadence is 10s; a wallet's token BALANCES only move when it transacts, and
- * every transaction already invalidates this cache through `invalidateIdle`. Re-reading hundreds of
+ * every transaction the wallet signs invalidates this cache through `invalidateIdle`. Re-reading hundreds of
  * token accounts on every cadence tick multiplied the snapshot's cost by the number of chunks they
  * span (measured: 301 accounts → 5 getMultipleAccounts instead of 1, every 10s, per wallet).
  *
@@ -73,7 +72,7 @@ const u64le = (b: Uint8Array, o: number): bigint => {
  * 100%-on-chain DLMM wallet snapshot. Discovers a wallet's positions (getProgramAccountsV2 owner@40),
  * then values every position + reads native SOL + stable ATAs in ONE pinned getMultipleAccounts pass
  * so the whole total is internally consistent (no two-clock double-counting). Validated byte-exact
- * vs the datapi (see verify.spike.ts / backend-validation-report.md §1).
+ * vs the Meteora datapi on live positions.
  */
 export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
   private readonly decimalsCache = new Map<string, number>();
@@ -110,19 +109,10 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
 
   /**
    * Drop a wallet's cached idle-token read so the next snapshot re-reads its balances. The engine calls
-   * this on any activity for the wallet: a plain SPL transfer is not a DLMM instruction, so it never
-   * invalidates the position discovery plan, and tying the idle read to that plan alone would leave a
-   * received token invisible until the 10-minute safety rediscovery.
+   * this on every transaction the wallet makes (DLMM or not) and whenever an ingest finds new ones.
    */
   invalidateIdle(ownerStr: string): void {
     this.idleCache.delete(ownerStr);
-  }
-
-  deriveAta(owner: PublicKey, mint: PublicKey): PublicKey {
-    return PublicKey.findProgramAddressSync(
-      [owner.toBuffer(), TOKEN_PROGRAM.toBuffer(), mint.toBuffer()],
-      ASSOCIATED_TOKEN_PROGRAM_ID,
-    )[0];
   }
 
   /**
@@ -162,11 +152,9 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
    * Read every classic-SPL and Token-2022 account the wallet controls, WITH the bytes we need, in one
    * call per token program. `dataSlice` 0..72 covers the mint (0..32) and the amount (64..72).
    *
-   * This deliberately does NOT discover pubkeys and then read them with getMultipleAccounts. web3.js
-   * sends a 100-key read as a JSON-RPC BATCH, which the rate limiter charges as 100 reservations — and
-   * the limiter's cursor only moves forward, so four such chunks every snapshot pushed it minutes into
-   * the future and froze the whole live lane for ~4 minutes at a time. Two reservations instead of
-   * ~400 is the difference between working and not.
+   * This deliberately does NOT discover pubkeys and then read them with getMultipleAccounts: hundreds
+   * of token accounts would add several 100-key reads to every 10 s snapshot. One call per token program
+   * returns the same bytes.
    */
   private async readTokenAccounts(owner: string): Promise<OnchainWalletSnapshot['idleTokens']> {
     const out: OnchainWalletSnapshot['idleTokens'] = [];
@@ -326,7 +314,7 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
   async positionHistory(positionAddress: string): Promise<PositionHistory | null> {
     const hit = this.historyCache.get(positionAddress);
     if (hit && (hit.closed || Date.now() - hit.at < HISTORY_TTL_MS)) return hit.hist;
-    const hist = await fetchPositionHistory(this.conn, positionAddress);
+    const hist = await fetchPositionHistory(this.conn, (m) => this.decimalsOf(m), positionAddress);
     if (hist) {
       const closed = hist.events.some((e) => e.kind === 'close');
       // Bound the (otherwise unbounded) cache: closed histories carry no TTL, so cap the total and
@@ -399,15 +387,19 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
     // (missing pool data, unfetched bin-array, unknown decimals) must NOT be persisted as a real Net
     // Worth point — it surfaces as `complete: false` → freshness 'syncing' → skipped by the recorder.
     let complete = true;
+    // A live position this read could not value. It is still OPEN — dropping it from the snapshot
+    // would read as a close to the projection, so the snapshot says it is partial instead.
+    let positionsComplete = true;
     positionKeys.forEach((pk, i) => {
       const info = posInfos[i];
       if (!info) return; // position account absent → closed between rounds (benign; not a data miss)
       const lbPair = lbPairByPos.get(pk.toBase58());
       const lb = lbPair && lbByKey.get(lbPair.toBase58());
       if (!lbPair || !lb) {
-        // The position exists on-chain but its pool (lbPair) data wasn't read — its value would be
-        // dropped, deflating the total. Flag incomplete rather than silently under-count.
+        // The position exists on-chain but its pool (lbPair) data wasn't read: its value would be
+        // dropped, deflating the total, and the position itself would look closed.
         complete = false;
+        positionsComplete = false;
         return;
       }
       const pos = decodePosition(info.data);
@@ -477,6 +469,7 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
       idleTokens,
       positions,
       complete,
+      positionsComplete,
       plan,
     };
   }
@@ -490,6 +483,8 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
     const lbPairSet = new Map<string, PublicKey>();
     const binArrayKeys: PublicKey[] = [];
     const binArrayMeta: { lbPair: string; index: number }[] = [];
+    // Positions in the same pool share bin arrays: read each one once.
+    const seenBinArrays = new Set<string>();
     positionKeys.forEach((pk, i) => {
       const info = headers[i];
       if (!info) return;
@@ -500,6 +495,9 @@ export class OnchainDlmmGateway implements OnchainDlmmGatewayPort {
       const idxs = coverageIndices(h.lowerBinId, h.upperBinId);
       coverageByPos.set(pk.toBase58(), idxs);
       for (const idx of idxs) {
+        const key = `${lb}:${idx}`;
+        if (seenBinArrays.has(key)) continue;
+        seenBinArrays.add(key);
         binArrayKeys.push(deriveBinArray(h.lbPair, idx));
         binArrayMeta.push({ lbPair: lb, index: idx });
       }

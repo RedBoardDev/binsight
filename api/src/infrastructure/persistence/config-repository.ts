@@ -6,14 +6,13 @@ import {
 } from '@binsight/shared';
 import { and, eq, isNull, notInArray, sql } from 'drizzle-orm';
 import type { ConfigRepository } from '@/domain/ports';
-import { toFiniteNumber as num } from '@/util/number';
 import type { Database } from './database';
 import { notifRules as notifRulesTable, settings as settingsTable } from './schema';
 
 /**
  * Runtime settings and notification rules (owner-scoped; wallets live in AccountRepository).
- * Reads are served from in-memory caches (loaded by `init()`, refreshed on every write) so hot,
- * synchronous callers — the poll-interval math, the Bark-key getter — never await the database.
+ * Reads are served from in-memory caches (loaded by `init()`, refreshed on every write) so a hot,
+ * synchronous caller (the Bark-key getter) never awaits the database.
  */
 export class PostgresConfigRepository implements ConfigRepository {
   private settingsCache: RuntimeSettings;
@@ -58,17 +57,7 @@ export class PostgresConfigRepository implements ConfigRepository {
   private async loadSettings(): Promise<RuntimeSettings> {
     const rows = await this.db.select().from(settingsTable);
     const stored = Object.fromEntries(rows.map((r) => [r.key, r.value]));
-    return {
-      meteoraTargetRps: num(stored.meteoraTargetRps, this.defaults.meteoraTargetRps),
-      pollMinMs: num(stored.pollMinMs, this.defaults.pollMinMs),
-      pollMaxMs: num(stored.pollMaxMs, this.defaults.pollMaxMs),
-      pollIdleMs: num(stored.pollIdleMs, this.defaults.pollIdleMs),
-      barkKey: stored.barkKey ?? this.defaults.barkKey,
-      presenceTimeoutSeconds: num(
-        stored.presenceTimeoutSeconds,
-        this.defaults.presenceTimeoutSeconds,
-      ),
-    };
+    return { barkKey: stored.barkKey ?? this.defaults.barkKey };
   }
 
   // --- notification rules ---

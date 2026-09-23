@@ -20,10 +20,20 @@ export class TtlCache<V> {
 
   set(key: string, v: V): void {
     if (this.map.size >= this.maxEntries && !this.map.has(key)) {
-      const oldest = this.map.keys().next().value;
-      if (oldest !== undefined) this.map.delete(oldest);
+      // Expired entries go first: keys that are never read again (a versioned cache's superseded
+      // generations) would otherwise sit here until evicted one by one at the cap.
+      this.sweep();
+      if (this.map.size >= this.maxEntries) {
+        const oldest = this.map.keys().next().value;
+        if (oldest !== undefined) this.map.delete(oldest);
+      }
     }
     this.map.set(key, { v, exp: this.now() + this.ttlMs });
+  }
+
+  private sweep(): void {
+    const now = this.now();
+    for (const [k, e] of this.map) if (e.exp <= now) this.map.delete(k);
   }
 
   /** Drop a key now (explicit invalidation, e.g. after a write that changes the cached value). */

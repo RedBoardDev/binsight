@@ -1,4 +1,4 @@
-import { DLMM_PROGRAM_ID, SOL_MINT } from '@binsight/shared';
+import { SOL_MINT } from '@binsight/shared';
 import type {
   ParsedInstruction,
   ParsedTransactionWithMeta,
@@ -6,17 +6,19 @@ import type {
 } from '@solana/web3.js';
 import type { SwapFlowRow, WalletFlowRow } from '@/domain/dlmm';
 import { hasDlmmPositionInstruction } from './dlmm/position-instructions';
-import { type EnhancedTx, parseSwapBuy, parseSwapSell, walletSolFlow } from './helius-enhanced';
+import {
+  type EnhancedTx,
+  parseSwapBuy,
+  parseSwapSell,
+  touchesDlmm,
+  walletSolFlow,
+} from './swap-legs';
 
 /**
- * PURE, OFFLINE adapter that re-derives the fields the Helius Enhanced API enriches from a plain
- * Solana `getParsedTransaction` (jsonParsed) result, so the EXISTING Enhanced parsers
- * ({@link parseSwapSell}, {@link parseSwapBuy}, {@link walletSolFlow}) can run on it UNCHANGED.
- *
- * Parity is therefore guaranteed BY CONSTRUCTION: this module never re-implements swap/flow logic, it
- * only reshapes the raw on-chain transaction into the {@link EnhancedTx} the parsers already consume.
- * Eliminating the 100-credit Enhanced call from the live path (Phase A) is a matter of feeding these
- * parsers a getParsedTransaction instead of a Helius payload — nothing downstream changes.
+ * PURE, OFFLINE adapter that rebuilds, from a plain Solana `getParsedTransaction` (jsonParsed) result,
+ * the Helius-shaped transaction the wallet parsers ({@link parseSwapSell}, {@link parseSwapBuy},
+ * {@link walletSolFlow}) were written and validated against. It never re-implements swap/flow logic; it
+ * only reshapes the raw on-chain transaction into an {@link EnhancedTx}.
  *
  * Reconstructable from getParsedTransaction: tokenTransfers, nativeTransfers, accountData, instructions
  * (programId only), signature, timestamp. NOT reconstructable: Helius's proprietary `type` taxonomy
@@ -25,11 +27,7 @@ import { type EnhancedTx, parseSwapBuy, parseSwapSell, walletSolFlow } from './h
  * on {@link extractFlowRow}.
  */
 
-/**
- * Helius `type` cannot be derived from raw chain data, so the reconstructed tx carries this sentinel.
- * It deliberately equals pageFlows' own `tx.type ?? 'UNKNOWN'` fallback, so classifyTradingByType falls
- * back to the DLMM-touch signal (the only trading signal we CAN reconstruct) rather than the SWAP type.
- */
+/** Helius's `type` taxonomy cannot be derived from raw chain data, so the rebuilt tx carries this. */
 const RECONSTRUCTED_TX_TYPE = 'UNKNOWN';
 
 // `program` tags emitted by getParsedTransaction (jsonParsed) for the programs we read. Matching the
@@ -347,19 +345,6 @@ function extractInstructions(
 }
 
 /**
- * Mirror of the PRIVATE `touchesDlmm` in helius-enhanced.ts (which cannot be imported). Identical logic
- * over the reconstructed instructions, so the trading classification matches pageFlows by construction.
- */
-function touchesDlmm(tx: EnhancedTx): boolean {
-  for (const ix of tx.instructions ?? []) {
-    if (ix.programId === DLMM_PROGRAM_ID) return true;
-    for (const inner of ix.innerInstructions ?? [])
-      if (inner.programId === DLMM_PROGRAM_ID) return true;
-  }
-  return false;
-}
-
-/**
  * Is this tx TRADING activity (counts toward wallet PnL) rather than an external transfer (CEX in/out,
  * funding)? Derived STRUCTURALLY from what actually moved, never from Helius's `type` taxonomy — which
  * is a proprietary heuristic with no on-chain field and is therefore unavailable offline.
@@ -400,7 +385,7 @@ export function parsedTxToEnhancedTx(tx: ParsedTransactionWithMeta): EnhancedTx 
 
 /**
  * Derive the wallet's clean swap leg(s) from a parsed tx — run parseSwapSell + parseSwapBuy on the
- * reconstructed EnhancedTx, mapped to the SAME {@link SwapFlowRow} rows `pageSwaps` produces (sell →
+ * reconstructed EnhancedTx, mapped to {@link SwapFlowRow} rows (sell →
  * side 'sell', solAmount = SOL received; buy → side 'buy', solAmount = SOL spent). A clean SWAP matches
  * at most one parser, so a tx yields 0 or 1 rows; an unattributable tx (batched/multi-mint) yields none.
  */
@@ -446,10 +431,10 @@ export function extractSwapRows(tx: ParsedTransactionWithMeta, wallet: string): 
 }
 
 /**
- * Derive the wallet's single `pageFlows` row from a parsed tx: net SOL flow (walletSolFlow) + the trading
- * flag (classifyTradingByType), tagged with signature + timestamp. Returns null for a degenerate tx with
+ * Derive the wallet's single cash-flow row from a parsed tx: net SOL flow (walletSolFlow) + the trading
+ * flag (isTradingTx), tagged with signature + timestamp. Returns null for a degenerate tx with
  * no metadata (nothing reliable to reduce) or no signature (nothing to key a row on); for any real tx —
- * including a plain external transfer — it emits a row, exactly as pageFlows does.
+ * including a plain external transfer — it emits a row.
  *
  * The trading flag is STRUCTURAL, not taxonomic — see {@link isTradingTx}. Helius's `type` is not
  * reconstructable offline, so relying on it here would misfile every non-DLMM swap as an external

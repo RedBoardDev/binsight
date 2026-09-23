@@ -65,23 +65,4 @@ describe('SwapFlowRepository', () => {
     await repo.upsertMany([swap({ wallet: 'w2', signature: 's2', side: 'sell' })]);
     expect((await repo.byWallet('w1')).map((r) => r.signature)).toEqual(['s1']);
   });
-
-  // WHY: the cursor is the incremental-ingest resume state (page newest→genesis, top-up to newestSig);
-  // it must round-trip so a restart resumes instead of re-paging the whole history.
-  it('round-trips the swap-flow cursor', async () => {
-    const repo = await newRepo();
-    expect(await repo.getCursor('w')).toBeNull();
-    await repo.setCursor('w', { oldestSig: 'old', newestSig: 'new', complete: false });
-    expect(await repo.getCursor('w')).toEqual({
-      oldestSig: 'old',
-      newestSig: 'new',
-      complete: false,
-    });
-    await repo.setCursor('w', { oldestSig: 'old', newestSig: 'newer', complete: true });
-    expect(await repo.getCursor('w')).toEqual({
-      oldestSig: 'old',
-      newestSig: 'newer',
-      complete: true,
-    });
-  });
 });
