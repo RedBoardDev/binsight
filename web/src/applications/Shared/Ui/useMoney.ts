@@ -13,15 +13,11 @@ import { usePrefs } from '@app/core/stores/prefsStore';
 export interface Money {
   hide: boolean;
   usd: boolean;
-  /** Render the ◎ unit mark only in SOL mode — in USD the "$" is already in the string. */
+  /** Render the ◎ unit mark only when amounts render in SOL — in USD the "$" is in the string. */
   showGlyph: boolean;
-  sol: (value: number, options?: { signed?: boolean; decimals?: number }) => string;
+  sol: (value: number, options?: { signed?: boolean }) => string;
   /** A position's NATIVE quote. A non-SOL quote is never run through the SOL⇄USD preference. */
-  quote: (
-    value: number,
-    symbol: string,
-    options?: { signed?: boolean; decimals?: number },
-  ) => string;
+  quote: (value: number, symbol: string, options?: { signed?: boolean }) => string;
   hero: (value: number) => string;
   pct: (value: number) => string;
 }
@@ -43,13 +39,15 @@ export function useMoney(): Money {
       : usd
         ? fmtUsd(value * factor, { signed: options?.signed })
         : options?.signed
-          ? fmtSolSigned(value, options.decimals)
-          : fmtSol(value, options?.decimals);
+          ? fmtSolSigned(value)
+          : fmtSol(value);
 
   return {
     hide,
     usd,
-    showGlyph: currency === 'SOL',
+    // Follows what is actually rendered: before any rate has loaded, USD mode still shows SOL, and
+    // those amounts need their unit mark rather than reading as bare numbers.
+    showGlyph: !usd,
     sol,
     quote: (value, symbol, options) => {
       // Only SOL follows the currency switch: there is no USDC⇄USD rate to apply, and converting a
@@ -57,7 +55,7 @@ export function useMoney(): Money {
       if (symbol === 'SOL') return sol(value, options);
       if (hide) return AMOUNT_MASK;
       const abs = Math.abs(value);
-      const digits = options?.decimals ?? (abs >= 1000 ? 2 : abs >= 1 ? 4 : 6);
+      const digits = abs >= 1000 ? 2 : abs >= 1 ? 4 : 6;
       const body = abs.toLocaleString('en-US', {
         minimumFractionDigits: 0,
         maximumFractionDigits: digits,

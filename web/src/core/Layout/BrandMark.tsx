@@ -1,14 +1,11 @@
-import { cn } from '@heroui/react';
-
 interface BrandMarkProps {
   size?: number;
   withWordmark?: boolean;
-  className?: string;
 }
 
 /** The Binsight lockup — the bin mark plus the wordmark in the display face. */
-export const BrandMark = ({ size = 22, withWordmark = true, className }: BrandMarkProps) => (
-  <div className={cn('flex items-center gap-2.5', className)}>
+export const BrandMark = ({ size = 22, withWordmark = true }: BrandMarkProps) => (
+  <div className="flex items-center gap-2.5">
     {/* biome-ignore lint/performance/noImgElement: a fixed static brand mark, no layout cost. */}
     <img src="/icon.svg" alt="" width={size} height={size} className="shrink-0" />
     {withWordmark && (

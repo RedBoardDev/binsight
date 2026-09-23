@@ -13,14 +13,13 @@ import { useCallback, useState } from 'react';
 
 interface SharePnlCardButtonProps {
   position: ClosedPosition;
-  className?: string;
 }
 
 /**
  * A discreet share affordance for a closed position: opens the share dialog with the position
  * summary, the server-rendered PnL card PNG and share / copy / download.
  */
-export const SharePnlCardButton = ({ position, className }: SharePnlCardButtonProps) => {
+export const SharePnlCardButton = ({ position }: SharePnlCardButtonProps) => {
   const [isOpen, setOpen] = useState(false);
   const money = useMoney();
   const pair = `${position.tokenX}/${position.tokenY}`;
@@ -44,7 +43,7 @@ export const SharePnlCardButton = ({ position, className }: SharePnlCardButtonPr
           size="sm"
           variant="ghost"
           aria-label="Share PnL card"
-          className={cn('text-faint', className)}
+          className="text-faint"
           onPress={() => setOpen(true)}
         >
           <Share2 size={16} />

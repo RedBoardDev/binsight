@@ -35,14 +35,7 @@ export const ClosedPositionRow = ({
       columnCount={columnCount}
       chartOpen={chartOpen}
       onToggleChart={onToggleChart}
-      onOpen={() =>
-        select({
-          address: position.address,
-          pair: position.pair,
-          open: false,
-          closed: position.raw,
-        })
-      }
+      onOpen={() => select(position.selection)}
       chart={{
         positionAddress: position.address,
         poolAddress: position.raw.poolAddress,
@@ -69,7 +62,7 @@ export const ClosedPositionRow = ({
         {fmtDuration(position.durationSeconds)}
       </Table.Cell>
       <Table.Cell className="tabular text-right text-muted">
-        {money.sol(position.raw.depositSol)}
+        {money.quote(position.displayDeposit, position.quoteSymbol)}
       </Table.Cell>
       <Table.Cell className="tabular text-right">
         {money.quote(position.displayFees, position.quoteSymbol)}

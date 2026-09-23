@@ -9,6 +9,13 @@ import { useEffect, useRef } from 'react';
 
 const SCOPE_KEY = 'binsight-scope';
 
+/** Forget the remembered scope — a wallet of the previous account must not be restored on sign-in. */
+export const forgetSavedScope = (): void => {
+  try {
+    localStorage.removeItem(SCOPE_KEY);
+  } catch {}
+};
+
 /**
  * Keeps the URL (`?address`, `?positionId`), localStorage (last scope) and the stores in sync, so a
  * link is shareable, bookmarkable and deep-linkable.

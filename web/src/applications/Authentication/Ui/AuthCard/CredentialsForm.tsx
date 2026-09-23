@@ -1,6 +1,7 @@
 'use client';
 
 import { authApi } from '@app/applications/Authentication/Api/auth.api';
+import { useResetSession } from '@app/applications/Authentication/Api/useSession.api';
 import { isSolanaAddress } from '@app/applications/Shared/Domain/solanaAddress';
 import { Alert, Button, FieldError, Form, Input, Label, Spinner, TextField } from '@heroui/react';
 import { useRouter } from 'next/navigation';
@@ -16,13 +17,15 @@ interface CredentialsFormProps {
 /** Address + password, no signature: sign-in always, and sign-up when the backend runs open-access. */
 export const CredentialsForm = ({ mode }: CredentialsFormProps) => {
   const router = useRouter();
+  const resetSession = useResetSession();
   const [address, setAddress] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const isSignin = mode === 'signin';
-  const addressOk = isSolanaAddress(address);
+  const trimmed = address.trim();
+  const addressOk = isSolanaAddress(trimmed);
   const passwordOk = isSignin ? password.length > 0 : password.length >= MIN_PASSWORD;
   const canSubmit = !busy && addressOk && passwordOk;
 
@@ -31,17 +34,23 @@ export const CredentialsForm = ({ mode }: CredentialsFormProps) => {
     if (!canSubmit) return;
     setBusy(true);
     setError(null);
-    const res = isSignin
-      ? await authApi.login(address.trim(), password)
-      : await authApi.register({ address: address.trim(), password });
-    setBusy(false);
-    if (res.ok) {
-      router.replace('/');
-      return;
+    try {
+      const res = isSignin
+        ? await authApi.login(trimmed, password)
+        : await authApi.register({ address: trimmed, password });
+      if (res.ok) {
+        resetSession();
+        router.replace('/');
+        return;
+      }
+      setError(
+        res.error ?? (isSignin ? 'Invalid address or password.' : 'Could not create the account.'),
+      );
+    } catch {
+      setError('Could not reach the server — please retry.');
+    } finally {
+      setBusy(false);
     }
-    setError(
-      res.error ?? (isSignin ? 'Invalid address or password.' : 'Could not create the account.'),
-    );
   };
 
   return (

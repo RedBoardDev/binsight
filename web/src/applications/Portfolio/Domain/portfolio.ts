@@ -13,10 +13,6 @@ export class Portfolio {
     return this.state.totals;
   }
 
-  get scope(): string {
-    return this.state.scope;
-  }
-
   /** Open positions sorted by current size, largest first. */
   get openByValue(): OpenPositionEntity[] {
     return [...this.open].sort((a, b) => b.sizeSol - a.sizeSol);

@@ -17,7 +17,6 @@ const DEFAULT_WIDTH = 112;
 interface BinChartProps {
   positionAddress: string;
   outOfRange: boolean;
-  className?: string;
 }
 
 /**
@@ -28,7 +27,7 @@ interface BinChartProps {
  *
  * Bins are fetched per position and only for OPEN ones (closed positions hold no live liquidity).
  */
-export const BinChart = ({ positionAddress, outOfRange, className }: BinChartProps) => {
+export const BinChart = ({ positionAddress, outOfRange }: BinChartProps) => {
   const { data } = usePositionBins(positionAddress, true);
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const ref = useRef<HTMLDivElement>(null);
@@ -59,7 +58,7 @@ export const BinChart = ({ positionAddress, outOfRange, className }: BinChartPro
           ? `Liquidity across ${data.bins.length} price bins`
           : 'Liquidity distribution unavailable'
       }
-      className={cn('relative w-full', className)}
+      className="relative w-full"
       style={{ height: CHART_HEIGHT }}
     >
       {geometry && geometry.bars.length > 0 ? (

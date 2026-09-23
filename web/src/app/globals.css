@@ -79,9 +79,6 @@
    everywhere; the DLMM histogram colours are data categories, deliberately not the brand accent. */
 @theme inline {
   --color-profit: var(--success);
-  --color-loss: var(--danger);
-  --color-in-range: var(--success);
-  --color-out-range: var(--warning);
   --color-bin-x: #a78bfa;
   --color-bin-y: #38bdf8;
   --color-faint: #98a0ae;

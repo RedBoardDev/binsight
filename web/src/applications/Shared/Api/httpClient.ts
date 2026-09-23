@@ -31,7 +31,7 @@ export async function apiGet<T>(path: string): Promise<T> {
 
 export async function apiSend(
   path: string,
-  method: 'POST' | 'PUT' | 'DELETE',
+  method: 'POST' | 'DELETE',
   body?: unknown,
 ): Promise<boolean> {
   const res = await fetch(`/api/${path}`, {
@@ -51,5 +51,3 @@ export async function apiGetBlob(
   if (!res.ok) throw new ApiError(`GET ${path} failed (${res.status})`);
   return res.blob();
 }
-
-export const scopeParam = (scope: string): string => encodeURIComponent(scope);

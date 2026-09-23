@@ -1,6 +1,7 @@
 'use client';
 
 import { apiGet, apiGetBlob } from '@app/applications/Shared/Api/httpClient';
+import { sameScopePlaceholder } from '@app/applications/Shared/Api/queryClient';
 import type { Candle, ClosedPosition, PositionBins, PositionHistory } from '@binsight/shared';
 import { useQuery } from '@tanstack/react-query';
 
@@ -38,6 +39,7 @@ export function useClosedPositions(
       params.set('pageSize', String(pageSize));
       return apiGet<ClosedPositionsPage>(`positions/closed?${params.toString()}`);
     },
+    placeholderData: sameScopePlaceholder(scope),
   });
 }
 

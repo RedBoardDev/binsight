@@ -23,14 +23,13 @@ interface OpenPositionCardProps {
 export const OpenPositionCard = ({ position, now }: OpenPositionCardProps) => {
   const select = useUi((s) => s.select);
   const money = useMoney();
-  const age = position.raw.openedAt ? fmtDuration((now - position.raw.openedAt) / 1000) : '—';
 
   return (
     <Button
       variant="tertiary"
       fullWidth
       className={CARD_CLASS}
-      onPress={() => select({ address: position.address, pair: position.pair, open: true })}
+      onPress={() => select(position.selection)}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
@@ -61,7 +60,8 @@ export const OpenPositionCard = ({ position, now }: OpenPositionCardProps) => {
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1 leading-snug">
           <div className="tabular text-muted text-xs">
-            Size {money.quote(position.displaySize, position.quoteSymbol)} · {age}
+            Size {money.quote(position.displaySize, position.quoteSymbol)} ·{' '}
+            {fmtDuration(position.ageSeconds(now))}
           </div>
           <div className="tabular text-muted text-xs">
             Fees {money.quote(position.displayTotalFees, position.quoteSymbol)} ·{' '}

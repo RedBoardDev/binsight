@@ -1,6 +1,7 @@
 'use client';
 
 import { usePortfolioFeed } from '@app/applications/Portfolio/Api/portfolioFeed.store';
+import { ActivePnlTile, OpenCountTile } from '@app/applications/Portfolio/Ui/PortfolioStatTiles';
 import { pctOf } from '@app/applications/Shared/Domain/percent';
 import { toneOf } from '@app/applications/Shared/Domain/tone';
 import { SolMark } from '@app/applications/Shared/Ui/SolMark';
@@ -11,7 +12,7 @@ import { useNetworthCurve, useStats } from '@app/applications/Stats/Api/useStats
 import { ALL_TIME_DAYS } from '@app/applications/Stats/Domain/period';
 import { periodLabel, realPnlGain } from '@app/applications/Stats/Domain/realPnl';
 import { useUi } from '@app/core/stores/uiStore';
-import { Card, Chip, cn, Skeleton, Tooltip } from '@heroui/react';
+import { Card, cn, Skeleton, Tooltip } from '@heroui/react';
 import { Info } from 'lucide-react';
 
 /** The desktop hero: live Net Worth plus the four headline metrics the whole product is read from. */
@@ -26,7 +27,7 @@ export const PortfolioSummaryCard = () => {
   // Fetched all-time and sliced client-side: the period gain is a NetWorth delta off it.
   const { data: curve } = useNetworthCurve(scope, ALL_TIME_DAYS, closedVersion);
   // Today's realized PnL comes from the backend (/stats.todayPnlSol) — the single source of truth, the
-  // exact value the macOS/iOS apps show. The client must NOT re-derive it (that drifted from the apps).
+  // exact value the macOS app shows. The client must NOT re-derive it (that drifted from the app).
   const { data: stats } = useStats(scope, closedVersion);
 
   if (!portfolio) return <PortfolioSummarySkeleton />;
@@ -88,36 +89,14 @@ export const PortfolioSummaryCard = () => {
           }
           sub={today != null ? money.pct(pctOf(today, totals.walletTotalSol)) : '—'}
         />
-        <StatTile
-          label="Active PnL"
-          tone={toneOf(totals.uPnlSol)}
-          value={
-            <TickFlash value={totals.uPnlSol}>
-              {money.sol(totals.uPnlSol, { signed: true })}
-            </TickFlash>
-          }
-          sub={money.pct(totals.uPnlPct)}
-        />
+        <ActivePnlTile totals={totals} />
         <StatTile
           label={`Gain (${periodLabel(period)})`}
           tone={gain != null ? toneOf(gain) : 'neutral'}
           value={gain != null ? money.sol(gain, { signed: true }) : '—'}
           sub="Real PnL Δ"
         />
-        <StatTile
-          label="Open"
-          value={totals.openCount}
-          sub={
-            <span className="flex gap-1.5">
-              <Chip.Root color="success" size="sm" variant="soft">
-                <Chip.Label>{totals.inRangeCount} in</Chip.Label>
-              </Chip.Root>
-              <Chip.Root color="warning" size="sm" variant="soft">
-                <Chip.Label>{totals.outOfRangeCount} out</Chip.Label>
-              </Chip.Root>
-            </span>
-          }
-        />
+        <OpenCountTile totals={totals} />
       </Card.Content>
     </Card.Root>
   );

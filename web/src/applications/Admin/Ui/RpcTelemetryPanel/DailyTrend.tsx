@@ -2,7 +2,7 @@
 
 import type { RpcCreditLedgerRow } from '@app/applications/Admin/Domain/rpcTelemetry';
 import { aggregateDailyCredits } from '@app/applications/Admin/Domain/rpcTelemetry';
-import { fmtAmount, fmtDate } from '@app/applications/Shared/Domain/formatters';
+import { fmtAmount, fmtDay } from '@app/applications/Shared/Domain/formatters';
 import { Card } from '@heroui/react';
 
 interface DailyTrendProps {
@@ -34,7 +34,7 @@ export const DailyTrend = ({ rows }: DailyTrendProps) => {
                     title={`${day.calls} calls`}
                   />
                 </div>
-                <span className="text-faint text-xs">{fmtDate(day.dayMs)}</span>
+                <span className="text-faint text-xs">{fmtDay(day.dayMs)}</span>
               </div>
             );
           })}

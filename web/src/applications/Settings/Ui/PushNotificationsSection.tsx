@@ -1,12 +1,12 @@
 'use client';
 
 import {
+  activeRegistration,
+  dropPushSubscription,
   fetchVapidKey,
   sendTestPush,
   subscribeToPush,
-  unsubscribeFromPush,
 } from '@app/applications/Settings/Api/usePush.api';
-import { PUSH_READY_TIMEOUT_MS } from '@app/applications/Shared/Domain/timings';
 import { SectionLabel } from '@app/applications/Shared/Ui/SectionLabel';
 import { Button, Switch } from '@heroui/react';
 import { useEffect, useState } from 'react';
@@ -29,14 +29,6 @@ type PushState =
   | 'idle'
   | 'subscribed'
   | 'busy';
-
-/** SW registration, or null if none becomes active shortly (dev: the SW is production-only). */
-async function activeRegistration(): Promise<ServiceWorkerRegistration | null> {
-  return Promise.race([
-    navigator.serviceWorker.ready,
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), PUSH_READY_TIMEOUT_MS)),
-  ]);
-}
 
 const NOTE: Partial<Record<PushState, string>> = {
   loading: 'Checking…',
@@ -93,18 +85,10 @@ export const PushNotificationsSection = () => {
   const disable = async () => {
     setState('busy');
     try {
-      const registration = await activeRegistration();
-      const subscription = await registration?.pushManager.getSubscription();
-      if (!subscription) {
-        // SW not ready / no local subscription handle → we can't tell the server which endpoint to
-        // drop, so the backend may still be delivering. DON'T claim disabled — keep 'subscribed' so
-        // a retry is possible (showing 'idle' here lied while pushes kept arriving).
-        setState('subscribed');
-        return;
-      }
-      await unsubscribeFromPush(subscription.endpoint);
-      await subscription.unsubscribe();
-      setState('idle');
+      // SW not ready / no local subscription handle → we can't tell the server which endpoint to
+      // drop, so the backend may still be delivering. DON'T claim disabled — keep 'subscribed' so a
+      // retry is possible (showing 'idle' here lied while pushes kept arriving).
+      setState((await dropPushSubscription()) ? 'idle' : 'subscribed');
     } catch {
       // unsubscribe failed — keep the truthful 'subscribed', not a false 'idle'.
       setState('subscribed');

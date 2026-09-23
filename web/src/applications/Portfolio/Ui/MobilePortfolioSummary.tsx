@@ -20,7 +20,7 @@ export const MobilePortfolioSummary = () => {
   const scopeLoading = usePortfolioFeed((s) => s.scopeLoading);
   const money = useMoney();
   // Today's realized PnL is the backend's single source of truth (/stats.todayPnlSol) — the exact
-  // value the macOS/iOS apps show. The client must NOT re-derive it.
+  // value the macOS app shows. The client must NOT re-derive it.
   const { data: stats } = useStats(scope, closedVersion);
 
   if (!portfolio) return <Skeleton.Root className="h-[5.5rem] w-full rounded-xl" />;
