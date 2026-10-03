@@ -1,0 +1,37 @@
+# cargo-deny: licenses, security advisories, banned crates and allowed sources.
+# Run with `just rust-deny` (CI runs it on every push).
+
+[graph]
+all-features = true
+
+[advisories]
+ignore = []
+
+[licenses]
+# Permissive licenses only, plus MPL-2.0 (weak, file-level copyleft that stays compatible with
+# distributing binsight under MIT as long as those files are not modified).
+# No GPL, LGPL or AGPL.
+allow = [
+  "MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", "BSD-3-Clause",
+  "ISC", "Zlib", "Unicode-3.0", "Unlicense", "CC0-1.0", "MPL-2.0", "BSL-1.0", "0BSD",
+  "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.9
+unused-allowed-license = "allow"
+
+[licenses.private]
+ignore = true   # our own crates are not published; they are MIT, like the repository
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+deny = [
+  { crate = "openssl", reason = "use rustls" },
+  { crate = "openssl-sys", reason = "use rustls" },
+  { crate = "native-tls", reason = "use rustls" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
