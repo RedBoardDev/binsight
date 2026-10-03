@@ -1,0 +1,546 @@
+{
+  "packages": [
+    {
+      "name": "binsight-core",
+      "version": "0.1.0",
+      "id": "path+file:///workspace/binsight/crates/core#binsight-core@0.1.0",
+      "manifest_path": "/workspace/binsight/crates/core/Cargo.toml",
+      "dependencies": [
+        {
+          "name": "thiserror",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "jiff",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "proptest",
+          "req": "^1",
+          "kind": "dev"
+        }
+      ]
+    },
+    {
+      "name": "binsight-solana",
+      "version": "0.1.0",
+      "id": "path+file:///workspace/binsight/crates/solana#binsight-solana@0.1.0",
+      "manifest_path": "/workspace/binsight/crates/solana/Cargo.toml",
+      "dependencies": [
+        {
+          "name": "binsight-core",
+          "req": "*",
+          "kind": null,
+          "path": "/workspace/binsight/crates/core"
+        },
+        {
+          "name": "thiserror",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "bs58",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "proptest",
+          "req": "^1",
+          "kind": "dev"
+        }
+      ]
+    },
+    {
+      "name": "binsight-dlmm",
+      "version": "0.1.0",
+      "id": "path+file:///workspace/binsight/crates/dlmm#binsight-dlmm@0.1.0",
+      "manifest_path": "/workspace/binsight/crates/dlmm/Cargo.toml",
+      "dependencies": [
+        {
+          "name": "binsight-core",
+          "req": "*",
+          "kind": null,
+          "path": "/workspace/binsight/crates/core"
+        },
+        {
+          "name": "binsight-solana",
+          "req": "*",
+          "kind": null,
+          "path": "/workspace/binsight/crates/solana"
+        }
+      ]
+    },
+    {
+      "name": "binsight-ledger",
+      "version": "0.1.0",
+      "id": "path+file:///workspace/binsight/crates/ledger#binsight-ledger@0.1.0",
+      "manifest_path": "/workspace/binsight/crates/ledger/Cargo.toml",
+      "dependencies": []
+    },
+    {
+      "name": "binsight-store",
+      "version": "0.1.0",
+      "id": "path+file:///workspace/binsight/crates/store#binsight-store@0.1.0",
+      "manifest_path": "/workspace/binsight/crates/store/Cargo.toml",
+      "dependencies": [
+        {
+          "name": "binsight-core",
+          "req": "*",
+          "kind": null,
+          "path": "/workspace/binsight/crates/core"
+        },
+        {
+          "name": "binsight-solana",
+          "req": "*",
+          "kind": null,
+          "path": "/workspace/binsight/crates/solana"
+        },
+        {
+          "name": "rusqlite",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "deadpool-sqlite",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "tokio",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "sha2",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "hex",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "jiff",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "thiserror",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "tracing",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "tempfile",
+          "req": "^1",
+          "kind": "dev"
+        },
+        {
+          "name": "tokio",
+          "req": "^1",
+          "kind": "dev"
+        }
+      ]
+    },
+    {
+      "name": "binsight-chain",
+      "version": "0.1.0",
+      "id": "path+file:///workspace/binsight/crates/chain#binsight-chain@0.1.0",
+      "manifest_path": "/workspace/binsight/crates/chain/Cargo.toml",
+      "dependencies": [
+        {
+          "name": "binsight-core",
+          "req": "*",
+          "kind": null,
+          "path": "/workspace/binsight/crates/core"
+        },
+        {
+          "name": "binsight-solana",
+          "req": "*",
+          "kind": null,
+          "path": "/workspace/binsight/crates/solana"
+        },
+        {
+          "name": "thiserror",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "secrecy",
+          "req": "^1",
+          "kind": null
+        }
+      ]
+    },
+    {
+      "name": "binsight-engine",
+      "version": "0.1.0",
+      "id": "path+file:///workspace/binsight/crates/engine#binsight-engine@0.1.0",
+      "manifest_path": "/workspace/binsight/crates/engine/Cargo.toml",
+      "dependencies": [
+        {
+          "name": "binsight-core",
+          "req": "*",
+          "kind": null,
+          "path": "/workspace/binsight/crates/core"
+        },
+        {
+          "name": "binsight-store",
+          "req": "*",
+          "kind": null,
+          "path": "/workspace/binsight/crates/store"
+        },
+        {
+          "name": "tokio",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "tokio-util",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "jiff",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "thiserror",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "tracing",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "tempfile",
+          "req": "^1",
+          "kind": "dev"
+        },
+        {
+          "name": "tokio",
+          "req": "^1",
+          "kind": "dev"
+        }
+      ]
+    },
+    {
+      "name": "binsight-api",
+      "version": "0.1.0",
+      "id": "path+file:///workspace/binsight/crates/api#binsight-api@0.1.0",
+      "manifest_path": "/workspace/binsight/crates/api/Cargo.toml",
+      "dependencies": [
+        {
+          "name": "binsight-core",
+          "req": "*",
+          "kind": null,
+          "path": "/workspace/binsight/crates/core"
+        },
+        {
+          "name": "binsight-engine",
+          "req": "*",
+          "kind": null,
+          "path": "/workspace/binsight/crates/engine"
+        },
+        {
+          "name": "axum",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "axum-extra",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "tower",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "tower-http",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "utoipa",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "utoipa-axum",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "serde",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "serde_json",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "tokio",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "tokio-util",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "tokio-stream",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "futures-util",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "hmac",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "sha2",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "subtle",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "secrecy",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "jiff",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "thiserror",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "tracing",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "insta",
+          "req": "^1",
+          "kind": "dev"
+        },
+        {
+          "name": "http-body-util",
+          "req": "^1",
+          "kind": "dev"
+        },
+        {
+          "name": "tower",
+          "req": "^1",
+          "kind": "dev"
+        },
+        {
+          "name": "tempfile",
+          "req": "^1",
+          "kind": "dev"
+        },
+        {
+          "name": "tokio",
+          "req": "^1",
+          "kind": "dev"
+        }
+      ]
+    },
+    {
+      "name": "binsight",
+      "version": "0.1.0",
+      "id": "path+file:///workspace/binsight/crates/binsight#binsight@0.1.0",
+      "manifest_path": "/workspace/binsight/crates/binsight/Cargo.toml",
+      "dependencies": [
+        {
+          "name": "binsight-core",
+          "req": "*",
+          "kind": null,
+          "path": "/workspace/binsight/crates/core"
+        },
+        {
+          "name": "binsight-solana",
+          "req": "*",
+          "kind": null,
+          "path": "/workspace/binsight/crates/solana"
+        },
+        {
+          "name": "binsight-dlmm",
+          "req": "*",
+          "kind": null,
+          "path": "/workspace/binsight/crates/dlmm"
+        },
+        {
+          "name": "binsight-ledger",
+          "req": "*",
+          "kind": null,
+          "path": "/workspace/binsight/crates/ledger"
+        },
+        {
+          "name": "binsight-store",
+          "req": "*",
+          "kind": null,
+          "path": "/workspace/binsight/crates/store"
+        },
+        {
+          "name": "binsight-chain",
+          "req": "*",
+          "kind": null,
+          "path": "/workspace/binsight/crates/chain"
+        },
+        {
+          "name": "binsight-engine",
+          "req": "*",
+          "kind": null,
+          "path": "/workspace/binsight/crates/engine"
+        },
+        {
+          "name": "binsight-api",
+          "req": "*",
+          "kind": null,
+          "path": "/workspace/binsight/crates/api"
+        },
+        {
+          "name": "anyhow",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "clap",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "tokio",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "tokio-util",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "tracing",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "tracing-subscriber",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "dotenvy",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "dialoguer",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "rust-embed",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "secrecy",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "getrandom",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "hex",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "jiff",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "thiserror",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "insta",
+          "req": "^1",
+          "kind": "dev"
+        },
+        {
+          "name": "tempfile",
+          "req": "^1",
+          "kind": "dev"
+        }
+      ]
+    },
+    {
+      "name": "xtask",
+      "version": "0.1.0",
+      "id": "path+file:///workspace/binsight/xtask#xtask@0.1.0",
+      "manifest_path": "/workspace/binsight/xtask/Cargo.toml",
+      "dependencies": [
+        {
+          "name": "anyhow",
+          "req": "^1",
+          "kind": null
+        },
+        {
+          "name": "serde_json",
+          "req": "^1",
+          "kind": null
+        }
+      ]
+    }
+  ],
+  "workspace_members": [
+    "path+file:///workspace/binsight/crates/core#binsight-core@0.1.0",
+    "path+file:///workspace/binsight/crates/solana#binsight-solana@0.1.0",
+    "path+file:///workspace/binsight/crates/dlmm#binsight-dlmm@0.1.0",
+    "path+file:///workspace/binsight/crates/ledger#binsight-ledger@0.1.0",
+    "path+file:///workspace/binsight/crates/store#binsight-store@0.1.0",
+    "path+file:///workspace/binsight/crates/chain#binsight-chain@0.1.0",
+    "path+file:///workspace/binsight/crates/engine#binsight-engine@0.1.0",
+    "path+file:///workspace/binsight/crates/api#binsight-api@0.1.0",
+    "path+file:///workspace/binsight/crates/binsight#binsight@0.1.0",
+    "path+file:///workspace/binsight/xtask#xtask@0.1.0"
+  ],
+  "workspace_root": "/workspace/binsight",
+  "version": 1
+}
