@@ -14,7 +14,7 @@ mod validate;
 use std::path::Path;
 
 pub use problems::{ConfigError, ConfigProblem, ConfigWarning, Setting, Source};
-pub use sources::{ConfigFile, ConfigSources, read_sources};
+pub use sources::{ConfigFile, ConfigSources, config_file_path, read_env_file, read_sources};
 pub use validate::{Config, DEFAULT_BIND, LoadedConfig, validate};
 
 /// Reads and validates the configuration; `config_file_flag` is the `--config-file` option.

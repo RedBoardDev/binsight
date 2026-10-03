@@ -31,6 +31,12 @@ pub struct Cli {
 /// The commands.
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Write a configuration file with your Helius API key and password (asked without echo)
+    Init {
+        /// Replace the configuration file if it already exists
+        #[arg(long)]
+        force: bool,
+    },
     /// Run the server: open and upgrade the database, start the engine, serve the API and the
     /// web app until stopped (Ctrl-C or SIGTERM)
     Run,

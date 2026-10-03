@@ -23,6 +23,9 @@ pub const EXIT_INCOMPATIBLE_DATABASE: u8 = 65;
 /// A file or network operation failed (`EX_IOERR`).
 pub const EXIT_IO: u8 = 74;
 
+/// The command cannot run as invoked (`EX_USAGE`).
+pub const EXIT_USAGE: u8 = 64;
+
 /// Anything else.
 pub const EXIT_UNEXPECTED: u8 = 1;
 
@@ -32,6 +35,9 @@ pub enum Failure {
     /// The configuration is invalid; every problem is listed.
     #[error(transparent)]
     Config(#[from] ConfigError),
+    /// The command cannot run as invoked; the message says what to do instead.
+    #[error("{0}")]
+    Usage(String),
     /// Another binsight already holds the lock of the data folder.
     #[error("another binsight is already running with the data folder {}", path.display())]
     DataDirLocked {
@@ -71,6 +77,7 @@ impl Failure {
     pub fn exit_code(&self) -> ExitCode {
         ExitCode::from(match self {
             Self::Config(_) => EXIT_CONFIG,
+            Self::Usage(_) => EXIT_USAGE,
             Self::DataDirLocked { .. } => EXIT_LOCKED,
             Self::IncompatibleDatabase(_) => EXIT_INCOMPATIBLE_DATABASE,
             Self::Io { .. } | Self::BackupFailed(_) => EXIT_IO,

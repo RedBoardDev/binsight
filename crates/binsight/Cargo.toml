@@ -26,6 +26,7 @@ binsight-core.workspace = true
 binsight-engine.workspace = true
 binsight-store.workspace = true
 clap.workspace = true
+dialoguer.workspace = true
 dotenvy.workspace = true
 getrandom.workspace = true
 hex.workspace = true

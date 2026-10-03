@@ -68,6 +68,16 @@ pub fn read_sources(config_file_flag: Option<&Path>) -> Result<ConfigSources, Ve
     Ok(ConfigSources { env, file })
 }
 
+/// Where the configuration file is (or would be): `config_file_flag`, else
+/// `BINSIGHT_CONFIG_FILE`, else the default path. `None` only when no home folder is known.
+pub fn config_file_path(config_file_flag: Option<&Path>) -> Option<PathBuf> {
+    let env = read_environment();
+    config_file_flag
+        .map(Path::to_path_buf)
+        .or_else(|| env.get(CONFIG_FILE_VARIABLE).map(PathBuf::from))
+        .or_else(|| default_config_file(&env))
+}
+
 /// The `BINSIGHT_*` and folder variables of this process. Variables whose name or value is not
 /// valid UTF-8 are skipped (none of ours can be).
 fn read_environment() -> BTreeMap<String, String> {
@@ -80,7 +90,11 @@ fn read_environment() -> BTreeMap<String, String> {
 }
 
 /// Reads a file of `NAME=value` lines (comments, quotes and `export` are understood).
-pub(crate) fn read_env_file(path: &Path) -> Result<ConfigFile, Vec<ConfigProblem>> {
+///
+/// # Errors
+///
+/// Returns a problem if the file cannot be read or a line cannot be parsed.
+pub fn read_env_file(path: &Path) -> Result<ConfigFile, Vec<ConfigProblem>> {
     let problem = |detail: String| {
         vec![ConfigProblem::new(
             Setting::ConfigFile,

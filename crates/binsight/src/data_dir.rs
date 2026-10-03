@@ -71,7 +71,7 @@ impl LockedDataDir {
 }
 
 /// Creates `path` and its parents; new folders are readable by their owner only.
-fn create_private_folder(path: &Path) -> std::io::Result<()> {
+pub(crate) fn create_private_folder(path: &Path) -> std::io::Result<()> {
     let mut builder = std::fs::DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]

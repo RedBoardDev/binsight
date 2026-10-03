@@ -34,13 +34,18 @@ pub async fn ensure_instance_secrets(store: &Store) -> Result<SessionSecret, Fai
 
 /// `length` random bytes, in hexadecimal.
 pub(crate) fn random_hex(length: usize) -> Result<String, Failure> {
+    random_bytes(length).map(hex::encode)
+}
+
+/// `length` bytes from the operating system's secure random generator.
+pub(crate) fn random_bytes(length: usize) -> Result<Vec<u8>, Failure> {
     let mut bytes = vec![0_u8; length];
     getrandom::fill(&mut bytes).map_err(|error| {
         Failure::Unexpected(anyhow::anyhow!(
             "the system random generator failed: {error}"
         ))
     })?;
-    Ok(hex::encode(bytes))
+    Ok(bytes)
 }
 
 fn decode_session_secret(stored: &str) -> Result<SessionSecret, Failure> {
