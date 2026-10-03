@@ -22,17 +22,23 @@ pub enum Setting {
     PublicUrl,
     /// `BINSIGHT_CONFIG_FILE`: the configuration file (environment or command line only).
     ConfigFile,
+    /// `BINSIGHT_LOG`: which log events are written.
+    Log,
+    /// `BINSIGHT_LOG_FORMAT`: `pretty` or `json`.
+    LogFormat,
 }
 
 impl Setting {
     /// Every setting, in the order they are reported.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 8] = [
         Self::Password,
         Self::HeliusApiKey,
         Self::DataDir,
         Self::Bind,
         Self::PublicUrl,
         Self::ConfigFile,
+        Self::Log,
+        Self::LogFormat,
     ];
 
     /// The environment variable of the setting.
@@ -44,6 +50,8 @@ impl Setting {
             Self::Bind => "BINSIGHT_BIND",
             Self::PublicUrl => "BINSIGHT_PUBLIC_URL",
             Self::ConfigFile => "BINSIGHT_CONFIG_FILE",
+            Self::Log => "BINSIGHT_LOG",
+            Self::LogFormat => "BINSIGHT_LOG_FORMAT",
         }
     }
 

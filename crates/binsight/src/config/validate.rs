@@ -17,6 +17,9 @@ use super::paths::{default_data_dir, expand_home};
 use super::problems::{ConfigError, ConfigProblem, ConfigWarning, Setting, Source};
 use super::sources::{ConfigSources, VARIABLE_PREFIX};
 use super::suggestion::closest_variable;
+use crate::logging::{
+    DEFAULT_LOG_FILTER, DEFAULT_LOG_FORMAT, LogFormat, LogSettings, parse_filter,
+};
 
 /// Where the server listens when nothing else is configured: this machine only.
 pub const DEFAULT_BIND: &str = "127.0.0.1:8080";
@@ -34,6 +37,8 @@ pub struct Config {
     pub bind: SocketAddr,
     /// The address the owner opens binsight at, if it differs from `bind`.
     pub public_url: Option<PublicUrl>,
+    /// What is logged and how.
+    pub log: LogSettings,
     /// The configuration file that was read, if any.
     pub config_file: Option<PathBuf>,
     /// Where each set value came from.
@@ -61,23 +66,36 @@ pub fn validate(sources: &ConfigSources) -> Result<LoadedConfig, ConfigError> {
     let data_dir = reader.data_dir();
     let bind = reader.with_default(Setting::Bind, DEFAULT_BIND, str::parse::<SocketAddr>);
     let public_url = reader.optional(Setting::PublicUrl, PublicUrl::parse);
-    match (password, helius_api_key, data_dir, bind) {
-        (Some(password), Some(helius_api_key), Some(data_dir), Some(bind))
-            if reader.problems.is_empty() =>
-        {
-            Ok(LoadedConfig {
-                config: Config {
-                    password,
-                    helius_api_key,
-                    data_dir,
-                    bind,
-                    public_url,
-                    config_file: sources.file.as_ref().map(|file| file.path.clone()),
-                    origins: reader.origins,
-                },
-                warnings: warnings(sources),
-            })
-        }
+    let log_filter = reader.with_default(Setting::Log, DEFAULT_LOG_FILTER, parse_filter);
+    let log_format = reader.with_default(Setting::LogFormat, DEFAULT_LOG_FORMAT, LogFormat::parse);
+    match (
+        password,
+        helius_api_key,
+        data_dir,
+        bind,
+        log_filter,
+        log_format,
+    ) {
+        (
+            Some(password),
+            Some(helius_api_key),
+            Some(data_dir),
+            Some(bind),
+            Some(filter),
+            Some(format),
+        ) if reader.problems.is_empty() => Ok(LoadedConfig {
+            config: Config {
+                password,
+                helius_api_key,
+                data_dir,
+                bind,
+                public_url,
+                log: LogSettings { filter, format },
+                config_file: sources.file.as_ref().map(|file| file.path.clone()),
+                origins: reader.origins,
+            },
+            warnings: warnings(sources),
+        }),
         _ => Err(ConfigError {
             problems: reader.problems,
         }),

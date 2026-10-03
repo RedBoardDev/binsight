@@ -198,3 +198,38 @@ fn warns_when_other_users_can_read_the_file() {
         ConfigWarning::FileReadableByOthers { .. }
     ));
 }
+
+#[test]
+fn logs_at_info_in_the_readable_format_by_default() {
+    let loaded = validate(&sources(
+        &[
+            ("HOME", "/home/owner"),
+            ("BINSIGHT_PASSWORD", PASSWORD),
+            ("BINSIGHT_HELIUS_API_KEY", KEY),
+        ],
+        None,
+    ))
+    .unwrap();
+
+    assert_eq!(loaded.config.log.filter, "info");
+    assert_eq!(
+        loaded.config.log.format,
+        binsight::logging::LogFormat::Pretty
+    );
+}
+
+#[test]
+fn refuses_an_unknown_log_format() {
+    let error = validate(&sources(
+        &[
+            ("HOME", "/home/owner"),
+            ("BINSIGHT_PASSWORD", PASSWORD),
+            ("BINSIGHT_HELIUS_API_KEY", KEY),
+            ("BINSIGHT_LOG_FORMAT", "xml"),
+        ],
+        None,
+    ))
+    .unwrap_err();
+
+    assert_eq!(error.problems[0].setting, Setting::LogFormat);
+}

@@ -12,3 +12,4 @@
 //! everything else lives in this library, so it can be tested.
 
 pub mod config;
+pub mod logging;
