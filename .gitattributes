@@ -1,0 +1,9 @@
+* text=auto eol=lf
+*.png binary
+*.ico binary
+*.woff2 binary
+*.db binary
+Cargo.lock linguist-generated=true
+web/pnpm-lock.yaml linguist-generated=true
+openapi/v1.json linguist-generated=true
+web/src/lib/api/generated/** linguist-generated=true
