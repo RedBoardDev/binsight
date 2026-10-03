@@ -1,0 +1,16 @@
+[package]
+name = "binsight"
+description = "Self-hostable portfolio tracker for Meteora DLMM liquidity positions."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "binsight"
+path = "src/main.rs"
+
+[lints]
+workspace = true

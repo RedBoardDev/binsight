@@ -1,0 +1,98 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT"
+repository = "https://github.com/RedBoardDev/binsight"
+publish = false
+
+[workspace.dependencies]
+binsight-core = { path = "crates/core" }
+binsight-solana = { path = "crates/solana" }
+binsight-dlmm = { path = "crates/dlmm" }
+binsight-ledger = { path = "crates/ledger" }
+binsight-store = { path = "crates/store" }
+binsight-chain = { path = "crates/chain" }
+binsight-engine = { path = "crates/engine" }
+binsight-api = { path = "crates/api" }
+
+anyhow = "1.0.104"
+axum = "0.8.9"
+axum-extra = { version = "0.12.6", default-features = false, features = ["cookie-signed"] }
+bs58 = "0.5.1"
+clap = { version = "4.6.7", features = ["derive"] }
+deadpool-sqlite = { version = "0.14.0", features = ["rt_tokio_1"] }
+dialoguer = { version = "0.12.0", default-features = false, features = ["password"] }
+dotenvy = "0.15.7"
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+getrandom = "0.4.3"
+hex = "0.4.3"
+hmac = "0.13.0"
+jiff = { version = "0.2.37", default-features = false, features = ["std"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+rust-embed = { version = "8.12.0", features = ["mime-guess"] }
+secrecy = "0.10.3"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+subtle = "2.6.1"
+thiserror = "2.0.21"
+tokio = { version = "1.53.2", default-features = false }
+tokio-stream = { version = "0.1.19", default-features = false, features = ["time", "sync"] }
+tokio-util = "0.7.18"
+tower = { version = "0.5.3", features = ["util"] }
+tower-http = { version = "0.7.1", features = [
+    "trace", "request-id", "set-header", "sensitive-headers", "compression-gzip",
+    "compression-br", "timeout", "limit", "catch-panic", "csrf",
+] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json", "fmt", "ansi"] }
+utoipa = { version = "6.0.0", features = ["jiff_0_2"] }
+utoipa-axum = "0.3.0"
+
+# dev-only
+http-body-util = "0.1.5"
+insta = { version = "1.49.0", features = ["json", "redactions"] }
+proptest = "1.11.0"
+tempfile = "3.27.0"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+unreachable_pub = "warn"
+unused_qualifications = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+allow_attributes_without_reason = "deny"
+dbg_macro = "deny"
+exit = "deny"
+expect_used = "deny"
+get_unwrap = "deny"
+indexing_slicing = "deny"
+mem_forget = "deny"
+panic = "deny"
+print_stderr = "deny"
+print_stdout = "deny"
+string_slice = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+unwrap_used = "deny"
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 1
+
+[profile.release]
+lto = "thin"
+strip = "symbols"

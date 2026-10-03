@@ -1,0 +1,15 @@
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
+allow-print-in-tests = true
+doc-valid-idents = ["SQLite", "OpenAPI", "JSON-RPC", "WebSocket", "Helius", "Solana", "Meteora", "DLMM", "PnL", "GitHub", ".."]
+disallowed-methods = [
+  { path = "std::env::var", reason = "read configuration through binsight::config only" },
+  { path = "std::env::var_os", reason = "read configuration through binsight::config only" },
+  { path = "std::env::vars", reason = "read configuration through binsight::config only" },
+  { path = "std::time::SystemTime::now", reason = "inject a binsight_core::clock::Clock" },
+  { path = "jiff::Timestamp::now", reason = "inject a binsight_core::clock::Clock" },
+  { path = "jiff::Zoned::now", reason = "inject a binsight_core::clock::Clock" },
+  { path = "std::thread::sleep", reason = "never block the async runtime; use tokio::time::sleep" },
+]
