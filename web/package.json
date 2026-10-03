@@ -21,7 +21,8 @@
     "i18n:check": "lingui check sync --clean && lingui check missing",
     "openapi:generate": "openapi-typescript ../openapi/v1.json --output src/lib/api/generated/openapi.d.ts",
     "openapi:check": "pnpm openapi:generate && git diff --exit-code -- src/lib/api/generated",
-    "licenses:check": "node scripts/thirdPartyNotices.ts --check"
+    "licenses:check": "node scripts/thirdPartyNotices.ts --check",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "@heroui/react": "3.2.6",
@@ -44,10 +45,12 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
     "@biomejs/biome": "2.5.15",
     "@lingui/cli": "6.9.0",
     "@lingui/format-po": "6.9.0",
     "@lingui/vite-plugin": "6.9.0",
+    "@playwright/test": "1.63.0",
     "@tailwindcss/vite": "4.3.3",
     "@tanstack/router-cli": "1.167.40",
     "@tanstack/router-plugin": "1.168.42",

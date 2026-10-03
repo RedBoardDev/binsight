@@ -62,6 +62,15 @@ Vite plugin and by `pnpm typecheck` and `pnpm test` (`tsr generate`); it is igno
 from the repository root, which regenerates the contract from the Rust code and then this file, and commit
 both. On a merge conflict in either file, take one side and regenerate; never merge them by hand.
 
+## End-to-end smoke test
+
+`just e2e` (from the repository root) builds the web app and the debug binary, then runs `e2e/smoke.spec.ts`
+with Playwright on a desktop and a mobile Chromium: Playwright starts the server itself with a temporary data
+folder and the password `e2e-password-not-a-secret`, signs in, checks the dashboard, the live status, the 404
+page and sign-out, and runs axe on each page (no serious or critical violation). Install the browser once with
+`pnpm exec playwright install chromium` (add `--with-deps` on a machine where you may install system
+libraries). Set `E2E_BASE_URL` to test a server that is already running.
+
 ## Translations
 
 The interface is in English, French and German (Lingui). The English text is the message key. After adding or
