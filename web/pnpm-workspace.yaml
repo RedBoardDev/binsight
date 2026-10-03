@@ -1,0 +1,9 @@
+# Settings only: web/ is a single package, so there is no `packages:` list.
+engineStrict: true
+saveExact: true
+minimumReleaseAge: 1440
+trustPolicy: no-downgrade
+blockExoticSubdeps: true
+strictDepBuilds: true
+# Every dependency build script is reviewed before it is allowed here (true) or explicitly skipped (false).
+allowBuilds: {}

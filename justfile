@@ -1,14 +1,16 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
+web := "pnpm --dir web"
+
 # List the recipes.
 default:
     @just --list --unsorted
 
 # --- Everyday -------------------------------------------------------------
 
-# Install the git hooks (the web dependencies join this recipe with the web app).
+# Install the git hooks and the web dependencies.
 [group('setup')]
-setup: hooks
+setup: hooks web-install
 
 # Link the commit-msg hook (keeps any hook you already have).
 [group('setup')]
@@ -36,6 +38,28 @@ fmt: rust-fmt
 
 # Build the release binary.
 build: rust-build
+
+# --- Web ------------------------------------------------------------------
+
+# Install the web dependencies exactly as locked.
+[group('web')]
+web-install:
+    {{ web }} install --frozen-lockfile
+
+# Run the Vite dev server (http://localhost:5173, /api proxied to the server).
+[group('web')]
+web-dev:
+    {{ web }} dev
+
+# Typecheck the web app.
+[group('web')]
+web-typecheck:
+    {{ web }} typecheck
+
+# Build the web app into web/dist.
+[group('web')]
+web-build:
+    {{ web }} build
 
 # --- Rust -----------------------------------------------------------------
 
