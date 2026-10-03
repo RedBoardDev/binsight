@@ -39,6 +39,10 @@ RUN cargo build --release --locked -p binsight \
 
 # 3. Runtime: no shell, no package manager, not root.
 FROM gcr.io/distroless/cc-debian13:nonroot@sha256:e792ab3d241a468a4fd7519ddbbebe66b49b5f365771716ea688ad40b6c6f1c2
+# GHCR links the package to the repository through the source label.
+LABEL org.opencontainers.image.source="https://github.com/RedBoardDev/binsight" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.description="Self-hostable tracker for Meteora DLMM liquidity positions, with exact on-chain PnL."
 COPY --from=builder /binsight /usr/local/bin/binsight
 COPY --from=builder --chown=65532:65532 /data-skeleton /data
 ENV BINSIGHT_DATA_DIR=/data \
