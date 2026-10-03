@@ -50,7 +50,16 @@ Vite plugin and by `pnpm typecheck` and `pnpm test` (`tsr generate`); it is igno
    under Node; components and hooks run under jsdom. `test/architecture.spec.ts` checks the module rules of
    `web.md` over `src/`: its failure message names the rule and the fix.
 4. `pnpm i18n:check`: the message catalogs match the code and every message is translated.
-5. `pnpm build`: the production build in `dist/`. It fails on a missing translation.
+5. `pnpm openapi:check`: the typed API client matches `openapi/v1.json`.
+6. `pnpm build`: the production build in `dist/`. It fails on a missing translation.
+
+## API client
+
+`src/lib/api/generated/openapi.d.ts` holds the types of the API, generated from the contract
+[`openapi/v1.json`](../openapi/v1.json) by `openapi-typescript`; `src/lib/api/client.ts` is the typed
+`openapi-fetch` client built on them. Never edit the generated file: after an API change, run `just openapi`
+from the repository root, which regenerates the contract from the Rust code and then this file, and commit
+both. On a merge conflict in either file, take one side and regenerate; never merge them by hand.
 
 ## Translations
 

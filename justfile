@@ -44,6 +44,12 @@ fmt: rust-fmt web-fix
 # Build the web app, then the release binary that embeds it.
 build: web-build rust-build
 
+# Regenerate the OpenAPI contract, then the typed web client from it (commit both).
+openapi: rust-openapi web-openapi
+
+# Check that the contract matches the Rust code and the web client matches the contract.
+openapi-check: rust-openapi-check web-openapi-check
+
 # --- Web ------------------------------------------------------------------
 
 # Install the web dependencies exactly as locked.
@@ -86,6 +92,17 @@ web-i18n:
 web-i18n-check:
     {{ web }} i18n:check
 
+# Regenerate the typed API client from openapi/v1.json.
+[group('web')]
+web-openapi:
+    {{ web }} openapi:generate
+
+# Check that the committed API client matches openapi/v1.json. The script's git pathspec is
+# relative to web/: one that matches nothing would make the check pass in silence.
+[group('web')]
+web-openapi-check:
+    {{ web }} openapi:check
+
 # Build the web app into web/dist.
 [group('web')]
 web-build:
@@ -93,13 +110,7 @@ web-build:
 
 # Everything CI checks on the web side.
 [group('web')]
-web-check: web-lint web-typecheck web-test web-i18n-check web-build
-
-# Regenerate the OpenAPI contract (commit the result).
-openapi: rust-openapi
-
-# Check that the committed OpenAPI contract matches the code.
-openapi-check: rust-openapi-check
+web-check: web-lint web-typecheck web-test web-i18n-check web-openapi-check web-build
 
 # --- Rust -----------------------------------------------------------------
 

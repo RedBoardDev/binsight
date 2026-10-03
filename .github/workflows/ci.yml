@@ -199,6 +199,10 @@ jobs:
         id: i18n
         continue-on-error: true
         run: pnpm i18n:check
+      - name: API client up to date
+        id: openapi
+        continue-on-error: true
+        run: pnpm openapi:check
       - name: Build (fails on a missing translation)
         id: build
         continue-on-error: true
@@ -218,6 +222,7 @@ jobs:
           TYPECHECK: ${{ steps.typecheck.outcome }}
           TEST: ${{ steps.test.outcome }}
           I18N: ${{ steps.i18n.outcome }}
+          OPENAPI: ${{ steps.openapi.outcome }}
           BUILD: ${{ steps.build.outcome }}
         run: |
           status=0
@@ -229,6 +234,7 @@ jobs:
           report Typecheck "$TYPECHECK"
           report "Unit tests" "$TEST"
           report "Message catalogs" "$I18N"
+          report "API client" "$OPENAPI"
           report Build "$BUILD"
           exit "$status"
 
