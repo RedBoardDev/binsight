@@ -66,6 +66,11 @@ web-fix:
 web-typecheck:
     {{ web }} typecheck
 
+# Run the web unit tests and the architecture test.
+[group('web')]
+web-test:
+    {{ web }} test
+
 # Build the web app into web/dist.
 [group('web')]
 web-build:
