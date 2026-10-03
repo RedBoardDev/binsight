@@ -12,6 +12,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+jiff.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
