@@ -1,0 +1,14 @@
+# Exceptions to the size limits checked by `cargo xtask structure`:
+#   - a source file has at most 500 lines (aim for 250; over 300 needs a reason in review);
+#   - a folder holds at most 12 source files (tests and generated files excluded).
+#
+# Split the code before adding an entry here: an exception is a debt. Every entry needs a reason,
+# and an entry that is no longer needed fails the check, so this list can only shrink.
+#
+# [[file]]
+# path = "crates/example/src/lookup_table.rs"
+# reason = "why this file cannot be split"
+#
+# [[folder]]
+# path = "crates/example/src/routes"
+# reason = "why this folder cannot be split"
