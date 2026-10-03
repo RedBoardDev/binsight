@@ -24,7 +24,7 @@ use crate::data_dir::LockedDataDir;
 use crate::failure::Failure;
 use crate::instance_secrets::ensure_instance_secrets;
 use crate::logging;
-use crate::shutdown::cancel_on_signal;
+use crate::shutdown::StopSignals;
 use crate::web_assets::EmbeddedWebApp;
 
 /// The longest graceful shutdown before the remaining work is dropped.
@@ -65,9 +65,12 @@ async fn serve(config: Config) -> Result<(), Failure> {
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let store = open_store(&data_dir, clock.as_ref()).await?;
     let session_secret = ensure_instance_secrets(&store).await?;
+    let shutdown = CancellationToken::new();
+    // Listening for stop signals starts here, before the server says it is up: a signal sent
+    // before then would otherwise kill the process without a graceful shutdown.
+    tokio::spawn(StopSignals::listen().cancel_on_signal(shutdown.clone()));
     let listener = listen(config.bind).await?;
     let (engine, handle) = Engine::new(store.clone());
-    let shutdown = CancellationToken::new();
     let state = AppState::new(AppStateParts {
         engine: handle,
         auth: AuthSettings {
@@ -112,15 +115,15 @@ async fn listen(address: SocketAddr) -> Result<TcpListener, Failure> {
     Ok(listener)
 }
 
-/// Runs the engine and the server together. A stop signal, or either of them ending (normally
-/// or not), stops both; once stopping, they get [`SHUTDOWN_DEADLINE_SECS`] seconds.
+/// Runs the engine and the server together. A cancelled `shutdown` (a stop signal), or either of
+/// them ending (normally or not), stops both; once stopping, they get
+/// [`SHUTDOWN_DEADLINE_SECS`] seconds.
 async fn supervise(
     engine: Engine,
     state: AppState,
     listener: TcpListener,
     shutdown: CancellationToken,
 ) -> Result<(), Failure> {
-    tokio::spawn(cancel_on_signal(shutdown.clone()));
     let engine = stop_all_when_done(shutdown.clone(), async {
         engine
             .run(shutdown.clone())
