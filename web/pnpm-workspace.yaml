@@ -7,6 +7,10 @@ blockExoticSubdeps: true
 strictDepBuilds: true
 # Every dependency build script is reviewed before it is allowed here (true) or explicitly skipped (false).
 allowBuilds: {}
+# openapi-typescript 7.13 declares typescript ^5 but runs on 6 (it needs the JS API that 7 dropped).
+peerDependencyRules:
+  allowedVersions:
+    openapi-typescript>typescript: '6'
 # Versions published before their package adopted npm provenance look like a trust downgrade.
 # Each entry is an exact version that was checked by hand; never exclude a whole package.
 trustPolicyExclude:
