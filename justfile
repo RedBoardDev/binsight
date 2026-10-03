@@ -97,8 +97,8 @@ web-i18n-check:
 web-openapi:
     {{ web }} openapi:generate
 
-# Check that the committed API client matches openapi/v1.json. The script's git pathspec is
-# relative to web/: one that matches nothing would make the check pass in silence.
+# The script's git pathspec is relative to web/: one that matches nothing would pass in silence.
+[doc('Check that the committed API client matches openapi/v1.json.')]
 [group('web')]
 web-openapi-check:
     {{ web }} openapi:check
@@ -186,3 +186,20 @@ rust-run *ARGS:
 rust-build:
     cargo clean -p binsight --release
     cargo build --release --locked -p binsight
+
+# --- Docker: always under the project name binsight-local, never another one -----
+
+# Build the image as binsight:local.
+[group('docker')]
+docker-build:
+    docker build -t binsight:local .
+
+# Run binsight:local with Docker Compose on http://localhost:18080 (password from .dev/binsight.env).
+[group('docker')]
+docker-up: docker-build rust-dev-env
+    BINSIGHT_IMAGE=binsight:local BINSIGHT_PORT=18080 docker compose -p binsight-local --env-file .dev/binsight.env up
+
+# Stop and remove the binsight-local containers (the data volume stays).
+[group('docker')]
+docker-down:
+    docker compose -p binsight-local --env-file .dev/binsight.env down

@@ -1,0 +1,14 @@
+# An allowlist: everything not listed below stays out of the build context.
+*
+!Cargo.toml
+!Cargo.lock
+!.cargo/
+!crates/
+!xtask/
+!web/
+web/node_modules/
+web/dist/
+web/playwright-report/
+web/test-results/
+**/*.env
+**/*.db*
