@@ -1,13 +1,23 @@
 import { NotFoundScreen } from '@app/core/NotFoundScreen';
 import { ShellErrorScreen } from '@app/core/ShellErrorScreen';
 import { routeTree } from '@app/routeTree.gen';
+import type { QueryClient } from '@tanstack/react-query';
 import { createRouter, type RouterHistory } from '@tanstack/react-router';
 
-const buildRouter = (history: RouterHistory | undefined) =>
+interface AppRouterOptions {
+  readonly queryClient: QueryClient;
+  readonly history?: RouterHistory;
+}
+
+const buildRouter = ({ queryClient, history }: AppRouterOptions) =>
   createRouter({
     routeTree,
+    context: { queryClient },
     ...(history === undefined ? {} : { history }),
     defaultPreload: 'intent',
+    // TanStack Query owns the cache: the router hands every preload to it, and the query's own
+    // staleTime decides whether to fetch.
+    defaultPreloadStaleTime: 0,
     // Set on every route, so a failing page renders inside its parent's layout: the menu stays.
     defaultErrorComponent: ShellErrorScreen,
     defaultNotFoundComponent: NotFoundScreen,
@@ -15,12 +25,7 @@ const buildRouter = (history: RouterHistory | undefined) =>
 
 export type AppRouter = ReturnType<typeof buildRouter>;
 
-interface AppRouterOptions {
-  readonly history?: RouterHistory;
-}
-
-export const createAppRouter = ({ history }: AppRouterOptions = {}): AppRouter =>
-  buildRouter(history);
+export const createAppRouter = (options: AppRouterOptions): AppRouter => buildRouter(options);
 
 declare module '@tanstack/react-router' {
   interface Register {

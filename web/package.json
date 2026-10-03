@@ -27,6 +27,7 @@
     "@heroui/styles": "3.2.6",
     "@lingui/core": "6.9.0",
     "@lingui/react": "6.9.0",
+    "@tanstack/react-query": "5.104.1",
     "@tanstack/react-router": "1.170.41",
     "lucide-react": "1.50.0",
     "openapi-fetch": "0.17.0",

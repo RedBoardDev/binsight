@@ -1,14 +1,18 @@
 import { LocaleProvider } from '@app/core/i18n/LocaleProvider';
 import { Toast } from '@heroui/react';
+import { type QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 
 interface AppProvidersProps {
+  queryClient: QueryClient;
   children: ReactNode;
 }
 
-export const AppProviders = ({ children }: AppProvidersProps) => (
-  <LocaleProvider>
-    <Toast.Provider placement="top" />
-    {children}
-  </LocaleProvider>
+export const AppProviders = ({ queryClient, children }: AppProvidersProps) => (
+  <QueryClientProvider client={queryClient}>
+    <LocaleProvider>
+      <Toast.Provider placement="top" />
+      {children}
+    </LocaleProvider>
+  </QueryClientProvider>
 );

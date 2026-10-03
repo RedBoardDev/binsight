@@ -1,6 +1,4 @@
-import { createAppRouter } from '@app/core/router';
-import { createMemoryHistory, RouterProvider } from '@tanstack/react-router';
-import { renderWithProviders } from '@test/renderWithProviders';
+import { renderAppAt } from '@test/renderAppAt';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -20,8 +18,7 @@ describe('ShellErrorScreen', () => {
   it('shows a failing page inside the shell and renders it again on retry', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const user = userEvent.setup();
-    const router = createAppRouter({ history: createMemoryHistory({ initialEntries: ['/'] }) });
-    renderWithProviders(<RouterProvider router={router} />);
+    renderAppAt('/');
 
     expect(await screen.findByRole('heading', { name: 'Something went wrong' })).toBeVisible();
     expect(screen.getAllByRole('navigation', { name: 'Main navigation' })).toHaveLength(2);
