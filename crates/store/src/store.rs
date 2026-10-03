@@ -62,6 +62,23 @@ impl Store {
     }
 }
 
+impl Store {
+    /// Copies the write-ahead log back into the database file and empties it, so the file alone
+    /// holds everything. Called once at shutdown.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the checkpoint cannot run.
+    pub async fn checkpoint(&self) -> Result<(), StoreError> {
+        self.database
+            .write(|connection| {
+                connection.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))?;
+                Ok(())
+            })
+            .await
+    }
+}
+
 /// Runs `SELECT 1`, the cheapest query that proves a connection works.
 fn select_one(connection: &rusqlite::Connection) -> Result<(), StoreError> {
     connection.query_row("SELECT 1", [], |_| Ok(()))?;
@@ -81,6 +98,21 @@ mod tests {
 
         assert!(matches!(error, StoreError::NotFound { .. }));
         assert!(!path.exists(), "opening must not create the file");
+    }
+
+    #[tokio::test]
+    async fn empties_the_write_ahead_log_on_checkpoint() {
+        let (folder, store) = crate::test_database::migrated_store().await;
+        store
+            .meta()
+            .set(crate::MetaKey::InstanceId, "abc".to_owned())
+            .await
+            .unwrap();
+
+        store.checkpoint().await.unwrap();
+
+        let wal = folder.path().join("binsight.db-wal");
+        assert_eq!(std::fs::metadata(wal).map_or(0, |file| file.len()), 0);
     }
 
     #[tokio::test]
