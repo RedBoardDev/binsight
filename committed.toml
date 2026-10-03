@@ -1,0 +1,17 @@
+# Commit message rules, checked by `committed` in CI and by the optional local hook (`just hooks`).
+# They mirror .claude/rules/git.md: Conventional Commits, imperative summary, 72-column lines.
+style = "conventional"
+allowed_types = ["feat", "fix", "refactor", "perf", "test", "docs", "build", "ci", "chore"]
+# A crate name, or one of the shared areas. The scope is optional.
+allowed_scopes = [
+  "core", "solana", "dlmm", "ledger", "store", "chain", "engine", "api", "binsight",
+  "web", "xtask", "deps", "github",
+]
+subject_length = 72
+line_length = 72
+subject_capitalized = false
+subject_not_punctuated = true
+imperative_subject = true
+no_fixup = true
+no_wip = true
+merge_commit = false   # false disallows merge commits: main stays linear (fast-forward merges only)

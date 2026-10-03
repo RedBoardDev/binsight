@@ -6,6 +6,20 @@ default:
 
 # --- Everyday -------------------------------------------------------------
 
+# Install the git hooks (the web dependencies join this recipe with the web app).
+[group('setup')]
+setup: hooks
+
+# Link the commit-msg hook (keeps any hook you already have).
+[group('setup')]
+hooks:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    hook="$(git rev-parse --git-path hooks)/commit-msg"
+    if [ -e "$hook" ] && [ ! -L "$hook" ]; then echo "keeping your own $hook"; exit 0; fi
+    mkdir -p "$(dirname "$hook")"
+    ln -sf "$PWD/.githooks/commit-msg" "$hook"
+
 # Run the server with the development config in .dev/.
 [group('dev')]
 dev: rust-dev-env

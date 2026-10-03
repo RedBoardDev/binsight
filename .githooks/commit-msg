@@ -1,0 +1,7 @@
+#!/bin/sh
+if ! command -v committed >/dev/null 2>&1; then
+  echo "commit-msg: 'committed' is not installed; skipping (CI checks every commit)." >&2
+  echo "  install it with: cargo install committed --locked" >&2
+  exit 0
+fi
+exec committed --commit-file "$1"
