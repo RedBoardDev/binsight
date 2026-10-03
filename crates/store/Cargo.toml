@@ -10,3 +10,12 @@ publish.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+deadpool-sqlite.workspace = true
+rusqlite.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

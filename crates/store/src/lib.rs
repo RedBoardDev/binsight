@@ -6,3 +6,16 @@
 //! **May depend on:** `binsight-core`, `binsight-solana`, `binsight-dlmm`, `binsight-ledger`.
 //! **Must not depend on:** `binsight-chain`, `binsight-engine`, `binsight-api`, any HTTP crate.
 //! (Checked in CI by `cargo xtask layering`.)
+//!
+//! **Start here:** [`Store`].
+//!
+//! Inside the crate, SQL runs in plain synchronous functions that receive a connection; only the
+//! connection pools in `pools` run them, on a blocking thread. Callers outside the crate see typed
+//! async methods and never a SQLite type.
+
+mod error;
+mod pools;
+mod store;
+
+pub use error::StoreError;
+pub use store::Store;
