@@ -25,3 +25,7 @@ binsight.env
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# Local Claude Code state (the shared .claude/ rules are versioned)
+.claude/settings.local.json
+.claude/*.local.*
