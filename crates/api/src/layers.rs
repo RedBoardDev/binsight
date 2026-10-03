@@ -10,22 +10,29 @@ mod timeout;
 use std::any::Any;
 
 use axum::Router;
-use axum::extract::Request;
+use axum::extract::{DefaultBodyLimit, Request};
 use axum::http::header;
 use axum::middleware::from_fn;
 use axum::response::{IntoResponse, Response};
 use tower::ServiceBuilder;
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::compression::CompressionLayer;
+use tower_http::csrf::{CsrfLayer, ProtectionError};
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::sensitive_headers::SetSensitiveHeadersLayer;
 use tower_http::trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::{Level, Span, info_span};
 
-use crate::error::{ApiError, render_error_bodies};
+use crate::error::{ApiError, ErrorCode, render_error_bodies};
+
+/// The largest request body accepted; a login request is a few dozen bytes.
+const MAX_BODY_BYTES: usize = 64 * 1024;
 
 /// Wraps every route of `router` (and its fallbacks) in the middleware stack.
-pub(crate) fn apply(router: Router) -> Router {
+///
+/// `cross_site_protection` refuses state-changing requests sent by another site; it is configured
+/// with the trusted public URL, if any.
+pub(crate) fn apply(router: Router, cross_site_protection: CsrfLayer) -> Router {
     router.layer(
         ServiceBuilder::new()
             // Cookies and credentials never appear in logs.
@@ -51,7 +58,10 @@ pub(crate) fn apply(router: Router) -> Router {
             // Everything below may fail with an `ApiError`; its JSON body is written here.
             .layer(from_fn(render_error_bodies))
             .layer(CatchPanicLayer::custom(respond_to_panic))
-            .layer(from_fn(timeout::time_out_slow_requests)),
+            .layer(from_fn(timeout::time_out_slow_requests))
+            // A browser cannot be tricked into changing state from another site.
+            .layer(cross_site_protection.with_rejection_response(refuse_cross_site_request))
+            .layer(DefaultBodyLimit::max(MAX_BODY_BYTES)),
     )
 }
 
@@ -68,6 +78,15 @@ fn request_span(request: &Request) -> Span {
         path = %request.uri().path(),
         request_id,
     )
+}
+
+/// A state-changing request came from another site.
+fn refuse_cross_site_request(_error: ProtectionError) -> Response {
+    ApiError::new(
+        ErrorCode::ForbiddenCrossOrigin,
+        "cross-site requests may not change anything",
+    )
+    .into_response()
 }
 
 /// A handler panicked: answer with a server error instead of dropping the connection.
@@ -91,7 +110,10 @@ mod tests {
 
     #[tokio::test]
     async fn answers_a_panicking_handler_with_a_generic_json_500() {
-        let router = apply(Router::new().route("/boom", get(panicking_handler)));
+        let router = apply(
+            Router::new().route("/boom", get(panicking_handler)),
+            CsrfLayer::new(),
+        );
 
         let response = router
             .oneshot(Request::get("/boom").body(Body::empty()).unwrap())

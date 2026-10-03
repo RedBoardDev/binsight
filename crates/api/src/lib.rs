@@ -10,8 +10,10 @@
 //! (Checked in CI by `cargo xtask layering`.)
 //!
 //! **Start here:** [`router`] builds the application from an [`AppState`]; [`serve`] runs it.
-//! Every error answers with the same JSON body, built in `error`.
+//! Every error answers with the same JSON body, built in `error`. Authentication settings come
+//! from [`auth`].
 
+pub mod auth;
 mod error;
 mod health;
 mod layers;

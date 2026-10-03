@@ -1,15 +1,18 @@
 //! Assembles the routes, the fallbacks and the middleware into the application router.
 //!
-//! Every API route is registered here together with its OpenAPI documentation. Unknown paths and
-//! wrong methods get JSON errors. This module wires; handlers live in their own modules.
+//! Every API route is registered here together with its OpenAPI documentation, either as public or
+//! behind the session guard. Unknown paths and wrong methods get JSON errors. This module wires;
+//! handlers live in their own modules.
 
 use axum::Router;
 use axum::http::Uri;
+use axum::middleware::from_fn_with_state;
 use axum::response::{IntoResponse, Response};
 use utoipa::OpenApi;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
+use crate::auth::{require_session, routes as auth};
 use crate::error::{ApiError, ErrorCode};
 use crate::openapi::ApiDoc;
 use crate::state::AppState;
@@ -17,19 +20,38 @@ use crate::{health, layers, openapi};
 
 /// The complete application: every route, its fallbacks and the middleware stack.
 pub fn router(state: AppState) -> Router {
-    let (routes, _contract) = documented_routes().split_for_parts();
+    let routes = DocumentedRoutes::new();
+    let guard = from_fn_with_state(state.clone(), require_session);
+    let (routes, _contract) = routes
+        .public
+        .merge(routes.protected.route_layer(guard))
+        .split_for_parts();
+    let cross_site_protection = state.auth.cross_site_protection();
     let application = routes
         .fallback(route_not_found)
         .method_not_allowed_fallback(method_not_allowed)
         .with_state(state);
-    layers::apply(application)
+    layers::apply(application, cross_site_protection)
 }
 
-/// The documented routes; the same value produces the router and the OpenAPI contract.
-pub(crate) fn documented_routes() -> OpenApiRouter<AppState> {
-    OpenApiRouter::with_openapi(ApiDoc::openapi())
-        .routes(routes!(health::get_health))
-        .routes(routes!(openapi::get_openapi))
+/// Every API route with its documentation; the same value produces the router and the contract.
+pub(crate) struct DocumentedRoutes {
+    /// Routes anyone may call.
+    pub(crate) public: OpenApiRouter<AppState>,
+    /// Routes that need a session; the router puts them behind the session guard.
+    pub(crate) protected: OpenApiRouter<AppState>,
+}
+
+impl DocumentedRoutes {
+    pub(crate) fn new() -> Self {
+        let public = OpenApiRouter::with_openapi(ApiDoc::openapi())
+            .routes(routes!(health::get_health))
+            .routes(routes!(openapi::get_openapi))
+            .routes(routes!(auth::login))
+            .routes(routes!(auth::logout));
+        let protected = OpenApiRouter::new().routes(routes!(auth::get_session));
+        Self { public, protected }
+    }
 }
 
 async fn route_not_found(uri: Uri) -> Response {

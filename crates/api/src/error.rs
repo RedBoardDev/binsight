@@ -7,9 +7,11 @@
 
 mod api_error;
 mod code;
+mod json;
 mod rendering;
 
 pub(crate) use api_error::ApiError;
 pub(crate) use code::ErrorCode;
+pub(crate) use json::ApiJson;
 pub(crate) use rendering::{ErrorBody, ErrorDetail};
 pub(crate) use rendering::{REQUEST_ID_HEADER, render_error_bodies};

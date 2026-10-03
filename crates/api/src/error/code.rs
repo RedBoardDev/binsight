@@ -11,12 +11,25 @@ use utoipa::ToSchema;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ErrorCode {
+    /// The request body is not what the route expects (missing JSON content type, invalid JSON,
+    /// missing field).
+    InvalidRequest,
+    /// The route needs a session and there is none (or it expired): sign in.
+    Unauthenticated,
+    /// The password is wrong.
+    InvalidCredentials,
+    /// A state-changing request came from another site and was refused.
+    ForbiddenCrossOrigin,
     /// There is no API route at this path.
     NotFound,
     /// The route exists but not for this HTTP method.
     MethodNotAllowed,
     /// The server took too long to answer.
     RequestTimeout,
+    /// The request body is larger than the server accepts.
+    PayloadTooLarge,
+    /// Too many failed logins; the `Retry-After` header says how long to wait.
+    TooManyAttempts,
     /// Something failed on the server; the logs have the details under the request id.
     Internal,
 }
@@ -25,9 +38,14 @@ impl ErrorCode {
     /// The HTTP status that goes with the code.
     pub(crate) fn status(self) -> StatusCode {
         match self {
+            Self::InvalidRequest => StatusCode::BAD_REQUEST,
+            Self::Unauthenticated | Self::InvalidCredentials => StatusCode::UNAUTHORIZED,
+            Self::ForbiddenCrossOrigin => StatusCode::FORBIDDEN,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
             Self::RequestTimeout => StatusCode::REQUEST_TIMEOUT,
+            Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+            Self::TooManyAttempts => StatusCode::TOO_MANY_REQUESTS,
             Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }

@@ -13,9 +13,18 @@ workspace = true
 
 [dependencies]
 axum.workspace = true
+axum-extra.workspace = true
+binsight-core.workspace = true
 binsight-engine.workspace = true
+cookie.workspace = true
+hmac.workspace = true
+jiff = { workspace = true, features = ["serde"] }
+secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
 tokio = { workspace = true, features = ["net", "time"] }
 tokio-util.workspace = true
 tower.workspace = true

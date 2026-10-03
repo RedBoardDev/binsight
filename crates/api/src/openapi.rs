@@ -7,9 +7,12 @@
 
 use axum::http::header;
 use axum::response::IntoResponse;
-use utoipa::OpenApi;
+use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
+use utoipa::{Modify, OpenApi};
 
+use crate::auth::SESSION_COOKIE_NAME;
 use crate::error::{ErrorBody, ErrorCode, ErrorDetail};
+use crate::router::DocumentedRoutes;
 
 /// The version of the API contract. A compatible addition bumps the minor version; a breaking
 /// change gets a new `/api/v2` instead.
@@ -25,13 +28,31 @@ pub const API_CONTRACT_VERSION: &str = "1.0.0";
         license(name = "MIT", identifier = "MIT"),
     ),
     components(schemas(ErrorBody, ErrorDetail, ErrorCode)),
-    tags((name = "system", description = "The state of the server and its contract.")),
+    modifiers(&SessionCookie),
+    tags(
+        (name = "system", description = "The state of the server and its contract."),
+        (name = "auth", description = "Signing in and out with the owner's password."),
+    ),
 )]
 pub(crate) struct ApiDoc;
 
+/// Declares the `session_cookie` security scheme that protected operations refer to.
+struct SessionCookie;
+
+impl Modify for SessionCookie {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        let components = openapi.components.get_or_insert_with(Default::default);
+        components.add_security_scheme(
+            "session_cookie",
+            SecurityScheme::ApiKey(ApiKey::Cookie(ApiKeyValue::new(SESSION_COOKIE_NAME))),
+        );
+    }
+}
+
 /// The contract, built from the registered routes.
 pub fn spec() -> utoipa::openapi::OpenApi {
-    crate::router::documented_routes().into_openapi()
+    let routes = DocumentedRoutes::new();
+    routes.public.merge(routes.protected).into_openapi()
 }
 
 /// The contract as pretty-printed JSON, exactly as committed in `openapi/v1.json`.

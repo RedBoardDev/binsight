@@ -10,6 +10,147 @@
     "version": "1.0.0"
   },
   "paths": {
+    "/api/v1/auth/login": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Signs the owner in with the password and sets the session cookie.",
+        "operationId": "login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Signed in; the session cookie is set.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is not a valid login request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The password is wrong (`invalid_credentials`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A cross-site request (`forbidden_cross_origin`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many failed attempts (`too_many_attempts`); retry after the delay.",
+            "headers": {
+              "retry-after": {
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 0
+                },
+                "description": "Seconds to wait before the next attempt."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Signs out: deletes the session cookie. Always succeeds, signed in or not.",
+        "operationId": "logout",
+        "responses": {
+          "204": {
+            "description": "Signed out; the session cookie is deleted."
+          },
+          "403": {
+            "description": "A cross-site request (`forbidden_cross_origin`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/session": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "The current session, if the session cookie is valid.",
+        "operationId": "getSession",
+        "responses": {
+          "200": {
+            "description": "Signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionInfo"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
     "/api/v1/health": {
       "get": {
         "tags": [
@@ -95,9 +236,15 @@
         "type": "string",
         "description": "Why a request failed. Stable: clients use it as their translation key.",
         "enum": [
+          "invalid_request",
+          "unauthenticated",
+          "invalid_credentials",
+          "forbidden_cross_origin",
           "not_found",
           "method_not_allowed",
           "request_timeout",
+          "payload_too_large",
+          "too_many_attempts",
           "internal"
         ]
       },
@@ -159,6 +306,46 @@
           "ok",
           "unavailable"
         ]
+      },
+      "LoginRequest": {
+        "type": "object",
+        "description": "A login attempt. Deliberately not `Debug`: it holds the password.",
+        "required": [
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string",
+            "format": "password",
+            "description": "The owner's password."
+          }
+        }
+      },
+      "SessionInfo": {
+        "type": "object",
+        "description": "The current session.",
+        "required": [
+          "authenticated",
+          "expires_at"
+        ],
+        "properties": {
+          "authenticated": {
+            "type": "boolean",
+            "description": "Always `true`: without a session the API answers `401` instead."
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the session ends (RFC 3339, UTC); the owner must then sign in again."
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "session_cookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "binsight_session"
       }
     }
   },
@@ -166,6 +353,10 @@
     {
       "name": "system",
       "description": "The state of the server and its contract."
+    },
+    {
+      "name": "auth",
+      "description": "Signing in and out with the owner's password."
     }
   ]
 }
