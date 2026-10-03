@@ -22,22 +22,27 @@ hooks:
     mkdir -p "$(dirname "$hook")"
     ln -sf "$PWD/.githooks/commit-msg" "$hook"
 
-# Run the server with the development config in .dev/.
+# Run the server and the Vite dev server together (http://localhost:5173); Ctrl-C stops both.
 [group('dev')]
 dev: rust-dev-env
-    just rust-run
+    #!/usr/bin/env bash
+    set -euo pipefail
+    trap 'kill 0' EXIT
+    just rust-run &
+    just web-dev &
+    wait -n
 
 # Everything CI checks.
-check: rust-check
+check: rust-check web-check
 
 # Run every test.
-test: rust-test
+test: rust-test web-test
 
 # Format all the code.
-fmt: rust-fmt
+fmt: rust-fmt web-fix
 
-# Build the release binary.
-build: rust-build
+# Build the web app, then the release binary that embeds it.
+build: web-build rust-build
 
 # --- Web ------------------------------------------------------------------
 
@@ -75,6 +80,10 @@ web-test:
 [group('web')]
 web-build:
     {{ web }} build
+
+# Everything CI checks on the web side.
+[group('web')]
+web-check: web-lint web-typecheck web-test web-build
 
 # --- Rust -----------------------------------------------------------------
 
