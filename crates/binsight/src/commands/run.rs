@@ -58,6 +58,9 @@ async fn serve(config: Config) -> Result<(), Failure> {
         config_file = config.config_file.as_ref().map(|path| path.display().to_string()),
         "binsight starting"
     );
+    if !EmbeddedWebApp.is_built() {
+        warn!("this binary was built without the web app; it serves a placeholder page");
+    }
     let data_dir = LockedDataDir::open(&config.data_dir)?;
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let store = open_store(&data_dir, clock.as_ref()).await?;
