@@ -51,6 +51,16 @@ web-install:
 web-dev:
     {{ web }} dev
 
+# Check the web formatting and lints without changing any file.
+[group('web')]
+web-lint:
+    {{ web }} lint
+
+# Format the web code and apply the safe lint fixes.
+[group('web')]
+web-fix:
+    {{ web }} fix
+
 # Typecheck the web app.
 [group('web')]
 web-typecheck:

@@ -1,0 +1,89 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "root": true,
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "root": "..",
+    "useIgnoreFile": true,
+    "defaultBranch": "main"
+  },
+  "files": {
+    "includes": [
+      "**",
+      "!**/node_modules",
+      "!**/dist",
+      "!**/playwright-report",
+      "!**/test-results",
+      "!**/coverage",
+      "!src/routeTree.gen.ts",
+      "!src/lib/api/generated",
+      "!src/locales"
+    ]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100,
+    "lineEnding": "lf"
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "single",
+      "jsxQuoteStyle": "double",
+      "semicolons": "always",
+      "trailingCommas": "all",
+      "arrowParentheses": "always",
+      "bracketSpacing": true
+    }
+  },
+  "json": { "formatter": { "trailingCommas": "none" } },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "correctness": {
+        "noUnusedVariables": "error",
+        "noUnusedImports": "error",
+        "useExhaustiveDependencies": "error"
+      },
+      "suspicious": {
+        "noExplicitAny": "error",
+        "noConsole": { "level": "warn", "options": { "allow": ["error", "warn", "info"] } }
+      },
+      "performance": { "noBarrelFile": "error", "noReExportAll": "error" },
+      "style": {
+        "useConst": "error",
+        "useImportType": "error",
+        "useExportType": "error",
+        "noDefaultExport": "error",
+        "noNonNullAssertion": "error",
+        "useConsistentTypeDefinitions": { "level": "error", "options": { "style": "interface" } },
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "paths": {
+              "react-router": "Routing uses @tanstack/react-router.",
+              "react-router-dom": "Routing uses @tanstack/react-router.",
+              "clsx": "Use a Record<Variant, string> class table.",
+              "classnames": "Use a Record<Variant, string> class table.",
+              "tailwind-merge": "Use a Record<Variant, string> class table.",
+              "date-fns": "Format dates with Intl through the shared date formatters.",
+              "dayjs": "Format dates with Intl through the shared date formatters.",
+              "axios": "Use the API client generated from the OpenAPI contract.",
+              "zustand": "Use a module store read with useSyncExternalStore."
+            }
+          }
+        }
+      }
+    }
+  },
+  "assist": { "enabled": true, "actions": { "source": { "organizeImports": "on" } } },
+  "overrides": [
+    {
+      "includes": ["*.config.ts"],
+      "linter": { "rules": { "style": { "noDefaultExport": "off" } } }
+    }
+  ]
+}
