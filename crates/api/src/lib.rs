@@ -8,3 +8,18 @@
 //! `binsight-engine`.
 //! **Must not depend on:** `binsight-store`, `binsight-chain` (everything goes through the engine).
 //! (Checked in CI by `cargo xtask layering`.)
+//!
+//! **Start here:** [`router`] builds the application from an [`AppState`]; [`serve`] runs it.
+//! Every error answers with the same JSON body, built in `error`.
+
+mod error;
+mod health;
+mod layers;
+pub mod openapi;
+mod router;
+mod server;
+mod state;
+
+pub use router::router;
+pub use server::serve;
+pub use state::AppState;

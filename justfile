@@ -95,6 +95,12 @@ web-build:
 [group('web')]
 web-check: web-lint web-typecheck web-test web-i18n-check web-build
 
+# Regenerate the OpenAPI contract (commit the result).
+openapi: rust-openapi
+
+# Check that the committed OpenAPI contract matches the code.
+openapi-check: rust-openapi-check
+
 # --- Rust -----------------------------------------------------------------
 
 # Format the Rust code.
@@ -117,6 +123,16 @@ rust-lint:
 rust-test:
     cargo nextest run --workspace --locked --profile {{ if env("CI", "") == "true" { "ci" } else { "default" } }}
     cargo test --workspace --doc --locked
+
+# Regenerate openapi/v1.json from the Rust code.
+[group('rust')]
+rust-openapi:
+    BINSIGHT_UPDATE_OPENAPI=1 cargo nextest run --locked -p binsight-api -E 'binary(openapi_contract)'
+
+# Check that openapi/v1.json matches the Rust code (also part of rust-test).
+[group('rust')]
+rust-openapi-check:
+    cargo nextest run --locked -p binsight-api -E 'binary(openapi_contract)'
 
 # Check licenses, security advisories, banned crates and sources.
 [group('rust')]

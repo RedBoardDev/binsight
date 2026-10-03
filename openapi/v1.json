@@ -1,0 +1,171 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "binsight",
+    "description": "The HTTP API of a binsight server: health, authentication and live events.",
+    "license": {
+      "name": "MIT",
+      "identifier": "MIT"
+    },
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/v1/health": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Reports the health of the server.",
+        "operationId": "getHealth",
+        "responses": {
+          "200": {
+            "description": "The server and its database answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The database does not answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/openapi.json": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Serves the contract.",
+        "operationId": "getOpenApi",
+        "responses": {
+          "200": {
+            "description": "This contract, as OpenAPI 3.1 JSON.",
+            "content": {
+              "application/json": {}
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ComponentStatus": {
+        "type": "string",
+        "description": "Whether one component answers.",
+        "enum": [
+          "ok",
+          "unavailable"
+        ]
+      },
+      "EngineStatus": {
+        "type": "string",
+        "description": "Where the engine is in its lifecycle.",
+        "enum": [
+          "starting",
+          "running",
+          "stopping"
+        ]
+      },
+      "ErrorBody": {
+        "type": "object",
+        "description": "The body of every error response.",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorDetail",
+            "description": "What went wrong."
+          }
+        }
+      },
+      "ErrorCode": {
+        "type": "string",
+        "description": "Why a request failed. Stable: clients use it as their translation key.",
+        "enum": [
+          "not_found",
+          "method_not_allowed",
+          "request_timeout",
+          "internal"
+        ]
+      },
+      "ErrorDetail": {
+        "type": "object",
+        "description": "The content of an error body.",
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/ErrorCode",
+            "description": "The stable error code; clients translate it."
+          },
+          "message": {
+            "type": "string",
+            "description": "An English explanation for debugging; never shown to users as is."
+          },
+          "request_id": {
+            "type": "string",
+            "description": "The id of the request, also in the `x-request-id` response header."
+          }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "description": "The health report.",
+        "required": [
+          "status",
+          "version",
+          "database",
+          "engine"
+        ],
+        "properties": {
+          "database": {
+            "$ref": "#/components/schemas/ComponentStatus",
+            "description": "Whether the database answers."
+          },
+          "engine": {
+            "$ref": "#/components/schemas/EngineStatus",
+            "description": "Where the engine is in its lifecycle."
+          },
+          "status": {
+            "$ref": "#/components/schemas/HealthStatus",
+            "description": "`ok` when every component answers."
+          },
+          "version": {
+            "type": "string",
+            "description": "The binsight version, for example `0.1.0`."
+          }
+        }
+      },
+      "HealthStatus": {
+        "type": "string",
+        "description": "The overall verdict of a health check.",
+        "enum": [
+          "ok",
+          "unavailable"
+        ]
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "system",
+      "description": "The state of the server and its contract."
+    }
+  ]
+}
