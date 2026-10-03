@@ -124,6 +124,13 @@ rust-fmt:
 rust-fmt-check:
     cargo fmt --all --check
 
+# Without --all-targets, a dependency declared only for the tests cannot hide a crate that does
+# not build on its own.
+[doc('Compile every crate as it ships, without its tests.')]
+[group('rust')]
+rust-build-check:
+    cargo check --workspace --locked
+
 # Lint with clippy; any warning fails.
 [group('rust')]
 rust-lint:
@@ -167,7 +174,7 @@ rust-unused-deps:
 
 # Everything CI checks on the Rust side.
 [group('rust')]
-rust-check: rust-fmt-check rust-lint rust-test rust-deny rust-layering rust-structure rust-unused-deps
+rust-check: rust-fmt-check rust-build-check rust-lint rust-test rust-deny rust-layering rust-structure rust-unused-deps
 
 # Write a development config in .dev/ (ignored by git).
 [group('rust')]
