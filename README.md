@@ -1,3 +1,126 @@
 # binsight
 
 Self-hostable portfolio tracker for Meteora DLMM liquidity positions, with exact on-chain PnL.
+
+[![CI](https://github.com/RedBoardDev/binsight/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/RedBoardDev/binsight/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+## Status
+
+**Early development — not usable yet.** The foundation is in place (server, database, sign-in, live updates,
+installable web app); tracking positions is not. There is no release yet: the instructions below run the
+latest build of `main`.
+
+## What it is
+
+binsight runs on your own machine or server, for one owner who tracks a handful of Solana wallets. It reads
+the chain through your own [Helius](https://www.helius.dev) API key and keeps everything in a single SQLite
+database. One instance is one binary (or one container) with one data folder.
+
+Today it offers:
+
+- a password-protected web app, served by the binary itself;
+- live updates from the server (the connection status is always visible);
+- an installable app (PWA) on desktop and mobile;
+- English, French and German.
+
+Roadmap: exact, on-chain-verified PnL for DLMM positions (every figure says whether it is complete, partial,
+estimated or unavailable), several wallets per instance, net worth and history, all within the Helius free
+plan for about ten wallets.
+
+## Quick start with Docker Compose
+
+You need Docker with Compose, and a Helius API key (the free plan is enough).
+
+```sh
+mkdir binsight && cd binsight
+curl -fsSLO https://raw.githubusercontent.com/RedBoardDev/binsight/main/docker-compose.yml
+cat > .env <<'ENV'
+BINSIGHT_PASSWORD=choose-a-long-password
+BINSIGHT_HELIUS_API_KEY=your-helius-api-key
+ENV
+chmod 600 .env
+docker compose up -d
+```
+
+Open <http://localhost:8080> and sign in with your password. The data lives in the `data` volume of the
+`binsight-app` Compose project.
+
+The image is `ghcr.io/redboarddev/binsight`, built for `linux/amd64` and `linux/arm64`. `edge` follows
+`main`; releases will be tagged `X.Y.Z`, `X.Y` and `latest`. Set `BINSIGHT_IMAGE` in `.env` to pin another
+tag, and `BINSIGHT_PORT` to publish another port than 8080.
+
+## Configuration
+
+binsight reads environment variables, then a `binsight.env` file, then its defaults (an environment variable
+wins over the file). Invalid settings are all reported at once and the server does not start.
+
+| Variable | Required | Default | Meaning |
+|---|---|---|---|
+| `BINSIGHT_PASSWORD` | yes | — | The owner's password, 12 to 1024 characters. |
+| `BINSIGHT_HELIUS_API_KEY` | yes | — | Your Helius API key. |
+| `BINSIGHT_DATA_DIR` | no | `$XDG_DATA_HOME/binsight`, else `~/.local/share/binsight`; `/data` in the image | Where the database, its backups and the instance secrets live. |
+| `BINSIGHT_BIND` | no | `127.0.0.1:8080`; `0.0.0.0:8080` in the image | The address and port the server listens on. |
+| `BINSIGHT_PUBLIC_URL` | no | — | The address browsers use, such as `https://binsight.example.com` (no path). Set it behind a reverse proxy: it is trusted for cross-site checks, and `https` makes the session cookie `Secure`. |
+| `BINSIGHT_LOG` | no | `info` | The log filter (`warn`, `debug`, `binsight_api=debug`…). |
+| `BINSIGHT_LOG_FORMAT` | no | `pretty` | `pretty` or `json`. |
+| `BINSIGHT_CONFIG_FILE` | no | `$XDG_CONFIG_HOME/binsight/binsight.env`, else `~/.config/binsight/binsight.env` | The configuration file (also `--config-file`). A missing file at the default path is fine. |
+
+`binsight admin config` shows the effective configuration and where each value comes from, without the
+secrets.
+
+## Running without Docker
+
+There are no release binaries yet: build one from source (below), then:
+
+```sh
+binsight init   # asks for your Helius API key and password, writes ~/.config/binsight/binsight.env (mode 0600)
+binsight run    # serves http://127.0.0.1:8080 until Ctrl-C or SIGTERM
+```
+
+`binsight --help` and `binsight admin --help` list the other commands (configuration, database status,
+backup, signing every session out).
+
+## Exposing it safely
+
+binsight speaks plain HTTP and has a single password: do not expose its port to the internet directly. Put it
+behind a reverse proxy with HTTPS, or reach it over a private network such as Tailscale. Installing the PWA
+from another device also needs HTTPS. With [Caddy](https://caddyserver.com):
+
+```
+binsight.example.com {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+Then set `BINSIGHT_PUBLIC_URL=https://binsight.example.com`. With Docker, publish the port on the loopback
+interface only (`BINSIGHT_PORT=127.0.0.1:8080`): Docker's published ports bypass most host firewalls.
+
+## Updating and backups
+
+```sh
+docker compose pull && docker compose up -d
+```
+
+Before applying a database migration, binsight backs the database up automatically into `backups/` in its
+data folder (the last three are kept), and it refuses to open a database written by a newer version. To back
+up everything, copy the data folder (or the `data` volume) while binsight is stopped.
+
+## Building from source
+
+You need Rust (rustup installs the version pinned in `rust-toolchain.toml`), Node.js 24 (`nvm install` reads
+`.nvmrc`), pnpm 12 (`npm install --global pnpm@12.8.1`) and [just](https://just.systems).
+
+```sh
+just setup   # git hooks and web dependencies
+just build   # the web app, then target/release/binsight, which embeds it
+```
+
+Or build the image: `docker build -t binsight:local .`
+
+## Contributing, security and license
+
+- Contributions are welcome: read [CONTRIBUTING.md](CONTRIBUTING.md).
+- Report vulnerabilities privately, as explained in [SECURITY.md](SECURITY.md).
+- binsight is released under the [MIT License](LICENSE). Every instance serves the notices of the third-party
+  software in its web app at `/third-party-licenses.txt`.
