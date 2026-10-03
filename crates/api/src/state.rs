@@ -1,8 +1,9 @@
 //! The shared state every handler can read.
 //!
 //! It holds handles, never data: the engine handle (the API's only way to reach the rest of
-//! binsight), the clock, the authentication state and the shutdown signal that ends the live
-//! streams. Cloning it is cheap. This module only defines and builds the state.
+//! binsight), the clock, the authentication state, the shutdown signal that ends the live
+//! streams and the files of the web app. Cloning it is cheap. This module only defines and builds
+//! the state.
 
 use std::sync::Arc;
 
@@ -13,6 +14,7 @@ use binsight_engine::EngineHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::auth::{AuthSettings, AuthState};
+use crate::web_app::WebAssets;
 
 /// Everything the API is built from.
 #[derive(Clone)]
@@ -25,6 +27,8 @@ pub struct AppStateParts {
     pub clock: Arc<dyn Clock>,
     /// Cancelled when the server shuts down; long-lived responses end on it.
     pub shutdown: CancellationToken,
+    /// The files of the web app.
+    pub web_assets: Arc<dyn WebAssets>,
 }
 
 /// What the HTTP layer needs from the rest of the application.
@@ -34,6 +38,7 @@ pub struct AppState {
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) auth: Arc<AuthState>,
     pub(crate) shutdown: CancellationToken,
+    pub(crate) web_assets: Arc<dyn WebAssets>,
 }
 
 impl AppState {
@@ -44,6 +49,7 @@ impl AppState {
             clock: parts.clock,
             auth: Arc::new(AuthState::new(&parts.auth)),
             shutdown: parts.shutdown,
+            web_assets: parts.web_assets,
         }
     }
 }

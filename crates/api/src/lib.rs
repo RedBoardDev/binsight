@@ -11,7 +11,7 @@
 //!
 //! **Start here:** [`router`] builds the application from an [`AppState`]; [`serve`] runs it.
 //! Every error answers with the same JSON body, built in `error`. Authentication settings come
-//! from [`auth`].
+//! from [`auth`]; the files of the web app from any [`WebAssets`] source.
 
 pub mod auth;
 mod error;
@@ -22,7 +22,9 @@ pub mod openapi;
 mod router;
 mod server;
 mod state;
+mod web_app;
 
 pub use router::router;
 pub use server::serve;
 pub use state::{AppState, AppStateParts};
+pub use web_app::{WebAsset, WebAssets};

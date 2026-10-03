@@ -1,11 +1,11 @@
 //! Assembles the routes, the fallbacks and the middleware into the application router.
 //!
 //! Every API route is registered here together with its OpenAPI documentation, either as public or
-//! behind the session guard. Unknown paths and wrong methods get JSON errors. This module wires;
-//! handlers live in their own modules.
+//! behind the session guard. Every other path goes to the web app, except unknown `/api/` paths,
+//! which get JSON errors, as do wrong methods. This module wires; handlers live in their own
+//! modules.
 
 use axum::Router;
-use axum::http::Uri;
 use axum::middleware::from_fn_with_state;
 use axum::response::{IntoResponse, Response};
 use utoipa::OpenApi;
@@ -16,6 +16,7 @@ use crate::auth::{require_session, routes as auth};
 use crate::error::{ApiError, ErrorCode};
 use crate::openapi::ApiDoc;
 use crate::state::AppState;
+use crate::web_app::serve_web_app;
 use crate::{health, layers, live, openapi};
 
 /// The complete application: every route, its fallbacks and the middleware stack.
@@ -28,7 +29,7 @@ pub fn router(state: AppState) -> Router {
         .split_for_parts();
     let cross_site_protection = state.auth.cross_site_protection();
     let application = routes
-        .fallback(route_not_found)
+        .fallback(serve_web_app)
         .method_not_allowed_fallback(method_not_allowed)
         .with_state(state);
     layers::apply(application, cross_site_protection)
@@ -54,11 +55,6 @@ impl DocumentedRoutes {
             .routes(routes!(live::stream_events));
         Self { public, protected }
     }
-}
-
-async fn route_not_found(uri: Uri) -> Response {
-    let message = format!("there is no route at {}", uri.path());
-    ApiError::new(ErrorCode::NotFound, message).into_response()
 }
 
 async fn method_not_allowed() -> Response {

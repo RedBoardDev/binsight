@@ -12,7 +12,7 @@ use axum::Router;
 use axum::body::{Body, Bytes};
 use axum::http::{HeaderMap, Request, StatusCode};
 use binsight_api::auth::{AuthSettings, OwnerPassword, PublicUrl, SessionSecret};
-use binsight_api::{AppState, AppStateParts, router};
+use binsight_api::{AppState, AppStateParts, WebAsset, WebAssets, router};
 use binsight_core::clock::FixedClock;
 use binsight_engine::test_support::temporary_engine;
 use binsight_engine::{Engine, EngineHandle};
@@ -26,6 +26,28 @@ pub(crate) const PASSWORD: &str = "correct horse battery staple";
 
 /// The instant every test application starts at.
 pub(crate) const START_SECONDS: i64 = 1_790_000_000;
+
+/// The web app files of every test application.
+pub(crate) const INDEX_HTML: &str = "<!doctype html><title>binsight</title>";
+
+/// A few web app files, in memory.
+pub(crate) struct FakeWebAssets;
+
+impl WebAssets for FakeWebAssets {
+    fn get(&self, path: &str) -> Option<WebAsset> {
+        let (bytes, content_type, hash_byte): (&'static [u8], &str, u8) = match path {
+            "index.html" => (INDEX_HTML.as_bytes(), "text/html", 1),
+            "assets/app-1a2b.js" => (b"console.log('app');", "text/javascript", 2),
+            "manifest.webmanifest" => (b"{}", "application/manifest+json", 3),
+            _ => return None,
+        };
+        Some(WebAsset {
+            bytes: bytes.into(),
+            content_type: content_type.to_owned(),
+            sha256: [hash_byte; 32],
+        })
+    }
+}
 
 /// How to build a test application.
 pub(crate) struct TestAppOptions {
@@ -97,6 +119,7 @@ impl TestApp {
             },
             clock: clock.clone(),
             shutdown: shutdown.clone(),
+            web_assets: Arc::new(FakeWebAssets),
         });
         Self {
             router: router(state.clone()),
