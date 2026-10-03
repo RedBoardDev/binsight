@@ -66,6 +66,15 @@ pub enum StoreError {
         #[source]
         source: rusqlite::Error,
     },
+    /// A backup could not be written; when this happens before an upgrade, nothing is migrated.
+    #[error("could not write the database backup {path}")]
+    Backup {
+        /// The backup file that could not be written.
+        path: PathBuf,
+        /// What failed (the folder, the file or the copy).
+        #[source]
+        source: std::io::Error,
+    },
     /// A value is too large for the column it should be stored in.
     #[error("the {what} {value} is too large to be stored")]
     ValueTooLarge {

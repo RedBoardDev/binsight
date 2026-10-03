@@ -7,7 +7,7 @@ use jiff::Timestamp;
 
 use crate::error::StoreError;
 use crate::store::Store;
-use crate::upgrade::UpgradeOptions;
+use crate::upgrade::{BackupOptions, UpgradeOptions};
 
 /// A store migrated to the latest schema. Keep the folder alive as long as the store is used.
 pub(crate) async fn migrated_store() -> (tempfile::TempDir, Store) {
@@ -15,6 +15,10 @@ pub(crate) async fn migrated_store() -> (tempfile::TempDir, Store) {
     let options = UpgradeOptions {
         binary_version: "0.1.0".to_owned(),
         now: Timestamp::UNIX_EPOCH,
+        backups: BackupOptions {
+            folder: folder.path().join("backups"),
+            keep: 3,
+        },
     };
     let (store, _report) = Store::open_and_upgrade(&folder.path().join("binsight.db"), options)
         .await

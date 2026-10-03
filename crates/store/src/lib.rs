@@ -38,4 +38,4 @@ pub use raw_tx::{
     Commitment, PayloadCompression, PayloadEncoding, RawTxRecord, RawTxRepo, TxVersion,
 };
 pub use store::Store;
-pub use upgrade::{SchemaStatus, UpgradeOptions, UpgradeReport};
+pub use upgrade::{BackupOptions, SchemaStatus, UpgradeOptions, UpgradeReport};

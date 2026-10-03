@@ -1,32 +1,41 @@
-//! Opening the database for the server: bringing its schema up to date first.
+//! Keeping the database file safe across binsight versions: upgrades, schema status, backups.
 //!
 //! [`Store::open_and_upgrade`] is how `binsight run` opens the database: it creates the file if
-//! needed and applies every pending embedded migration before anything else reads it.
-//! [`Store::schema_status`] reports the same information without changing anything, for the
-//! administrative commands.
+//! needed, backs up an existing database, and applies every pending embedded migration before
+//! anything else reads it. [`Store::schema_status`] reports where the schema stands without
+//! changing anything, and [`Store::back_up`] makes a backup on demand, for the administrative
+//! commands.
 
+mod backup;
 mod history;
 mod migrate;
 mod migrations;
+mod procedure;
 
-use std::path::Path;
+pub use backup::BackupOptions;
+
+use std::path::{Path, PathBuf};
 
 use jiff::Timestamp;
 
 use crate::error::StoreError;
 use crate::pools::Database;
 use crate::store::Store;
-use history::{ensure_history_table, read_applied};
-use migrate::{apply_migrations, plan_migrations};
-use migrations::{MIGRATIONS, Migration};
+use backup::{backup_file_name, write_backup};
+use history::read_applied;
+use migrate::plan_migrations;
+use migrations::MIGRATIONS;
+use procedure::upgrade;
 
 /// What [`Store::open_and_upgrade`] needs to know about the running binary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpgradeOptions {
     /// The version of the running binsight, recorded next to each migration it applies.
     pub binary_version: String,
-    /// The current time, recorded next to each migration it applies.
+    /// The current time, recorded next to each migration it applies and in backup names.
     pub now: Timestamp,
+    /// Where the backup taken before an upgrade goes.
+    pub backups: BackupOptions,
 }
 
 /// What [`Store::open_and_upgrade`] did.
@@ -38,6 +47,8 @@ pub struct UpgradeReport {
     pub to_version: u32,
     /// The names of the migrations applied, in order (empty if the schema was up to date).
     pub applied: Vec<&'static str>,
+    /// The backup taken before the upgrade, if one was needed.
+    pub backup: Option<PathBuf>,
 }
 
 /// Where the schema of a database stands compared to this binary.
@@ -52,32 +63,52 @@ pub struct SchemaStatus {
 }
 
 impl Store {
-    /// Opens the database at `path`, creating it if needed, and applies every pending migration.
+    /// Opens the database at `path`, creating it if needed, and brings it up to date.
+    ///
+    /// An existing database is first backed up when migrations are pending or when a different
+    /// binsight version last opened it; old backups are then rotated.
     ///
     /// # Errors
     ///
     /// Returns [`StoreError::DatabaseNewerThanBinary`] or
-    /// [`StoreError::MigrationChecksumMismatch`] if this binary cannot safely use the database
-    /// (nothing is changed then), [`StoreError::MigrationFailed`] if a migration fails (the
-    /// database is left as it was), or another error if the file cannot be opened.
+    /// [`StoreError::MigrationChecksumMismatch`] if this binary cannot safely use the database,
+    /// [`StoreError::Backup`] if the backup cannot be written (nothing is changed in these cases),
+    /// [`StoreError::MigrationFailed`] if a migration fails (the database is left as it was), or
+    /// another error if the file cannot be opened.
     pub async fn open_and_upgrade(
         path: &Path,
         options: UpgradeOptions,
     ) -> Result<(Self, UpgradeReport), StoreError> {
-        Self::open_and_upgrade_with(path, MIGRATIONS, options).await
-    }
-
-    /// [`Store::open_and_upgrade`] with an explicit list of migrations, so tests can use their own.
-    async fn open_and_upgrade_with(
-        path: &Path,
-        migrations: &'static [Migration],
-        options: UpgradeOptions,
-    ) -> Result<(Self, UpgradeReport), StoreError> {
         let database = Database::open(path)?;
         let report = database
-            .write(move |connection| upgrade(connection, migrations, &options))
+            .write(move |connection| upgrade(connection, MIGRATIONS, &options))
             .await?;
         Ok((Self::from_database(database), report))
+    }
+
+    /// Writes a backup of the database into `backups.folder`, named after `now`, the binary
+    /// version and the schema version, and returns its path. Old backups are not rotated.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Backup`] if the copy cannot be written.
+    pub async fn back_up(
+        &self,
+        backups: &BackupOptions,
+        binary_version: &str,
+        now: Timestamp,
+    ) -> Result<PathBuf, StoreError> {
+        let folder = backups.folder.clone();
+        let binary_version = binary_version.to_owned();
+        self.database()
+            .write(move |connection| {
+                let schema = plan_migrations(MIGRATIONS, &read_applied(connection)?)?;
+                let name = backup_file_name(now, &binary_version, schema.current_version);
+                let path = folder.join(name);
+                write_backup(connection, &path)?;
+                Ok(path)
+            })
+            .await
     }
 
     /// Reports the schema version of the database and the migrations still pending, without
@@ -105,45 +136,18 @@ impl Store {
     }
 }
 
-/// The upgrade itself, on the writer connection.
-fn upgrade(
-    connection: &mut rusqlite::Connection,
-    migrations: &[Migration],
-    options: &UpgradeOptions,
-) -> Result<UpgradeReport, StoreError> {
-    ensure_history_table(connection)?;
-    let plan = plan_migrations(migrations, &read_applied(connection)?)?;
-    apply_migrations(
-        connection,
-        &plan.pending,
-        &options.binary_version,
-        options.now,
-    )?;
-    Ok(UpgradeReport {
-        from_version: plan.current_version,
-        to_version: plan.target_version(),
-        applied: plan
-            .pending
-            .iter()
-            .map(|migration| migration.name)
-            .collect(),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const ONLY: &[Migration] = &[Migration {
-        version: 1,
-        name: "only",
-        sql: "CREATE TABLE only_table (id INTEGER PRIMARY KEY) STRICT;",
-    }];
-
-    fn options() -> UpgradeOptions {
+    fn options(folder: &tempfile::TempDir) -> UpgradeOptions {
         UpgradeOptions {
             binary_version: "0.1.0".to_owned(),
             now: Timestamp::UNIX_EPOCH,
+            backups: BackupOptions {
+                folder: folder.path().join("backups"),
+                keep: 3,
+            },
         }
     }
 
@@ -152,13 +156,13 @@ mod tests {
         let folder = tempfile::tempdir().unwrap();
         let path = folder.path().join("binsight.db");
 
-        let (store, report) = Store::open_and_upgrade_with(&path, ONLY, options())
+        let (store, report) = Store::open_and_upgrade(&path, options(&folder))
             .await
             .unwrap();
 
         assert_eq!(report.from_version, 0);
         assert_eq!(report.to_version, 1);
-        assert_eq!(report.applied, vec!["only"]);
+        assert_eq!(report.applied, vec!["foundation"]);
         store.ping().await.unwrap();
     }
 
@@ -166,11 +170,11 @@ mod tests {
     async fn applies_nothing_the_second_time() {
         let folder = tempfile::tempdir().unwrap();
         let path = folder.path().join("binsight.db");
-        Store::open_and_upgrade_with(&path, ONLY, options())
+        Store::open_and_upgrade(&path, options(&folder))
             .await
             .unwrap();
 
-        let (_store, report) = Store::open_and_upgrade_with(&path, ONLY, options())
+        let (_store, report) = Store::open_and_upgrade(&path, options(&folder))
             .await
             .unwrap();
 
@@ -182,7 +186,7 @@ mod tests {
     async fn reports_the_schema_of_the_embedded_migrations() {
         let folder = tempfile::tempdir().unwrap();
         let (store, _report) =
-            Store::open_and_upgrade(&folder.path().join("binsight.db"), options())
+            Store::open_and_upgrade(&folder.path().join("binsight.db"), options(&folder))
                 .await
                 .unwrap();
 
@@ -190,5 +194,27 @@ mod tests {
 
         assert_eq!(status.current_version, status.latest_version);
         assert_eq!(status.pending, Vec::<&str>::new());
+    }
+
+    #[tokio::test]
+    async fn backs_up_on_demand_without_changing_the_database() {
+        let folder = tempfile::tempdir().unwrap();
+        let (store, _report) =
+            Store::open_and_upgrade(&folder.path().join("binsight.db"), options(&folder))
+                .await
+                .unwrap();
+        let backups = options(&folder).backups;
+
+        let path = store
+            .back_up(&backups, "0.1.0", Timestamp::UNIX_EPOCH)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            path.file_name().unwrap(),
+            "binsight-19700101T000000Z-v0.1.0-schema1.db"
+        );
+        let copy = Store::open_existing(&path).await.unwrap();
+        assert_eq!(copy.schema_status().await.unwrap().current_version, 1);
     }
 }
