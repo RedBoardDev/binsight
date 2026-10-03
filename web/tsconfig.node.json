@@ -2,7 +2,10 @@
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "types": ["node"],
-    "tsBuildInfoFile": "./node_modules/.tmp/node.tsbuildinfo"
+    "tsBuildInfoFile": "./node_modules/.tmp/node.tsbuildinfo",
+    "paths": {
+      "@app/*": ["./src/*"]
+    }
   },
   "include": ["*.config.ts", "test/**/*.spec.ts", "test/architecture"]
 }

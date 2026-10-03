@@ -21,7 +21,7 @@ export const LocaleSwitcher = () => {
         }
       }}
     >
-      <Label>{t`Language`}</Label>
+      <Label className="sr-only">{t`Language`}</Label>
       <Select.Trigger>
         <Select.Value />
         <Select.Indicator />

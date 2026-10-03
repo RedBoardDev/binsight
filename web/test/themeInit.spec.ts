@@ -1,5 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
+import {
+  resolveTheme,
+  THEME_PREFERENCES,
+  THEME_STORAGE_KEY,
+} from '@app/core/theme/themePreference';
 import { describe, expect, it } from 'vitest';
 
 const THEME_INIT_SOURCE = readFileSync(new URL('../public/theme-init.js', import.meta.url), 'utf8');
@@ -22,7 +27,7 @@ const runThemeInit = ({ storedPreference, systemPrefersDark }: Environment): App
       if (storedPreference instanceof Error) {
         throw storedPreference;
       }
-      return key === 'binsight.theme' ? storedPreference : null;
+      return key === THEME_STORAGE_KEY ? storedPreference : null;
     },
   };
   const window = {
@@ -68,5 +73,16 @@ describe('theme-init.js', () => {
   it('follows the system when the storage cannot be read', () => {
     const blocked = new Error('SecurityError: storage is disabled');
     expect(runThemeInit({ storedPreference: blocked, systemPrefersDark: true })).toEqual(DARK);
+  });
+
+  it('agrees with resolveTheme for every preference and system scheme', () => {
+    for (const preference of THEME_PREFERENCES) {
+      for (const systemPrefersDark of [false, true]) {
+        const expected = resolveTheme(preference, systemPrefersDark);
+        expect(runThemeInit({ storedPreference: preference, systemPrefersDark })).toEqual(
+          expected === 'dark' ? DARK : LIGHT,
+        );
+      }
+    }
   });
 });

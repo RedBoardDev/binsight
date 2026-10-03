@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { lingui } from '@lingui/vite-plugin';
 import tailwindcss from '@tailwindcss/vite';
+import { tanstackRouter } from '@tanstack/router-plugin/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
@@ -15,6 +16,8 @@ const apiProxy = {
 
 export default defineConfig(({ mode }) => ({
   plugins: [
+    // Reads tsr.config.json. It must come before react(), which would otherwise see the routes untransformed.
+    tanstackRouter({ target: 'react' }),
     react(),
     // Without failOnMissing, a message missing in French or German would ship in English unnoticed.
     lingui({

@@ -7,6 +7,68 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: fr\n"
 
+#: src/core/RootErrorBoundary.tsx
+msgid "An unexpected error stopped the app. Reload the page to start again."
+msgstr "Une erreur inattendue a arrêté l’application. Rechargez la page pour recommencer."
+
+#: src/core/NotFoundScreen.tsx
+msgid "Back to the dashboard"
+msgstr "Retour au tableau de bord"
+
+#: src/core/RootErrorBoundary.tsx
+msgid "binsight stopped working"
+msgstr "binsight a cessé de fonctionner"
+
+#: src/core/theme/ThemeSwitcher.tsx
+msgid "Dark theme"
+msgstr "Thème sombre"
+
+#: src/applications/Dashboard/Ui/DashboardPage.tsx
+#: src/core/Layout/AppShell/navItems.ts
+msgid "Dashboard"
+msgstr "Tableau de bord"
+
 #: src/core/i18n/LocaleSwitcher.tsx
 msgid "Language"
 msgstr "Langue"
+
+#: src/core/theme/ThemeSwitcher.tsx
+msgid "Light theme"
+msgstr "Thème clair"
+
+#: src/core/Layout/AppShell/DesktopSidebar.tsx
+#: src/core/Layout/AppShell/MobileTabBar.tsx
+msgid "Main navigation"
+msgstr "Navigation principale"
+
+#: src/core/NotFoundScreen.tsx
+msgid "Page not found"
+msgstr "Page introuvable"
+
+#: src/core/RootErrorBoundary.tsx
+msgid "Reload"
+msgstr "Recharger"
+
+#: src/core/ShellErrorScreen.tsx
+msgid "Something went wrong"
+msgstr "Une erreur est survenue"
+
+#: src/core/theme/ThemeSwitcher.tsx
+msgid "System theme"
+msgstr "Thème du système"
+
+#: src/core/theme/ThemeSwitcher.tsx
+msgid "Theme"
+msgstr "Thème"
+
+#: src/core/NotFoundScreen.tsx
+msgid "This address does not match any page of binsight."
+msgstr "Cette adresse ne correspond à aucune page de binsight."
+
+#: src/core/ShellErrorScreen.tsx
+msgid "This page could not be displayed. Try again; if it keeps failing, reload the app."
+msgstr "Cette page n’a pas pu s’afficher. Réessayez ; si l’erreur persiste, rechargez l’application."
+
+#: src/core/ShellErrorScreen.tsx
+msgid "Try again"
+msgstr "Réessayer"

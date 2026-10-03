@@ -1,6 +1,6 @@
 import { resolveInitialLocale } from '@app/core/i18n/localeResolution';
-import { readStoredLocale, storeLocale } from '@app/core/i18n/localeStorage';
-import { DEFAULT_LOCALE, type Locale } from '@app/core/i18n/locales';
+import { DEFAULT_LOCALE, LOCALE_STORAGE_KEY, type Locale } from '@app/core/i18n/locales';
+import { readPreference, storePreference } from '@app/core/preferenceStorage';
 import { i18n, type Messages } from '@lingui/core';
 
 interface Catalog {
@@ -17,7 +17,7 @@ const activateLocale = async (locale: Locale): Promise<void> => {
 
 export const activateInitialLocale = async (): Promise<void> => {
   const locale = resolveInitialLocale({
-    stored: readStoredLocale(),
+    stored: readPreference(LOCALE_STORAGE_KEY),
     browserLanguages: navigator.languages,
   });
   try {
@@ -31,7 +31,7 @@ export const activateInitialLocale = async (): Promise<void> => {
 export const changeLocale = async (locale: Locale): Promise<void> => {
   try {
     await activateLocale(locale);
-    storeLocale(locale);
+    storePreference(LOCALE_STORAGE_KEY, locale);
   } catch (error) {
     console.error(`could not load the "${locale}" messages; keeping the current language`, error);
   }
