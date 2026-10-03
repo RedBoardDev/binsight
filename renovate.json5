@@ -1,0 +1,20 @@
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: ['config:recommended', ':semanticCommits', 'helpers:pinGitHubActionDigests', 'docker:pinDigests'],
+  timezone: 'Europe/Paris',
+  schedule: ['before 6am on monday'],
+  minimumReleaseAge: '3 days',
+  internalChecksFilter: 'strict',
+  semanticCommitType: 'chore',
+  semanticCommitScope: 'deps',
+  lockFileMaintenance: { enabled: true, schedule: ['before 6am on monday'] },
+  packageRules: [
+    { matchManagers: ['npm'], rangeStrategy: 'pin' },
+    { matchManagers: ['npm'], matchUpdateTypes: ['minor', 'patch'], groupName: 'web dependencies (non-major)' },
+    { matchManagers: ['cargo'], matchUpdateTypes: ['minor', 'patch'], groupName: 'rust dependencies (non-major)' },
+    { matchManagers: ['github-actions'], groupName: 'github actions' },
+    { matchPackageNames: ['typescript'], allowedVersions: '<7' }, // openapi-typescript needs the TS 6 JS API
+    { matchPackageNames: ['node'], groupName: 'node' },
+  ],
+  vulnerabilityAlerts: { labels: ['security'], minimumReleaseAge: null },
+}
