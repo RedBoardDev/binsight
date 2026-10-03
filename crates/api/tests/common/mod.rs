@@ -12,11 +12,13 @@ use axum::Router;
 use axum::body::{Body, Bytes};
 use axum::http::{HeaderMap, Request, StatusCode};
 use binsight_api::auth::{AuthSettings, OwnerPassword, PublicUrl, SessionSecret};
-use binsight_api::{AppState, router};
+use binsight_api::{AppState, AppStateParts, router};
 use binsight_core::clock::FixedClock;
-use binsight_engine::test_support::{TemporaryEngine, temporary_engine};
+use binsight_engine::test_support::temporary_engine;
+use binsight_engine::{Engine, EngineHandle};
 use http_body_util::BodyExt;
 use jiff::Timestamp;
+use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 
 /// The owner's password in tests.
@@ -42,11 +44,16 @@ impl Default for TestAppOptions {
     }
 }
 
-/// The application under test, with the engine (and its database) it runs on and its clock.
+/// The application under test, with the engine (and its database) it runs on, its clock and its
+/// shutdown signal.
 pub(crate) struct TestApp {
     pub(crate) router: Router,
-    pub(crate) engine: TemporaryEngine,
+    pub(crate) state: AppState,
     pub(crate) clock: Arc<FixedClock>,
+    pub(crate) shutdown: CancellationToken,
+    pub(crate) handle: EngineHandle,
+    engine: Option<Engine>,
+    _database_folder: tempfile::TempDir,
 }
 
 /// A response, fully read.
@@ -76,21 +83,37 @@ impl TestApp {
 
     /// An application on a fresh temporary database.
     pub(crate) async fn with(options: TestAppOptions) -> Self {
-        let engine = temporary_engine().await;
+        let temporary = temporary_engine().await;
         let clock = Arc::new(FixedClock::new(
             Timestamp::from_second(START_SECONDS).unwrap(),
         ));
-        let auth = AuthSettings {
-            password: OwnerPassword::parse(options.password).unwrap(),
-            session_secret: SessionSecret::from_bytes([options.secret_byte; 32]),
-            public_url: options.public_url.map(|url| PublicUrl::parse(url).unwrap()),
-        };
-        let router = router(AppState::new(engine.handle.clone(), &auth, clock.clone()));
+        let shutdown = CancellationToken::new();
+        let state = AppState::new(AppStateParts {
+            engine: temporary.handle.clone(),
+            auth: AuthSettings {
+                password: OwnerPassword::parse(options.password).unwrap(),
+                session_secret: SessionSecret::from_bytes([options.secret_byte; 32]),
+                public_url: options.public_url.map(|url| PublicUrl::parse(url).unwrap()),
+            },
+            clock: clock.clone(),
+            shutdown: shutdown.clone(),
+        });
         Self {
-            router,
-            engine,
+            router: router(state.clone()),
+            state,
             clock,
+            shutdown,
+            handle: temporary.handle,
+            engine: Some(temporary.engine),
+            _database_folder: temporary.folder,
         }
+    }
+
+    /// Starts the engine in the background; it stops on the application's shutdown signal.
+    pub(crate) fn start_engine(&mut self) -> tokio::task::JoinHandle<()> {
+        let engine = self.engine.take().expect("the engine is already started");
+        let shutdown = self.shutdown.clone();
+        tokio::spawn(async move { engine.run(shutdown).await.unwrap() })
     }
 
     /// Moves the application's clock forwards.

@@ -32,6 +32,7 @@ pub const API_CONTRACT_VERSION: &str = "1.0.0";
     tags(
         (name = "system", description = "The state of the server and its contract."),
         (name = "auth", description = "Signing in and out with the owner's password."),
+        (name = "live", description = "Events pushed to the clients as they happen."),
     ),
 )]
 pub(crate) struct ApiDoc;

@@ -151,6 +151,42 @@
         ]
       }
     },
+    "/api/v1/events": {
+      "get": {
+        "tags": [
+          "live"
+        ],
+        "summary": "Streams the live events of the server.",
+        "operationId": "streamEvents",
+        "responses": {
+          "200": {
+            "description": "A stream of Server-Sent Events. The `event:` name of each message equals the `type` of its JSON `data`. `engine_status` comes first, then a `heartbeat` every 15 seconds and the other events as they happen.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveEvent"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
     "/api/v1/health": {
       "get": {
         "tags": [
@@ -307,6 +343,52 @@
           "unavailable"
         ]
       },
+      "LiveEvent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Sent every 15 seconds so clients can tell a quiet stream from a dead one.",
+            "required": [
+              "server_time",
+              "type"
+            ],
+            "properties": {
+              "server_time": {
+                "type": "string",
+                "format": "date-time",
+                "description": "The server's clock (RFC 3339, UTC)."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "heartbeat"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The engine's lifecycle status: sent first on every connection, then on each change.",
+            "required": [
+              "status",
+              "type"
+            ],
+            "properties": {
+              "status": {
+                "$ref": "#/components/schemas/EngineStatus",
+                "description": "The new status."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "engine_status"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A message of the live event stream."
+      },
       "LoginRequest": {
         "type": "object",
         "description": "A login attempt. Deliberately not `Debug`: it holds the password.",
@@ -357,6 +439,10 @@
     {
       "name": "auth",
       "description": "Signing in and out with the owner's password."
+    },
+    {
+      "name": "live",
+      "description": "Events pushed to the clients as they happen."
     }
   ]
 }

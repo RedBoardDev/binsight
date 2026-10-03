@@ -16,7 +16,7 @@ use crate::auth::{require_session, routes as auth};
 use crate::error::{ApiError, ErrorCode};
 use crate::openapi::ApiDoc;
 use crate::state::AppState;
-use crate::{health, layers, openapi};
+use crate::{health, layers, live, openapi};
 
 /// The complete application: every route, its fallbacks and the middleware stack.
 pub fn router(state: AppState) -> Router {
@@ -49,7 +49,9 @@ impl DocumentedRoutes {
             .routes(routes!(openapi::get_openapi))
             .routes(routes!(auth::login))
             .routes(routes!(auth::logout));
-        let protected = OpenApiRouter::new().routes(routes!(auth::get_session));
+        let protected = OpenApiRouter::new()
+            .routes(routes!(auth::get_session))
+            .routes(routes!(live::stream_events));
         Self { public, protected }
     }
 }
