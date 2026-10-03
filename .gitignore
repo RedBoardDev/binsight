@@ -1,0 +1,27 @@
+# Rust
+/target/
+junit.xml
+
+# Web
+/web/node_modules/
+/web/dist/
+/web/src/routeTree.gen.ts
+/web/playwright-report/
+/web/test-results/
+/web/coverage/
+*.tsbuildinfo
+
+# Local runtime data and secrets
+/.dev/
+*.db
+*.db-wal
+*.db-shm
+binsight.env
+.env
+.env.*
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
