@@ -44,7 +44,15 @@ production.
 3. `pnpm test`: Vitest. Pure code (`Domain/`, `lib/`, the service worker, `core/` modules without React) runs
    under Node; components and hooks run under jsdom. `test/architecture.spec.ts` checks the module rules of
    `web.md` over `src/`: its failure message names the rule and the fix.
-4. `pnpm build`: the production build in `dist/`.
+4. `pnpm i18n:check`: the message catalogs match the code and every message is translated.
+5. `pnpm build`: the production build in `dist/`. It fails on a missing translation.
+
+## Translations
+
+The interface is in English, French and German (Lingui). The English text is the message key. After adding or
+changing a visible string, run `just web-i18n`, then fill in its `msgstr` in `src/locales/fr/messages.po` and
+`src/locales/de/messages.po` in the same commit. There is no fallback: an untranslated message fails the
+checks and the build.
 
 ## Adding a dependency
 

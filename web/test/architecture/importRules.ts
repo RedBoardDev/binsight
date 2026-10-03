@@ -19,6 +19,8 @@ interface ImportEdge {
 
 type ImportRule = (edge: ImportEdge) => string | null;
 
+const SPEC_FILE = /\.spec\.tsx?$/;
+
 const REACT_AND_UI_PACKAGES = [
   'react',
   'react-dom',
@@ -120,6 +122,11 @@ const standaloneServiceWorker: ImportRule = ({ importer, specifier }) =>
     ? 'the service worker is a separate TypeScript project: it never imports from @app/.'
     : null;
 
+const testHelpersInSpecsOnly: ImportRule = ({ importer, specifier }) =>
+  specifier.startsWith('@test/') && !SPEC_FILE.test(importer)
+    ? 'test helpers are for specs only: application code would ship them in the bundle.'
+    : null;
+
 const IMPORT_RULES: ReadonlyArray<readonly [Rule, ImportRule]> = [
   ['pure-domain', pureDomain],
   ['api-without-ui', apiWithoutUi],
@@ -128,6 +135,7 @@ const IMPORT_RULES: ReadonlyArray<readonly [Rule, ImportRule]> = [
   ['relative-import-into-twin', relativeImportIntoTwin],
   ['private-twin-folder', privateTwinFolder],
   ['standalone-service-worker', standaloneServiceWorker],
+  ['test-helpers-in-specs-only', testHelpersInSpecsOnly],
 ];
 
 const checkImport = (edge: ImportEdge): Violation[] =>

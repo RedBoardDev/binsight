@@ -5,7 +5,8 @@
     "jsx": "react-jsx",
     "types": ["vite/client"],
     "paths": {
-      "@app/*": ["./src/*"]
+      "@app/*": ["./src/*"],
+      "@test/*": ["./test/*"]
     },
     "tsBuildInfoFile": "./node_modules/.tmp/app.tsbuildinfo"
   },

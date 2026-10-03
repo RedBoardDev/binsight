@@ -76,6 +76,16 @@ web-typecheck:
 web-test:
     {{ web }} test
 
+# Extract the interface messages into the en/fr/de catalogs (then translate the new ones).
+[group('web')]
+web-i18n:
+    {{ web }} i18n:extract
+
+# Check that the catalogs are up to date and every message is translated.
+[group('web')]
+web-i18n-check:
+    {{ web }} i18n:check
+
 # Build the web app into web/dist.
 [group('web')]
 web-build:
@@ -83,7 +93,7 @@ web-build:
 
 # Everything CI checks on the web side.
 [group('web')]
-web-check: web-lint web-typecheck web-test web-build
+web-check: web-lint web-typecheck web-test web-i18n-check web-build
 
 # --- Rust -----------------------------------------------------------------
 

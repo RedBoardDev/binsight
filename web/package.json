@@ -16,15 +16,24 @@
     "lint": "biome ci .",
     "fix": "biome check --write .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "i18n:extract": "lingui extract --clean",
+    "i18n:check": "lingui check sync --clean && lingui check missing"
   },
   "dependencies": {
+    "@heroui/react": "3.2.6",
     "@heroui/styles": "3.2.6",
+    "@lingui/core": "6.9.0",
+    "@lingui/react": "6.9.0",
     "react": "19.3.0",
+    "react-aria-components": "1.21.1",
     "react-dom": "19.3.0"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
+    "@lingui/cli": "6.9.0",
+    "@lingui/format-po": "6.9.0",
+    "@lingui/vite-plugin": "6.9.0",
     "@tailwindcss/vite": "4.3.3",
     "@testing-library/dom": "10.4.2",
     "@testing-library/jest-dom": "7.0.1",

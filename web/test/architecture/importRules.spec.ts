@@ -27,6 +27,7 @@ describe('findImportViolations', () => {
       ['routes/login.tsx', '@app/applications/Auth/Ui/LoginPage'],
       ['lib/api/client.ts', 'openapi-fetch'],
       ['sw/sw.ts', './navigationDenylist'],
+      ['core/i18n/LocaleSwitcher.spec.tsx', '@test/renderWithProviders'],
     ];
     for (const [path, specifier] of allowed) {
       expect(rulesBrokenBy(path, specifier), `${path} → ${specifier}`).toEqual([]);
@@ -96,6 +97,12 @@ describe('findImportViolations', () => {
   it('keeps the service worker out of the app', () => {
     expect(rulesBrokenBy('sw/sw.ts', '@app/core/theme/themePreference')).toEqual([
       'standalone-service-worker',
+    ]);
+  });
+
+  it('keeps the test helpers out of application code', () => {
+    expect(rulesBrokenBy('core/i18n/LocaleSwitcher.tsx', '@test/renderWithProviders')).toEqual([
+      'test-helpers-in-specs-only',
     ]);
   });
 });

@@ -8,6 +8,7 @@ export const RULES = [
   'relative-import-into-twin',
   'private-twin-folder',
   'standalone-service-worker',
+  'test-helpers-in-specs-only',
   'spec-next-to-subject',
 ] as const;
 

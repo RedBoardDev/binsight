@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url';
+import { lingui } from '@lingui/vite-plugin';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
@@ -12,10 +13,19 @@ const apiProxy = {
   },
 };
 
-export default defineConfig({
-  plugins: [react(), tailwindcss()],
+export default defineConfig(({ mode }) => ({
+  plugins: [
+    react(),
+    // Without failOnMissing, a message missing in French or German would ship in English unnoticed.
+    lingui({
+      macroTransform: true,
+      failOnMissing: mode === 'production',
+      failOnCompileError: true,
+    }),
+    tailwindcss(),
+  ],
   resolve: { alias: { '@app': fileURLToPath(new URL('./src', import.meta.url)) } },
   server: { port: 5173, strictPort: true, proxy: apiProxy },
   preview: { port: 4173, strictPort: true, proxy: apiProxy },
   build: { outDir: 'dist', emptyOutDir: true, assetsDir: 'assets', sourcemap: false },
-});
+}));

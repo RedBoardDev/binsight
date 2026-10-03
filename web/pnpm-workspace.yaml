@@ -7,3 +7,7 @@ blockExoticSubdeps: true
 strictDepBuilds: true
 # Every dependency build script is reviewed before it is allowed here (true) or explicitly skipped (false).
 allowBuilds: {}
+# Versions published before their package adopted npm provenance look like a trust downgrade.
+# Each entry is an exact version that was checked by hand; never exclude a whole package.
+trustPolicyExclude:
+  - semver@6.3.1

@@ -1,10 +1,16 @@
 import { fileURLToPath } from 'node:url';
+import { lingui } from '@lingui/vite-plugin';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
-  plugins: [react()],
-  resolve: { alias: { '@app': fileURLToPath(new URL('./src', import.meta.url)) } },
+  plugins: [react(), lingui({ macroTransform: true })],
+  resolve: {
+    alias: {
+      '@app': fileURLToPath(new URL('./src', import.meta.url)),
+      '@test': fileURLToPath(new URL('./test', import.meta.url)),
+    },
+  },
   test: {
     restoreMocks: true,
     unstubGlobals: true,
