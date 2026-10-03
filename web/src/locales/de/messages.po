@@ -7,6 +7,10 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: de\n"
 
+#: src/applications/Auth/Ui/LoginForm/LoginFormAlert.tsx
+msgid "{seconds, plural, one {Too many failed attempts. Try again in # second.} other {Too many failed attempts. Try again in # seconds.}}"
+msgstr "{seconds, plural, one {Zu viele fehlgeschlagene Versuche. Versuchen Sie es in # Sekunde erneut.} other {Zu viele fehlgeschlagene Versuche. Versuchen Sie es in # Sekunden erneut.}}"
+
 #: src/core/RootErrorBoundary.tsx
 msgid "An unexpected error stopped the app. Reload the page to start again."
 msgstr "Ein unerwarteter Fehler hat die App angehalten. Laden Sie die Seite neu, um von vorn zu beginnen."
@@ -15,9 +19,17 @@ msgstr "Ein unerwarteter Fehler hat die App angehalten. Laden Sie die Seite neu,
 msgid "Back to the dashboard"
 msgstr "Zurück zur Übersicht"
 
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "binsight cannot be reached. Check your connection and try again."
+msgstr "binsight ist nicht erreichbar. Prüfen Sie Ihre Verbindung und versuchen Sie es erneut."
+
 #: src/core/RootErrorBoundary.tsx
 msgid "binsight stopped working"
 msgstr "binsight funktioniert nicht mehr"
+
+#: src/applications/Auth/Ui/useAuthActions.ts
+msgid "Could not sign out."
+msgstr "Abmelden fehlgeschlagen."
 
 #: src/core/theme/ThemeSwitcher.tsx
 msgid "Dark theme"
@@ -27,6 +39,15 @@ msgstr "Dunkles Design"
 #: src/core/Layout/AppShell/navItems.ts
 msgid "Dashboard"
 msgstr "Übersicht"
+
+#: src/applications/Auth/Ui/LoginForm/errorCopy.ts
+msgid "Enter the password."
+msgstr "Geben Sie das Passwort ein."
+
+#: src/applications/Auth/Ui/LoginForm/errorCopy.ts
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "Incorrect password."
+msgstr "Falsches Passwort."
 
 #: src/core/i18n/LocaleSwitcher.tsx
 msgid "Language"
@@ -45,17 +66,61 @@ msgstr "Hauptnavigation"
 msgid "Page not found"
 msgstr "Seite nicht gefunden"
 
+#: src/applications/Auth/Ui/LoginForm/PasswordField.tsx
+msgid "Password"
+msgstr "Passwort"
+
 #: src/core/RootErrorBoundary.tsx
 msgid "Reload"
 msgstr "Neu laden"
+
+#: src/applications/Auth/Ui/LoginForm.tsx
+msgid "Sign in"
+msgstr "Anmelden"
+
+#: src/applications/Auth/Ui/LoginPage.tsx
+msgid "Sign in with the password of this instance."
+msgstr "Melden Sie sich mit dem Passwort dieser Instanz an."
+
+#: src/applications/Auth/Ui/SignOutButton.tsx
+msgid "Sign out"
+msgstr "Abmelden"
 
 #: src/core/ShellErrorScreen.tsx
 msgid "Something went wrong"
 msgstr "Etwas ist schiefgelaufen"
 
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "Something went wrong. Try again."
+msgstr "Etwas ist schiefgelaufen. Versuchen Sie es erneut."
+
 #: src/core/theme/ThemeSwitcher.tsx
 msgid "System theme"
 msgstr "Systemdesign"
+
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "The request was not valid. Reload the app and try again."
+msgstr "Die Anfrage war ungültig. Laden Sie die App neu und versuchen Sie es erneut."
+
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "The request was refused because it did not come from binsight itself."
+msgstr "Die Anfrage wurde abgelehnt, weil sie nicht von binsight selbst kam."
+
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "The request was too large for the server."
+msgstr "Die Anfrage war für den Server zu groß."
+
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "The server ran into a problem. Try again later."
+msgstr "Auf dem Server ist ein Problem aufgetreten. Versuchen Sie es später erneut."
+
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "The server refused this action. Reload the app and try again."
+msgstr "Der Server hat diese Aktion abgelehnt. Laden Sie die App neu und versuchen Sie es erneut."
+
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "The server took too long to answer. Try again."
+msgstr "Der Server hat zu lange für die Antwort gebraucht. Versuchen Sie es erneut."
 
 #: src/core/theme/ThemeSwitcher.tsx
 msgid "Theme"
@@ -65,10 +130,30 @@ msgstr "Design"
 msgid "This address does not match any page of binsight."
 msgstr "Diese Adresse entspricht keiner Seite von binsight."
 
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "This item no longer exists."
+msgstr "Dieses Element existiert nicht mehr."
+
 #: src/core/ShellErrorScreen.tsx
 msgid "This page could not be displayed. Try again; if it keeps failing, reload the app."
 msgstr "Diese Seite konnte nicht angezeigt werden. Versuchen Sie es erneut; wenn der Fehler bleibt, laden Sie die App neu."
 
+#: src/applications/Auth/Ui/LoginForm/errorCopy.ts
+msgid "This password is too long."
+msgstr "Dieses Passwort ist zu lang."
+
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "Too many attempts. Wait a moment and try again."
+msgstr "Zu viele Versuche. Warten Sie einen Moment und versuchen Sie es erneut."
+
+#: src/applications/Auth/Ui/LoginForm/LoginFormAlert.tsx
+msgid "Too many failed attempts. Wait a moment and try again."
+msgstr "Zu viele fehlgeschlagene Versuche. Warten Sie einen Moment und versuchen Sie es erneut."
+
 #: src/core/ShellErrorScreen.tsx
 msgid "Try again"
 msgstr "Erneut versuchen"
+
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "Your session has ended. Sign in again."
+msgstr "Ihre Sitzung ist abgelaufen. Melden Sie sich erneut an."

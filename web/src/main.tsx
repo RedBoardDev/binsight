@@ -3,7 +3,10 @@ import { AppProviders } from '@app/core/AppProviders';
 import { activateInitialLocale } from '@app/core/i18n/localeActivation';
 import { createQueryClient } from '@app/core/query/createQueryClient';
 import { RootErrorBoundary } from '@app/core/RootErrorBoundary';
+import { redirectToSignIn } from '@app/core/redirectToSignIn';
 import { createAppRouter } from '@app/core/router';
+import { apiClient } from '@app/lib/api/client';
+import { createUnauthorizedMiddleware } from '@app/lib/api/unauthorizedMiddleware';
 import { RouterProvider } from '@tanstack/react-router';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -18,6 +21,7 @@ await activateInitialLocale();
 
 const queryClient = createQueryClient();
 const router = createAppRouter({ queryClient });
+apiClient.use(createUnauthorizedMiddleware(() => redirectToSignIn({ router, queryClient })));
 
 createRoot(rootElement).render(
   <StrictMode>

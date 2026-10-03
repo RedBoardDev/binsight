@@ -27,3 +27,11 @@ Object.defineProperty(window, 'matchMedia', {
 
 // jsdom does not implement scrolling; the router restores the scroll position on navigation.
 window.scrollTo = () => undefined;
+
+// jsdom has no ResizeObserver; HeroUI's toasts measure themselves with one.
+class ResizeObserverStub {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+window.ResizeObserver = ResizeObserverStub;

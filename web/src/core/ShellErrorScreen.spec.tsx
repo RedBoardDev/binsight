@@ -1,4 +1,5 @@
 import { renderAppAt } from '@test/renderAppAt';
+import { signedInSession, stubApi } from '@test/stubApi';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -18,6 +19,7 @@ describe('ShellErrorScreen', () => {
   it('shows a failing page inside the shell and renders it again on retry', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const user = userEvent.setup();
+    stubApi({ 'GET /api/v1/auth/session': signedInSession });
     renderAppAt('/');
 
     expect(await screen.findByRole('heading', { name: 'Something went wrong' })).toBeVisible();

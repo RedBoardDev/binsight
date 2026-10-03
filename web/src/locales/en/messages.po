@@ -7,6 +7,10 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: en\n"
 
+#: src/applications/Auth/Ui/LoginForm/LoginFormAlert.tsx
+msgid "{seconds, plural, one {Too many failed attempts. Try again in # second.} other {Too many failed attempts. Try again in # seconds.}}"
+msgstr "{seconds, plural, one {Too many failed attempts. Try again in # second.} other {Too many failed attempts. Try again in # seconds.}}"
+
 #: src/core/RootErrorBoundary.tsx
 msgid "An unexpected error stopped the app. Reload the page to start again."
 msgstr "An unexpected error stopped the app. Reload the page to start again."
@@ -15,9 +19,17 @@ msgstr "An unexpected error stopped the app. Reload the page to start again."
 msgid "Back to the dashboard"
 msgstr "Back to the dashboard"
 
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "binsight cannot be reached. Check your connection and try again."
+msgstr "binsight cannot be reached. Check your connection and try again."
+
 #: src/core/RootErrorBoundary.tsx
 msgid "binsight stopped working"
 msgstr "binsight stopped working"
+
+#: src/applications/Auth/Ui/useAuthActions.ts
+msgid "Could not sign out."
+msgstr "Could not sign out."
 
 #: src/core/theme/ThemeSwitcher.tsx
 msgid "Dark theme"
@@ -27,6 +39,15 @@ msgstr "Dark theme"
 #: src/core/Layout/AppShell/navItems.ts
 msgid "Dashboard"
 msgstr "Dashboard"
+
+#: src/applications/Auth/Ui/LoginForm/errorCopy.ts
+msgid "Enter the password."
+msgstr "Enter the password."
+
+#: src/applications/Auth/Ui/LoginForm/errorCopy.ts
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "Incorrect password."
+msgstr "Incorrect password."
 
 #: src/core/i18n/LocaleSwitcher.tsx
 msgid "Language"
@@ -45,17 +66,61 @@ msgstr "Main navigation"
 msgid "Page not found"
 msgstr "Page not found"
 
+#: src/applications/Auth/Ui/LoginForm/PasswordField.tsx
+msgid "Password"
+msgstr "Password"
+
 #: src/core/RootErrorBoundary.tsx
 msgid "Reload"
 msgstr "Reload"
+
+#: src/applications/Auth/Ui/LoginForm.tsx
+msgid "Sign in"
+msgstr "Sign in"
+
+#: src/applications/Auth/Ui/LoginPage.tsx
+msgid "Sign in with the password of this instance."
+msgstr "Sign in with the password of this instance."
+
+#: src/applications/Auth/Ui/SignOutButton.tsx
+msgid "Sign out"
+msgstr "Sign out"
 
 #: src/core/ShellErrorScreen.tsx
 msgid "Something went wrong"
 msgstr "Something went wrong"
 
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "Something went wrong. Try again."
+msgstr "Something went wrong. Try again."
+
 #: src/core/theme/ThemeSwitcher.tsx
 msgid "System theme"
 msgstr "System theme"
+
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "The request was not valid. Reload the app and try again."
+msgstr "The request was not valid. Reload the app and try again."
+
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "The request was refused because it did not come from binsight itself."
+msgstr "The request was refused because it did not come from binsight itself."
+
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "The request was too large for the server."
+msgstr "The request was too large for the server."
+
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "The server ran into a problem. Try again later."
+msgstr "The server ran into a problem. Try again later."
+
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "The server refused this action. Reload the app and try again."
+msgstr "The server refused this action. Reload the app and try again."
+
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "The server took too long to answer. Try again."
+msgstr "The server took too long to answer. Try again."
 
 #: src/core/theme/ThemeSwitcher.tsx
 msgid "Theme"
@@ -65,10 +130,30 @@ msgstr "Theme"
 msgid "This address does not match any page of binsight."
 msgstr "This address does not match any page of binsight."
 
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "This item no longer exists."
+msgstr "This item no longer exists."
+
 #: src/core/ShellErrorScreen.tsx
 msgid "This page could not be displayed. Try again; if it keeps failing, reload the app."
 msgstr "This page could not be displayed. Try again; if it keeps failing, reload the app."
 
+#: src/applications/Auth/Ui/LoginForm/errorCopy.ts
+msgid "This password is too long."
+msgstr "This password is too long."
+
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "Too many attempts. Wait a moment and try again."
+msgstr "Too many attempts. Wait a moment and try again."
+
+#: src/applications/Auth/Ui/LoginForm/LoginFormAlert.tsx
+msgid "Too many failed attempts. Wait a moment and try again."
+msgstr "Too many failed attempts. Wait a moment and try again."
+
 #: src/core/ShellErrorScreen.tsx
 msgid "Try again"
 msgstr "Try again"
+
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "Your session has ended. Sign in again."
+msgstr "Your session has ended. Sign in again."

@@ -1,3 +1,4 @@
+import { SignOutButton } from '@app/applications/Auth/Ui/SignOutButton';
 import { LocaleSwitcher } from '@app/core/i18n/LocaleSwitcher';
 import { ThemeSwitcher } from '@app/core/theme/ThemeSwitcher';
 
@@ -7,6 +8,7 @@ export const AppHeader = () => (
     <div className="ml-auto flex items-center gap-2">
       <LocaleSwitcher />
       <ThemeSwitcher />
+      <SignOutButton />
     </div>
   </header>
 );
