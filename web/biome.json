@@ -65,6 +65,10 @@
           "level": "error",
           "options": {
             "paths": {
+              "@heroui/react": {
+                "importNames": ["toast", "toastQueue"],
+                "message": "Import toast from @app/applications/Shared/Ui/toast: it applies the app's timeouts."
+              },
               "react-router": "Routing uses @tanstack/react-router.",
               "react-router-dom": "Routing uses @tanstack/react-router.",
               "clsx": "Use a Record<Variant, string> class table.",
@@ -82,6 +86,10 @@
   },
   "assist": { "enabled": true, "actions": { "source": { "organizeImports": "on" } } },
   "overrides": [
+    {
+      "includes": ["src/applications/Shared/Ui/toast.ts"],
+      "linter": { "rules": { "style": { "noRestrictedImports": "off" } } }
+    },
     {
       "includes": ["*.config.ts"],
       "linter": { "rules": { "style": { "noDefaultExport": "off" } } }

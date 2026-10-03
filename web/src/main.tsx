@@ -1,5 +1,5 @@
 import '@app/core/theme/globals.css';
-import { LocaleProvider } from '@app/core/i18n/LocaleProvider';
+import { AppProviders } from '@app/core/AppProviders';
 import { activateInitialLocale } from '@app/core/i18n/localeActivation';
 import { RootErrorBoundary } from '@app/core/RootErrorBoundary';
 import { createAppRouter } from '@app/core/router';
@@ -20,9 +20,9 @@ const router = createAppRouter();
 createRoot(rootElement).render(
   <StrictMode>
     <RootErrorBoundary>
-      <LocaleProvider>
+      <AppProviders>
         <RouterProvider router={router} />
-      </LocaleProvider>
+      </AppProviders>
     </RootErrorBoundary>
   </StrictMode>,
 );
