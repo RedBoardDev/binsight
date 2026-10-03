@@ -13,3 +13,37 @@ pub enum AmountError {
     #[error("the amount would become negative")]
     Negative,
 }
+
+/// A decimal string could not be read as an amount.
+///
+/// The accepted form is digits, optionally followed by a decimal point and more digits, such as
+/// `12`, `0.5` or `1.250`. Signs, exponents, spaces and separators are refused rather than guessed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum DecimalError {
+    /// The text is empty.
+    #[error("the decimal string is empty")]
+    Empty,
+    /// The text starts with `+` or `-`; only unsigned amounts can be parsed.
+    #[error("the decimal string has a sign; only unsigned amounts are accepted")]
+    Signed,
+    /// The text contains something other than ASCII digits and one decimal point.
+    #[error("the decimal string contains the invalid character {0:?}")]
+    InvalidCharacter(char),
+    /// The text contains more than one decimal point.
+    #[error("the decimal string contains more than one decimal point")]
+    MultiplePoints,
+    /// A decimal point is not surrounded by digits on both sides (`.5` or `1.`).
+    #[error("the decimal string needs digits on both sides of the decimal point")]
+    MissingDigits,
+    /// The text has more digits after the decimal point than the token has decimals.
+    #[error("the decimal string has {found} digits after the point; the token has {allowed}")]
+    TooManyDecimals {
+        /// How many digits follow the decimal point in the text.
+        found: usize,
+        /// How many decimals the token has.
+        allowed: u8,
+    },
+    /// The amount does not fit in a `u128` of raw units.
+    #[error("the decimal string is too large for a raw token amount")]
+    TooLarge,
+}

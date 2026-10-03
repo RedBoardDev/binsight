@@ -16,5 +16,6 @@
     clippy::arithmetic_side_effects
 )]
 
+pub mod decimal;
 pub mod error;
 pub mod units;
