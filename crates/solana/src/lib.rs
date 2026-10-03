@@ -16,3 +16,12 @@
     clippy::as_conversions,
     clippy::arithmetic_side_effects
 )]
+
+pub mod address;
+mod base58;
+pub mod error;
+pub mod signature;
+
+pub use address::Address;
+pub use error::ParseError;
+pub use signature::Signature;
