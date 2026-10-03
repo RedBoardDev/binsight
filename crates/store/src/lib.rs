@@ -13,9 +13,12 @@
 //! connection pools in `pools` run them, on a blocking thread. Callers outside the crate see typed
 //! async methods and never a SQLite type.
 
+mod codec;
 mod error;
 mod pools;
 mod store;
+mod upgrade;
 
 pub use error::StoreError;
 pub use store::Store;
+pub use upgrade::{SchemaStatus, UpgradeOptions, UpgradeReport};

@@ -33,4 +33,45 @@ pub enum StoreError {
     /// SQLite reported an error while running a statement.
     #[error("a database statement failed")]
     Sqlite(#[from] rusqlite::Error),
+    /// The database was migrated by a newer binsight: this binary does not know its schema.
+    #[error(
+        "the database schema is at version {database} but this binsight only knows versions up \
+         to {binary}; run a newer binsight or restore a backup"
+    )]
+    DatabaseNewerThanBinary {
+        /// The schema version found in the database.
+        database: u32,
+        /// The latest schema version this binary knows.
+        binary: u32,
+    },
+    /// A migration already applied to the database differs from the one embedded in the binary.
+    #[error(
+        "migration {version} ({name}) differs from the one applied to this database; released \
+         migrations must never be edited"
+    )]
+    MigrationChecksumMismatch {
+        /// The version of the edited migration.
+        version: u32,
+        /// The name of the edited migration.
+        name: &'static str,
+    },
+    /// A migration failed; none of the pending migrations was applied.
+    #[error("migration {version} ({name}) failed; the database was left unchanged")]
+    MigrationFailed {
+        /// The version of the failing migration.
+        version: u32,
+        /// The name of the failing migration.
+        name: &'static str,
+        /// What SQLite reported.
+        #[source]
+        source: rusqlite::Error,
+    },
+    /// A value read from the database is outside the range the schema allows.
+    #[error("the database holds an invalid {what}: {value}")]
+    InvalidStoredValue {
+        /// What the value was supposed to be.
+        what: &'static str,
+        /// The value found, as text.
+        value: String,
+    },
 }

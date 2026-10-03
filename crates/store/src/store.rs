@@ -34,11 +34,19 @@ impl Store {
                 path: path.to_path_buf(),
             });
         }
-        let store = Self {
-            database: Database::open(path)?,
-        };
+        let store = Self::from_database(Database::open(path)?);
         store.ping().await?;
         Ok(store)
+    }
+
+    /// Wraps pools that are already open.
+    pub(crate) fn from_database(database: Database) -> Self {
+        Self { database }
+    }
+
+    /// The connection pools, for the other modules of the crate.
+    pub(crate) fn database(&self) -> &Database {
+        &self.database
     }
 
     /// Checks that the database answers a trivial query on both the writer and a reader.

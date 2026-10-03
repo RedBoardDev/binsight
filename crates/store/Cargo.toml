@@ -13,7 +13,10 @@ workspace = true
 
 [dependencies]
 deadpool-sqlite.workspace = true
+hex.workspace = true
+jiff.workspace = true
 rusqlite.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
