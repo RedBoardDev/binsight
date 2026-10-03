@@ -1,0 +1,130 @@
+// Writes dist/third-party-licenses.txt: the license and notice texts of every package the build
+// ships, which the binary serves at /third-party-licenses.txt. Fails when a package's license is
+// not on the allowlist. With --check, it only checks and writes nothing.
+//
+// Run by Node directly (type stripping), so this file stays a single module with no local import.
+
+import { spawnSync } from 'node:child_process';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+// Permissive licenses only (MPL-2.0 is file-level copyleft, compatible as long as its files are
+// not modified). Never GPL, AGPL or LGPL.
+export const ALLOWED_LICENSES: ReadonlySet<string> = new Set([
+  '0BSD',
+  'Apache-2.0',
+  'BlueOak-1.0.0',
+  'BSD-2-Clause',
+  'BSD-3-Clause',
+  'CC0-1.0',
+  'ISC',
+  'MIT',
+  'MPL-2.0',
+  'Unlicense',
+  'Zlib',
+]);
+
+const LICENSE_FILE = /^(licen[cs]e|copying|notice)([.-].*)?$/i;
+const OUTPUT_PATH = 'dist/third-party-licenses.txt';
+
+export interface PackageEntry {
+  readonly name: string;
+  readonly version: string;
+  readonly license: string;
+  readonly path: string;
+}
+
+interface LicensedPackage {
+  readonly name: string;
+  readonly versions: readonly string[];
+  readonly paths: readonly string[];
+  readonly license: string;
+}
+
+// An SPDX expression such as "(MIT OR Apache-2.0)": one allowed alternative of an OR is enough;
+// every part of an AND must be allowed.
+export const isAllowedLicense = (expression: string): boolean =>
+  expression
+    .replace(/[()]/g, '')
+    .split(/\s+OR\s+/)
+    .some((alternative) =>
+      alternative.split(/\s+AND\s+/).every((part) => ALLOWED_LICENSES.has(part.trim())),
+    );
+
+const isLicensedPackage = (value: unknown): value is LicensedPackage =>
+  typeof value === 'object' &&
+  value !== null &&
+  'name' in value &&
+  typeof value.name === 'string' &&
+  'license' in value &&
+  typeof value.license === 'string' &&
+  'versions' in value &&
+  Array.isArray(value.versions) &&
+  'paths' in value &&
+  Array.isArray(value.paths);
+
+export const toPackageEntries = (report: unknown): PackageEntry[] => {
+  if (typeof report !== 'object' || report === null) {
+    throw new Error('pnpm licenses did not return a JSON object');
+  }
+  return Object.values(report)
+    .flat()
+    .filter(isLicensedPackage)
+    .flatMap((pkg) =>
+      pkg.versions.map((version, index) => ({
+        name: pkg.name,
+        version: String(version),
+        license: pkg.license,
+        path: String(pkg.paths[index] ?? pkg.paths[0] ?? ''),
+      })),
+    )
+    .sort((a, b) => a.name.localeCompare(b.name) || a.version.localeCompare(b.version));
+};
+
+const readLicenseTexts = (packagePath: string): string[] =>
+  readdirSync(packagePath)
+    .filter((file) => LICENSE_FILE.test(file))
+    .sort()
+    .map((file) => readFileSync(join(packagePath, file), 'utf8').trim());
+
+export const renderNotice = (entry: PackageEntry, texts: readonly string[]): string => {
+  const header = `${entry.name} ${entry.version} (${entry.license})`;
+  const body =
+    texts.length === 0
+      ? `The package ships no license file; its license is ${entry.license}.`
+      : texts.join('\n\n');
+  return `${header}\n${'-'.repeat(header.length)}\n\n${body}\n`;
+};
+
+const listProductionPackages = (): PackageEntry[] => {
+  const result = spawnSync('pnpm', ['licenses', 'list', '--prod', '--json'], { encoding: 'utf8' });
+  if (result.status !== 0) {
+    throw new Error(`pnpm licenses list failed: ${result.stderr}`);
+  }
+  return toPackageEntries(JSON.parse(result.stdout));
+};
+
+const main = (): void => {
+  const isCheckOnly = process.argv.includes('--check');
+  const entries = listProductionPackages();
+  const disallowed = entries.filter((entry) => !isAllowedLicense(entry.license));
+  if (disallowed.length > 0) {
+    for (const entry of disallowed) {
+      console.error(`${entry.name}@${entry.version}: license "${entry.license}" is not allowed`);
+    }
+    process.exit(1);
+  }
+  if (isCheckOnly) {
+    console.info(`${entries.length} production packages, all with an allowed license`);
+    return;
+  }
+  const notices = entries.map((entry) => renderNotice(entry, readLicenseTexts(entry.path)));
+  const intro =
+    'Third-party software in the binsight web app\n\nbinsight is MIT-licensed. The web app it serves includes the packages below, each under its own license.\n';
+  writeFileSync(OUTPUT_PATH, [intro, ...notices].join('\n\n'));
+  console.info(`wrote ${OUTPUT_PATH} (${entries.length} packages)`);
+};
+
+if (import.meta.main) {
+  main();
+}

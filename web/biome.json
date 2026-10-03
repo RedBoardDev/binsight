@@ -38,8 +38,16 @@
       "bracketSpacing": true
     }
   },
-  "json": { "formatter": { "trailingCommas": "none" } },
-  "css": { "parser": { "tailwindDirectives": true } },
+  "json": {
+    "formatter": {
+      "trailingCommas": "none"
+    }
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  },
   "linter": {
     "enabled": true,
     "rules": {
@@ -51,16 +59,29 @@
       },
       "suspicious": {
         "noExplicitAny": "error",
-        "noConsole": { "level": "warn", "options": { "allow": ["error", "warn", "info"] } }
+        "noConsole": {
+          "level": "warn",
+          "options": {
+            "allow": ["error", "warn", "info"]
+          }
+        }
       },
-      "performance": { "noBarrelFile": "error", "noReExportAll": "error" },
+      "performance": {
+        "noBarrelFile": "error",
+        "noReExportAll": "error"
+      },
       "style": {
         "useConst": "error",
         "useImportType": "error",
         "useExportType": "error",
         "noDefaultExport": "error",
         "noNonNullAssertion": "error",
-        "useConsistentTypeDefinitions": { "level": "error", "options": { "style": "interface" } },
+        "useConsistentTypeDefinitions": {
+          "level": "error",
+          "options": {
+            "style": "interface"
+          }
+        },
         "noRestrictedImports": {
           "level": "error",
           "options": {
@@ -84,15 +105,44 @@
       }
     }
   },
-  "assist": { "enabled": true, "actions": { "source": { "organizeImports": "on" } } },
+  "assist": {
+    "enabled": true,
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  },
   "overrides": [
     {
       "includes": ["src/applications/Shared/Ui/toast.ts"],
-      "linter": { "rules": { "style": { "noRestrictedImports": "off" } } }
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": "off"
+          }
+        }
+      }
     },
     {
       "includes": ["*.config.ts"],
-      "linter": { "rules": { "style": { "noDefaultExport": "off" } } }
+      "linter": {
+        "rules": {
+          "style": {
+            "noDefaultExport": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["scripts/**"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noConsole": "off"
+          }
+        }
+      }
     }
   ]
 }

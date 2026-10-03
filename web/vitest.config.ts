@@ -26,6 +26,7 @@ export default defineConfig({
             'src/lib/**/*.spec.ts',
             'src/sw/**/*.spec.ts',
             'src/core/**/*.spec.ts',
+            'scripts/**/*.spec.ts',
             'test/**/*.spec.ts',
           ],
         },

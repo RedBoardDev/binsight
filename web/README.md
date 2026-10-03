@@ -51,7 +51,8 @@ Vite plugin and by `pnpm typecheck` and `pnpm test` (`tsr generate`); it is igno
    `web.md` over `src/`: its failure message names the rule and the fix.
 4. `pnpm i18n:check`: the message catalogs match the code and every message is translated.
 5. `pnpm openapi:check`: the typed API client matches `openapi/v1.json`.
-6. `pnpm build`: the production build in `dist/`. It fails on a missing translation.
+6. `pnpm build`: the production build in `dist/`. It fails on a missing translation, and on a production
+   dependency whose license is not on the allowlist of `scripts/thirdPartyNotices.ts`.
 
 ## API client
 
@@ -67,6 +68,13 @@ The interface is in English, French and German (Lingui). The English text is the
 changing a visible string, run `just web-i18n`, then fill in its `msgstr` in `src/locales/fr/messages.po` and
 `src/locales/de/messages.po` in the same commit. There is no fallback: an untranslated message fails the
 checks and the build.
+
+## Third-party notices
+
+After `vite build`, `scripts/thirdPartyNotices.ts` writes `dist/third-party-licenses.txt`: the license and
+notice texts of every production dependency, which the binary serves at `/third-party-licenses.txt` and the
+sidebar links to. It reads `pnpm licenses list --prod`, so anything the browser runs must be a
+`dependency`, and tooling a `devDependency`. `pnpm licenses:check` runs the allowlist check alone.
 
 ## Adding a dependency
 

@@ -10,7 +10,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && node scripts/thirdPartyNotices.ts",
     "preview": "vite preview",
     "typecheck": "tsr generate && tsc -b",
     "lint": "biome ci .",
@@ -20,7 +20,8 @@
     "i18n:extract": "lingui extract --clean",
     "i18n:check": "lingui check sync --clean && lingui check missing",
     "openapi:generate": "openapi-typescript ../openapi/v1.json --output src/lib/api/generated/openapi.d.ts",
-    "openapi:check": "pnpm openapi:generate && git diff --exit-code -- src/lib/api/generated"
+    "openapi:check": "pnpm openapi:generate && git diff --exit-code -- src/lib/api/generated",
+    "licenses:check": "node scripts/thirdPartyNotices.ts --check"
   },
   "dependencies": {
     "@heroui/react": "3.2.6",

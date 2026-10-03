@@ -89,6 +89,10 @@ msgstr "Langue"
 msgid "Last heartbeat"
 msgstr "Dernier signal"
 
+#: src/core/Layout/AppShell/AboutFooter.tsx
+msgid "Licenses"
+msgstr "Licences"
+
 #: src/core/theme/ThemeSwitcher.tsx
 msgid "Light theme"
 msgstr "Thème clair"
