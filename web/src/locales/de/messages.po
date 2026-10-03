@@ -15,6 +15,10 @@ msgstr "{seconds, plural, one {Zu viele fehlgeschlagene Versuche. Versuchen Sie 
 msgid "An unexpected error stopped the app. Reload the page to start again."
 msgstr "Ein unerwarteter Fehler hat die App angehalten. Laden Sie die Seite neu, um von vorn zu beginnen."
 
+#: src/applications/Health/Ui/HealthCard/healthLabels.ts
+msgid "Available"
+msgstr "Verfügbar"
+
 #: src/core/NotFoundScreen.tsx
 msgid "Back to the dashboard"
 msgstr "Zurück zur Übersicht"
@@ -40,9 +44,25 @@ msgstr "Dunkles Design"
 msgid "Dashboard"
 msgstr "Übersicht"
 
+#: src/applications/Health/Ui/HealthCard/HealthReport.tsx
+msgid "Database"
+msgstr "Datenbank"
+
+#: src/applications/Health/Ui/HealthCard/healthLabels.ts
+msgid "Degraded"
+msgstr "Eingeschränkt"
+
+#: src/applications/Health/Ui/HealthCard/HealthReport.tsx
+msgid "Engine"
+msgstr "Engine"
+
 #: src/applications/Auth/Ui/LoginForm/errorCopy.ts
 msgid "Enter the password."
 msgstr "Geben Sie das Passwort ein."
+
+#: src/applications/Health/Ui/HealthCard/healthLabels.ts
+msgid "Healthy"
+msgstr "Betriebsbereit"
 
 #: src/applications/Auth/Ui/LoginForm/errorCopy.ts
 #: src/applications/Shared/Ui/apiErrorMessages.ts
@@ -74,6 +94,14 @@ msgstr "Passwort"
 msgid "Reload"
 msgstr "Neu laden"
 
+#: src/applications/Health/Ui/HealthCard/healthLabels.ts
+msgid "Running"
+msgstr "Läuft"
+
+#: src/applications/Health/Ui/HealthCard.tsx
+msgid "Server"
+msgstr "Server"
+
 #: src/applications/Auth/Ui/LoginForm.tsx
 msgid "Sign in"
 msgstr "Anmelden"
@@ -94,6 +122,18 @@ msgstr "Etwas ist schiefgelaufen"
 msgid "Something went wrong. Try again."
 msgstr "Etwas ist schiefgelaufen. Versuchen Sie es erneut."
 
+#: src/applications/Health/Ui/HealthCard/healthLabels.ts
+msgid "Starting"
+msgstr "Startet"
+
+#: src/applications/Health/Ui/HealthCard/HealthReport.tsx
+msgid "Status"
+msgstr "Status"
+
+#: src/applications/Health/Ui/HealthCard/healthLabels.ts
+msgid "Stopping"
+msgstr "Wird beendet"
+
 #: src/core/theme/ThemeSwitcher.tsx
 msgid "System theme"
 msgstr "Systemdesign"
@@ -109,6 +149,10 @@ msgstr "Die Anfrage wurde abgelehnt, weil sie nicht von binsight selbst kam."
 #: src/applications/Shared/Ui/apiErrorMessages.ts
 msgid "The request was too large for the server."
 msgstr "Die Anfrage war für den Server zu groß."
+
+#: src/applications/Health/Ui/HealthCard.tsx
+msgid "The server health could not be read."
+msgstr "Der Serverstatus konnte nicht gelesen werden."
 
 #: src/applications/Shared/Ui/apiErrorMessages.ts
 msgid "The server ran into a problem. Try again later."
@@ -150,9 +194,18 @@ msgstr "Zu viele Versuche. Warten Sie einen Moment und versuchen Sie es erneut."
 msgid "Too many failed attempts. Wait a moment and try again."
 msgstr "Zu viele fehlgeschlagene Versuche. Warten Sie einen Moment und versuchen Sie es erneut."
 
+#: src/applications/Health/Ui/HealthCard.tsx
 #: src/core/ShellErrorScreen.tsx
 msgid "Try again"
 msgstr "Erneut versuchen"
+
+#: src/applications/Health/Ui/HealthCard/healthLabels.ts
+msgid "Unavailable"
+msgstr "Nicht verfügbar"
+
+#: src/applications/Health/Ui/HealthCard/HealthReport.tsx
+msgid "Version"
+msgstr "Version"
 
 #: src/applications/Shared/Ui/apiErrorMessages.ts
 msgid "Your session has ended. Sign in again."

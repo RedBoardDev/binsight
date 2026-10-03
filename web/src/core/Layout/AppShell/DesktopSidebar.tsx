@@ -1,3 +1,4 @@
+import { AboutFooter } from '@app/core/Layout/AppShell/AboutFooter';
 import { NAV_ITEMS } from '@app/core/Layout/AppShell/navItems';
 import { useLingui } from '@lingui/react/macro';
 import { Link } from '@tanstack/react-router';
@@ -22,6 +23,7 @@ export const DesktopSidebar = () => {
           {i18n._(label)}
         </Link>
       ))}
+      <AboutFooter />
     </nav>
   );
 };
