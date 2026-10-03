@@ -4,6 +4,31 @@ import tailwindcss from '@tailwindcss/vite';
 import { tanstackRouter } from '@tanstack/router-plugin/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
+import { type ManifestOptions, VitePWA } from 'vite-plugin-pwa';
+
+const manifest: Partial<ManifestOptions> = {
+  id: '/',
+  name: 'binsight',
+  short_name: 'binsight',
+  description: 'Exact PnL for your Meteora DLMM liquidity positions.',
+  start_url: '/',
+  scope: '/',
+  display: 'standalone',
+  orientation: 'any',
+  background_color: '#0b0f14',
+  theme_color: '#0b0f14',
+  icons: [
+    { src: '/icons/pwa-64x64.png', sizes: '64x64', type: 'image/png' },
+    { src: '/icons/pwa-192x192.png', sizes: '192x192', type: 'image/png' },
+    { src: '/icons/pwa-512x512.png', sizes: '512x512', type: 'image/png' },
+    {
+      src: '/icons/maskable-icon-512x512.png',
+      sizes: '512x512',
+      type: 'image/png',
+      purpose: 'maskable',
+    },
+  ],
+};
 
 const apiProxy = {
   // Same origin seen from the browser, so the session cookie and the server's CSRF check both work.
@@ -26,6 +51,21 @@ export default defineConfig(({ mode }) => ({
       failOnCompileError: true,
     }),
     tailwindcss(),
+    VitePWA({
+      strategies: 'injectManifest',
+      srcDir: 'src/sw',
+      filename: 'sw.ts',
+      registerType: 'prompt',
+      // 'inline' or 'auto' would add an inline script, which the server's CSP (script-src 'self')
+      // blocks; main.tsx registers the worker through the UpdatePrompt instead.
+      injectRegister: false,
+      manifest,
+      injectManifest: {
+        globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
+        globIgnores: ['third-party-licenses.txt'],
+      },
+      devOptions: { enabled: false },
+    }),
   ],
   resolve: { alias: { '@app': fileURLToPath(new URL('./src', import.meta.url)) } },
   server: { port: 5173, strictPort: true, proxy: apiProxy },

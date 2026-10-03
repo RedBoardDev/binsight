@@ -11,6 +11,10 @@ msgstr ""
 msgid "{seconds, plural, one {Too many failed attempts. Try again in # second.} other {Too many failed attempts. Try again in # seconds.}}"
 msgstr "{seconds, plural, one {Zu viele fehlgeschlagene Versuche. Versuchen Sie es in # Sekunde erneut.} other {Zu viele fehlgeschlagene Versuche. Versuchen Sie es in # Sekunden erneut.}}"
 
+#: src/core/pwa/UpdatePrompt.tsx
+msgid "A new version of binsight is available."
+msgstr "Eine neue Version von binsight ist verfügbar."
+
 #: src/core/RootErrorBoundary.tsx
 msgid "An unexpected error stopped the app. Reload the page to start again."
 msgstr "Ein unerwarteter Fehler hat die App angehalten. Laden Sie die Seite neu, um von vorn zu beginnen."
@@ -122,6 +126,7 @@ msgstr "Pausiert"
 msgid "Reconnecting"
 msgstr "Verbindet erneut"
 
+#: src/core/pwa/UpdatePrompt.tsx
 #: src/core/RootErrorBoundary.tsx
 msgid "Reload"
 msgstr "Neu laden"

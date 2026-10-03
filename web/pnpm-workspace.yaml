@@ -11,3 +11,9 @@ allowBuilds: {}
 # Each entry is an exact version that was checked by hand; never exclude a whole package.
 trustPolicyExclude:
   - semver@6.3.1
+  # Required by workbox-build 7.4.1; published without provenance, no install script.
+  - '@trickfilm400/rollup-plugin-off-main-thread@3.0.0-pre1'
+# workbox-build 7.4.1 still asks for glob 11, which is deprecated for known vulnerabilities; glob 13
+# keeps the globSync API it uses.
+overrides:
+  workbox-build>glob: 13.0.6

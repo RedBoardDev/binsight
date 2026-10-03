@@ -3,7 +3,7 @@
   "compilerOptions": {
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
-    "types": ["vite/client"],
+    "types": ["vite/client", "vite-plugin-pwa/react"],
     "paths": {
       "@app/*": ["./src/*"],
       "@test/*": ["./test/*"]
@@ -11,5 +11,5 @@
     "tsBuildInfoFile": "./node_modules/.tmp/app.tsbuildinfo"
   },
   "include": ["src", "test"],
-  "exclude": ["test/**/*.spec.ts", "test/architecture"]
+  "exclude": ["src/sw", "test/**/*.spec.ts", "test/architecture"]
 }

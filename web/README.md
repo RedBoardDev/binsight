@@ -77,3 +77,18 @@ Ask first: most needs are already covered (see the reuse order in `web.md`). The
 - if pnpm reports an ignored build script, review the package and record the decision in `allowBuilds` in
   [`pnpm-workspace.yaml`](pnpm-workspace.yaml);
 - explain in the commit body what the package does that we should not write ourselves.
+
+## Installable app (PWA)
+
+`vite-plugin-pwa` builds the service worker from `src/sw/sw.ts` (a separate TypeScript project, without the
+`@app/` alias) and the web manifest from `vite.config.ts`. The worker precaches the built files and serves the
+app shell for navigations; it never handles `/api/*`, so the live event stream never goes through it. A new
+version waits until the owner accepts the update prompt. The worker is off in `pnpm dev`: test it with
+`pnpm build` and the binary.
+
+The icons in `public/icons/` were generated once from `public/favicon.svg`:
+
+```sh
+pnpm dlx @vite-pwa/assets-generator@1.0.4 --preset minimal-2023 public/favicon.svg
+mv public/*.png public/icons/
+```

@@ -1,6 +1,8 @@
 import '@app/core/theme/globals.css';
 import { AppProviders } from '@app/core/AppProviders';
 import { activateInitialLocale } from '@app/core/i18n/localeActivation';
+import { registerStaleChunkReload } from '@app/core/pwa/staleChunkReload';
+import { UpdatePrompt } from '@app/core/pwa/UpdatePrompt';
 import { createQueryClient } from '@app/core/query/createQueryClient';
 import { RootErrorBoundary } from '@app/core/RootErrorBoundary';
 import { redirectToSignIn } from '@app/core/redirectToSignIn';
@@ -16,6 +18,8 @@ if (rootElement === null) {
   throw new Error('index.html has no #root element');
 }
 
+registerStaleChunkReload();
+
 // Activated before the first render, so no component ever renders without its messages.
 await activateInitialLocale();
 
@@ -27,6 +31,7 @@ createRoot(rootElement).render(
   <StrictMode>
     <RootErrorBoundary>
       <AppProviders queryClient={queryClient}>
+        <UpdatePrompt />
         <RouterProvider router={router} />
       </AppProviders>
     </RootErrorBoundary>
