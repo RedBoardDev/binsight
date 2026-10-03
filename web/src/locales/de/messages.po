@@ -31,6 +31,14 @@ msgstr "binsight ist nicht erreichbar. Prüfen Sie Ihre Verbindung und versuchen
 msgid "binsight stopped working"
 msgstr "binsight funktioniert nicht mehr"
 
+#: src/applications/Realtime/Ui/streamStateLabels.ts
+msgid "Connecting"
+msgstr "Verbindet"
+
+#: src/applications/Realtime/Ui/RealtimeStatusCard.tsx
+msgid "Connection"
+msgstr "Verbindung"
+
 #: src/applications/Auth/Ui/useAuthActions.ts
 msgid "Could not sign out."
 msgstr "Abmelden fehlgeschlagen."
@@ -73,9 +81,25 @@ msgstr "Falsches Passwort."
 msgid "Language"
 msgstr "Sprache"
 
+#: src/applications/Realtime/Ui/RealtimeStatusCard.tsx
+msgid "Last heartbeat"
+msgstr "Letztes Lebenszeichen"
+
 #: src/core/theme/ThemeSwitcher.tsx
 msgid "Light theme"
 msgstr "Helles Design"
+
+#: src/applications/Realtime/Ui/streamStateLabels.ts
+msgid "Live"
+msgstr "Live"
+
+#: src/applications/Realtime/Ui/RealtimeStatusCard.tsx
+msgid "Live updates"
+msgstr "Live-Aktualisierungen"
+
+#: src/applications/Realtime/Ui/RealtimeStatusIndicator.tsx
+msgid "Live updates: {label}"
+msgstr "Live-Aktualisierungen: {label}"
 
 #: src/core/Layout/AppShell/DesktopSidebar.tsx
 #: src/core/Layout/AppShell/MobileTabBar.tsx
@@ -89,6 +113,14 @@ msgstr "Seite nicht gefunden"
 #: src/applications/Auth/Ui/LoginForm/PasswordField.tsx
 msgid "Password"
 msgstr "Passwort"
+
+#: src/applications/Realtime/Ui/streamStateLabels.ts
+msgid "Paused"
+msgstr "Pausiert"
+
+#: src/applications/Realtime/Ui/streamStateLabels.ts
+msgid "Reconnecting"
+msgstr "Verbindet erneut"
 
 #: src/core/RootErrorBoundary.tsx
 msgid "Reload"

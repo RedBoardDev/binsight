@@ -31,6 +31,14 @@ msgstr "binsight cannot be reached. Check your connection and try again."
 msgid "binsight stopped working"
 msgstr "binsight stopped working"
 
+#: src/applications/Realtime/Ui/streamStateLabels.ts
+msgid "Connecting"
+msgstr "Connecting"
+
+#: src/applications/Realtime/Ui/RealtimeStatusCard.tsx
+msgid "Connection"
+msgstr "Connection"
+
 #: src/applications/Auth/Ui/useAuthActions.ts
 msgid "Could not sign out."
 msgstr "Could not sign out."
@@ -73,9 +81,25 @@ msgstr "Incorrect password."
 msgid "Language"
 msgstr "Language"
 
+#: src/applications/Realtime/Ui/RealtimeStatusCard.tsx
+msgid "Last heartbeat"
+msgstr "Last heartbeat"
+
 #: src/core/theme/ThemeSwitcher.tsx
 msgid "Light theme"
 msgstr "Light theme"
+
+#: src/applications/Realtime/Ui/streamStateLabels.ts
+msgid "Live"
+msgstr "Live"
+
+#: src/applications/Realtime/Ui/RealtimeStatusCard.tsx
+msgid "Live updates"
+msgstr "Live updates"
+
+#: src/applications/Realtime/Ui/RealtimeStatusIndicator.tsx
+msgid "Live updates: {label}"
+msgstr "Live updates: {label}"
 
 #: src/core/Layout/AppShell/DesktopSidebar.tsx
 #: src/core/Layout/AppShell/MobileTabBar.tsx
@@ -89,6 +113,14 @@ msgstr "Page not found"
 #: src/applications/Auth/Ui/LoginForm/PasswordField.tsx
 msgid "Password"
 msgstr "Password"
+
+#: src/applications/Realtime/Ui/streamStateLabels.ts
+msgid "Paused"
+msgstr "Paused"
+
+#: src/applications/Realtime/Ui/streamStateLabels.ts
+msgid "Reconnecting"
+msgstr "Reconnecting"
 
 #: src/core/RootErrorBoundary.tsx
 msgid "Reload"

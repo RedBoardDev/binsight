@@ -35,3 +35,19 @@ class ResizeObserverStub {
   disconnect(): void {}
 }
 window.ResizeObserver = ResizeObserverStub;
+
+// jsdom has no EventSource. This one never connects; a spec that drives the live stream stubs
+// its own with vi.stubGlobal.
+class SilentEventSource extends EventTarget {
+  readonly CLOSED = 2;
+  readyState = 0;
+
+  close(): void {
+    this.readyState = this.CLOSED;
+  }
+}
+Object.defineProperty(window, 'EventSource', {
+  configurable: true,
+  writable: true,
+  value: SilentEventSource,
+});
