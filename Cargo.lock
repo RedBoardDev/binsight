@@ -54,6 +54,7 @@ dependencies = [
  "binsight-store",
  "jiff",
  "tempfile",
+ "thiserror",
  "tokio",
  "tokio-util",
  "tracing",

@@ -14,15 +14,18 @@
 
 mod clock;
 mod engine;
+mod error;
 mod events;
 mod handle;
 mod health;
+pub mod projections;
 mod status;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 
 pub use clock::SystemClock;
 pub use engine::Engine;
+pub use error::EngineError;
 pub use events::EngineEvent;
 pub use handle::EngineHandle;
 pub use health::{ComponentHealth, EngineHealth};

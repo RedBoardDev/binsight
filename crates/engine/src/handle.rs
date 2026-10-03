@@ -32,6 +32,12 @@ impl EngineHandle {
         }
     }
 
+    /// The database, for the engine's own tests.
+    #[cfg(test)]
+    pub(crate) fn store(&self) -> &Store {
+        &self.store
+    }
+
     /// The current lifecycle status.
     pub fn status(&self) -> EngineStatus {
         *self.status.borrow()

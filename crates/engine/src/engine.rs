@@ -1,16 +1,19 @@
 //! The engine: the long-running task that owns the background work.
 //!
-//! In this first version the engine has no work yet: it starts, reports that it is running and
-//! waits for the shutdown signal. Every status change is published both as the current status and
-//! as an event. This module owns the lifecycle; what the work is belongs to later modules.
+//! At startup the engine brings the projection bookkeeping in step with the code; then, having no
+//! other work yet, it reports that it is running and waits for the shutdown signal. Every status
+//! change is published both as the current status and as an event. This module owns the
+//! lifecycle; what the work is belongs to other modules.
 
 use binsight_store::Store;
 use tokio::sync::{broadcast, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
+use crate::error::EngineError;
 use crate::events::EngineEvent;
 use crate::handle::EngineHandle;
+use crate::projections::{REGISTRY, reconcile_projections};
 use crate::status::EngineStatus;
 
 /// How many events a slow subscriber may fall behind before it starts losing the oldest ones.
@@ -19,6 +22,7 @@ const EVENT_BUFFER_SIZE: usize = 256;
 /// The engine, ready to run.
 #[derive(Debug)]
 pub struct Engine {
+    store: Store,
     status: watch::Sender<EngineStatus>,
     events: broadcast::Sender<EngineEvent>,
 }
@@ -29,17 +33,31 @@ impl Engine {
     pub fn new(store: Store) -> (Self, EngineHandle) {
         let (status, status_receiver) = watch::channel(EngineStatus::Starting);
         let (events, _) = broadcast::channel(EVENT_BUFFER_SIZE);
-        let handle = EngineHandle::new(store, status_receiver, events.clone());
-        (Self { status, events }, handle)
+        let handle = EngineHandle::new(store.clone(), status_receiver, events.clone());
+        (
+            Self {
+                store,
+                status,
+                events,
+            },
+            handle,
+        )
     }
 
-    /// Runs the engine until `shutdown` is cancelled.
-    pub async fn run(self, shutdown: CancellationToken) {
+    /// Runs the startup work, then runs until `shutdown` is cancelled.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::Store`] if the startup work cannot read or update the database; the
+    /// engine never reaches the running status then.
+    pub async fn run(self, shutdown: CancellationToken) -> Result<(), EngineError> {
+        reconcile_projections(&self.store, REGISTRY).await?;
         self.change_status(EngineStatus::Running);
         info!("engine running");
         shutdown.cancelled().await;
         self.change_status(EngineStatus::Stopping);
         info!("engine stopped");
+        Ok(())
     }
 
     /// Records the new status and tells the subscribers.
@@ -68,7 +86,7 @@ mod tests {
         let running = events.recv().await.unwrap();
         assert_eq!(handle.status(), EngineStatus::Running);
         shutdown.cancel();
-        task.await.unwrap();
+        task.await.unwrap().unwrap();
         let stopping = events.recv().await.unwrap();
 
         assert_eq!(
@@ -97,6 +115,7 @@ mod tests {
             setup.engine.run(shutdown),
         )
         .await
+        .unwrap()
         .unwrap();
     }
 
