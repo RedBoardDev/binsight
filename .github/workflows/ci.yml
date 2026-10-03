@@ -21,6 +21,54 @@ env:
   CI: true
 
 jobs:
+  commits:
+    name: Commit messages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Pick the commit range
+        id: range
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          zero=0000000000000000000000000000000000000000
+          if [ "$EVENT" = pull_request ]; then range="$BASE..$HEAD"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]] || [ "$EVENT" = workflow_dispatch ]; then range=""
+          elif [ "$GITHUB_REF" = refs/heads/main ]; then
+            if [ "$BEFORE" = "$zero" ]; then range="$SHA~..$SHA"; else range="$BEFORE..$SHA"; fi
+          # A branch push is checked from main, not from `before`: after a force-push `before` is unreachable.
+          else range="origin/main..$SHA"; fi
+          echo "range=$range" >> "$GITHUB_OUTPUT"
+      - if: steps.range.outputs.range != ''
+        uses: crate-ci/committed@faeed42f2e10c244533a01525f13c4d8b6ce383f # v1.1.11
+        with:
+          args: -vv --no-merge-commit
+          commits: ${{ steps.range.outputs.range }}
+
+  workflows:
+    name: Workflow lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: actionlint
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
+      - uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          advanced-security: false
+          version: 1.30.1
+
   fmt:
     name: Rust formatting
     runs-on: ubuntu-24.04
@@ -112,16 +160,25 @@ jobs:
 
   ci-ok:
     name: ci-ok
+    # Add a job to this workflow and forget it in `needs` here, and it becomes advisory:
+    # a red run would still look green.
     if: always()
-    needs: [fmt, clippy, test, deny, layering]
+    needs: [commits, workflows, fmt, clippy, test, deny, layering]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Verify every job
         env:
-          RESULTS: ${{ join(needs.*.result, ' ') }}
+          RESULTS: ${{ toJSON(needs) }}
         run: |
-          echo "job results: $RESULTS"
-          for result in $RESULTS; do
-            [ "$result" = success ] || { echo "::error::a required job did not pass ($result)"; exit 1; }
-          done
+          # GitHub reports a skipped job as passing to branch protection, so here every job must
+          # succeed: skipped, failed and cancelled all fail the verdict.
+          failed=0
+          while read -r job result; do
+            echo "$job: $result"
+            if [ "$result" != success ]; then
+              echo "::error::$job did not pass ($result)"
+              failed=1
+            fi
+          done < <(echo "$RESULTS" | jq -r 'to_entries[] | "\(.key) \(.value.result)"')
+          exit "$failed"
