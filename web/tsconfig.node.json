@@ -4,5 +4,5 @@
     "types": ["node"],
     "tsBuildInfoFile": "./node_modules/.tmp/node.tsbuildinfo"
   },
-  "include": ["*.config.ts", "test/architecture.spec.ts", "test/architecture"]
+  "include": ["*.config.ts", "test/**/*.spec.ts", "test/architecture"]
 }

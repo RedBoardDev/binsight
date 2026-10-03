@@ -1,3 +1,4 @@
+import '@app/core/theme/globals.css';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
@@ -8,6 +9,8 @@ if (rootElement === null) {
 
 createRoot(rootElement).render(
   <StrictMode>
-    <h1>binsight</h1>
+    <main className="grid h-full place-items-center">
+      <h1 className="font-semibold text-3xl text-accent">binsight</h1>
+    </main>
   </StrictMode>,
 );
