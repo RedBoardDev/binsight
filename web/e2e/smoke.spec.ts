@@ -30,8 +30,10 @@ test('signs in, shows the dashboard and signs out', async ({ page }, testInfo) =
   });
   await expectNoA11yViolations(page);
 
-  const sidebar = page.getByRole('navigation', { name: 'Main navigation' }).first();
-  const tabBar = page.getByRole('navigation', { name: 'Main navigation' }).last();
+  // includeHidden: the menu hidden at this width is display:none, which getByRole skips.
+  const menus = page.getByRole('navigation', { name: 'Main navigation', includeHidden: true });
+  const [sidebar, tabBar] = [menus.first(), menus.last()];
+  await expect(menus).toHaveCount(2);
   const isMobile = testInfo.project.name === 'mobile';
   await expect(isMobile ? tabBar : sidebar).toBeVisible();
   await expect(isMobile ? sidebar : tabBar).toBeHidden();
