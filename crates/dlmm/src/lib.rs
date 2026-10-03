@@ -16,3 +16,5 @@
     clippy::as_conversions,
     clippy::arithmetic_side_effects
 )]
+
+pub mod program;
