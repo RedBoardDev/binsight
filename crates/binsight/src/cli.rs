@@ -40,4 +40,26 @@ pub enum Command {
     /// Run the server: open and upgrade the database, start the engine, serve the API and the
     /// web app until stopped (Ctrl-C or SIGTERM)
     Run,
+    /// Inspect and maintain an installation
+    Admin {
+        /// The maintenance task.
+        #[command(subcommand)]
+        command: AdminCommand,
+    },
+    /// Check that the local server answers (for container health checks)
+    #[command(hide = true)]
+    Healthcheck,
+}
+
+/// The maintenance tasks.
+#[derive(Debug, Subcommand)]
+pub enum AdminCommand {
+    /// Show the effective configuration and where each value comes from (secrets are hidden)
+    Config,
+    /// Back up the database now (works while the server runs)
+    Backup,
+    /// Show the database schema version, pending migrations and projections
+    DbStatus,
+    /// Sign out every session by replacing the session secret (the server must be stopped)
+    RotateSessions,
 }

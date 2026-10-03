@@ -59,6 +59,9 @@ pub enum Failure {
     /// The database could not be backed up, so it was not touched.
     #[error("could not back up the database; nothing was changed")]
     BackupFailed(#[source] StoreError),
+    /// The server answered its health check with an error, or not like a binsight server.
+    #[error("the server is not healthy: {0}")]
+    Unhealthy(String),
     /// Anything else, with its context.
     #[error(transparent)]
     Unexpected(#[from] anyhow::Error),
@@ -81,7 +84,7 @@ impl Failure {
             Self::DataDirLocked { .. } => EXIT_LOCKED,
             Self::IncompatibleDatabase(_) => EXIT_INCOMPATIBLE_DATABASE,
             Self::Io { .. } | Self::BackupFailed(_) => EXIT_IO,
-            Self::Unexpected(_) => EXIT_UNEXPECTED,
+            Self::Unhealthy(_) | Self::Unexpected(_) => EXIT_UNEXPECTED,
         })
     }
 }

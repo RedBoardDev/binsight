@@ -61,13 +61,23 @@ impl LockedDataDir {
 
     /// The database file.
     pub fn database_path(&self) -> PathBuf {
-        self.path.join(DATABASE_FILE)
+        database_path(&self.path)
     }
 
     /// The folder of the backups.
     pub fn backups_path(&self) -> PathBuf {
-        self.path.join(BACKUPS_FOLDER)
+        backups_path(&self.path)
     }
+}
+
+/// The database file of the data folder `data_dir`.
+pub fn database_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(DATABASE_FILE)
+}
+
+/// The backups folder of the data folder `data_dir`.
+pub fn backups_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(BACKUPS_FOLDER)
 }
 
 /// Creates `path` and its parents; new folders are readable by their owner only.

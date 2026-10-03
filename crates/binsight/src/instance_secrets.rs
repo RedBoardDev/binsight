@@ -32,6 +32,17 @@ pub async fn ensure_instance_secrets(store: &Store) -> Result<SessionSecret, Fai
     decode_session_secret(&stored)
 }
 
+/// Replaces the session secret: every session cookie issued so far stops being valid.
+///
+/// # Errors
+///
+/// Returns a failure if the random generator or the database fails.
+pub async fn rotate_session_secret(store: &Store) -> Result<(), Failure> {
+    let secret = random_hex(SESSION_SECRET_BYTES)?;
+    store.meta().set(MetaKey::SessionSecret, secret).await?;
+    Ok(())
+}
+
 /// `length` random bytes, in hexadecimal.
 pub(crate) fn random_hex(length: usize) -> Result<String, Failure> {
     random_bytes(length).map(hex::encode)

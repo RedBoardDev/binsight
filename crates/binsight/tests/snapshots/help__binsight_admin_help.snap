@@ -1,0 +1,19 @@
+---
+source: crates/binsight/tests/help.rs
+expression: "help_of(&[\"admin\", \"--help\"]).await"
+---
+Inspect and maintain an installation
+
+Usage: binsight admin [OPTIONS] <COMMAND>
+
+Commands:
+  config           Show the effective configuration and where each value comes from (secrets are hidden)
+  backup           Back up the database now (works while the server runs)
+  db-status        Show the database schema version, pending migrations and projections
+  rotate-sessions  Sign out every session by replacing the session secret (the server must be stopped)
+  help             Print this message or the help of the given subcommand(s)
+
+Options:
+      --config-file <PATH>  The configuration file to read [default: $XDG_CONFIG_HOME/binsight/binsight.env or ~/.config/binsight/binsight.env]
+  -h, --help                Print help
+  -V, --version             Print version

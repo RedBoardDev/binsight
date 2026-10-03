@@ -1,0 +1,18 @@
+---
+source: crates/binsight/tests/help.rs
+expression: "help_of(&[\"--help\"]).await"
+---
+Self-hostable portfolio tracker for Meteora DLMM liquidity positions, with exact, on-chain verified PnL
+
+Usage: binsight [OPTIONS] <COMMAND>
+
+Commands:
+  init   Write a configuration file with your Helius API key and password (asked without echo)
+  run    Run the server: open and upgrade the database, start the engine, serve the API and the web app until stopped (Ctrl-C or SIGTERM)
+  admin  Inspect and maintain an installation
+  help   Print this message or the help of the given subcommand(s)
+
+Options:
+      --config-file <PATH>  The configuration file to read [default: $XDG_CONFIG_HOME/binsight/binsight.env or ~/.config/binsight/binsight.env]
+  -h, --help                Print help
+  -V, --version             Print version
