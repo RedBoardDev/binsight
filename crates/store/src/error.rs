@@ -66,6 +66,20 @@ pub enum StoreError {
         #[source]
         source: rusqlite::Error,
     },
+    /// A value is too large for the column it should be stored in.
+    #[error("the {what} {value} is too large to be stored")]
+    ValueTooLarge {
+        /// What the value is.
+        what: &'static str,
+        /// The value, as text.
+        value: String,
+    },
+    /// A projection name is not a lowercase `snake_case` identifier.
+    #[error("{name:?} is not a valid projection name (lowercase letters, digits and underscores)")]
+    InvalidProjectionName {
+        /// The refused name.
+        name: String,
+    },
     /// A value read from the database is outside the range the schema allows.
     #[error("the database holds an invalid {what}: {value}")]
     InvalidStoredValue {

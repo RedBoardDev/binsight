@@ -12,6 +12,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+binsight-solana.workspace = true
 deadpool-sqlite.workspace = true
 hex.workspace = true
 jiff.workspace = true

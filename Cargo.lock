@@ -63,6 +63,7 @@ dependencies = [
 name = "binsight-store"
 version = "0.1.0"
 dependencies = [
+ "binsight-solana",
  "deadpool-sqlite",
  "hex",
  "jiff",

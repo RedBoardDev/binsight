@@ -17,7 +17,11 @@ pub(crate) struct Migration {
 }
 
 /// Every migration, in the order they are applied.
-pub(crate) const MIGRATIONS: &[Migration] = &[];
+pub(crate) const MIGRATIONS: &[Migration] = &[Migration {
+    version: 1,
+    name: "foundation",
+    sql: include_str!("../../migrations/0001_foundation.sql"),
+}];
 
 #[cfg(test)]
 mod tests {
