@@ -86,8 +86,7 @@ fn back_up_before_upgrade(
     options: &UpgradeOptions,
 ) -> Result<PathBuf, StoreError> {
     let name = backup_file_name(options.now, &options.binary_version, plan.current_version);
-    let path = options.backups.folder.join(name);
-    write_backup(connection, &path)?;
+    let path = write_backup(connection, &options.backups.folder.join(name))?;
     info!(path = %path.display(), "database backed up before the upgrade");
     Ok(path)
 }

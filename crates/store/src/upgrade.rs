@@ -104,9 +104,7 @@ impl Store {
             .write(move |connection| {
                 let schema = plan_migrations(MIGRATIONS, &read_applied(connection)?)?;
                 let name = backup_file_name(now, &binary_version, schema.current_version);
-                let path = folder.join(name);
-                write_backup(connection, &path)?;
-                Ok(path)
+                write_backup(connection, &folder.join(name))
             })
             .await
     }

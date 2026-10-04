@@ -2,30 +2,32 @@
 //!
 //! A backup is a complete, compacted SQLite file named
 //! `binsight-<UTC time>-v<binary version>-schema<schema version>.db`, readable only by its owner.
-//! `VACUUM INTO` copies a consistent snapshot even while the server keeps reading. Rotation only
-//! ever deletes files whose name matches that exact pattern, so nothing else in the folder is at
-//! risk. This module decides names and copies files; when to back up is decided by the upgrade.
+//! `VACUUM INTO` copies a consistent snapshot even while the server keeps reading. The copy is
+//! written under a `.partial` name and renamed once complete, so a file with a backup name is
+//! always a whole backup: a failed or interrupted copy never counts as one. Rotation only ever
+//! deletes files whose name matches the backup pattern, so nothing else in the folder is at risk.
+//! This module decides names and copies files; when to back up is decided by the upgrade.
 
+mod naming;
+mod rotation;
+
+use std::ffi::OsString;
 use std::fs::OpenOptions;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use jiff::Timestamp;
 use rusqlite::Connection;
 
 use crate::error::StoreError;
+use naming::alternative_name;
+pub(crate) use naming::backup_file_name;
+pub(crate) use rotation::rotate_backups;
 
-/// Every backup file name starts with this.
-const FILE_PREFIX: &str = "binsight-";
+/// Appended to the name of a backup while it is being written.
+const PARTIAL_SUFFIX: &str = ".partial";
 
-/// Every backup file name ends with this.
-const FILE_SUFFIX: &str = ".db";
-
-/// The UTC time in a backup file name; it sorts in chronological order.
-const TIME_FORMAT: &str = "%Y%m%dT%H%M%SZ";
-
-/// The length of a formatted [`TIME_FORMAT`], such as `20261003T120000Z`.
-const TIME_LENGTH: usize = 16;
+/// How many backups may share the same second before the last name is reused.
+const MAX_BACKUPS_PER_SECOND: u32 = 100;
 
 /// Where backups go and how many are kept.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,21 +38,26 @@ pub struct BackupOptions {
     pub keep: usize,
 }
 
-/// The file name of a backup taken at `now` by `binary_version` of a database at `schema_version`.
-pub(crate) fn backup_file_name(
-    now: Timestamp,
-    binary_version: &str,
-    schema_version: u32,
-) -> String {
-    let time = now.strftime(TIME_FORMAT);
-    format!("{FILE_PREFIX}{time}-v{binary_version}-schema{schema_version}{FILE_SUFFIX}")
+/// Copies the database behind `connection` to `destination` and returns the path written.
+///
+/// The copy goes to `<destination>.partial` first, created empty with owner-only permissions so
+/// it is never readable by others, not even for a moment; it is renamed once complete, and
+/// deleted if the copy fails. If `destination` already exists (two backups in the same second),
+/// the backup gets the next free name (`…-2.db`, `…-3.db`…) instead of replacing it.
+pub(crate) fn write_backup(
+    connection: &Connection,
+    destination: &Path,
+) -> Result<PathBuf, StoreError> {
+    let partial = write_partial_backup(connection, destination)?;
+    finish_backup(&partial, &free_destination(destination))
 }
 
-/// Copies the database behind `connection` to `destination`, a file that must not exist yet.
-///
-/// The file is created empty with owner-only permissions first, so the copy is never readable by
-/// others, not even for a moment.
-pub(crate) fn write_backup(connection: &Connection, destination: &Path) -> Result<(), StoreError> {
+/// Copies the database to `<destination>.partial` and returns that path; nothing is left behind
+/// on failure.
+fn write_partial_backup(
+    connection: &Connection,
+    destination: &Path,
+) -> Result<PathBuf, StoreError> {
     let backup_error = |source| StoreError::Backup {
         path: destination.to_path_buf(),
         source,
@@ -58,73 +65,66 @@ pub(crate) fn write_backup(connection: &Connection, destination: &Path) -> Resul
     if let Some(folder) = destination.parent() {
         std::fs::create_dir_all(folder).map_err(backup_error)?;
     }
-    create_private_file(destination).map_err(backup_error)?;
-    let target = destination.to_str().ok_or_else(|| {
+    let partial = partial_path(destination);
+    let target = partial.to_str().ok_or_else(|| {
         backup_error(io::Error::new(
             io::ErrorKind::InvalidInput,
             "the backup path is not valid UTF-8",
         ))
     })?;
-    connection
-        .execute("VACUUM INTO ?1", [target])
-        .map_err(|error| backup_error(io::Error::other(error)))?;
-    Ok(())
-}
-
-/// Deletes the oldest backups in `folder`, keeping the `keep` most recent. Returns the deleted
-/// files. Files that are not backups are never touched.
-pub(crate) fn rotate_backups(folder: &Path, keep: usize) -> io::Result<Vec<PathBuf>> {
-    let mut names = Vec::new();
-    for entry in std::fs::read_dir(folder)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_file() {
-            continue;
-        }
-        if let Some(name) = entry.file_name().to_str() {
-            names.push(name.to_owned());
-        }
+    // A copy interrupted in this very second left its partial file behind.
+    discard(&partial);
+    create_private_file(&partial).map_err(backup_error)?;
+    if let Err(error) = connection.execute("VACUUM INTO ?1", [target]) {
+        discard(&partial);
+        return Err(backup_error(io::Error::other(error)));
     }
-    let mut deleted = Vec::new();
-    for name in backups_to_delete(names, keep) {
-        let path = folder.join(name);
-        std::fs::remove_file(&path)?;
-        deleted.push(path);
-    }
-    Ok(deleted)
+    Ok(partial)
 }
 
-/// The backup names to delete so that only the `keep` most recent remain.
-fn backups_to_delete(names: Vec<String>, keep: usize) -> Vec<String> {
-    let mut backups: Vec<String> = names
-        .into_iter()
-        .filter(|name| is_backup_file_name(name))
-        .collect();
-    backups.sort();
-    let excess = backups.len().saturating_sub(keep);
-    backups.truncate(excess);
-    backups
-}
-
-/// Whether `name` is exactly the name of a backup made by this module.
-fn is_backup_file_name(name: &str) -> bool {
-    let Some(rest) = name
-        .strip_prefix(FILE_PREFIX)
-        .and_then(|rest| rest.strip_suffix(FILE_SUFFIX))
-    else {
-        return false;
-    };
-    let Some((time, versions)) = rest.split_at_checked(TIME_LENGTH) else {
-        return false;
-    };
-    let is_time = time
-        .chars()
-        .enumerate()
-        .all(|(position, character)| match position {
-            8 => character == 'T',
-            15 => character == 'Z',
-            _ => character.is_ascii_digit(),
+/// Gives the complete copy at `partial` its backup name.
+fn finish_backup(partial: &Path, destination: &Path) -> Result<PathBuf, StoreError> {
+    if let Err(source) = std::fs::rename(partial, destination) {
+        discard(partial);
+        return Err(StoreError::Backup {
+            path: destination.to_path_buf(),
+            source,
         });
-    is_time && versions.starts_with("-v") && versions.contains("-schema")
+    }
+    Ok(destination.to_path_buf())
+}
+
+/// `destination`, or the first alternative name that does not exist yet (the last one if all of
+/// them do).
+fn free_destination(destination: &Path) -> PathBuf {
+    let Some(name) = destination.file_name().and_then(|name| name.to_str()) else {
+        return destination.to_path_buf();
+    };
+    (1..=MAX_BACKUPS_PER_SECOND)
+        .map(|attempt| match attempt {
+            1 => destination.to_path_buf(),
+            _ => destination.with_file_name(alternative_name(name, attempt)),
+        })
+        .find(|candidate| !candidate.exists())
+        .unwrap_or_else(|| {
+            destination.with_file_name(alternative_name(name, MAX_BACKUPS_PER_SECOND))
+        })
+}
+
+/// `<path>.partial`.
+fn partial_path(path: &Path) -> PathBuf {
+    let mut name = OsString::from(path.as_os_str());
+    name.push(PARTIAL_SUFFIX);
+    PathBuf::from(name)
+}
+
+/// Deletes a partial copy; one that is already gone is fine.
+fn discard(partial: &Path) {
+    if let Err(error) = std::fs::remove_file(partial)
+        && error.kind() != io::ErrorKind::NotFound
+    {
+        tracing::warn!(path = %partial.display(), %error, "could not delete a partial backup");
+    }
 }
 
 /// Creates an empty file readable and writable by its owner only; fails if it already exists.
@@ -138,53 +138,26 @@ fn create_private_file(path: &Path) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use jiff::Timestamp;
+
+    use super::naming::is_backup_file_name;
     use super::*;
 
-    fn at(seconds: i64) -> Timestamp {
-        Timestamp::from_second(seconds).unwrap()
+    fn database_with_one_table(folder: &Path) -> Connection {
+        let connection = Connection::open(folder.join("binsight.db")).unwrap();
+        connection
+            .execute_batch("CREATE TABLE kept (x TEXT)")
+            .unwrap();
+        connection
     }
 
-    #[test]
-    fn names_a_backup_after_its_time_and_versions() {
-        let name = backup_file_name(at(1_790_000_000), "0.1.0", 1);
-
-        assert_eq!(name, "binsight-20260921T141320Z-v0.1.0-schema1.db");
-        assert!(is_backup_file_name(&name));
-    }
-
-    #[test]
-    fn recognises_only_its_own_backup_names() {
-        for other in [
-            "binsight.db",
-            "binsight-latest.db",
-            "binsight-20260921T144000Z.db",
-            "binsight-20260921T144000Z-v0.1.0-schema1.db.tmp",
-            "notes-20260921T144000Z-v0.1.0-schema1.db",
-        ] {
-            assert!(!is_backup_file_name(other), "{other}");
-        }
-    }
-
-    #[test]
-    fn deletes_the_oldest_backups_beyond_the_kept_count() {
-        let names: Vec<String> = [3, 1, 4, 2]
-            .into_iter()
-            .map(|day| backup_file_name(at(1_790_000_000 + day * 86_400), "0.1.0", 1))
-            .chain(["keep-me.db".to_owned()])
+    fn file_names(folder: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(folder)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
             .collect();
-
-        let deleted = backups_to_delete(names, 3);
-
-        assert_eq!(
-            deleted,
-            vec![backup_file_name(at(1_790_086_400), "0.1.0", 1)]
-        );
-    }
-
-    #[test]
-    fn deletes_nothing_when_there_are_few_backups() {
-        let names = vec![backup_file_name(at(0), "0.1.0", 1)];
-        assert_eq!(backups_to_delete(names, 3), Vec::<String>::new());
+        names.sort();
+        names
     }
 
     #[cfg(unix)]
@@ -193,14 +166,12 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let folder = tempfile::tempdir().unwrap();
-        let connection = Connection::open(folder.path().join("binsight.db")).unwrap();
-        connection
-            .execute_batch("CREATE TABLE kept (x TEXT)")
-            .unwrap();
+        let connection = database_with_one_table(folder.path());
         let destination = folder.path().join("backups").join("copy.db");
 
-        write_backup(&connection, &destination).unwrap();
+        let written = write_backup(&connection, &destination).unwrap();
 
+        assert_eq!(written, destination);
         let mode = std::fs::metadata(&destination)
             .unwrap()
             .permissions()
@@ -208,5 +179,53 @@ mod tests {
         assert_eq!(mode & 0o777, 0o600);
         let copy = Connection::open(&destination).unwrap();
         copy.execute_batch("SELECT * FROM kept").unwrap();
+        assert_eq!(file_names(&folder.path().join("backups")), ["copy.db"]);
+    }
+
+    #[test]
+    fn leaves_no_file_behind_when_the_copy_fails() {
+        let folder = tempfile::tempdir().unwrap();
+        let connection = database_with_one_table(folder.path());
+        let backups = folder.path().join("backups");
+        // SQLite refuses to VACUUM inside a transaction.
+        connection.execute_batch("BEGIN").unwrap();
+
+        let error = write_backup(&connection, &backups.join("copy.db")).unwrap_err();
+
+        assert!(matches!(error, StoreError::Backup { .. }), "{error}");
+        assert_eq!(file_names(&backups), Vec::<String>::new());
+    }
+
+    #[test]
+    fn replaces_a_partial_file_left_by_an_interrupted_copy() {
+        let folder = tempfile::tempdir().unwrap();
+        let connection = database_with_one_table(folder.path());
+        let destination = folder.path().join("copy.db");
+        std::fs::write(partial_path(&destination), b"half a copy").unwrap();
+
+        write_backup(&connection, &destination).unwrap();
+
+        assert!(!partial_path(&destination).exists());
+        Connection::open(&destination)
+            .unwrap()
+            .execute_batch("SELECT * FROM kept")
+            .unwrap();
+    }
+
+    #[test]
+    fn never_replaces_a_backup_taken_in_the_same_second() {
+        let folder = tempfile::tempdir().unwrap();
+        let connection = database_with_one_table(folder.path());
+        let destination = folder
+            .path()
+            .join(backup_file_name(Timestamp::UNIX_EPOCH, "0.1.0", 1));
+
+        let first = write_backup(&connection, &destination).unwrap();
+        let second = write_backup(&connection, &destination).unwrap();
+
+        assert_ne!(first, second);
+        assert!(first.exists() && second.exists());
+        let second_name = second.file_name().unwrap().to_str().unwrap();
+        assert!(is_backup_file_name(second_name), "{second_name}");
     }
 }
