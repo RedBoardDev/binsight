@@ -8,6 +8,8 @@ disallowed-methods = [
   { path = "std::env::var", reason = "read configuration through binsight::config only" },
   { path = "std::env::var_os", reason = "read configuration through binsight::config only" },
   { path = "std::env::vars", reason = "read configuration through binsight::config only" },
+  { path = "std::env::vars_os", reason = "read configuration through binsight::config only" },
+  { path = "std::env::home_dir", reason = "read configuration through binsight::config only" },
   { path = "std::time::SystemTime::now", reason = "inject a binsight_core::clock::Clock" },
   { path = "jiff::Timestamp::now", reason = "inject a binsight_core::clock::Clock" },
   { path = "jiff::Zoned::now", reason = "inject a binsight_core::clock::Clock" },

@@ -81,6 +81,10 @@ pub fn config_file_path(config_file_flag: Option<&Path>) -> Option<PathBuf> {
 
 /// The `BINSIGHT_*` and folder variables of this process. Variables whose name or value is not
 /// valid UTF-8 are skipped (none of ours can be).
+#[expect(
+    clippy::disallowed_methods,
+    reason = "this is the one place that reads the environment"
+)]
 fn read_environment() -> BTreeMap<String, String> {
     std::env::vars_os()
         .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
