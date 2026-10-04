@@ -16,5 +16,14 @@
     { matchPackageNames: ['typescript'], allowedVersions: '<7' }, // openapi-typescript needs the TS 6 JS API
     { matchPackageNames: ['node'], groupName: 'node' },
   ],
+  // Images run by a `run:` step are invisible to the github-actions manager.
+  customManagers: [
+    {
+      customType: 'regex',
+      managerFilePatterns: ['/^\\.github/workflows/.+\\.ya?ml$/'],
+      matchStrings: ['docker run .* (?<depName>rhysd/actionlint):(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)'],
+      datasourceTemplate: 'docker',
+    },
+  ],
   vulnerabilityAlerts: { labels: ['security'], minimumReleaseAge: null },
 }
