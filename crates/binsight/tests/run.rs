@@ -4,8 +4,6 @@
 
 mod common;
 
-use std::time::{Duration, Instant};
-
 use common::{Server, as_pairs, binsight, valid_variables};
 
 #[tokio::test]
@@ -58,21 +56,17 @@ async fn exits_with_75_when_another_server_uses_the_data_folder() {
     first.send_sigterm().await;
 }
 
+// An overrun of the shutdown deadline exits 1, so the exit code alone proves the stop was in
+// time, without timing a real process on a machine that may be busy.
 #[tokio::test]
-async fn stops_cleanly_within_two_seconds_on_sigterm() {
+async fn stops_cleanly_on_sigterm() {
     let home = tempfile::tempdir().unwrap();
     let variables = valid_variables(home.path(), "127.0.0.1:0");
     let mut server = Server::start(home.path(), &as_pairs(&variables)).await;
 
-    let asked_at = Instant::now();
     server.send_sigterm().await;
     server.wait_for_line("shutdown complete").await;
     let status = server.child.wait().await.unwrap();
 
-    assert!(
-        asked_at.elapsed() < Duration::from_secs(2),
-        "{:?}",
-        asked_at.elapsed()
-    );
     assert_eq!(status.code(), Some(0));
 }
