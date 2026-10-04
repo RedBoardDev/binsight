@@ -196,6 +196,19 @@
     color: var(--accent);
   }
 
+  /* A column header that sorts: capitals, in the text color on the column that sorts. */
+  .button--column-header {
+    @apply caps-label;
+    height: 1.75rem;
+    gap: 0.25rem;
+    margin-inline: -0.5rem;
+    padding-inline: 0.5rem;
+  }
+
+  :is(th[aria-sort="ascending"], th[aria-sort="descending"]) .button--column-header {
+    color: var(--foreground);
+  }
+
   /* A switch is neutral: its track takes the text color when on, never the accent. */
   .switch {
     --switch-control-bg: color-mix(in srgb, var(--foreground) 16%, transparent);
