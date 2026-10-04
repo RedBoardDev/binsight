@@ -72,6 +72,17 @@ mod tests {
     }
 
     #[test]
+    fn never_reads_a_file_outside_the_web_build() {
+        for path in [
+            "../Cargo.toml",
+            "../../Cargo.toml",
+            "assets/../../../Cargo.toml",
+        ] {
+            assert_eq!(EmbeddedWebApp.get(path), None, "{path}");
+        }
+    }
+
+    #[test]
     fn has_no_file_the_build_does_not_have() {
         assert_eq!(EmbeddedWebApp.get("assets/never-built.js"), None);
     }

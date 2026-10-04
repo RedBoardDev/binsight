@@ -113,6 +113,28 @@ async fn compares_the_client_tag_weakly() {
 }
 
 #[tokio::test]
+async fn never_serves_a_file_outside_the_web_app() {
+    let app = TestApp::new().await;
+
+    for path in [
+        "/../Cargo.toml",
+        "/assets/../../secret.js",
+        "/assets/..%2f..%2fsecret.js",
+        "/%2e%2e/%2e%2e/etc/passwd",
+        "/assets/%2e%2e/index.html",
+    ] {
+        let response = app.get(path).await;
+        let is_app_page =
+            response.status == StatusCode::OK && response.body == INDEX_HTML.as_bytes();
+        assert!(
+            response.status == StatusCode::NOT_FOUND || is_app_page,
+            "{path}: {}",
+            response.status
+        );
+    }
+}
+
+#[tokio::test]
 async fn answers_head_without_a_body() {
     let app = TestApp::new().await;
     let request = Request::head("/").body(Body::empty()).unwrap();
