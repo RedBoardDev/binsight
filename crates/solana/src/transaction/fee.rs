@@ -3,10 +3,12 @@
 //! The node reports only the total. The priority part is what the transaction asked for: in its
 //! header for version 1 (a total in lamports), or with Compute Budget instructions for legacy and
 //! version 0 (a price per compute unit, in micro-lamports, times the limit, rounded up like the
-//! runtime). When a legacy or version 0 transaction sets a price without a limit, the limit the
-//! runtime chose is not recorded anywhere; the priority part is then what is left after
-//! [`LAMPORTS_PER_SIGNATURE`] per signature. The base part is always the total minus the
-//! priority part. This module computes the split; it does not decide who pays.
+//! runtime; or, in 2022, the additional fee of the deprecated `RequestUnits`). When the request
+//! does not fix the amount (a price without a limit, whose limit the runtime chose and recorded
+//! nowhere) or asks for more than the total (an old transaction charged under older rules), the
+//! priority part is what is left after [`LAMPORTS_PER_SIGNATURE`] per signature. The base part is
+//! always the total minus the priority part. This module computes the split; it does not decide
+//! who pays.
 
 use binsight_core::units::Lamports;
 
@@ -42,8 +44,9 @@ pub struct FeeBreakdown {
 enum PriorityRequest {
     /// The request fixes the amount.
     Exact(Lamports),
-    /// A price without a limit: the amount depends on a limit the runtime chose.
-    PriceWithoutLimit,
+    /// The request does not fix the amount (a price without a limit, or a request the runtime
+    /// refuses): the priority part is what the signatures leave.
+    LeftAfterSignatures,
 }
 
 /// Splits the fee `total` of a transaction with `required_signatures` signers.
@@ -60,15 +63,11 @@ pub(super) fn breakdown(
         WireFormat::Legacy | WireFormat::V0 { .. } => compute_budget_request(instructions),
     };
     let priority = match request {
-        PriorityRequest::Exact(priority) => priority,
-        PriorityRequest::PriceWithoutLimit => {
-            let signature_fee = signature_count(instructions, required_signatures)
-                .and_then(|signatures| LAMPORTS_PER_SIGNATURE.0.checked_mul(signatures))
-                .map(Lamports)
-                .ok_or(TransactionReadError::SignatureFeeOverflow)?;
-            total
-                .try_sub(signature_fee)
-                .map_err(|_| fee_too_small("signature", total, signature_fee))?
+        PriorityRequest::Exact(priority) if priority <= total => priority,
+        // A request above the total was not charged as asked (older fee rules): the split falls
+        // back to the signatures rather than leaving the transaction unreadable.
+        PriorityRequest::Exact(_) | PriorityRequest::LeftAfterSignatures => {
+            priority_left_after_signatures(total, instructions, required_signatures)?
         }
     };
     let base = total
@@ -81,6 +80,21 @@ pub(super) fn breakdown(
     })
 }
 
+/// What is left of `total` after [`LAMPORTS_PER_SIGNATURE`] per signature.
+fn priority_left_after_signatures(
+    total: Lamports,
+    instructions: &[InstructionNode],
+    required_signatures: u8,
+) -> Result<Lamports, TransactionReadError> {
+    let signature_fee = signature_count(instructions, required_signatures)
+        .and_then(|signatures| LAMPORTS_PER_SIGNATURE.0.checked_mul(signatures))
+        .map(Lamports)
+        .ok_or(TransactionReadError::SignatureFeeOverflow)?;
+    total
+        .try_sub(signature_fee)
+        .map_err(|_| fee_too_small("signature", total, signature_fee))
+}
+
 fn fee_too_small(part: &'static str, total: Lamports, expected: Lamports) -> TransactionReadError {
     TransactionReadError::FeeTooSmall {
         part,
@@ -91,11 +105,12 @@ fn fee_too_small(part: &'static str, total: Lamports, expected: Lamports) -> Tra
 
 /// The priority fee the top-level Compute Budget instructions ask for.
 ///
-/// A repeated or malformed instruction makes the runtime refuse the request, so the amount then
-/// falls back to the signature count, like a price without a limit.
+/// A repeated, malformed or conflicting instruction makes the runtime refuse the request, so the
+/// amount then falls back to the signature count, like a price without a limit.
 fn compute_budget_request(instructions: &[InstructionNode]) -> PriorityRequest {
     let mut price = None;
     let mut limit = None;
+    let mut additional_fee = None;
     let top_level_budget = instructions.iter().filter(|instruction| {
         instruction.position.inner.is_none() && instruction.program == COMPUTE_BUDGET_PROGRAM
     });
@@ -103,7 +118,7 @@ fn compute_budget_request(instructions: &[InstructionNode]) -> PriorityRequest {
         let decoded = match programs::decode(instruction) {
             Ok(Some(ProgramInstruction::ComputeBudget(decoded))) => decoded,
             Ok(_) => continue,
-            Err(_) => return PriorityRequest::PriceWithoutLimit,
+            Err(_) => return PriorityRequest::LeftAfterSignatures,
         };
         let is_repeated = match decoded {
             ComputeBudgetInstruction::SetComputeUnitPrice { micro_lamports } => {
@@ -112,26 +127,37 @@ fn compute_budget_request(instructions: &[InstructionNode]) -> PriorityRequest {
             ComputeBudgetInstruction::SetComputeUnitLimit { units } => {
                 limit.replace(units).is_some()
             }
+            ComputeBudgetInstruction::RequestUnitsDeprecated {
+                additional_fee: fee,
+                ..
+            } => additional_fee.replace(fee).is_some(),
             _ => false,
         };
         if is_repeated {
-            return PriorityRequest::PriceWithoutLimit;
+            return PriorityRequest::LeftAfterSignatures;
         }
     }
-    match (price, limit) {
-        (None | Some(0), _) => PriorityRequest::Exact(Lamports::ZERO),
-        (Some(_), None) => PriorityRequest::PriceWithoutLimit,
-        (Some(price), Some(limit)) => {
-            let units = u128::from(limit.min(MAX_COMPUTE_UNIT_LIMIT));
-            u128::from(price)
-                .checked_mul(units)
-                .map(|micro_lamports| micro_lamports.div_ceil(MICRO_LAMPORTS_PER_LAMPORT))
-                .and_then(|lamports| u64::try_from(lamports).ok())
-                .map_or(PriorityRequest::PriceWithoutLimit, |lamports| {
-                    PriorityRequest::Exact(Lamports(lamports))
-                })
-        }
+    match (additional_fee, price, limit) {
+        (Some(fee), None, None) => PriorityRequest::Exact(fee),
+        (None, None | Some(0), _) => PriorityRequest::Exact(Lamports::ZERO),
+        (None, Some(price), Some(limit)) => priced_request(price, limit),
+        // The deprecated request cannot be mixed with the new ones, and a price without a limit
+        // leaves the limit to the runtime.
+        (Some(_), _, _) | (None, Some(_), None) => PriorityRequest::LeftAfterSignatures,
     }
+}
+
+/// `price` micro-lamports for each of `limit` compute units (capped like the runtime), rounded up
+/// to the next lamport.
+fn priced_request(price: u64, limit: u32) -> PriorityRequest {
+    let units = u128::from(limit.min(MAX_COMPUTE_UNIT_LIMIT));
+    u128::from(price)
+        .checked_mul(units)
+        .map(|micro_lamports| micro_lamports.div_ceil(MICRO_LAMPORTS_PER_LAMPORT))
+        .and_then(|lamports| u64::try_from(lamports).ok())
+        .map_or(PriorityRequest::LeftAfterSignatures, |lamports| {
+            PriorityRequest::Exact(Lamports(lamports))
+        })
 }
 
 /// The signatures the fee is charged for: the transaction's, plus those its top-level
@@ -213,16 +239,35 @@ mod tests {
     }
 
     #[test]
-    fn refuses_a_fee_below_its_priority_part() {
+    fn falls_back_to_the_signatures_when_the_priority_asked_exceeds_the_fee() {
         let instructions = [
             top_level(0, COMPUTE_BUDGET_PROGRAM, price(1_000_000)),
             top_level(1, COMPUTE_BUDGET_PROGRAM, limit(10_000)),
         ];
-        let error = breakdown(Lamports(5_000), &WireFormat::Legacy, &instructions, 1).unwrap_err();
+        let fee = breakdown(Lamports(5_000), &WireFormat::Legacy, &instructions, 1).unwrap();
+        assert_eq!(fee.base, Lamports(5_000));
+        assert_eq!(fee.priority, Lamports::ZERO);
+    }
+
+    #[test]
+    fn reads_the_additional_fee_of_the_deprecated_request() {
+        let mut request = vec![0];
+        request.extend(200_000_u32.to_le_bytes());
+        request.extend(7_000_u32.to_le_bytes());
+        let instructions = [top_level(0, COMPUTE_BUDGET_PROGRAM, request)];
+        let fee = breakdown(Lamports(12_000), &WireFormat::Legacy, &instructions, 1).unwrap();
+        assert_eq!(fee.priority, Lamports(7_000));
+        assert_eq!(fee.base, Lamports(5_000));
+    }
+
+    #[test]
+    fn refuses_a_fee_below_its_signature_part() {
+        let instructions = [top_level(0, COMPUTE_BUDGET_PROGRAM, price(10))];
+        let error = breakdown(Lamports(9_999), &WireFormat::Legacy, &instructions, 2).unwrap_err();
         assert!(matches!(
             error,
             TransactionReadError::FeeTooSmall {
-                part: "priority",
+                part: "signature",
                 ..
             }
         ));

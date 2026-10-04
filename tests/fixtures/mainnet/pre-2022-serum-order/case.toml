@@ -1,0 +1,13 @@
+# Captured by `cargo xtask fixture capture` (finalized commitment). Each JSON file is the
+# node's `result`, byte for byte; do not edit them by hand.
+
+name = "pre-2022-serum-order"
+why = "A 2021 Serum order by a market-making bot: its token balances name neither their owner nor their token program, as nodes recorded them then."
+perspective = "CuieVDEDtLo7FypA9SbLM9saXFdb1dsshEkyErMqkRQq"
+oracles = []
+captured_at = "2026-10-04"
+
+[[transaction]]
+file = "tx-1.json"
+signature = "s28hELYcWfbRFKScS4Ysdh8CSyhFoCM3SkxU1VS6GZcWNVxHjYyBA81QQ4WNTMMnkmk68AWLB9ZsyzxAL6Tb1fc"
+slot = 100000000

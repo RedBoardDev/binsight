@@ -1,9 +1,11 @@
 //! The Compute Budget program: the compute-unit limit and price of a legacy or version 0
 //! transaction.
 //!
-//! The data is Borsh: a `u8` discriminator, then one little-endian field. The runtime refuses
-//! extra bytes, so the decoder does too. A version 1 transaction carries these values in its
-//! header instead and the runtime ignores these instructions there. This module only decodes.
+//! The data is Borsh: a `u8` discriminator, then little-endian fields. The runtime refuses extra
+//! bytes, so the decoder does too. A version 1 transaction carries these values in its header
+//! instead and the runtime ignores these instructions there. This module only decodes.
+
+use binsight_core::units::Lamports;
 
 use super::InstructionDecodeError;
 use super::instruction_reader::InstructionFields;
@@ -11,6 +13,7 @@ use super::instruction_reader::InstructionFields;
 /// The name used in errors.
 const PROGRAM: &str = "Compute Budget";
 
+const REQUEST_UNITS_DEPRECATED: u8 = 0;
 const REQUEST_HEAP_FRAME: u8 = 1;
 const SET_COMPUTE_UNIT_LIMIT: u8 = 2;
 const SET_COMPUTE_UNIT_PRICE: u8 = 3;
@@ -19,6 +22,14 @@ const SET_LOADED_ACCOUNTS_DATA_SIZE_LIMIT: u8 = 4;
 /// A Compute Budget instruction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComputeBudgetInstruction {
+    /// The first way to pay for priority (2022), replaced by the limit and price instructions:
+    /// a compute-unit limit and a fee added to the signature fee.
+    RequestUnitsDeprecated {
+        /// The compute-unit limit.
+        units: u32,
+        /// The fee added to the signature fee.
+        additional_fee: Lamports,
+    },
     /// Requests a heap.
     RequestHeapFrame {
         /// Its size.
@@ -39,7 +50,7 @@ pub enum ComputeBudgetInstruction {
         /// The limit.
         bytes: u32,
     },
-    /// Another (deprecated) instruction.
+    /// Another instruction.
     Other {
         /// Its discriminator.
         discriminator: u8,
@@ -50,6 +61,10 @@ pub enum ComputeBudgetInstruction {
 pub(super) fn decode(data: &[u8]) -> Result<ComputeBudgetInstruction, InstructionDecodeError> {
     let mut fields = InstructionFields::new(data, PROGRAM);
     let instruction = match fields.u8("the instruction")? {
+        REQUEST_UNITS_DEPRECATED => ComputeBudgetInstruction::RequestUnitsDeprecated {
+            units: fields.u32("the compute-unit limit")?,
+            additional_fee: Lamports(u64::from(fields.u32("the additional fee")?)),
+        },
         REQUEST_HEAP_FRAME => ComputeBudgetInstruction::RequestHeapFrame {
             bytes: fields.u32("the heap size")?,
         },
@@ -82,6 +97,20 @@ mod tests {
             decode(&data),
             Ok(ComputeBudgetInstruction::SetComputeUnitPrice {
                 micro_lamports: 133_333_334
+            })
+        );
+    }
+
+    #[test]
+    fn decodes_the_deprecated_request_with_its_additional_fee() {
+        let mut data = vec![REQUEST_UNITS_DEPRECATED];
+        data.extend(400_000_u32.to_le_bytes());
+        data.extend(12_345_u32.to_le_bytes());
+        assert_eq!(
+            decode(&data),
+            Ok(ComputeBudgetInstruction::RequestUnitsDeprecated {
+                units: 400_000,
+                additional_fee: Lamports(12_345),
             })
         );
     }

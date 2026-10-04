@@ -17,7 +17,7 @@ pub use associated_token::{AssociatedAccountCreation, AssociatedTokenInstruction
 pub use compute_budget::ComputeBudgetInstruction;
 pub use system::SystemInstruction;
 pub use token::{CheckedTransfer, TokenInstruction};
-pub use token_program::TokenProgram;
+pub use token_program::{TOKEN_2022_FIRST_INVOCATION_SLOT, TokenProgram};
 
 use crate::error::MalformedBytes;
 use crate::transaction::InstructionNode;

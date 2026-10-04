@@ -3,8 +3,10 @@
 //! Native balances come as two lists in account order. Token balances come as two sparse lists
 //! (an account created or closed by the transaction is missing on one side), which are merged per
 //! account: a missing side counts as zero, with no owner. Amounts are read from the exact integer
-//! strings, never from the floating-point `uiAmount`. This module only reads balances; it does not
-//! decide whose they are.
+//! strings, never from the floating-point `uiAmount`. Old answers (before mid-2022) omit the token
+//! program of a balance, which is then SPL Token (see
+//! [`TOKEN_2022_FIRST_INVOCATION_SLOT`](crate::programs::TOKEN_2022_FIRST_INVOCATION_SLOT)). This
+//! module only reads balances; it does not decide whose they are.
 
 use std::collections::BTreeMap;
 
@@ -85,25 +87,34 @@ struct TokenSide {
     amount: RawTokenAmount,
 }
 
+/// The token balances of a transaction, as the meta lists them.
+pub(super) struct TokenBalanceLists<'a> {
+    /// `preTokenBalances`.
+    pub(super) pre: &'a [RpcTokenBalance],
+    /// `postTokenBalances`.
+    pub(super) post: &'a [RpcTokenBalance],
+    /// The slot of the transaction, which says how old the answer's format can be.
+    pub(super) slot: u64,
+}
+
 /// Merges the token balances before and after into one entry per token account, in account order.
 ///
 /// An account closed and reopened for another mint in the same transaction gives two entries:
 /// the old mint going to zero, then the new mint coming from zero.
 pub(super) fn tokens(
     accounts: &[AccountKey],
-    pre: &[RpcTokenBalance],
-    post: &[RpcTokenBalance],
+    lists: &TokenBalanceLists<'_>,
 ) -> Result<Vec<TokenBalance>, TransactionReadError> {
     let mut sides: BTreeMap<u8, (Option<TokenSide>, Option<TokenSide>)> = BTreeMap::new();
-    for balance in pre {
-        let side = token_side(accounts, balance)?;
+    for balance in lists.pre {
+        let side = token_side(accounts, balance, lists.slot)?;
         let entry = &mut sides.entry(balance.account_index).or_default().0;
         if entry.replace(side).is_some() {
             return Err(duplicate(balance, "preTokenBalances"));
         }
     }
-    for balance in post {
-        let side = token_side(accounts, balance)?;
+    for balance in lists.post {
+        let side = token_side(accounts, balance, lists.slot)?;
         let entry = &mut sides.entry(balance.account_index).or_default().1;
         if entry.replace(side).is_some() {
             return Err(duplicate(balance, "postTokenBalances"));
@@ -169,18 +180,18 @@ fn balance(
 fn token_side(
     accounts: &[AccountKey],
     balance: &RpcTokenBalance,
+    slot: u64,
 ) -> Result<TokenSide, TransactionReadError> {
     let account = address_at(accounts, balance.account_index)?;
-    let program_text = balance
-        .program_id
-        .as_deref()
-        .ok_or(TransactionReadError::MissingField { field: "programId" })?;
-    let program_address = parse_address(program_text, "programId")?;
-    let program =
-        TokenProgram::of(program_address).ok_or(TransactionReadError::UnknownTokenProgram {
-            account,
-            program: program_address,
-        })?;
+    let program = match balance.program_id.as_deref() {
+        Some(text) => {
+            let program = parse_address(text, "programId")?;
+            TokenProgram::of(program)
+                .ok_or(TransactionReadError::UnknownTokenProgram { account, program })?
+        }
+        None => TokenProgram::of_unnamed_balance(slot)
+            .ok_or(TransactionReadError::MissingField { field: "programId" })?,
+    };
     Ok(TokenSide {
         mint: parse_address(&balance.mint, "mint")?,
         program,

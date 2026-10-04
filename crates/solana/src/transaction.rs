@@ -34,6 +34,7 @@ pub use view::{TransactionView, TxOutcome};
 use crate::Address;
 use crate::error::MalformedBytes;
 use accounts::LoadedAddresses;
+use balances::TokenBalanceLists;
 use rpc_response::{RpcLoadedAddresses, RpcTransaction, RpcVersion};
 
 /// The encoding name of a base64 transaction in the answer.
@@ -85,7 +86,14 @@ pub fn read(json: &[u8]) -> Result<TransactionView, TransactionReadError> {
         fee_payer: accounts.first().ok_or_else(first_signer)?.address,
         fee,
         native_balances: balances::native(&accounts, &meta.pre_balances, &meta.post_balances)?,
-        token_balances: balances::tokens(&accounts, &pre_tokens, &post_tokens)?,
+        token_balances: balances::tokens(
+            &accounts,
+            &TokenBalanceLists {
+                pre: &pre_tokens,
+                post: &post_tokens,
+                slot: response.slot,
+            },
+        )?,
         instructions,
         accounts,
     })
