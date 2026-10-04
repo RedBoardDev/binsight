@@ -74,6 +74,22 @@ pub(crate) fn event_instruction(top: u16, inner: u16, data: Vec<u8>) -> Instruct
     }
 }
 
+/// A DLMM instruction (not an event) at `position`, called at `stack_height`.
+pub(crate) fn program_instruction(
+    position: InstructionPosition,
+    stack_height: u8,
+    accounts: Vec<Address>,
+    data: Vec<u8>,
+) -> InstructionNode {
+    InstructionNode {
+        position,
+        stack_height: Some(stack_height),
+        program: PROGRAM_ID,
+        accounts,
+        data: InstructionData(data),
+    }
+}
+
 /// A successful transaction made of `instructions`; every other field is a placeholder.
 pub(crate) fn transaction_with(instructions: Vec<InstructionNode>) -> TransactionView {
     TransactionView {

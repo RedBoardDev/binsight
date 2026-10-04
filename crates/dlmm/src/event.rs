@@ -9,7 +9,8 @@
 //! Reading is **tolerant**: a newer program may append fields to an event, so only the leading
 //! fields binsight needs are read and any bytes after them are ignored. An event whose
 //! discriminator is unknown is kept as [`DlmmEvent::Unknown`] instead of failing the
-//! transaction. This module decodes; it does not decide what the events mean for a position.
+//! transaction. This module decodes; deciding what the events mean for a position is the job of
+//! [`crate::activity`].
 
 mod contents;
 mod extract;

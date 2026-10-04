@@ -2,7 +2,8 @@
 //!
 //! Each struct holds the fields of one event (or of a family of events with the same shape) that
 //! binsight needs, named as in the program's IDL. Token amounts are [`RawTokenAmount`]s, bins are
-//! `i32` bin ids. This module only defines the shapes; [`super::layout`] reads them from bytes.
+//! `i32` bin ids. This module only defines the shapes; [`super::layout`] reads them from bytes and
+//! [`crate::activity`] decides what they mean for a position.
 
 use binsight_core::units::RawTokenAmount;
 use binsight_solana::Address;

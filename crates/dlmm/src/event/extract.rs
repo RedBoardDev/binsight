@@ -2,7 +2,7 @@
 //!
 //! An event is an inner instruction to the DLMM program whose only account is the program's event
 //! authority and whose data starts with the event tag. Anything else the program runs is an
-//! instruction. This module walks the instructions once and
+//! instruction, classified by [`crate::instruction`]. This module walks the instructions once and
 //! allocates only the list of events it returns.
 
 use binsight_solana::MalformedBytes;
@@ -37,8 +37,9 @@ pub enum DecodeError {
 /// Decodes every event the DLMM program emitted in `tx`, in the order it emitted them.
 ///
 /// The events of a failed transaction are decoded too, as the node recorded them, but they
-/// changed nothing on chain: whoever stores them must keep the transaction's outcome beside
-/// them, so that no reader takes a `PositionClose` of a failed transaction for a close.
+/// changed nothing on chain: [`crate::activity::position_activity`] ignores them, and whoever
+/// stores them must keep the transaction's outcome beside them, so that no reader takes a
+/// `PositionClose` of a failed transaction for a close.
 ///
 /// # Errors
 ///
