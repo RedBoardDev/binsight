@@ -18,8 +18,8 @@ use std::path::{Path, PathBuf};
 
 use jiff::Timestamp;
 
+use crate::database::Database;
 use crate::error::StoreError;
-use crate::pools::Database;
 use crate::store::Store;
 use backup::{backup_file_name, write_backup};
 use history::read_applied;

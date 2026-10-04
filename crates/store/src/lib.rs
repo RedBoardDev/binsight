@@ -15,23 +15,20 @@
 //! [`Store::meta`].
 //!
 //! Inside the crate, SQL runs in plain synchronous functions that receive a connection; only the
-//! connection pools in `pools` run them, on a blocking thread. Callers outside the crate see typed
-//! async methods and never a SQLite type.
+//! connection pools in `database` run them, on a blocking thread. Callers outside the crate see
+//! typed async methods and never a SQLite type.
 //!
 //! Like the pure crates, the store never uses floating point: amounts are stored as exact text.
 
 #![deny(clippy::float_arithmetic, clippy::float_cmp)]
 
-mod codec;
+mod database;
 mod decoded;
 mod error;
 mod meta;
-mod pools;
 mod projections;
 mod raw_tx;
 mod store;
-#[cfg(test)]
-mod test_database;
 mod upgrade;
 
 pub use decoded::{DecodeOutcome, DecodeRecord, DecodedEvent, DecodedRepo};

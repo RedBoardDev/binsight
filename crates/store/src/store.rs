@@ -6,8 +6,8 @@
 
 use std::path::Path;
 
+use crate::database::Database;
 use crate::error::StoreError;
-use crate::pools::Database;
 
 /// A handle on the binsight database.
 ///
@@ -102,7 +102,7 @@ mod tests {
 
     #[tokio::test]
     async fn empties_the_write_ahead_log_on_checkpoint() {
-        let (folder, store) = crate::test_database::migrated_store().await;
+        let (folder, store) = crate::database::test_database::migrated_store().await;
         store
             .meta()
             .set(crate::MetaKey::InstanceId, "abc".to_owned())

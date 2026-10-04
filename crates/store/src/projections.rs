@@ -9,9 +9,11 @@
 use jiff::Timestamp;
 use rusqlite::{Row, params};
 
-use crate::codec::{timestamp_from_sql, timestamp_to_sql, version_from_sql, version_to_sql};
+use crate::database::Database;
+use crate::database::codec::{
+    timestamp_from_sql, timestamp_to_sql, version_from_sql, version_to_sql,
+};
 use crate::error::StoreError;
-use crate::pools::Database;
 use crate::store::Store;
 
 const SELECT_ALL: &str =
@@ -182,7 +184,7 @@ fn status_from_sql(status: &str, built_at: Option<i64>) -> Result<ProjectionStat
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_database::{assert_queries_prepare, migrated_store};
+    use crate::database::test_database::{assert_queries_prepare, migrated_store};
 
     #[tokio::test]
     async fn prepares_every_query_against_the_schema() {

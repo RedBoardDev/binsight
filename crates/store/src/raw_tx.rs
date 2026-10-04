@@ -13,9 +13,11 @@ use binsight_solana::{Commitment, Signature};
 use jiff::Timestamp;
 use rusqlite::{OptionalExtension, Row, params};
 
-use crate::codec::{timestamp_from_sql, timestamp_to_sql, unsigned_from_sql, unsigned_to_sql};
+use crate::database::Database;
+use crate::database::codec::{
+    timestamp_from_sql, timestamp_to_sql, unsigned_from_sql, unsigned_to_sql,
+};
 use crate::error::StoreError;
-use crate::pools::Database;
 use crate::store::Store;
 use attributes::{
     commitment_from_sql, commitment_to_sql, compression_from_sql, compression_to_sql,
@@ -161,7 +163,7 @@ fn record_from_row(signature: Signature, row: &Row<'_>) -> Result<RawTxRecord, S
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::test_database::{assert_queries_prepare, migrated_store};
+    use crate::database::test_database::{assert_queries_prepare, migrated_store};
 
     /// A plausible record whose signature is made of `seed` bytes.
     pub(crate) fn sample_record(seed: u8) -> RawTxRecord {

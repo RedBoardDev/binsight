@@ -7,7 +7,9 @@ use binsight_solana::Signature;
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::{DecodeOutcome, DecodeRecord, DecodedEvent};
-use crate::codec::{timestamp_from_sql, timestamp_to_sql, version_from_sql, version_to_sql};
+use crate::database::codec::{
+    timestamp_from_sql, timestamp_to_sql, version_from_sql, version_to_sql,
+};
 use crate::error::StoreError;
 
 pub(super) const DELETE_DECODE: &str =

@@ -10,8 +10,8 @@ mod statements;
 use binsight_solana::Signature;
 use jiff::Timestamp;
 
+use crate::database::Database;
 use crate::error::StoreError;
-use crate::pools::Database;
 use crate::store::Store;
 use statements::{read_record, replace_record};
 
@@ -108,8 +108,8 @@ mod tests {
         DELETE_DECODE, INSERT_DECODE, INSERT_EVENT, SELECT_DECODE, SELECT_EVENTS,
     };
     use super::*;
+    use crate::database::test_database::{assert_queries_prepare, migrated_store};
     use crate::raw_tx::tests::sample_record;
-    use crate::test_database::{assert_queries_prepare, migrated_store};
 
     fn event(kind: &str) -> DecodedEvent {
         DecodedEvent {

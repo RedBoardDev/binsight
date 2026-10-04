@@ -10,7 +10,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use sha2::{Digest, Sha256};
 
 use super::migrations::Migration;
-use crate::codec::{timestamp_to_sql, version_from_sql, version_to_sql};
+use crate::database::codec::{timestamp_to_sql, version_from_sql, version_to_sql};
 use crate::error::StoreError;
 
 const CREATE_HISTORY_TABLE: &str = "

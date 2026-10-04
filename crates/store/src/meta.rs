@@ -5,8 +5,8 @@
 
 use rusqlite::{Connection, OptionalExtension, params};
 
+use crate::database::Database;
 use crate::error::StoreError;
-use crate::pools::Database;
 use crate::store::Store;
 
 const SELECT_VALUE: &str = "SELECT value FROM app_meta WHERE key = ?1";
@@ -114,7 +114,7 @@ pub(crate) fn write_meta(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_database::{assert_queries_prepare, migrated_store};
+    use crate::database::test_database::{assert_queries_prepare, migrated_store};
 
     #[tokio::test]
     async fn prepares_every_query_against_the_schema() {
