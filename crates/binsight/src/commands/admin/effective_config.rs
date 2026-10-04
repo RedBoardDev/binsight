@@ -3,7 +3,7 @@
 //! Each line names the variable, its value (or `(set)` for a secret, `(not set)` when absent) and
 //! where the value came from. This module only formats.
 
-use crate::config::{Config, Setting};
+use crate::config::{Config, DataSourceConfig, Setting};
 use crate::logging::LogFormat;
 
 /// One line per setting, in a stable order.
@@ -23,7 +23,15 @@ pub(super) fn describe(config: &Config) -> Vec<String> {
 
 fn displayed_value(config: &Config, setting: Setting) -> String {
     match setting {
-        Setting::Password | Setting::HeliusApiKey => "(set)".to_owned(),
+        Setting::Password => "(set)".to_owned(),
+        Setting::Demo => match config.data_source {
+            DataSourceConfig::Chain { .. } => "false".to_owned(),
+            DataSourceConfig::Demo => "true".to_owned(),
+        },
+        Setting::HeliusApiKey => match config.data_source {
+            DataSourceConfig::Chain { .. } => "(set)".to_owned(),
+            DataSourceConfig::Demo => "(not used in demo mode)".to_owned(),
+        },
         Setting::HeliusPlan => config.credit_budget.plan.to_string(),
         Setting::MonthlyCredits => config.credit_budget.monthly_credits.0.to_string(),
         Setting::DailyCreditLimit => config
@@ -76,6 +84,7 @@ mod tests {
         assert_eq!(
             lines,
             "BINSIGHT_PASSWORD=(set) (from the environment)\n\
+             BINSIGHT_DEMO=false (from the default)\n\
              BINSIGHT_HELIUS_API_KEY=(set) (from the environment)\n\
              BINSIGHT_HELIUS_PLAN=free (from the default)\n\
              BINSIGHT_MONTHLY_CREDITS=1000000 (from the default)\n\

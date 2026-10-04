@@ -53,6 +53,13 @@ unquoted or double-quoted value. Set `BINSIGHT_PORT` in `.env` to publish anothe
 The port is published on this machine only (`127.0.0.1`). To reach binsight from other devices, read
 [Exposing it safely](#exposing-it-safely) first.
 
+### Try it without a Helius key
+
+Demo mode serves a generated portfolio (three wallets, eighteen months of positions) instead of reading the
+chain: every screen works, nothing is tracked and no credit is spent. Leave the key out and add
+`BINSIGHT_DEMO='true'` to `.env`. A "Demo" badge stays on every screen; turn demo mode off to track real
+wallets (the generated figures are never stored).
+
 You can also build the image yourself and run it under another name:
 
 ```sh
@@ -69,7 +76,8 @@ wins over the file). Invalid settings are all reported at once and the server do
 | Variable | Required | Default | Meaning |
 |---|---|---|---|
 | `BINSIGHT_PASSWORD` | yes | — | The owner's password, 12 to 1024 characters. |
-| `BINSIGHT_HELIUS_API_KEY` | yes | — | Your Helius API key. |
+| `BINSIGHT_HELIUS_API_KEY` | yes, except in demo mode | — | Your Helius API key. |
+| `BINSIGHT_DEMO` | no | `false` | `true` serves a generated demo portfolio instead of the chain; the Helius key is then not needed (and ignored). |
 | `BINSIGHT_HELIUS_PLAN` | no | `free` | Your Helius plan (`free`, `developer`, `business` or `professional`): it sets how fast binsight may send requests. |
 | `BINSIGHT_MONTHLY_CREDITS` | no | the plan's (1000000 on `free`) | The credits your plan grants per month, if they differ from the plan's. |
 | `BINSIGHT_DAILY_CREDIT_LIMIT` | no | — | A hard cap on the credits spent per UTC day: once it is reached, binsight sends nothing until the next day. |

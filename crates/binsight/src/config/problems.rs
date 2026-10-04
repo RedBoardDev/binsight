@@ -12,6 +12,8 @@ use std::path::PathBuf;
 pub enum Setting {
     /// `BINSIGHT_PASSWORD`: the owner's password.
     Password,
+    /// `BINSIGHT_DEMO`: serve the generated demo world instead of the chain.
+    Demo,
     /// `BINSIGHT_HELIUS_API_KEY`: the Helius API key.
     HeliusApiKey,
     /// `BINSIGHT_HELIUS_PLAN`: the Helius plan the key belongs to.
@@ -38,8 +40,9 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting, in the order they are reported.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::Password,
+        Self::Demo,
         Self::HeliusApiKey,
         Self::HeliusPlan,
         Self::MonthlyCredits,
@@ -57,6 +60,7 @@ impl Setting {
     pub fn variable(self) -> &'static str {
         match self {
             Self::Password => "BINSIGHT_PASSWORD",
+            Self::Demo => "BINSIGHT_DEMO",
             Self::HeliusApiKey => "BINSIGHT_HELIUS_API_KEY",
             Self::HeliusPlan => "BINSIGHT_HELIUS_PLAN",
             Self::MonthlyCredits => "BINSIGHT_MONTHLY_CREDITS",
@@ -151,6 +155,11 @@ pub enum ConfigWarning {
         /// The known variable it most likely meant.
         suggestion: Option<&'static str>,
     },
+    /// A setting is set but has no effect in demo mode.
+    IgnoredInDemo {
+        /// The setting.
+        setting: Setting,
+    },
     /// The configuration file holds secrets but other users may read it.
     FileReadableByOthers {
         /// The file.
@@ -175,6 +184,11 @@ impl fmt::Display for ConfigWarning {
                     None => Ok(()),
                 }
             }
+            Self::IgnoredInDemo { setting } => write!(
+                formatter,
+                "{} is ignored: demo mode serves generated figures and tracks nothing",
+                setting.variable()
+            ),
             Self::FileReadableByOthers { path } => write!(
                 formatter,
                 "{} holds secrets but other users can read it; run `chmod 600` on it",

@@ -14,6 +14,7 @@ use binsight_api::auth::{ClientIpHeader, OwnerPassword, PublicUrl};
 use binsight_chain::HeliusApiKey;
 
 use super::credit_budget::CreditBudget;
+use super::data_source::{DataSourceConfig, parse_switch};
 use super::paths::{default_data_dir, expand_home};
 use super::problems::{ConfigError, ConfigProblem, ConfigWarning, Setting, Source};
 use super::sources::{ConfigSources, VARIABLE_PREFIX};
@@ -30,8 +31,8 @@ pub const DEFAULT_BIND: &str = "127.0.0.1:8080";
 pub struct Config {
     /// The owner's password.
     pub password: OwnerPassword,
-    /// The Helius API key.
-    pub helius_api_key: HeliusApiKey,
+    /// Where the figures come from (and the Helius key in chain mode).
+    pub data_source: DataSourceConfig,
     /// How the provider's credits may be spent.
     pub credit_budget: CreditBudget,
     /// Where the database and its backups live (absolute).
@@ -67,7 +68,7 @@ pub struct LoadedConfig {
 pub fn validate(sources: &ConfigSources) -> Result<LoadedConfig, ConfigError> {
     let mut reader = SettingReader::new(sources);
     let password = reader.required(Setting::Password, OwnerPassword::parse);
-    let helius_api_key = reader.required(Setting::HeliusApiKey, HeliusApiKey::parse);
+    let data_source = reader.data_source();
     let credit_budget = reader.credit_budget();
     let data_dir = reader.data_dir();
     let bind = reader.with_default(Setting::Bind, DEFAULT_BIND, str::parse::<SocketAddr>);
@@ -76,18 +77,19 @@ pub fn validate(sources: &ConfigSources) -> Result<LoadedConfig, ConfigError> {
     let log_filter = reader.with_default(Setting::Log, DEFAULT_LOG_FILTER, parse_filter);
     let log_format = reader.with_default(Setting::LogFormat, DEFAULT_LOG_FORMAT, LogFormat::parse);
     match (
-        (password, helius_api_key, credit_budget),
+        (password, data_source, credit_budget),
         (data_dir, bind),
         (log_filter, log_format),
     ) {
         (
-            (Some(password), Some(helius_api_key), Some(credit_budget)),
+            (Some(password), Some(data_source), Some(credit_budget)),
             (Some(data_dir), Some(bind)),
             (Some(filter), Some(format)),
         ) if reader.problems.is_empty() => Ok(LoadedConfig {
+            warnings: warnings(sources, &data_source),
             config: Config {
                 password,
-                helius_api_key,
+                data_source,
                 credit_budget,
                 data_dir,
                 bind,
@@ -97,7 +99,6 @@ pub fn validate(sources: &ConfigSources) -> Result<LoadedConfig, ConfigError> {
                 config_file: sources.file.as_ref().map(|file| file.path.clone()),
                 origins: reader.origins,
             },
-            warnings: warnings(sources),
         }),
         _ => Err(ConfigError {
             problems: reader.problems,
@@ -183,6 +184,15 @@ impl<'sources> SettingReader<'sources> {
         parse(default).ok()
     }
 
+    /// Demo mode, or chain mode with its required Helius key.
+    fn data_source(&mut self) -> Option<DataSourceConfig> {
+        if self.with_default(Setting::Demo, "false", parse_switch)? {
+            return Some(DataSourceConfig::Demo);
+        }
+        let helius_api_key = self.required(Setting::HeliusApiKey, HeliusApiKey::parse)?;
+        Some(DataSourceConfig::Chain { helius_api_key })
+    }
+
     /// The data folder: configured (with `~` expanded) or the default, and absolute.
     fn data_dir(&mut self) -> Option<PathBuf> {
         let env = &self.sources.env;
@@ -207,8 +217,9 @@ impl<'sources> SettingReader<'sources> {
     }
 }
 
-/// Unknown `BINSIGHT_` variables (with a suggestion) and a configuration file others can read.
-fn warnings(sources: &ConfigSources) -> Vec<ConfigWarning> {
+/// Unknown `BINSIGHT_` variables (with a suggestion), settings demo mode ignores, and a
+/// configuration file others can read.
+fn warnings(sources: &ConfigSources, data_source: &DataSourceConfig) -> Vec<ConfigWarning> {
     let from_env = sources.env.keys().map(|name| (name, Source::Environment));
     let from_file = sources.file.iter().flat_map(|file| {
         file.values
@@ -229,6 +240,14 @@ fn warnings(sources: &ConfigSources) -> Vec<ConfigWarning> {
             suggestion: closest_variable(name),
         })
         .collect();
+    let key_is_set = SettingReader::new(sources)
+        .find(Setting::HeliusApiKey)
+        .is_some();
+    if matches!(data_source, DataSourceConfig::Demo) && key_is_set {
+        found.push(ConfigWarning::IgnoredInDemo {
+            setting: Setting::HeliusApiKey,
+        });
+    }
     if let Some(file) = sources
         .file
         .as_ref()

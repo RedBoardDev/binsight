@@ -204,6 +204,7 @@ dependencies = [
  "binsight-api",
  "binsight-chain",
  "binsight-core",
+ "binsight-demo",
  "binsight-engine",
  "binsight-solana",
  "binsight-store",

@@ -226,6 +226,11 @@ rust-run *ARGS: rust-dev-env
 rust-admin *ARGS: rust-dev-env
     BINSIGHT_CONFIG_FILE=.dev/binsight.env cargo run --quiet -p binsight -- admin {{ ARGS }}
 
+# Run the server on the generated demo world (no Helius key needed, nothing is tracked).
+[group('rust')]
+demo *ARGS: rust-dev-env
+    BINSIGHT_CONFIG_FILE=.dev/binsight.env BINSIGHT_DEMO=true cargo run -p binsight -- run {{ ARGS }}
+
 # Build the release binary from scratch, so it embeds the current web build.
 [group('rust')]
 rust-build:

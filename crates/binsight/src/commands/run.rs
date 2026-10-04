@@ -2,9 +2,11 @@
 //!
 //! In order: validate the configuration (nothing starts if it is invalid), start logging, handle
 //! the stop signals, lock the data folder, open and upgrade the database (backing it up first),
-//! create the instance secrets, listen, then run the engine and the HTTP server until a stop
-//! signal. Shutdown is graceful but bounded: after [`SHUTDOWN_DEADLINE_SECS`] seconds whatever is
+//! create the instance secrets, pick the source of the figures (the chain, or the generated demo
+//! world), listen, then run the engine and the HTTP server until a stop signal. Shutdown is graceful but bounded: after [`SHUTDOWN_DEADLINE_SECS`] seconds whatever is
 //! left is dropped.
+
+mod sources;
 
 use std::net::SocketAddr;
 use std::path::Path;
@@ -13,7 +15,6 @@ use std::time::Duration;
 
 use binsight_api::auth::AuthSettings;
 use binsight_api::{AppState, AppStateParts, router};
-use binsight_chain::{GovernorSettings, HttpTransport, RpcClient, RpcEndpoint};
 use binsight_core::clock::Clock;
 use binsight_engine::{Engine, SystemClock};
 use binsight_store::{BackupOptions, Store, UpgradeOptions};
@@ -29,6 +30,7 @@ use crate::instance_secrets::ensure_instance_secrets;
 use crate::logging;
 use crate::shutdown::StopSignals;
 use crate::web_assets::EmbeddedWebApp;
+use sources::{data_source, rpc_client};
 
 /// The longest graceful shutdown before the remaining work is dropped.
 const SHUTDOWN_DEADLINE_SECS: u64 = 10;
@@ -70,6 +72,7 @@ async fn serve(config: Config) -> Result<(), Failure> {
     let listener = listen(config.bind).await?;
     let rpc = rpc_client(&config, clock.clone())?;
     let (engine, handle) = Engine::new(store.clone(), rpc, clock.clone());
+    let handle = handle.with_data_source(data_source(&config.data_source, &clock)?);
     let state = AppState::new(AppStateParts {
         engine: handle,
         auth: AuthSettings {
@@ -106,22 +109,6 @@ pub(in crate::commands) async fn open_store(
     let (store, report) = Store::open_and_upgrade(&data_dir.database_path(), options).await?;
     info!(schema_version = report.to_version, "database ready");
     Ok(store)
-}
-
-/// The Helius client. Nothing is sent until the engine has a wallet to ingest.
-fn rpc_client(config: &Config, clock: Arc<dyn Clock>) -> Result<RpcClient, Failure> {
-    let endpoint = RpcEndpoint::helius_mainnet(&config.helius_api_key);
-    let transport = HttpTransport::new(endpoint).map_err(|error| {
-        Failure::Unexpected(anyhow::Error::new(error).context("prepare the RPC client"))
-    })?;
-    let budget = config.credit_budget;
-    info!(
-        plan = %budget.plan,
-        daily_credit_limit = budget.daily_credit_limit.map(|limit| limit.0),
-        "rpc credit budget"
-    );
-    let governor = GovernorSettings::for_plan(budget.plan, budget.daily_credit_limit);
-    Ok(RpcClient::new(Arc::new(transport), governor, clock))
 }
 
 async fn listen(address: SocketAddr) -> Result<TcpListener, Failure> {

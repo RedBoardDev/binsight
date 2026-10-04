@@ -6,6 +6,7 @@
 //! environment. Validation is pure and reports every problem at once.
 
 mod credit_budget;
+mod data_source;
 mod env_file;
 mod paths;
 mod problems;
@@ -16,6 +17,7 @@ mod validate;
 use std::path::Path;
 
 pub use credit_budget::CreditBudget;
+pub use data_source::DataSourceConfig;
 pub use problems::{ConfigError, ConfigProblem, ConfigWarning, Setting, Source};
 pub use sources::{ConfigFile, ConfigSources, config_file_path, read_env_file, read_sources};
 pub use validate::{Config, DEFAULT_BIND, LoadedConfig, validate};
