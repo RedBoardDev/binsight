@@ -8,4 +8,4 @@ web/pnpm-lock.yaml linguist-generated=true
 openapi/v1.json linguist-generated=true
 web/src/lib/api/generated/** linguist-generated=true
 crates/binsight/third-party-licenses.txt linguist-generated=true
-tests/fixtures/** linguist-generated=true
+**/tests/fixtures/** linguist-generated=true
