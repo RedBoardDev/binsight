@@ -35,6 +35,12 @@ pub enum Reason {
         /// The position.
         position: PositionId,
     },
+    /// A pool is quoted in a token that is neither SOL nor a dollar stablecoin, so its positions
+    /// cannot be valued.
+    UnsupportedQuote {
+        /// The pool.
+        pool: Address,
+    },
     /// No SOL/USD rate is known for a day the figure needs.
     NoUsdRate,
     /// A percentage has a zero denominator.
