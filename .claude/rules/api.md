@@ -18,8 +18,12 @@ paths:
 
 - `snake_case` fields; enums as `snake_case` strings; timestamps RFC 3339 UTC; Solana ids in base58.
 - Lists: `{ "items": [...], "next_cursor": null | "…" }` with an opaque cursor.
-- Amounts: `Money { amount: DecimalString, unit }`; figures: `Figure { value: Money, exactness }`. No JSON number for an
-  amount or a ratio.
+- Amounts: `Money { amount: DecimalString, unit }`; figures: `Figure`, a union tagged by `exactness` whose `value` is
+  absent when the figure is `unavailable`, with its `reasons` otherwise (`PercentFigure` likewise, with a decimal
+  string). No JSON number for an amount or a ratio; numbers are counts and durations only.
+- Reads take `currency=sol|usd` (default `sol`); dollars are converted once per leaf figure at its day's rate, and
+  totals are sums of converted leaves.
+- Every read of figures answers `503 data_not_ready` while the engine does not serve them.
 
 ## Errors
 

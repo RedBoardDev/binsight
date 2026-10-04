@@ -15,6 +15,7 @@
 
 mod app;
 pub mod auth;
+mod contract;
 mod error;
 mod instance;
 mod live;

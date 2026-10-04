@@ -5,10 +5,12 @@
 //! figure comes from `binsight_ledger::report`, applied by the queries.
 
 mod refs;
+mod settings;
 mod sync;
 mod wallets;
 
 pub use refs::{WalletColor, WalletRef};
+pub use settings::{InstanceSettings, TimezoneSource};
 pub use sync::{
     ChainTip, CreditsSummary, ImportProgress, SyncReport, SyncState, WalletSync, WalletSyncLine,
 };

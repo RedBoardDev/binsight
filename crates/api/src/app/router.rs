@@ -17,7 +17,7 @@ use super::state::AppState;
 use super::web_app::serve_web_app;
 use crate::auth::{require_session, routes as auth};
 use crate::error::{ApiError, ErrorCode};
-use crate::instance::health;
+use crate::instance::{health, settings, sync, wallets};
 use crate::openapi::ApiDoc;
 use crate::{live, openapi};
 
@@ -55,7 +55,10 @@ impl DocumentedRoutes {
             .routes(routes!(auth::logout));
         let protected = OpenApiRouter::new()
             .routes(routes!(auth::get_session))
-            .routes(routes!(live::stream_events));
+            .routes(routes!(live::stream_events))
+            .routes(routes!(sync::get_sync_report))
+            .routes(routes!(settings::get_settings))
+            .routes(routes!(wallets::list_wallets));
         Self { public, protected }
     }
 }

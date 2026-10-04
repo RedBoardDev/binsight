@@ -106,20 +106,119 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Reads the settings of the instance. */
+        get: operations["getSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Reports how the instance and each wallet keep up with the chain. */
+        get: operations["getSyncReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/wallets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Lists the tracked wallets with their figures. */
+        get: operations["listWallets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description The last slot the instance saw. */
+        ChainTip: {
+            /**
+             * Format: int64
+             * @description The slot.
+             */
+            last_slot?: number | null;
+            /**
+             * Format: date-time
+             * @description When it was seen.
+             */
+            last_slot_at?: string | null;
+        };
         /**
          * @description Whether one component answers.
          * @enum {string}
          */
         ComponentStatus: "ok" | "unavailable";
+        /** @description The provider credits of the current UTC month. */
+        CreditsSummary: {
+            /**
+             * Format: int64
+             * @description The monthly budget.
+             */
+            budget: number;
+            /** @description Whether the projection exceeds the budget. */
+            is_over_budget: boolean;
+            /** @description The month, `YYYY-MM`. */
+            month: string;
+            /**
+             * Format: int64
+             * @description The credits the month will have spent at the current pace.
+             */
+            projected: number;
+            /**
+             * Format: int64
+             * @description Credits spent so far.
+             */
+            used: number;
+            /** @description `used / budget`, in percent. */
+            used_percent: components["schemas"]["DecimalString"];
+        };
+        /**
+         * @description The currency figures are shown in.
+         * @enum {string}
+         */
+        Currency: "sol" | "usd";
         /**
          * @description Where the figures the API serves come from.
          * @enum {string}
          */
         DataSource: "chain" | "demo";
+        /**
+         * @description An exact decimal number written as text: no exponent, no `+`, no leading zero, no trailing
+         *     zero after the point, never `-0`. For example `"61.541203117"`, `"-0.949"`, `"0"`.
+         * @example -1.25
+         */
+        DecimalString: string;
         /**
          * @description Where the engine is in its lifecycle.
          * @enum {string}
@@ -134,7 +233,7 @@ export interface components {
          * @description Why a request failed. Stable: clients use it as their translation key.
          * @enum {string}
          */
-        ErrorCode: "invalid_request" | "unauthenticated" | "invalid_credentials" | "forbidden_cross_origin" | "not_found" | "method_not_allowed" | "request_timeout" | "payload_too_large" | "too_many_attempts" | "internal";
+        ErrorCode: "invalid_request" | "unauthenticated" | "invalid_credentials" | "forbidden_cross_origin" | "not_found" | "method_not_allowed" | "wallet_not_found" | "request_timeout" | "payload_too_large" | "too_many_attempts" | "data_not_ready" | "internal";
         /** @description The content of an error body. */
         ErrorDetail: {
             /** @description The stable error code; clients translate it. */
@@ -143,6 +242,35 @@ export interface components {
             message: string;
             /** @description The id of the request, also in the `x-request-id` response header. */
             request_id: string;
+        };
+        /**
+         * @description An amount and how far it can be trusted. `value` is present unless the figure is
+         *     `unavailable`; `reasons` say why a figure is not `complete`.
+         */
+        Figure: {
+            /** @enum {string} */
+            exactness: "complete";
+            /** @description The amount. */
+            value: components["schemas"]["Money"];
+        } | {
+            /** @enum {string} */
+            exactness: "partial";
+            /** @description Why it is partial. */
+            reasons: components["schemas"]["Reason"][];
+            /** @description The amount of what could be valued. */
+            value: components["schemas"]["Money"];
+        } | {
+            /** @enum {string} */
+            exactness: "estimated";
+            /** @description Why it is estimated. */
+            reasons: components["schemas"]["Reason"][];
+            /** @description The estimated amount. */
+            value: components["schemas"]["Money"];
+        } | {
+            /** @enum {string} */
+            exactness: "unavailable";
+            /** @description Why. */
+            reasons: components["schemas"]["Reason"][];
         };
         /** @description The health report. */
         Health: {
@@ -162,6 +290,33 @@ export interface components {
          * @enum {string}
          */
         HealthStatus: "ok" | "unavailable";
+        /** @description The progress of a history import. */
+        ImportProgress: {
+            /**
+             * Format: int64
+             * @description How long it should still take, in seconds, when known.
+             */
+            eta_seconds?: number | null;
+            /** @description How far it is, in percent. */
+            progress: components["schemas"]["DecimalString"];
+        };
+        /**
+         * @description The settings of the instance. Language, theme and density are preferences of each device and
+         *     are not here.
+         */
+        InstanceSettings: {
+            /** @description The currency figures are shown in unless a client asks for another. */
+            default_currency: components["schemas"]["Currency"];
+            /** @description Whether clients hide amounts until the owner reveals them. */
+            hide_amounts_by_default: boolean;
+            /**
+             * @description The IANA time zone that decides where days start (today, periods, calendars), such as
+             *     `Europe/Paris`.
+             */
+            timezone: string;
+            /** @description `default` until the owner chooses a time zone (clients may then suggest theirs once). */
+            timezone_source: components["schemas"]["TimezoneSource"];
+        };
         /** @description A message of the live event stream. */
         LiveEvent: {
             /**
@@ -185,6 +340,89 @@ export interface components {
              */
             password: string;
         };
+        /** @description An exact amount of money. */
+        Money: {
+            /** @description The amount in whole units (`"1.5"` SOL), signed for gains and losses. */
+            amount: components["schemas"]["DecimalString"];
+            /** @description The unit. */
+            unit: components["schemas"]["MoneyUnit"];
+        };
+        /**
+         * @description The unit of an amount.
+         * @enum {string}
+         */
+        MoneyUnit: "sol" | "usd" | "usdc" | "usdt";
+        /** @description A percentage (`"2.56"` is 2.56 %) and how far it can be trusted, shaped like [`Figure`]. */
+        PercentFigure: {
+            /** @enum {string} */
+            exactness: "complete";
+            /** @description The percentage. */
+            value: components["schemas"]["DecimalString"];
+        } | {
+            /** @enum {string} */
+            exactness: "partial";
+            /** @description Why it is partial. */
+            reasons: components["schemas"]["Reason"][];
+            /** @description The percentage. */
+            value: components["schemas"]["DecimalString"];
+        } | {
+            /** @enum {string} */
+            exactness: "estimated";
+            /** @description Why it is estimated. */
+            reasons: components["schemas"]["Reason"][];
+            /** @description The percentage. */
+            value: components["schemas"]["DecimalString"];
+        } | {
+            /** @enum {string} */
+            exactness: "unavailable";
+            /** @description Why. */
+            reasons: components["schemas"]["Reason"][];
+        };
+        /** @description One reason a figure is partial, estimated or unavailable, tagged by `code`. */
+        Reason: {
+            /** @enum {string} */
+            code: "unpriced_token";
+            /** @description The token's mint. */
+            mint: string;
+            /** @description The wallet that holds it. */
+            wallet: string;
+        } | {
+            /** @enum {string} */
+            code: "reconstructed_history";
+            /**
+             * Format: date-time
+             * @description When it was added (RFC 3339, UTC): what comes before is reconstructed.
+             */
+            until: string;
+            /** @description The wallet. */
+            wallet: string;
+        } | {
+            /** @enum {string} */
+            code: "history_incomplete";
+            /** @description How far the import is, in percent. */
+            progress: components["schemas"]["DecimalString"];
+            /** @description The wallet. */
+            wallet: string;
+        } | {
+            /** @enum {string} */
+            code: "unpriced_leg";
+            /** @description The position id. */
+            position: string;
+        } | {
+            /** @enum {string} */
+            code: "unsupported_quote";
+            /** @description The pool. */
+            pool: string;
+        } | {
+            /** @enum {string} */
+            code: "no_usd_rate";
+        } | {
+            /** @enum {string} */
+            code: "zero_denominator";
+        } | {
+            /** @enum {string} */
+            code: "no_losses";
+        };
         /** @description The current session. */
         SessionInfo: {
             /** @description Always `true`: without a session the API answers `401` instead. */
@@ -194,6 +432,130 @@ export interface components {
              * @description When the session ends (RFC 3339, UTC); the owner must then sign in again.
              */
             expires_at: string;
+        };
+        /** @description The synchronization of the instance. */
+        SyncReport: {
+            /**
+             * Format: date-time
+             * @description When this report was made.
+             */
+            as_of: string;
+            /** @description The chain tip. */
+            chain: components["schemas"]["ChainTip"];
+            /** @description The credits of the month. */
+            credits: components["schemas"]["CreditsSummary"];
+            /** @description Where the engine is in its lifecycle. */
+            engine: components["schemas"]["EngineStatus"];
+            /**
+             * Format: date-time
+             * @description When the engine started.
+             */
+            started_at: string;
+            /** @description The worst state of the wallets. */
+            state: components["schemas"]["SyncState"];
+            /**
+             * Format: int64
+             * @description How often open positions are valued, in seconds, when they are.
+             */
+            valuation_interval_seconds?: number | null;
+            /** @description Each wallet, in the order of the wallet list. */
+            wallets: components["schemas"]["WalletSyncLine"][];
+        };
+        /**
+         * @description How a wallet (or the instance) keeps up with the chain, from the best to the worst.
+         * @enum {string}
+         */
+        SyncState: "live" | "importing" | "lagging" | "error";
+        /**
+         * @description Where the time zone setting comes from.
+         * @enum {string}
+         */
+        TimezoneSource: "default" | "owner";
+        /**
+         * @description One of the eight wallet colors of the theme.
+         * @enum {string}
+         */
+        WalletColor: "wallet_1" | "wallet_2" | "wallet_3" | "wallet_4" | "wallet_5" | "wallet_6" | "wallet_7" | "wallet_8";
+        /** @description The tracked wallets and their total. */
+        WalletList: {
+            /** @description Each wallet, in the order they were added. */
+            items: components["schemas"]["WalletSummary"][];
+            /** @description Always `null`: the list is never paged. */
+            next_cursor?: string | null;
+            /** @description Every wallet together. */
+            total: components["schemas"]["WalletsTotal"];
+        };
+        /** @description A tracked wallet: its address, its label and its color. */
+        WalletRef: {
+            /** @description The wallet address (base58). */
+            address: string;
+            /** @description Its color in charts and legends. */
+            color: components["schemas"]["WalletColor"];
+            /** @description Its label: never empty, at most 10 characters (the short address when the owner gave none). */
+            label: string;
+        };
+        /** @description One tracked wallet and its figures. */
+        WalletSummary: {
+            /**
+             * Format: date-time
+             * @description When the owner added it.
+             */
+            added_at: string;
+            /** @description How many positions it closed, empty shells left out (as History counts them). */
+            closed_count: number;
+            /** @description Its net worth now. */
+            net_worth: components["schemas"]["Figure"];
+            /** @description How many positions it has open. */
+            open_count: number;
+            /** @description How many of them are out of range. */
+            out_of_range_count: number;
+            /** @description Its real PnL since its first activity: net worth − net capital put in. */
+            real_pnl: components["schemas"]["Figure"];
+            /** @description Its net worth as a share of the total net worth. */
+            share_of_net_worth: components["schemas"]["PercentFigure"];
+            /** @description Its synchronization (the same as in `GET /sync`). */
+            sync: components["schemas"]["WalletSync"];
+            /** @description The wallet. */
+            wallet: components["schemas"]["WalletRef"];
+        };
+        /** @description The synchronization of one wallet. */
+        WalletSync: {
+            import?: components["schemas"]["ImportProgress"] | null;
+            /**
+             * Format: int64
+             * @description How many of its transactions are indexed.
+             */
+            indexed_tx: number;
+            /**
+             * Format: int64
+             * @description How far behind the chain it is, in seconds, when known.
+             */
+            lag_seconds?: number | null;
+            /**
+             * Format: date-time
+             * @description When its last transaction happened.
+             */
+            last_tx_at?: string | null;
+            /** @description Its state. */
+            state: components["schemas"]["SyncState"];
+        };
+        /** @description A wallet and its synchronization. */
+        WalletSyncLine: components["schemas"]["WalletSync"] & {
+            /** @description The wallet. */
+            wallet: components["schemas"]["WalletRef"];
+        };
+        /** @description The figures of every wallet together. */
+        WalletsTotal: {
+            /** @description How many positions were closed, empty shells left out. */
+            closed_count: number;
+            /** @description The total net worth. */
+            net_worth: components["schemas"]["Figure"];
+            /** @description How many positions are open. */
+            open_count: number;
+            /** @description How many of them are out of range. */
+            out_of_range_count: number;
+            /** @description The total real PnL. */
+            real_pnl: components["schemas"]["Figure"];
         };
     };
     responses: never;
@@ -396,6 +758,132 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    getSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The settings of the instance. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstanceSettings"];
+                };
+            };
+            /** @description Not signed in (`unauthenticated`). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The engine does not serve figures yet (`data_not_ready`). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    getSyncReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The synchronization of the instance. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncReport"];
+                };
+            };
+            /** @description Not signed in (`unauthenticated`). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The engine does not serve figures yet (`data_not_ready`). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    listWallets: {
+        parameters: {
+            query?: {
+                /** @description The currency of the figures (`sol` by default). */
+                currency?: components["schemas"]["Currency"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The tracked wallets and their total. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WalletList"];
+                };
+            };
+            /** @description A query parameter is invalid (`invalid_request`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not signed in (`unauthenticated`). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The engine does not serve figures yet (`data_not_ready`). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
         };

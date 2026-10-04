@@ -2,12 +2,12 @@
   "openapi": "3.1.0",
   "info": {
     "title": "binsight",
-    "description": "The HTTP API of a binsight server: health, authentication and live events.",
+    "description": "The HTTP API of a binsight server: health, authentication, live events, the tracked wallets, their synchronization and the settings of the instance. Amounts, prices and percentages are canonical decimal strings; every figure carries its exactness.",
     "license": {
       "name": "MIT",
       "identifier": "MIT"
     },
-    "version": "1.0.0"
+    "version": "1.1.0"
   },
   "paths": {
     "/api/v1/auth/login": {
@@ -234,16 +234,250 @@
           }
         }
       }
+    },
+    "/api/v1/settings": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Reads the settings of the instance.",
+        "operationId": "getSettings",
+        "responses": {
+          "200": {
+            "description": "The settings of the instance.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The engine does not serve figures yet (`data_not_ready`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/sync": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Reports how the instance and each wallet keep up with the chain.",
+        "operationId": "getSyncReport",
+        "responses": {
+          "200": {
+            "description": "The synchronization of the instance.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncReport"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The engine does not serve figures yet (`data_not_ready`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/wallets": {
+      "get": {
+        "tags": [
+          "wallets"
+        ],
+        "summary": "Lists the tracked wallets with their figures.",
+        "operationId": "listWallets",
+        "parameters": [
+          {
+            "name": "currency",
+            "in": "query",
+            "description": "The currency of the figures (`sol` by default).",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Currency"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The tracked wallets and their total.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WalletList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A query parameter is invalid (`invalid_request`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The engine does not serve figures yet (`data_not_ready`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          }
+        ]
+      }
     }
   },
   "components": {
     "schemas": {
+      "ChainTip": {
+        "type": "object",
+        "description": "The last slot the instance saw.",
+        "properties": {
+          "last_slot": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The slot.",
+            "minimum": 0
+          },
+          "last_slot_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When it was seen."
+          }
+        }
+      },
       "ComponentStatus": {
         "type": "string",
         "description": "Whether one component answers.",
         "enum": [
           "ok",
           "unavailable"
+        ]
+      },
+      "CreditsSummary": {
+        "type": "object",
+        "description": "The provider credits of the current UTC month.",
+        "required": [
+          "month",
+          "used",
+          "budget",
+          "used_percent",
+          "projected",
+          "is_over_budget"
+        ],
+        "properties": {
+          "budget": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The monthly budget.",
+            "minimum": 0
+          },
+          "is_over_budget": {
+            "type": "boolean",
+            "description": "Whether the projection exceeds the budget."
+          },
+          "month": {
+            "type": "string",
+            "description": "The month, `YYYY-MM`."
+          },
+          "projected": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The credits the month will have spent at the current pace.",
+            "minimum": 0
+          },
+          "used": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Credits spent so far.",
+            "minimum": 0
+          },
+          "used_percent": {
+            "$ref": "#/components/schemas/DecimalString",
+            "description": "`used / budget`, in percent."
+          }
+        }
+      },
+      "Currency": {
+        "type": "string",
+        "description": "The currency figures are shown in.",
+        "enum": [
+          "sol",
+          "usd"
         ]
       },
       "DataSource": {
@@ -253,6 +487,12 @@
           "chain",
           "demo"
         ]
+      },
+      "DecimalString": {
+        "type": "string",
+        "description": "An exact decimal number written as text: no exponent, no `+`, no leading zero, no trailing\nzero after the point, never `-0`. For example `\"61.541203117\"`, `\"-0.949\"`, `\"0\"`.",
+        "example": "-1.25",
+        "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$"
       },
       "EngineStatus": {
         "type": "string",
@@ -286,9 +526,11 @@
           "forbidden_cross_origin",
           "not_found",
           "method_not_allowed",
+          "wallet_not_found",
           "request_timeout",
           "payload_too_large",
           "too_many_attempts",
+          "data_not_ready",
           "internal"
         ]
       },
@@ -314,6 +556,110 @@
             "description": "The id of the request, also in the `x-request-id` response header."
           }
         }
+      },
+      "Figure": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Exact to the smallest unit.",
+            "required": [
+              "value",
+              "exactness"
+            ],
+            "properties": {
+              "exactness": {
+                "type": "string",
+                "enum": [
+                  "complete"
+                ]
+              },
+              "value": {
+                "$ref": "#/components/schemas/Money",
+                "description": "The amount."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A lower bound: some inputs could not be valued and are left out.",
+            "required": [
+              "value",
+              "reasons",
+              "exactness"
+            ],
+            "properties": {
+              "exactness": {
+                "type": "string",
+                "enum": [
+                  "partial"
+                ]
+              },
+              "reasons": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Reason"
+                },
+                "description": "Why it is partial."
+              },
+              "value": {
+                "$ref": "#/components/schemas/Money",
+                "description": "The amount of what could be valued."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Reconstructed rather than measured.",
+            "required": [
+              "value",
+              "reasons",
+              "exactness"
+            ],
+            "properties": {
+              "exactness": {
+                "type": "string",
+                "enum": [
+                  "estimated"
+                ]
+              },
+              "reasons": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Reason"
+                },
+                "description": "Why it is estimated."
+              },
+              "value": {
+                "$ref": "#/components/schemas/Money",
+                "description": "The estimated amount."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Could not be computed.",
+            "required": [
+              "reasons",
+              "exactness"
+            ],
+            "properties": {
+              "exactness": {
+                "type": "string",
+                "enum": [
+                  "unavailable"
+                ]
+              },
+              "reasons": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Reason"
+                },
+                "description": "Why."
+              }
+            }
+          }
+        ],
+        "description": "An amount and how far it can be trusted. `value` is present unless the figure is\n`unavailable`; `reasons` say why a figure is not `complete`."
       },
       "Health": {
         "type": "object",
@@ -355,6 +701,56 @@
           "ok",
           "unavailable"
         ]
+      },
+      "ImportProgress": {
+        "type": "object",
+        "description": "The progress of a history import.",
+        "required": [
+          "progress"
+        ],
+        "properties": {
+          "eta_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "How long it should still take, in seconds, when known.",
+            "minimum": 0
+          },
+          "progress": {
+            "$ref": "#/components/schemas/DecimalString",
+            "description": "How far it is, in percent."
+          }
+        }
+      },
+      "InstanceSettings": {
+        "type": "object",
+        "description": "The settings of the instance. Language, theme and density are preferences of each device and\nare not here.",
+        "required": [
+          "timezone",
+          "timezone_source",
+          "default_currency",
+          "hide_amounts_by_default"
+        ],
+        "properties": {
+          "default_currency": {
+            "$ref": "#/components/schemas/Currency",
+            "description": "The currency figures are shown in unless a client asks for another."
+          },
+          "hide_amounts_by_default": {
+            "type": "boolean",
+            "description": "Whether clients hide amounts until the owner reveals them."
+          },
+          "timezone": {
+            "type": "string",
+            "description": "The IANA time zone that decides where days start (today, periods, calendars), such as\n`Europe/Paris`."
+          },
+          "timezone_source": {
+            "$ref": "#/components/schemas/TimezoneSource",
+            "description": "`default` until the owner chooses a time zone (clients may then suggest theirs once)."
+          }
+        }
       },
       "LiveEvent": {
         "oneOf": [
@@ -416,6 +812,304 @@
           }
         }
       },
+      "Money": {
+        "type": "object",
+        "description": "An exact amount of money.",
+        "required": [
+          "amount",
+          "unit"
+        ],
+        "properties": {
+          "amount": {
+            "$ref": "#/components/schemas/DecimalString",
+            "description": "The amount in whole units (`\"1.5\"` SOL), signed for gains and losses."
+          },
+          "unit": {
+            "$ref": "#/components/schemas/MoneyUnit",
+            "description": "The unit."
+          }
+        }
+      },
+      "MoneyUnit": {
+        "type": "string",
+        "description": "The unit of an amount.",
+        "enum": [
+          "sol",
+          "usd",
+          "usdc",
+          "usdt"
+        ]
+      },
+      "PercentFigure": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Exact.",
+            "required": [
+              "value",
+              "exactness"
+            ],
+            "properties": {
+              "exactness": {
+                "type": "string",
+                "enum": [
+                  "complete"
+                ]
+              },
+              "value": {
+                "$ref": "#/components/schemas/DecimalString",
+                "description": "The percentage."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Computed from a lower bound.",
+            "required": [
+              "value",
+              "reasons",
+              "exactness"
+            ],
+            "properties": {
+              "exactness": {
+                "type": "string",
+                "enum": [
+                  "partial"
+                ]
+              },
+              "reasons": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Reason"
+                },
+                "description": "Why it is partial."
+              },
+              "value": {
+                "$ref": "#/components/schemas/DecimalString",
+                "description": "The percentage."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Computed from reconstructed figures.",
+            "required": [
+              "value",
+              "reasons",
+              "exactness"
+            ],
+            "properties": {
+              "exactness": {
+                "type": "string",
+                "enum": [
+                  "estimated"
+                ]
+              },
+              "reasons": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Reason"
+                },
+                "description": "Why it is estimated."
+              },
+              "value": {
+                "$ref": "#/components/schemas/DecimalString",
+                "description": "The percentage."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Could not be computed (for example a zero denominator).",
+            "required": [
+              "reasons",
+              "exactness"
+            ],
+            "properties": {
+              "exactness": {
+                "type": "string",
+                "enum": [
+                  "unavailable"
+                ]
+              },
+              "reasons": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Reason"
+                },
+                "description": "Why."
+              }
+            }
+          }
+        ],
+        "description": "A percentage (`\"2.56\"` is 2.56 %) and how far it can be trusted, shaped like [`Figure`]."
+      },
+      "Reason": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "A wallet holds a token without a price; the figure leaves it out.",
+            "required": [
+              "wallet",
+              "mint",
+              "code"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "unpriced_token"
+                ]
+              },
+              "mint": {
+                "type": "string",
+                "description": "The token's mint."
+              },
+              "wallet": {
+                "type": "string",
+                "description": "The wallet that holds it."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Part of the figure comes from before the wallet was added and is reconstructed.",
+            "required": [
+              "wallet",
+              "until",
+              "code"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "reconstructed_history"
+                ]
+              },
+              "until": {
+                "type": "string",
+                "format": "date-time",
+                "description": "When it was added (RFC 3339, UTC): what comes before is reconstructed."
+              },
+              "wallet": {
+                "type": "string",
+                "description": "The wallet."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A wallet's history is still being imported.",
+            "required": [
+              "wallet",
+              "progress",
+              "code"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "history_incomplete"
+                ]
+              },
+              "progress": {
+                "$ref": "#/components/schemas/DecimalString",
+                "description": "How far the import is, in percent."
+              },
+              "wallet": {
+                "type": "string",
+                "description": "The wallet."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A movement of a position had no bin price and was valued on its quote side only.",
+            "required": [
+              "position",
+              "code"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "unpriced_leg"
+                ]
+              },
+              "position": {
+                "type": "string",
+                "description": "The position id."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A pool is quoted in a token that is neither SOL nor a dollar stablecoin.",
+            "required": [
+              "pool",
+              "code"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "unsupported_quote"
+                ]
+              },
+              "pool": {
+                "type": "string",
+                "description": "The pool."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "No SOL/USD rate is known for a day the figure needs.",
+            "required": [
+              "code"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "no_usd_rate"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A percentage has a zero denominator.",
+            "required": [
+              "code"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "zero_denominator"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A profit factor has no loss to divide by.",
+            "required": [
+              "code"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "no_losses"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "One reason a figure is partial, estimated or unavailable, tagged by `code`."
+      },
       "SessionInfo": {
         "type": "object",
         "description": "The current session.",
@@ -432,6 +1126,308 @@
             "type": "string",
             "format": "date-time",
             "description": "When the session ends (RFC 3339, UTC); the owner must then sign in again."
+          }
+        }
+      },
+      "SyncReport": {
+        "type": "object",
+        "description": "The synchronization of the instance.",
+        "required": [
+          "state",
+          "engine",
+          "as_of",
+          "started_at",
+          "chain",
+          "credits",
+          "wallets"
+        ],
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When this report was made."
+          },
+          "chain": {
+            "$ref": "#/components/schemas/ChainTip",
+            "description": "The chain tip."
+          },
+          "credits": {
+            "$ref": "#/components/schemas/CreditsSummary",
+            "description": "The credits of the month."
+          },
+          "engine": {
+            "$ref": "#/components/schemas/EngineStatus",
+            "description": "Where the engine is in its lifecycle."
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the engine started."
+          },
+          "state": {
+            "$ref": "#/components/schemas/SyncState",
+            "description": "The worst state of the wallets."
+          },
+          "valuation_interval_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "How often open positions are valued, in seconds, when they are.",
+            "minimum": 0
+          },
+          "wallets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WalletSyncLine"
+            },
+            "description": "Each wallet, in the order of the wallet list."
+          }
+        }
+      },
+      "SyncState": {
+        "type": "string",
+        "description": "How a wallet (or the instance) keeps up with the chain, from the best to the worst.",
+        "enum": [
+          "live",
+          "importing",
+          "lagging",
+          "error"
+        ]
+      },
+      "TimezoneSource": {
+        "type": "string",
+        "description": "Where the time zone setting comes from.",
+        "enum": [
+          "default",
+          "owner"
+        ]
+      },
+      "WalletColor": {
+        "type": "string",
+        "description": "One of the eight wallet colors of the theme.",
+        "enum": [
+          "wallet_1",
+          "wallet_2",
+          "wallet_3",
+          "wallet_4",
+          "wallet_5",
+          "wallet_6",
+          "wallet_7",
+          "wallet_8"
+        ]
+      },
+      "WalletList": {
+        "type": "object",
+        "description": "The tracked wallets and their total.",
+        "required": [
+          "items",
+          "total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WalletSummary"
+            },
+            "description": "Each wallet, in the order they were added."
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Always `null`: the list is never paged."
+          },
+          "total": {
+            "$ref": "#/components/schemas/WalletsTotal",
+            "description": "Every wallet together."
+          }
+        }
+      },
+      "WalletRef": {
+        "type": "object",
+        "description": "A tracked wallet: its address, its label and its color.",
+        "required": [
+          "address",
+          "label",
+          "color"
+        ],
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "The wallet address (base58)."
+          },
+          "color": {
+            "$ref": "#/components/schemas/WalletColor",
+            "description": "Its color in charts and legends."
+          },
+          "label": {
+            "type": "string",
+            "description": "Its label: never empty, at most 10 characters (the short address when the owner gave none)."
+          }
+        }
+      },
+      "WalletSummary": {
+        "type": "object",
+        "description": "One tracked wallet and its figures.",
+        "required": [
+          "wallet",
+          "added_at",
+          "sync",
+          "net_worth",
+          "real_pnl",
+          "share_of_net_worth",
+          "open_count",
+          "out_of_range_count",
+          "closed_count"
+        ],
+        "properties": {
+          "added_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the owner added it."
+          },
+          "closed_count": {
+            "type": "integer",
+            "description": "How many positions it closed, empty shells left out (as History counts them).",
+            "minimum": 0
+          },
+          "net_worth": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "Its net worth now."
+          },
+          "open_count": {
+            "type": "integer",
+            "description": "How many positions it has open.",
+            "minimum": 0
+          },
+          "out_of_range_count": {
+            "type": "integer",
+            "description": "How many of them are out of range.",
+            "minimum": 0
+          },
+          "real_pnl": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "Its real PnL since its first activity: net worth − net capital put in."
+          },
+          "share_of_net_worth": {
+            "$ref": "#/components/schemas/PercentFigure",
+            "description": "Its net worth as a share of the total net worth."
+          },
+          "sync": {
+            "$ref": "#/components/schemas/WalletSync",
+            "description": "Its synchronization (the same as in `GET /sync`)."
+          },
+          "wallet": {
+            "$ref": "#/components/schemas/WalletRef",
+            "description": "The wallet."
+          }
+        }
+      },
+      "WalletSync": {
+        "type": "object",
+        "description": "The synchronization of one wallet.",
+        "required": [
+          "state",
+          "indexed_tx"
+        ],
+        "properties": {
+          "import": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ImportProgress",
+                "description": "The progress of the import of its history, while it runs."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "indexed_tx": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many of its transactions are indexed.",
+            "minimum": 0
+          },
+          "lag_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "How far behind the chain it is, in seconds, when known.",
+            "minimum": 0
+          },
+          "last_tx_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When its last transaction happened."
+          },
+          "state": {
+            "$ref": "#/components/schemas/SyncState",
+            "description": "Its state."
+          }
+        }
+      },
+      "WalletSyncLine": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/WalletSync",
+            "description": "Its synchronization."
+          },
+          {
+            "type": "object",
+            "required": [
+              "wallet"
+            ],
+            "properties": {
+              "wallet": {
+                "$ref": "#/components/schemas/WalletRef",
+                "description": "The wallet."
+              }
+            }
+          }
+        ],
+        "description": "A wallet and its synchronization."
+      },
+      "WalletsTotal": {
+        "type": "object",
+        "description": "The figures of every wallet together.",
+        "required": [
+          "net_worth",
+          "real_pnl",
+          "open_count",
+          "out_of_range_count",
+          "closed_count"
+        ],
+        "properties": {
+          "closed_count": {
+            "type": "integer",
+            "description": "How many positions were closed, empty shells left out.",
+            "minimum": 0
+          },
+          "net_worth": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "The total net worth."
+          },
+          "open_count": {
+            "type": "integer",
+            "description": "How many positions are open.",
+            "minimum": 0
+          },
+          "out_of_range_count": {
+            "type": "integer",
+            "description": "How many of them are out of range.",
+            "minimum": 0
+          },
+          "real_pnl": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "The total real PnL."
           }
         }
       }
@@ -456,6 +1452,14 @@
     {
       "name": "live",
       "description": "Events pushed to the clients as they happen."
+    },
+    {
+      "name": "wallets",
+      "description": "The tracked wallets and their figures."
+    },
+    {
+      "name": "settings",
+      "description": "The settings every client of the instance shares."
     }
   ]
 }

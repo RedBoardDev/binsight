@@ -24,6 +24,8 @@ pub(crate) enum ErrorCode {
     NotFound,
     /// The route exists but not for this HTTP method.
     MethodNotAllowed,
+    /// The request names a wallet that is not tracked.
+    WalletNotFound,
     /// The server took too long to answer (`503`: the request itself arrived in time, so clients
     /// and proxies must not treat it as a `408` they may replay on their own).
     RequestTimeout,
@@ -31,6 +33,9 @@ pub(crate) enum ErrorCode {
     PayloadTooLarge,
     /// Too many failed logins; the `Retry-After` header says how long to wait.
     TooManyAttempts,
+    /// The engine does not serve figures yet (it is still being built); in demo mode every
+    /// figure is available.
+    DataNotReady,
     /// Something failed on the server; the logs have the details under the request id.
     Internal,
 }
@@ -42,9 +47,9 @@ impl ErrorCode {
             Self::InvalidRequest => StatusCode::BAD_REQUEST,
             Self::Unauthenticated | Self::InvalidCredentials => StatusCode::UNAUTHORIZED,
             Self::ForbiddenCrossOrigin => StatusCode::FORBIDDEN,
-            Self::NotFound => StatusCode::NOT_FOUND,
+            Self::NotFound | Self::WalletNotFound => StatusCode::NOT_FOUND,
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
-            Self::RequestTimeout => StatusCode::SERVICE_UNAVAILABLE,
+            Self::RequestTimeout | Self::DataNotReady => StatusCode::SERVICE_UNAVAILABLE,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::TooManyAttempts => StatusCode::TOO_MANY_REQUESTS,
             Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,

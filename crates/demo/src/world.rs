@@ -1,6 +1,8 @@
 //! The demo world: the snapshot the queries read and the state of the demo instance.
 
+use binsight_engine::portfolio::views::{InstanceSettings, TimezoneSource};
 use binsight_engine::portfolio::{InstanceStatus, Snapshot};
+use binsight_ledger::report::valued::Currency;
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 
@@ -39,6 +41,8 @@ pub(crate) struct World {
     pub(crate) status: InstanceStatus,
     /// The time zone the world was generated in.
     pub(crate) timezone: TimeZone,
+    /// The settings of the demo instance.
+    pub(crate) settings: InstanceSettings,
 }
 
 impl World {
@@ -49,6 +53,12 @@ impl World {
             snapshot: Snapshot::new(generated.facts)?,
             status: generated.status,
             timezone: spec.timezone.clone(),
+            settings: InstanceSettings {
+                timezone: spec.timezone.iana_name().unwrap_or("UTC").to_owned(),
+                timezone_source: TimezoneSource::Default,
+                default_currency: Currency::Sol,
+                hide_amounts_by_default: false,
+            },
         })
     }
 }

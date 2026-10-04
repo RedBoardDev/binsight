@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use binsight_core::clock::Clock;
-use binsight_engine::portfolio::views::{SyncReport, WalletsView};
+use binsight_engine::portfolio::views::{InstanceSettings, SyncReport, WalletsView};
 use binsight_engine::portfolio::{
     Answer, InstanceReads, ReadContext, WalletReads, answered, query,
 };
@@ -56,6 +56,10 @@ impl InstanceReads for DemoPortfolio {
             &world.status,
             self.context().now,
         ))
+    }
+
+    fn settings(&self) -> Answer<'_, InstanceSettings> {
+        answered(Ok(self.world.settings.clone()))
     }
 }
 

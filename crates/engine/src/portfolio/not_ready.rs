@@ -5,7 +5,7 @@ use binsight_ledger::report::valued::Currency;
 use super::answer::{Answer, answered};
 use super::read_error::ReadError;
 use super::read_model::{InstanceReads, WalletReads};
-use super::views::{SyncReport, WalletsView};
+use super::views::{InstanceSettings, SyncReport, WalletsView};
 
 /// A source that has no figures yet.
 #[derive(Debug, Clone, Copy, Default)]
@@ -13,6 +13,10 @@ pub struct NotReadyPortfolio;
 
 impl InstanceReads for NotReadyPortfolio {
     fn sync_report(&self) -> Answer<'_, SyncReport> {
+        answered(Err(ReadError::NotReady))
+    }
+
+    fn settings(&self) -> Answer<'_, InstanceSettings> {
         answered(Err(ReadError::NotReady))
     }
 }

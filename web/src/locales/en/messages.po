@@ -31,6 +31,10 @@ msgstr "Back to the dashboard"
 msgid "binsight cannot be reached. Check your connection and try again."
 msgstr "binsight cannot be reached. Check your connection and try again."
 
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "binsight is still preparing your figures. Try again in a moment."
+msgstr "binsight is still preparing your figures. Try again in a moment."
+
 #: src/core/RootErrorBoundary.tsx
 msgid "binsight stopped working"
 msgstr "binsight stopped working"
@@ -226,6 +230,10 @@ msgstr "This page could not be displayed. Try again; if it keeps failing, reload
 #: src/applications/Auth/Ui/LoginForm/errorCopy.ts
 msgid "This password is too long."
 msgstr "This password is too long."
+
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "This wallet is no longer tracked."
+msgstr "This wallet is no longer tracked."
 
 #: src/applications/Shared/Ui/apiErrorMessages.ts
 msgid "Too many attempts. Wait a moment and try again."

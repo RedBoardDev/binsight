@@ -11,9 +11,11 @@ const ERROR_CODES = {
   forbidden_cross_origin: true,
   not_found: true,
   method_not_allowed: true,
+  wallet_not_found: true,
   request_timeout: true,
   payload_too_large: true,
   too_many_attempts: true,
+  data_not_ready: true,
   internal: true,
 } as const satisfies Record<ErrorCode, true>;
 

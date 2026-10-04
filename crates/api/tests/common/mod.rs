@@ -16,6 +16,8 @@ use axum::http::{HeaderMap, HeaderName, Request, StatusCode};
 use binsight_api::auth::{AuthSettings, ClientIpHeader, OwnerPassword, PublicUrl, SessionSecret};
 use binsight_api::{AppState, AppStateParts, WebAsset, WebAssets, router};
 use binsight_core::clock::FixedClock;
+use binsight_demo::{DemoPortfolio, WorldSpec};
+use binsight_engine::portfolio::DataSource;
 use binsight_engine::test_support::temporary_engine;
 use binsight_engine::{Engine, EngineHandle};
 use http_body_util::BodyExt;
@@ -51,8 +53,18 @@ impl WebAssets for FakeWebAssets {
     }
 }
 
+/// Where a test application takes its figures from.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Figures {
+    /// The chain: the engine serves nothing yet.
+    Chain,
+    /// The default demo world, anchored at the start instant in Europe/Paris.
+    Demo,
+}
+
 /// How to build a test application.
 pub(crate) struct TestAppOptions {
+    pub(crate) figures: Figures,
     pub(crate) password: &'static str,
     pub(crate) secret_byte: u8,
     pub(crate) public_url: Option<&'static str>,
@@ -62,6 +74,7 @@ pub(crate) struct TestAppOptions {
 impl Default for TestAppOptions {
     fn default() -> Self {
         Self {
+            figures: Figures::Chain,
             password: PASSWORD,
             secret_byte: 42,
             public_url: None,
@@ -117,15 +130,31 @@ impl TestApp {
         Self::with(TestAppOptions::default()).await
     }
 
+    /// An application serving the default demo world, signed-in requests made easy.
+    pub(crate) async fn demo() -> Self {
+        Self::with(TestAppOptions {
+            figures: Figures::Demo,
+            ..TestAppOptions::default()
+        })
+        .await
+    }
+
     /// An application on a fresh temporary database.
     pub(crate) async fn with(options: TestAppOptions) -> Self {
         let temporary = temporary_engine().await;
-        let clock = Arc::new(FixedClock::new(
-            Timestamp::from_second(START_SECONDS).unwrap(),
-        ));
+        let start = Timestamp::from_second(START_SECONDS).unwrap();
+        let clock = Arc::new(FixedClock::new(start));
         let shutdown = CancellationToken::new();
+        let data_source = match options.figures {
+            Figures::Chain => DataSource::Chain,
+            Figures::Demo => {
+                let spec = WorldSpec::new(start, jiff::tz::TimeZone::get("Europe/Paris").unwrap());
+                DataSource::Demo(Arc::new(DemoPortfolio::new(&spec, clock.clone()).unwrap()))
+            }
+        };
+        let handle = temporary.handle.with_data_source(data_source);
         let state = AppState::new(AppStateParts {
-            engine: temporary.handle.clone(),
+            engine: handle.clone(),
             auth: AuthSettings {
                 password: OwnerPassword::parse(options.password).unwrap(),
                 session_secret: SessionSecret::from_bytes([options.secret_byte; 32]),
@@ -143,7 +172,7 @@ impl TestApp {
             state,
             clock,
             shutdown,
-            handle: temporary.handle,
+            handle,
             engine: Some(temporary.engine),
             _database_folder: temporary.folder,
         }
@@ -201,6 +230,12 @@ impl TestApp {
             .body(Body::empty())
             .unwrap();
         self.send(request).await
+    }
+
+    /// Signs in and sends a `GET` to `path`.
+    pub(crate) async fn get_signed_in(&self, path: &str) -> TestResponse {
+        let cookie = self.session_cookie().await;
+        self.get_with_cookie(path, &cookie).await
     }
 
     /// Sends `request` through the whole application and reads the response.
