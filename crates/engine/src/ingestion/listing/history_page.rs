@@ -17,11 +17,17 @@ use super::history_cursor::{HistoryStep, step_after_history_page};
 use super::history_end::ListedEnd;
 use super::slot_order::{PageBoundary, rank_in_slots};
 use crate::ingestion::Ingestion;
-use crate::ingestion::refusal::resume_after_refusal;
+use crate::ingestion::refusal::{Refusal, refusal_of};
 
 /// Why a page was not written.
 #[derive(Debug, thiserror::Error)]
 pub(super) enum PageError {
+    /// The credit budget holds history listings back until this instant.
+    #[error("history listing deferred by the credit budget until {until}")]
+    Deferred {
+        /// When listing may resume.
+        until: Timestamp,
+    },
     /// The provider refuses every request until this instant.
     #[error("{reason}")]
     Paused {
@@ -55,8 +61,9 @@ pub(super) async fn list_and_write(
     let page = match ingestion.rpc.signatures_for_address(request, context).await {
         Ok(page) => page,
         Err(error) => {
-            return Err(match resume_after_refusal(&error, ingestion.clock.now()) {
-                Some(until) => PageError::Paused {
+            return Err(match refusal_of(&error, ingestion.clock.now()) {
+                Some(Refusal::Deferred(until)) => PageError::Deferred { until },
+                Some(Refusal::Paused(until)) => PageError::Paused {
                     until,
                     reason: error,
                 },

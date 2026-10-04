@@ -20,9 +20,9 @@ use std::sync::Arc;
 
 use binsight_chain::RpcClient;
 use binsight_chain::test_support::{ScriptedTransport, scripted_client};
-use binsight_core::clock::Clock;
-use binsight_core::credits::Credits;
-use binsight_store::{BackupOptions, Store, UpgradeOptions};
+use binsight_core::clock::{Clock, utc_day};
+use binsight_core::credits::{CallOutcome, Credits, Priority, Purpose};
+use binsight_store::{BackupOptions, CreditUsage, Store, UpgradeOptions};
 use jiff::Timestamp;
 
 use crate::engine::Engine;
@@ -89,6 +89,34 @@ async fn engine_in(
         store,
         transport,
     }
+}
+
+/// Records `credits` as spent on [`TEST_START`]'s day, as an earlier run would have, so the
+/// engine's budget starts from there.
+///
+/// # Panics
+///
+/// Panics if the database cannot be written.
+#[expect(
+    clippy::expect_used,
+    reason = "test support: a failed setup must stop the test immediately"
+)]
+pub async fn record_spent_today(store: &Store, credits: Credits) {
+    let usage = CreditUsage {
+        day: utc_day(TEST_START),
+        method: "getTransaction".to_owned(),
+        priority: Priority::History,
+        purpose: Purpose::TransactionFetch,
+        wallet: None,
+        outcome: CallOutcome::Ok,
+        calls: credits.0,
+        credits,
+    };
+    store
+        .credits()
+        .add(vec![usage])
+        .await
+        .expect("could not record the credits spent");
 }
 
 #[expect(

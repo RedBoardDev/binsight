@@ -107,6 +107,8 @@ pub(crate) async fn get_health(State(state): State<AppState>) -> (StatusCode, Js
 
 #[cfg(test)]
 mod tests {
+    use binsight_core::credits::Credits;
+
     use super::*;
 
     #[test]
@@ -114,6 +116,13 @@ mod tests {
         let health = Health::from(EngineHealth {
             database: ComponentHealth::Unavailable,
             engine: binsight_engine::EngineStatus::Running,
+            credits: binsight_engine::CreditHealth {
+                today_used: Credits(0),
+                daily_allowance: Credits(30_645),
+                cycle_used: Credits(0),
+                quota: Credits(1_000_000),
+                hard_limit_reached: false,
+            },
         });
 
         assert_eq!(health.status, HealthStatus::Unavailable);

@@ -4,6 +4,7 @@
 //! checks the health and subscribes to the engine's events; it cannot stop or drive the engine,
 //! which only the owner of [`crate::Engine`] can do.
 
+use binsight_chain::RpcClient;
 use binsight_store::Store;
 use tokio::sync::{broadcast, watch};
 
@@ -15,6 +16,7 @@ use crate::status::EngineStatus;
 #[derive(Debug, Clone)]
 pub struct EngineHandle {
     store: Store,
+    rpc: RpcClient,
     status: watch::Receiver<EngineStatus>,
     events: broadcast::Sender<EngineEvent>,
 }
@@ -22,11 +24,13 @@ pub struct EngineHandle {
 impl EngineHandle {
     pub(crate) fn new(
         store: Store,
+        rpc: RpcClient,
         status: watch::Receiver<EngineStatus>,
         events: broadcast::Sender<EngineEvent>,
     ) -> Self {
         Self {
             store,
+            rpc,
             status,
             events,
         }
@@ -43,11 +47,13 @@ impl EngineHandle {
         *self.status.borrow()
     }
 
-    /// Checks that the database answers (with a short deadline) and reports the status.
+    /// Checks that the database answers (with a short deadline), and reports the status and
+    /// where the credits stand.
     pub async fn health(&self) -> EngineHealth {
         EngineHealth {
             database: check_database(&self.store).await,
             engine: self.status(),
+            credits: self.rpc.credit_meter().standing().into(),
         }
     }
 

@@ -3,9 +3,9 @@
 //! Each wallet has its own retry delay: a page that cannot be listed or written is tried again
 //! after 30 seconds, then twice as long after each failure in a row, up to an hour, and the
 //! delay resets once a page of that wallet is written. A short page that may end a history waits
-//! five minutes for its confirmation, the second listing `history_cursor` asks for. The worker always
-//! lists the wallet that is due first, so a wallet whose page keeps failing neither blocks the
-//! others nor spends credits every few seconds. All of this lives in memory only: a restart tries
+//! five minutes for its confirmation, the second listing `history_cursor` asks for. The worker
+//! always lists the wallet that is due first, so a wallet whose page keeps failing neither blocks
+//! the others nor spends credits every few seconds. All of this lives in memory: a restart tries
 //! every wallet again at once, which costs one page each. This module decides; it does no I/O.
 
 use std::collections::HashMap;

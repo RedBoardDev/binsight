@@ -49,7 +49,7 @@ impl Engine {
     pub fn new(store: Store, rpc: RpcClient, clock: Arc<dyn Clock>) -> (Self, EngineHandle) {
         let (status, status_receiver) = watch::channel(EngineStatus::Starting);
         let (events, _) = broadcast::channel(EVENT_BUFFER_SIZE);
-        let handle = EngineHandle::new(store.clone(), status_receiver, events.clone());
+        let handle = EngineHandle::new(store.clone(), rpc.clone(), status_receiver, events.clone());
         (
             Self {
                 store,
@@ -162,6 +162,11 @@ mod tests {
 
         assert_eq!(health.database, ComponentHealth::Ok);
         assert_eq!(health.engine, EngineStatus::Starting);
+        assert_eq!(
+            health.credits.quota,
+            binsight_core::credits::Credits(1_000_000)
+        );
+        assert!(!health.credits.hard_limit_reached);
     }
 
     #[tokio::test(start_paused = true)]

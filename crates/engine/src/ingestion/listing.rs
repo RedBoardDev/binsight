@@ -3,8 +3,8 @@
 //!
 //! The worker lists the page of the wallet due first (`history_schedule`), then the next one. A
 //! page that cannot be listed or written changes nothing; its wallet waits before trying again
-//! while the others go on. A refusal that concerns every request pauses the whole worker
-//! instead. Listing and writing one page is `history_page`'s job.
+//! while the others go on. A credit budget that defers history listings, or a refusal that
+//! concerns every request, makes the whole worker wait. Listing and writing one page is `history_page`'s job.
 
 mod history_cursor;
 mod history_end;
@@ -81,6 +81,10 @@ async fn list_next_page(ingestion: &Ingestion, schedule: &mut ListingSchedule) -
     let unconfirmed_end = schedule.unconfirmed_end(wallet.address).cloned();
     match list_and_write(ingestion, wallet, request, unconfirmed_end.as_ref()).await {
         Ok(end) => schedule.record_page(wallet.address, end, ingestion.clock.now()),
+        Err(PageError::Deferred { until }) => {
+            debug!(%until, "history listing deferred by the credit budget");
+            return Progress::Wait(time_until(ingestion.clock.now(), until));
+        }
         Err(PageError::Paused { until, reason }) => {
             report_pause("listing", &reason, until);
             return Progress::Wait(time_until(ingestion.clock.now(), until));
@@ -108,9 +112,11 @@ mod tests {
     use binsight_store::WalletCursor;
     use serde_json::json;
 
+    use binsight_core::credits::Credits;
+
     use crate::test_support::{
-        RunningEngine, TEST_START, expect_transactions, numbered_signature, signature_page,
-        temporary_engine,
+        RunningEngine, TEST_START, expect_transactions, numbered_signature, record_spent_today,
+        signature_page, temporary_engine,
     };
 
     const WALLET: Address = Address::from_bytes([1; 32]);
@@ -255,6 +261,28 @@ mod tests {
             .wait_for_counts(WALLET, |counts| counts.fetched == 3)
             .await;
         assert_eq!(counts.listed, 3);
+        engine.stop().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn defers_the_history_listing_to_the_next_day_once_catching_up_borrowed_its_share() {
+        let setup = temporary_engine().await;
+        // 95,000 credits a day: catching up may borrow up to 142,500.
+        record_spent_today(&setup.store, Credits(142_500)).await;
+        setup.store.wallets().add(WALLET, TEST_START).await.unwrap();
+        let engine = RunningEngine::start(setup);
+
+        let before_midnight = Duration::from_mins(9 * 60 + 46);
+        tokio::time::sleep(before_midnight).await;
+        let calls_before_midnight = engine.transport.calls().len();
+        for _listing_and_its_confirmation in 0..2 {
+            let listing = engine.transport.expect("getSignaturesForAddress");
+            listing.respond(signature_page(0, 1));
+        }
+        expect_transactions(&engine.transport, 1);
+        engine.wait_for_complete_history(WALLET).await;
+
+        assert_eq!(calls_before_midnight, 0);
         engine.stop().await;
     }
 }

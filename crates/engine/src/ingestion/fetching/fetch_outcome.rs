@@ -4,16 +4,19 @@
 //! exist": a node may lag behind, so the task is tried again on a growing schedule and, once the
 //! schedule runs out, rarely but forever; a signature is never dropped. A version the node cannot
 //! return parks the task without blocking the others, noting the newest version binsight reads,
-//! so a binsight that reads newer versions puts it back in the queue at startup. Refusals that no
-//! retry can fix (the daily limit, a refused key, used-up credits) pause the whole fetcher
-//! instead of burning the task's attempts. This module decides; the fetcher does the I/O.
+//! so a binsight that reads newer versions puts it back in the queue at startup. A budget that
+//! defers the task's class leaves the task untouched, without counting an attempt: the fetcher
+//! holds the class back instead. Refusals that no retry can fix (the daily limit, a refused key,
+//! used-up credits) pause the whole fetcher instead of burning the task's attempts. This module
+//! decides; the fetcher does the I/O.
 
 use binsight_chain::{RawTransaction, RpcError, TransactionLookup};
+use binsight_core::credits::Priority;
 use binsight_solana::transaction::MAX_SUPPORTED_TX_VERSION;
 use binsight_store::{FetchFailure, FetchSetback, FetchTask, FetchedTx, RetryState};
 use jiff::{SignedDuration, Timestamp};
 
-use crate::ingestion::refusal::resume_after_refusal;
+use crate::ingestion::refusal::{Refusal, refusal_of};
 
 /// The waits before each new attempt, in seconds, after the first, second... failed attempt.
 const RETRY_SCHEDULE_SECS: [i64; 8] = [1, 2, 4, 8, 30, 120, 600, 3_600];
@@ -28,6 +31,14 @@ pub(super) enum FetchStep {
     Store(FetchedTx),
     /// Set the task back.
     SetBack(FetchFailure),
+    /// Leave the task as it is and hold back its class, and the less urgent ones, until
+    /// `until`.
+    Defer {
+        /// The task's class.
+        class: Priority,
+        /// When the class may be fetched again.
+        until: Timestamp,
+    },
     /// Leave the task as it is and stop fetching until `until`.
     Pause {
         /// When fetching may resume.
@@ -58,8 +69,12 @@ pub(super) fn next_step(
             error: Some(RpcError::UnsupportedTransactionVersion.to_string()),
             updated_at: now,
         }),
-        Err(error) => match resume_after_refusal(&error, now) {
-            Some(until) => FetchStep::Pause {
+        Err(error) => match refusal_of(&error, now) {
+            Some(Refusal::Deferred(until)) => FetchStep::Defer {
+                class: task.priority,
+                until,
+            },
+            Some(Refusal::Paused(until)) => FetchStep::Pause {
                 until,
                 reason: error,
             },
@@ -119,7 +134,7 @@ fn fetched_tx(transaction: RawTransaction, now: Timestamp) -> FetchedTx {
 #[cfg(test)]
 mod tests {
     use binsight_chain::{BudgetRefusal, TransportError};
-    use binsight_core::credits::{Credits, Priority};
+    use binsight_core::credits::Credits;
     use binsight_solana::Commitment;
     use binsight_solana::Signature;
     use binsight_solana::transaction::{TxEncoding, TxVersion};
@@ -234,6 +249,22 @@ mod tests {
         let step = next_step(&task(3), Err(refusal), now());
 
         assert!(matches!(step, FetchStep::Pause { until, .. } if until == resets_at));
+    }
+
+    #[test]
+    fn holds_the_class_back_without_spending_an_attempt_when_the_budget_defers_it() {
+        let until = Timestamp::from_second(1_790_000_030).unwrap();
+        let refusal = RpcError::Budget(BudgetRefusal::Deferred { until });
+
+        let step = next_step(&task(3), Err(refusal), now());
+
+        assert_eq!(
+            step,
+            FetchStep::Defer {
+                class: Priority::History,
+                until
+            }
+        );
     }
 
     #[test]

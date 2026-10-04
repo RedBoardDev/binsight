@@ -2,12 +2,13 @@
 //!
 //! Up to [`FETCH_CONCURRENCY`] transactions are fetched at once; each one is stored or set back
 //! as `fetch_outcome` decides. The batch as a whole ends with the outcome that should drive the
-//! worker: a pause asked by the provider, a write failure, or success. At shutdown the batch
+//! worker: a pause, a class the budget defers, a write failure, or success. Tasks come the most
+//! urgent class first, so once a class is deferred or every request paused, no new fetch starts. At shutdown the batch
 //! abandons its fetches and waits until they are gone, so each request in flight is counted by
 //! the credit meter before the last flush.
 
 use binsight_chain::CallContext;
-use binsight_core::credits::Purpose;
+use binsight_core::credits::{Priority, Purpose};
 use binsight_store::{FetchSetback, FetchTask};
 use jiff::Timestamp;
 use tokio::task::JoinSet;
@@ -29,14 +30,22 @@ pub(super) enum Fetched {
     /// The outcome could not be written: the task is still due, so the worker must slow down
     /// rather than fetch it again at once.
     NotRecorded,
+    /// The budget holds this class, and the less urgent ones, back until this instant.
+    Deferred {
+        /// The class.
+        class: Priority,
+        /// Until when.
+        until: Timestamp,
+    },
     /// The provider refuses every request until this instant.
     PausedUntil(Timestamp),
     /// Shutdown was requested; the fetches in flight were abandoned.
     Stopped,
 }
 
-/// Fetches `tasks`, a few at a time, and says how the batch ended as a whole: a pause wins over
-/// a write failure, which wins over success. No new fetch starts once one asks to pause.
+/// Fetches `tasks`, a few at a time, and says how the batch ended as a whole: a pause wins over a
+/// deferral, which wins over a write failure, which wins over success. No new fetch starts once
+/// one asks to pause or defers its class.
 pub(super) async fn fetch_all(
     ingestion: &Ingestion,
     tasks: Vec<FetchTask>,
@@ -46,7 +55,9 @@ pub(super) async fn fetch_all(
     let mut running = JoinSet::new();
     let mut batch = Fetched::Recorded;
     loop {
-        while running.len() < FETCH_CONCURRENCY && !matches!(batch, Fetched::PausedUntil(_)) {
+        while running.len() < FETCH_CONCURRENCY
+            && !matches!(batch, Fetched::PausedUntil(_) | Fetched::Deferred { .. })
+        {
             let Some(task) = waiting.next() else {
                 break;
             };
@@ -70,8 +81,8 @@ pub(super) async fn fetch_all(
     }
 }
 
-/// The outcome that should drive the worker: a stop, else the latest pause, else any write
-/// failure.
+/// The outcome that should drive the worker: a stop, else the latest pause, else the deferral of
+/// the most urgent class, else any write failure.
 fn worst(batch: Fetched, fetched: Fetched) -> Fetched {
     match (batch, fetched) {
         (Fetched::Stopped, _) | (_, Fetched::Stopped) => Fetched::Stopped,
@@ -80,6 +91,21 @@ fn worst(batch: Fetched, fetched: Fetched) -> Fetched {
         }
         (Fetched::PausedUntil(until), _) | (_, Fetched::PausedUntil(until)) => {
             Fetched::PausedUntil(until)
+        }
+        (
+            first @ Fetched::Deferred { class, .. },
+            second @ Fetched::Deferred {
+                class: other_class, ..
+            },
+        ) => {
+            if class <= other_class {
+                first
+            } else {
+                second
+            }
+        }
+        (deferred @ Fetched::Deferred { .. }, _) | (_, deferred @ Fetched::Deferred { .. }) => {
+            deferred
         }
         (Fetched::NotRecorded, _) | (_, Fetched::NotRecorded) => Fetched::NotRecorded,
         (Fetched::Recorded, Fetched::Recorded) => Fetched::Recorded,
@@ -123,6 +149,10 @@ async fn fetch_one(ingestion: Ingestion, task: FetchTask) -> Fetched {
                     Fetched::NotRecorded
                 }
             }
+        }
+        FetchStep::Defer { class, until } => {
+            debug!(%class, %until, "fetching deferred by the credit budget");
+            Fetched::Deferred { class, until }
         }
         FetchStep::Pause { until, reason } => {
             report_pause("fetch", &reason, until);

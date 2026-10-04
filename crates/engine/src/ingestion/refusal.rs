@@ -1,30 +1,48 @@
-//! Refusals that concern every request, not the one that met them, and how long work waits.
+//! Refusals that concern more than the request that met them, and how long work waits.
 //!
-//! A budget refusal (the daily credit limit, the cycle's credits, a class deferred), a refused
-//! key, used-up credits or a method outside the plan will refuse the next request just the same:
-//! retrying, or charging the attempt to a transaction, would only waste time. The worker that
-//! meets one pauses instead: until the budget lets requests go again, a while for the provider's
-//! refusals, which a human has to fix. Both workers read the same rule here.
+//! Two kinds exist. The budget may defer a class of requests (its share of the day is spent, its
+//! lane is full, or the cycle's last credits are kept for live work): that class and the less
+//! urgent ones wait, the more urgent ones go on, and nothing is dropped. Other refusals stop
+//! every request: the daily limit, the cycle's credits spent, a refused key or a method outside
+//! the plan. Retrying either, or charging the attempt to a transaction, would only waste time.
+//! Every worker reads the same rules here, and keeps its deferrals in a [`ClassDeferrals`].
 
+use std::collections::BTreeMap;
 use std::time::Duration;
 
-use binsight_chain::RpcError;
+use binsight_chain::{BudgetRefusal, RpcError};
+use binsight_core::credits::Priority;
 use jiff::{SignedDuration, Timestamp};
 use tracing::{error, warn};
 
 /// How long work waits after the provider refused the key, the plan or the credits.
 const PROVIDER_REFUSAL_PAUSE_SECS: i64 = 600;
 
-/// When work may resume after `error`, or `None` if the error only concerns this request.
-pub(super) fn resume_after_refusal(error: &RpcError, now: Timestamp) -> Option<Timestamp> {
+/// What a refusal means for the work that met it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Refusal {
+    /// The request's class, and the less urgent ones, wait until then.
+    Deferred(Timestamp),
+    /// Every request waits until then.
+    Paused(Timestamp),
+}
+
+/// What `error` means for the work that met it, or `None` if it only concerns this request.
+pub(super) fn refusal_of(error: &RpcError, now: Timestamp) -> Option<Refusal> {
     match error {
-        RpcError::Budget(refusal) => Some(refusal.resume_at()),
+        RpcError::Budget(
+            refusal @ (BudgetRefusal::Deferred { .. } | BudgetRefusal::CycleReserveReached { .. }),
+        ) => Some(Refusal::Deferred(refusal.resume_at())),
+        RpcError::Budget(
+            refusal @ (BudgetRefusal::DailyHardLimitReached { .. }
+            | BudgetRefusal::CycleQuotaSpent { .. }),
+        ) => Some(Refusal::Paused(refusal.resume_at())),
         RpcError::Unauthorized
         | RpcError::CreditsExhausted
-        | RpcError::NotAvailableOnPlan { .. } => Some(
+        | RpcError::NotAvailableOnPlan { .. } => Some(Refusal::Paused(
             now.checked_add(SignedDuration::from_secs(PROVIDER_REFUSAL_PAUSE_SECS))
                 .unwrap_or(Timestamp::MAX),
-        ),
+        )),
         _ => None,
     }
 }
@@ -43,15 +61,54 @@ pub(super) fn time_until(now: Timestamp, instant: Timestamp) -> Duration {
     Duration::try_from(instant.duration_since(now)).unwrap_or(Duration::ZERO)
 }
 
+/// The classes of requests a worker holds back, and until when.
+#[derive(Debug, Default)]
+pub(super) struct ClassDeferrals {
+    until: BTreeMap<Priority, Timestamp>,
+}
+
+impl ClassDeferrals {
+    /// Holds back `class` and every less urgent one until `until`.
+    pub(super) fn defer(&mut self, class: Priority, until: Timestamp) {
+        let held = self.until.entry(class).or_insert(until);
+        *held = (*held).max(until);
+    }
+
+    /// The least urgent class that may go at `now`, or `None` if even live requests wait.
+    pub(super) fn least_urgent_allowed(&self, now: Timestamp) -> Option<Priority> {
+        let mut allowed = None;
+        for class in Priority::ALL {
+            if self.until.get(&class).is_some_and(|until| *until > now) {
+                return allowed;
+            }
+            allowed = Some(class);
+        }
+        allowed
+    }
+
+    /// When the next deferral after `now` ends, if one does.
+    pub(super) fn next_end(&self, now: Timestamp) -> Option<Timestamp> {
+        self.until
+            .values()
+            .filter(|until| **until > now)
+            .min()
+            .copied()
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use binsight_chain::{BudgetRefusal, TransportError};
+    use binsight_chain::TransportError;
     use binsight_core::credits::Credits;
 
     use super::*;
 
     fn now() -> Timestamp {
         Timestamp::from_second(1_790_000_000).unwrap()
+    }
+
+    fn later(secs: i64) -> Timestamp {
+        now().checked_add(SignedDuration::from_secs(secs)).unwrap()
     }
 
     #[test]
@@ -62,13 +119,33 @@ mod tests {
             resets_at,
         });
 
-        assert_eq!(resume_after_refusal(&refusal, now()), Some(resets_at));
+        assert_eq!(
+            refusal_of(&refusal, now()),
+            Some(Refusal::Paused(resets_at))
+        );
     }
 
     #[test]
     fn waits_ten_minutes_when_the_provider_refuses_the_key() {
-        let resume = resume_after_refusal(&RpcError::Unauthorized, now()).unwrap();
-        assert_eq!(time_until(now(), resume), Duration::from_secs(600));
+        let refusal = refusal_of(&RpcError::Unauthorized, now());
+        assert_eq!(refusal, Some(Refusal::Paused(later(600))));
+    }
+
+    #[test]
+    fn defers_only_the_class_when_the_budget_says_so() {
+        let deferred = RpcError::Budget(BudgetRefusal::Deferred { until: later(5) });
+        let reserved = RpcError::Budget(BudgetRefusal::CycleReserveReached {
+            resets_at: later(90),
+        });
+
+        assert_eq!(
+            refusal_of(&deferred, now()),
+            Some(Refusal::Deferred(later(5)))
+        );
+        assert_eq!(
+            refusal_of(&reserved, now()),
+            Some(Refusal::Deferred(later(90)))
+        );
     }
 
     #[test]
@@ -76,13 +153,44 @@ mod tests {
         let error = RpcError::Transport(TransportError::Request {
             detail: String::new(),
         });
-        assert_eq!(resume_after_refusal(&error, now()), None);
-        assert_eq!(resume_after_refusal(&RpcError::Timeout, now()), None);
+        assert_eq!(refusal_of(&error, now()), None);
+        assert_eq!(refusal_of(&RpcError::Timeout, now()), None);
     }
 
     #[test]
     fn waits_nothing_for_an_instant_already_past() {
         let earlier = Timestamp::from_second(1_789_000_000).unwrap();
         assert_eq!(time_until(now(), earlier), Duration::ZERO);
+    }
+
+    #[test]
+    fn holds_back_a_class_and_the_less_urgent_ones_until_the_deferral_ends() {
+        let mut deferrals = ClassDeferrals::default();
+        assert_eq!(
+            deferrals.least_urgent_allowed(now()),
+            Some(Priority::Valuation)
+        );
+
+        deferrals.defer(Priority::CatchUp, later(30));
+
+        assert_eq!(
+            deferrals.least_urgent_allowed(now()),
+            Some(Priority::Realtime)
+        );
+        assert_eq!(deferrals.next_end(now()), Some(later(30)));
+        assert_eq!(
+            deferrals.least_urgent_allowed(later(30)),
+            Some(Priority::Valuation)
+        );
+        assert_eq!(deferrals.next_end(later(30)), None);
+    }
+
+    #[test]
+    fn holds_back_everything_when_live_requests_are_deferred() {
+        let mut deferrals = ClassDeferrals::default();
+
+        deferrals.defer(Priority::Realtime, later(2));
+
+        assert_eq!(deferrals.least_urgent_allowed(now()), None);
     }
 }

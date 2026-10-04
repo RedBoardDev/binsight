@@ -1,11 +1,14 @@
 //! The health of the engine and of what it depends on, as reported to the health endpoint.
 //!
 //! A health check must answer quickly even when something is stuck, so the database check has a
-//! short deadline: a database that does not answer in time is reported as unavailable. This
-//! module defines the report and how a database check result maps to it.
+//! short deadline: a database that does not answer in time is reported as unavailable. The
+//! credits come from the chain client's meter, in memory. This module defines the report and how
+//! a database check result and the meter's standing map to it.
 
 use std::time::Duration;
 
+use binsight_chain::CreditStanding;
+use binsight_core::credits::Credits;
 use binsight_store::{Store, StoreError};
 use tracing::warn;
 
@@ -23,6 +26,33 @@ pub enum ComponentHealth {
     Unavailable,
 }
 
+/// Where the RPC provider's credits stand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CreditHealth {
+    /// The credits spent today (UTC).
+    pub today_used: Credits,
+    /// What today may spend: the billing cycle's usable credits left, spread over its days.
+    pub daily_allowance: Credits,
+    /// The credits spent in the current billing cycle.
+    pub cycle_used: Credits,
+    /// The credits the billing cycle grants.
+    pub quota: Credits,
+    /// Whether a hard limit (the daily limit, or the cycle's credits) stops every request.
+    pub hard_limit_reached: bool,
+}
+
+impl From<CreditStanding> for CreditHealth {
+    fn from(standing: CreditStanding) -> Self {
+        Self {
+            today_used: standing.spent_today,
+            daily_allowance: standing.daily_allowance,
+            cycle_used: standing.spent_cycle,
+            quota: standing.cycle_credits,
+            hard_limit_reached: standing.is_refusing_all,
+        }
+    }
+}
+
 /// The health of the engine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EngineHealth {
@@ -30,6 +60,8 @@ pub struct EngineHealth {
     pub database: ComponentHealth,
     /// Where the engine is in its lifecycle.
     pub engine: EngineStatus,
+    /// Where the RPC credits stand.
+    pub credits: CreditHealth,
 }
 
 /// Pings the database with a deadline.
