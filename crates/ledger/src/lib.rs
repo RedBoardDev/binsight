@@ -1,7 +1,10 @@
 //! # binsight-ledger
 //!
-//! **Responsibility:** the accounting of binsight: typed ledger entries, liquidity position PnL,
-//! FIFO cost basis, net worth, curves and the bridge between them. Nothing is implemented yet.
+//! **Responsibility:** the accounting of binsight. Today: the [`facts`] the accounting produces
+//! about each wallet (positions, entries, marks, holdings, rates) and the [`report`] rules that
+//! turn them into the figures the screens show (windows, exactness, valuation). Later: typed
+//! ledger entries, liquidity position PnL and FIFO cost basis, which produce those facts from the
+//! chain.
 //!
 //! **May depend on:** `binsight-core`, `binsight-solana`, `binsight-dlmm`.
 //! **Must not depend on:** `binsight-store`, `binsight-chain`, `binsight-engine`, `binsight-api`,
@@ -16,3 +19,6 @@
     clippy::as_conversions,
     clippy::arithmetic_side_effects
 )]
+
+pub mod facts;
+pub mod report;

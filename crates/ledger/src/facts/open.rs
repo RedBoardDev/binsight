@@ -1,0 +1,58 @@
+//! An open position as last valued: its flows so far, its liquidity bin by bin and its fees.
+
+use binsight_core::units::RawTokenAmount;
+use binsight_solana::Address;
+use jiff::Timestamp;
+
+use super::position::{PositionId, QuoteUnits, Strategy};
+
+/// An open position, valued at its pool's active bin.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenPositionFacts {
+    /// The identity of this life of the position.
+    pub id: PositionId,
+    /// The wallet that owns it.
+    pub wallet: Address,
+    /// The pool it provides liquidity to.
+    pub pool: Address,
+    /// How its liquidity is spread.
+    pub strategy: Strategy,
+    /// When it was created.
+    pub opened_at: Timestamp,
+    /// The value of every deposit so far.
+    pub invested: QuoteUnits,
+    /// The value of every withdrawal so far.
+    pub withdrawn: QuoteUnits,
+    /// The value of every fee claim so far.
+    pub claimed_fees: QuoteUnits,
+    /// The value of its liquidity now, at the active bin.
+    pub value: QuoteUnits,
+    /// The value of the fees it could claim now.
+    pub unclaimed_fees: QuoteUnits,
+    /// The lowest bin of its range.
+    pub lower_bin_id: i32,
+    /// The highest bin of its range.
+    pub upper_bin_id: i32,
+    /// The pool's active bin when it was valued.
+    pub active_bin_id: i32,
+    /// Its liquidity in each bin of its range, lowest bin first.
+    pub bins: Vec<BinLiquidity>,
+    /// Since when the active bin is on its current side of the range (inside, above or below);
+    /// `None` when it never moved since the opening.
+    pub range_since: Option<Timestamp>,
+    /// When the value and the fees were read.
+    pub valued_at: Timestamp,
+    /// How many movements had no bin price and were valued on their quote side only.
+    pub unpriced_movements: u32,
+}
+
+/// The liquidity a position holds in one bin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BinLiquidity {
+    /// The bin.
+    pub bin_id: i32,
+    /// Its amount of base token (token X), in raw units.
+    pub base: RawTokenAmount,
+    /// Its amount of quote token (token Y), in raw units.
+    pub quote: RawTokenAmount,
+}
