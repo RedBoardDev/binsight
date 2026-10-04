@@ -6,8 +6,8 @@
 
 mod closed;
 mod logo;
-mod open_positions;
 mod overview;
+mod position;
 mod refs;
 mod series;
 mod settings;
@@ -20,12 +20,12 @@ pub use closed::{
     RecentClosesView,
 };
 pub use logo::TokenLogoImage;
-pub use open_positions::{
-    BinBar, BinChart, MAX_BIN_BARS, OpenPositionRow, OpenPositionsView, OpenTotals, RangeView,
-};
 pub use overview::{
     GainView, NetWorthView, OpenSummary, OverviewSync, OverviewView, TodayView, UnpricedHolding,
     WatchItem,
+};
+pub use position::{
+    BinBar, BinChart, MAX_BIN_BARS, OpenPositionRow, OpenPositionsView, OpenTotals, RangeView,
 };
 pub use refs::{PoolRef, PriceView, TokenLogo, TokenRef, WalletColor, WalletRef};
 pub use series::{SeriesHeaderView, SeriesPointView, SeriesView};

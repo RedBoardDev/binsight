@@ -1,5 +1,5 @@
 //! `GET /api/v1/positions/open`: the open positions with their range, bins and figures, sorted
-//! by the server (comparing amounts is computing), and their totals. The rows are in `open_row`.
+//! by the server (comparing amounts is computing), and their totals.
 
 use axum::Json;
 use axum::extract::State;
@@ -8,9 +8,10 @@ use binsight_engine::portfolio::views;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use super::open_row::OpenPositionRow;
 use crate::app::AppState;
-use crate::contract::{ApiQuery, CurrencyQuery, Figure, Freshness, PercentFigure, ScopeQuery};
+use crate::contract::{
+    ApiQuery, CurrencyQuery, Figure, Freshness, OpenPositionRow, PercentFigure, ScopeQuery,
+};
 use crate::error::{ApiError, ErrorBody};
 
 /// How the open positions are sorted.

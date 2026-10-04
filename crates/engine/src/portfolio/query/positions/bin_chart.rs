@@ -5,7 +5,7 @@ use binsight_core::units::RawTokenAmount;
 use binsight_dlmm::math::{mul_shr_64, price_from_bin};
 use binsight_ledger::facts::{BinLiquidity, OpenPositionFacts, PoolFacts};
 
-use super::refs::bin_price;
+use crate::portfolio::query::refs::bin_price;
 use crate::portfolio::views::{BinBar, BinChart, MAX_BIN_BARS};
 
 /// The chart of `position`'s liquidity in `pool`.

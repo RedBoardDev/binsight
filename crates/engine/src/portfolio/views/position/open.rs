@@ -8,8 +8,7 @@ use binsight_ledger::report::open::{Composition, RangeStatus};
 use binsight_ledger::report::valued::Money;
 use jiff::Timestamp;
 
-use super::refs::{PoolRef, PriceView, WalletRef};
-use super::window::Freshness;
+use crate::portfolio::views::{Freshness, PoolRef, PriceView, WalletRef};
 
 /// The open positions of a scope and their totals.
 #[derive(Debug, Clone, PartialEq, Eq)]

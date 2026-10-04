@@ -10,9 +10,9 @@ use binsight_ledger::report::valued::{Currency, Valued, percent_of, resolve, sum
 use binsight_solana::Address;
 
 use super::bin_chart::bin_chart;
-use super::refs::{bin_price, pool_ref, wallet_ref};
-use super::scope_figures::net_worth;
 use super::sort::{OpenSort, SortOrder, compare_rows};
+use crate::portfolio::query::refs::{bin_price, pool_ref, wallet_ref};
+use crate::portfolio::query::scope_figures::net_worth;
 use crate::portfolio::read_error::ReadError;
 use crate::portfolio::scope::{ReadContext, Scope};
 use crate::portfolio::snapshot::{OpenRow, Snapshot};
@@ -44,7 +44,7 @@ pub fn open_positions(
     request: OpenPositionsRequest,
     context: &ReadContext,
 ) -> Result<OpenPositionsView, ReadError> {
-    super::check_scope(snapshot, request.scope)?;
+    crate::portfolio::query::check_scope(snapshot, request.scope)?;
     let rows: Vec<&OpenRow> = snapshot.open_in(request.scope).collect();
     let wallet_worth = rows
         .iter()
@@ -63,7 +63,7 @@ pub fn open_positions(
     items.sort_by(|left, right| compare_rows(left, right, request.sort, order));
     Ok(OpenPositionsView {
         items,
-        freshness: super::freshness(snapshot, request.scope, context.now),
+        freshness: crate::portfolio::query::freshness(snapshot, request.scope, context.now),
         totals: open_totals(&rows, request.currency)?,
     })
 }

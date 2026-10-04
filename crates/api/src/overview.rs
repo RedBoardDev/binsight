@@ -4,7 +4,6 @@
 //! Each route lives in its own file with its wire types; this module only gathers them.
 
 pub(crate) mod open_positions;
-mod open_row;
 pub(crate) mod recent_closes;
 pub(crate) mod summary;
 mod watch;
