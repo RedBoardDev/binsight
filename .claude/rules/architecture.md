@@ -26,12 +26,15 @@ Dependencies only point downwards. A crate may depend on the crates listed for i
 | `binsight-store` | disk I/O | core, solana, dlmm, ledger |
 | `binsight-chain` | network I/O | core, solana |
 | `binsight-engine` | orchestration | core, solana, dlmm, ledger, store, chain |
-| `binsight-api` | HTTP | core, solana, dlmm, ledger, engine |
+| `binsight-api` | HTTP | core, solana, dlmm, ledger, engine (+ demo, in its tests only) |
+| `binsight-demo` | generated demo world | core, solana, dlmm, ledger, engine |
 | `binsight` (binary) | composition root | all |
 | `xtask` | tooling | none; nothing depends on it |
 
 - `chain` knows nothing about DLMM: it is a transport.
 - `api` never reaches `store` or `chain` directly: everything goes through `engine`.
+- `demo` never reaches `store` or `chain`: it can neither write to the database nor call the network. Only the
+  binary ships it (`BINSIGHT_DEMO=true`); the API uses it as a fixture in its tests.
 - Pure crates may only use the external crates allowlisted in `xtask` (no async runtime, no logging, no I/O).
 - External infrastructure crates have exactly one owner (e.g. SQLite only in `store`, HTTP server only in `api`).
 - Declare a dependency only when it is used (`cargo machete` fails otherwise).

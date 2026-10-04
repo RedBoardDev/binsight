@@ -4,7 +4,7 @@
 
 - [Conventional Commits](https://www.conventionalcommits.org): `type(scope): summary`, checked by `committed` in CI.
   Types: `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `build`, `ci`, `chore`. Scopes: a crate name (`core`,
-  `dlmm`, `ledger`, `store`, `chain`, `engine`, `api`, `binsight`), `web`, `xtask`, `deps`, `github`.
+  `dlmm`, `ledger`, `store`, `chain`, `engine`, `api`, `demo`, `binsight`), `web`, `xtask`, `deps`, `github`.
 - The summary is imperative, lowercase, no trailing period, under 72 characters, and says what changes for the
   project, not which files moved.
 - The body (wrapped at 72) explains **why**: the problem, the decision, the alternative rejected. Not a list of files.

@@ -23,11 +23,14 @@ const STORE: &str = "binsight-store";
 const CHAIN: &str = "binsight-chain";
 const ENGINE: &str = "binsight-engine";
 const API: &str = "binsight-api";
+const DEMO: &str = "binsight-demo";
 const BINARY: &str = "binsight";
 const XTASK: &str = "xtask";
 
 /// One-way dependencies: pure crates, then I/O, then the engine, the API and the binary on top.
 /// Nobody may depend on `xtask`, and `binsight-api` sees neither the store nor the chain client.
+/// Only the binary may serve the demo world (`binsight-demo`), which never reaches the store or
+/// the network.
 pub(crate) const INTERNAL_ALLOWED: &[CrateRule] = &[
     CrateRule {
         name: CORE,
@@ -62,14 +65,25 @@ pub(crate) const INTERNAL_ALLOWED: &[CrateRule] = &[
         may_depend_on: &[CORE, SOLANA, DLMM, LEDGER, ENGINE],
     },
     CrateRule {
+        name: DEMO,
+        may_depend_on: &[CORE, SOLANA, DLMM, LEDGER, ENGINE],
+    },
+    CrateRule {
         name: BINARY,
-        may_depend_on: &[CORE, SOLANA, DLMM, LEDGER, STORE, CHAIN, ENGINE, API],
+        may_depend_on: &[CORE, SOLANA, DLMM, LEDGER, STORE, CHAIN, ENGINE, API, DEMO],
     },
     CrateRule {
         name: XTASK,
         may_depend_on: &[],
     },
 ];
+
+/// Workspace crates a crate may use in its tests only (dev-dependencies), on top of
+/// [`INTERNAL_ALLOWED`]: the API tests its routes on the demo world, which it must never ship.
+pub(crate) const DEV_ONLY_ALLOWED: &[CrateRule] = &[CrateRule {
+    name: API,
+    may_depend_on: &[DEMO],
+}];
 
 /// An external crate that only some workspace crates may use.
 pub(crate) struct ExclusiveOwner {

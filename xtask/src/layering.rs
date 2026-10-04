@@ -10,7 +10,8 @@ use std::collections::BTreeSet;
 
 use crate::metadata::{Dependency, DependencyKind, Package};
 use crate::rules::{
-    CrateRule, EXCLUSIVE_OWNERS, INTERNAL_ALLOWED, PURE_CRATES, PURE_EXTERNAL_ALLOWLIST,
+    CrateRule, DEV_ONLY_ALLOWED, EXCLUSIVE_OWNERS, INTERNAL_ALLOWED, PURE_CRATES,
+    PURE_EXTERNAL_ALLOWLIST,
 };
 
 pub(crate) use violation::Violation;
@@ -44,9 +45,17 @@ pub(crate) fn check(packages: &[Package]) -> Vec<Violation> {
     violations
 }
 
-/// The internal matrix applies to every kind of dependency, tests included.
+/// The internal matrix applies to every kind of dependency, tests included; a few crates may
+/// also use some workspace crates in their tests only.
 fn check_internal(rule: &CrateRule, dependency: &Dependency) -> Option<Violation> {
-    if rule.may_depend_on.contains(&dependency.name.as_str()) {
+    let name = dependency.name.as_str();
+    if rule.may_depend_on.contains(&name) {
+        return None;
+    }
+    let is_allowed_in_tests = DEV_ONLY_ALLOWED
+        .iter()
+        .any(|extra| extra.name == rule.name && extra.may_depend_on.contains(&name));
+    if dependency.kind == DependencyKind::Dev && is_allowed_in_tests {
         return None;
     }
     Some(Violation::InternalNotAllowed {
@@ -205,6 +214,57 @@ mod tests {
             messages(&packages),
             ["binsight-extra has no layering rule: \
               add it to INTERNAL_ALLOWED in xtask/src/rules.rs"]
+        );
+    }
+
+    /// The planned workspace with the demo world in it.
+    fn workspace_with_the_demo_world() -> Vec<Package> {
+        let mut packages = planned_workspace();
+        packages.push(Package {
+            name: "binsight-demo".to_owned(),
+            dependencies: Vec::new(),
+        });
+        add_dependency(
+            &mut packages,
+            "binsight-demo",
+            "binsight-engine",
+            DependencyKind::Normal,
+        );
+        add_dependency(
+            &mut packages,
+            "binsight",
+            "binsight-demo",
+            DependencyKind::Normal,
+        );
+        packages
+    }
+
+    #[test]
+    fn lets_the_api_tests_use_the_demo_world() {
+        let mut packages = workspace_with_the_demo_world();
+        add_dependency(
+            &mut packages,
+            "binsight-api",
+            "binsight-demo",
+            DependencyKind::Dev,
+        );
+        assert_eq!(messages(&packages), Vec::<String>::new());
+    }
+
+    #[test]
+    fn refuses_a_normal_dependency_from_the_api_to_the_demo_world() {
+        let mut packages = workspace_with_the_demo_world();
+        add_dependency(
+            &mut packages,
+            "binsight-api",
+            "binsight-demo",
+            DependencyKind::Normal,
+        );
+        assert_eq!(
+            messages(&packages),
+            ["binsight-api must not depend on binsight-demo \
+              (allowed: binsight-core, binsight-solana, binsight-dlmm, binsight-ledger, \
+              binsight-engine)"]
         );
     }
 

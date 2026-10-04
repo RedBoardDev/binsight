@@ -4,7 +4,7 @@ style = "conventional"
 allowed_types = ["feat", "fix", "refactor", "perf", "test", "docs", "build", "ci", "chore"]
 # A crate name, or one of the shared areas. The scope is optional.
 allowed_scopes = [
-  "core", "solana", "dlmm", "ledger", "store", "chain", "engine", "api", "binsight",
+  "core", "solana", "dlmm", "ledger", "store", "chain", "engine", "api", "demo", "binsight",
   "web", "xtask", "deps", "github",
 ]
 subject_length = 72
