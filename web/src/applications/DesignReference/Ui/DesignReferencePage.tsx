@@ -2,6 +2,7 @@ import { PageHeader } from '@app/applications/Shared/Layout/Ui/PageHeader';
 import { AmountsSection } from './DesignReferencePage/AmountsSection';
 import { ColorsSection } from './DesignReferencePage/ColorsSection';
 import { ControlsSection } from './DesignReferencePage/ControlsSection';
+import { IdentitySection } from './DesignReferencePage/IdentitySection';
 import { MaterialsSection } from './DesignReferencePage/MaterialsSection';
 import { MotionSection } from './DesignReferencePage/MotionSection';
 import { TypographySection } from './DesignReferencePage/TypographySection';
@@ -14,6 +15,7 @@ export const DesignReferencePage = () => (
     <PageHeader title="Design reference" />
     <div className="flex flex-col gap-16">
       <AmountsSection />
+      <IdentitySection />
       <ColorsSection />
       <TypographySection />
       <ControlsSection />

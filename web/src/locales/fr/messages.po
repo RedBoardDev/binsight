@@ -7,6 +7,10 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: fr\n"
 
+#: src/applications/Shared/Ui/ExternalLink.tsx
+msgid "(opens in a new tab)"
+msgstr "(s’ouvre dans un nouvel onglet)"
+
 #: src/applications/Auth/Ui/LoginForm/LoginFormAlert.tsx
 msgid "{seconds, plural, one {Too many failed attempts. Try again in # second.} other {Too many failed attempts. Try again in # seconds.}}"
 msgstr "{seconds, plural, one {Trop de tentatives échouées. Réessayez dans # seconde.} other {Trop de tentatives échouées. Réessayez dans # secondes.}}"
@@ -99,6 +103,14 @@ msgstr "Connexion"
 #: src/applications/Realtime/Ui/RealtimeStatusCard.tsx
 msgid "Connection"
 msgstr "Connexion"
+
+#: src/applications/Shared/Ui/CopyButton.tsx
+msgid "Copied"
+msgstr "Copié"
+
+#: src/applications/Shared/Ui/CopyButton.tsx
+msgid "Copy failed: select the text and copy it."
+msgstr "La copie a échoué : sélectionnez le texte et copiez-le."
 
 #: src/applications/Auth/Ui/useAuthActions.ts
 msgid "Could not sign out."

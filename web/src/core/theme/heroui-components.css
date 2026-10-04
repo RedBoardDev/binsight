@@ -129,6 +129,15 @@
     color: var(--muted);
   }
 
+  /* An icon action that stays quiet until hovered (copy, share). */
+  .button--quiet {
+    color: var(--faint);
+  }
+
+  .button--quiet[data-hovered="true"] {
+    color: var(--foreground);
+  }
+
   /* A switch is neutral: its track takes the text color when on, never the accent. */
   .switch {
     --switch-control-bg: color-mix(in srgb, var(--foreground) 16%, transparent);
