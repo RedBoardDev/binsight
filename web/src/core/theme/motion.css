@@ -1,0 +1,133 @@
+/*
+ * Motion: durations, curves and springs, the page and theme cross-fades, and reduced motion. Motion
+ * is CSS only (plus HeroUI's own overlays), so one switch reduces all of it.
+ *
+ * Springs are expressed like Apple's (damping, response) and baked into linear() curves. A
+ * critically damped spring has the same shape at every response, so "settle" serves both default
+ * (response 0.40 s) and snappy (0.28 s) with their own settle times. Only the tab bar lens bounces
+ * (damping 0.8): the one playful motion of the app. Curves never overshoot otherwise.
+ */
+@theme {
+  /* iOS deceleration for entries; its exact mirror for exits; a symmetric one for cross-fades. */
+  --ease-out: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-in: cubic-bezier(0.72, 0, 1, 0.32);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-settle: linear(
+    0,
+    0.0575,
+    0.1804,
+    0.3209,
+    0.4553,
+    0.5731,
+    0.6712,
+    0.7502,
+    0.8123,
+    0.8602,
+    0.8967,
+    0.9241,
+    0.9445,
+    0.9597,
+    0.9708,
+    0.9789,
+    0.9848,
+    0.9891,
+    0.9922,
+    0.9945,
+    0.996,
+    0.9972,
+    0.998,
+    0.9986,
+    1
+  );
+  --ease-lens: linear(
+    0,
+    0.0517,
+    0.1705,
+    0.3164,
+    0.4638,
+    0.5982,
+    0.7125,
+    0.8045,
+    0.8753,
+    0.9273,
+    0.9637,
+    0.9878,
+    1.0026,
+    1.0108,
+    1.0144,
+    1.0151,
+    1.0141,
+    1.0122,
+    1.0099,
+    1.0077,
+    1.0057,
+    1.0041,
+    1.0027,
+    1.0017,
+    1
+  );
+}
+
+:root {
+  --duration-press: 100ms;
+  --duration-quick: 160ms;
+  --duration-base: 220ms;
+  --duration-page: 200ms;
+  --duration-theme: 200ms;
+  --duration-figure: 400ms;
+  /* Settle times of the springs above. */
+  --duration-spring-default: 588ms;
+  --duration-spring-snappy: 412ms;
+  --duration-spring-lens: 486ms;
+
+  /* The press feedback: on pointer-down, never on release. */
+  --press-scale: 0.97;
+}
+
+/*
+ * Reduced motion: data-reduce-motion="true" on <html> whenever the system asks for it or the app's
+ * own setting does (Shared/Motion keeps the attribute in step; HeroUI reads it too). No travel and
+ * no scaling, short fades only: opacity and color changes that explain a state stay.
+ */
+:root[data-reduce-motion="true"] {
+  --duration-base: 120ms;
+  --duration-page: 120ms;
+  --duration-spring-default: 120ms;
+  --duration-spring-snappy: 120ms;
+  --duration-spring-lens: 0ms;
+  --duration-theme: 0ms;
+  --duration-figure: 0ms;
+  --press-scale: 1;
+}
+
+/*
+ * Page changes cross-fade the content only: HeroUI leaves the root out of view transitions, and the
+ * shell has no transition name, so the bars stay still and live. A theme change cross-fades the
+ * whole screen once instead of letting every surface switch on its own.
+ */
+::view-transition-old(page),
+::view-transition-new(page) {
+  animation-duration: var(--duration-page);
+  animation-timing-function: var(--ease-in-out);
+}
+
+:root[data-view-transition="theme"] {
+  view-transition-name: root;
+}
+
+:root[data-view-transition="theme"]::view-transition-old(root),
+:root[data-view-transition="theme"]::view-transition-new(root) {
+  animation-duration: var(--duration-theme);
+  animation-timing-function: var(--ease-in-out);
+}
+
+/* Selection indicators glide from one option to the next; with reduced motion they fade instead. */
+:root[data-reduce-motion="true"] :is(.segment-indicator, .text-pills__indicator, .tabs__indicator) {
+  transition-property: opacity;
+}
+
+:root[data-reduce-motion="true"]::view-transition-group(*),
+:root[data-reduce-motion="true"]::view-transition-old(*),
+:root[data-reduce-motion="true"]::view-transition-new(*) {
+  animation: none;
+}

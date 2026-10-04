@@ -1,4 +1,5 @@
 import '@app/core/theme/globals.css';
+import { syncReducedMotionAttribute } from '@app/applications/Shared/Motion/Ui/reducedMotionStore';
 import { AppProviders } from '@app/core/AppProviders';
 import { activateInitialLocale } from '@app/core/i18n/localeActivation';
 import { registerStaleChunkReload } from '@app/core/pwa/staleChunkReload';
@@ -20,6 +21,7 @@ if (rootElement === null) {
 }
 
 registerStaleChunkReload();
+syncReducedMotionAttribute();
 syncThemeAttribute();
 
 // Activated before the first render, so no component ever renders without its messages.
