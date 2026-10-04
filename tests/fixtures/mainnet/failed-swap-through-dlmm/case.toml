@@ -1,0 +1,13 @@
+# Captured by `cargo xtask fixture capture` (finalized commitment). Each JSON file is the
+# node's `result`, byte for byte; do not edit them by hand.
+
+name = "failed-swap-through-dlmm"
+why = "A failed version 1 swap routed through a DLMM pool: it pays its fee, and the events it emitted before failing count for nothing."
+perspective = "8L2y55D11k63CAftvW7uMM2mBhtMxLoLnivG9uY2bt8j"
+oracles = ["R-07", "R-08", "L-11"]
+captured_at = "2026-10-04"
+
+[[transaction]]
+file = "tx-1.json"
+signature = "5ssM9Xm9ivXpvuAQTwsyJfqV5oAdAtcB39LppMw2ZkPYvkN4bndC6j9n4JS8xQqHehBM31PXHtFBraYF6YF229fH"
+slot = 453243529

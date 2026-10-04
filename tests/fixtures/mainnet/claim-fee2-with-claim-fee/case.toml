@@ -1,0 +1,13 @@
+# Captured by `cargo xtask fixture capture` (finalized commitment). Each JSON file is the
+# node's `result`, byte for byte; do not edit them by hand.
+
+name = "claim-fee2-with-claim-fee"
+why = "Closing a position emits RemoveLiquidity, then ClaimFee and ClaimFee2 for the same claim, then PositionClose."
+perspective = "5TUvWjeid81ivRQTWSQ6ibfst4x6XGinMWW3J4EkGoug"
+oracles = ["D-2", "D-10"]
+captured_at = "2026-10-04"
+
+[[transaction]]
+file = "tx-1.json"
+signature = "2hKtyXRs5CJcBrUKbAvCWuEFrpuk6UNh95ATH8Nso6qa1yXSRbNtFB4G1MZCMJGAXWRkPN6eckrLshSYSYLsDEEW"
+slot = 453243985

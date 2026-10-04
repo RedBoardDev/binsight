@@ -1,0 +1,13 @@
+# Captured by `cargo xtask fixture capture` (finalized commitment). Each JSON file is the
+# node's `result`, byte for byte; do not edit them by hand.
+
+name = "v1-rebalance-liquidity"
+why = "A version 1 transaction, priority fee in its header, that rebalances a position by adding liquidity."
+perspective = "DikCgJNuoLpTkro42uTYmbknBWHKC7Bo8Nhs5KQurzDv"
+oracles = []
+captured_at = "2026-10-04"
+
+[[transaction]]
+file = "tx-1.json"
+signature = "4gZ2KVuCiUTKfZqxrLWXrNkbJCQsyQE6DYpfms6NJaZ5DxHe6Wwn16G4Bv1Sw1JCN6Y9Yff93ik221qsxi3MtpYu"
+slot = 453253645

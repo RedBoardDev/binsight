@@ -1,0 +1,13 @@
+# Captured by `cargo xtask fixture capture` (finalized commitment). Each JSON file is the
+# node's `result`, byte for byte; do not edit them by hand.
+
+name = "legacy-sol-transfer"
+why = "A legacy transaction whose only instruction is a System transfer of SOL to a new account."
+perspective = "BMfZRMJUyWP3JChbsvkLfHrkDz3ZwQiEJgRWsRwJWD27"
+oracles = ["L-2", "L-3"]
+captured_at = "2026-10-04"
+
+[[transaction]]
+file = "tx-1.json"
+signature = "4JzRsYip6jwUhqFDqDybXdJi15nTSpwxhKmwa8BazTjRTFjkdcBBsVonFCStFbULDeZdxgqBHSACTCeJguFEFgdc"
+slot = 453251199

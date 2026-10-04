@@ -1,0 +1,13 @@
+# Captured by `cargo xtask fixture capture` (finalized commitment). Each JSON file is the
+# node's `result`, byte for byte; do not edit them by hand.
+
+name = "v0-add-liquidity-alt"
+why = "A version 0 automation transaction, with address lookup tables, that claims the fees of a position then adds liquidity to it."
+perspective = "HAWK3BVnwptKRFYfVoVGhBc2TYxpyG9jmAbkHeW9tyKE"
+oracles = ["D-1", "R-19"]
+captured_at = "2026-10-04"
+
+[[transaction]]
+file = "tx-1.json"
+signature = "4pqwtNPjWTFqsDuRfRFeEzSLxSKvAYMkhmP9qmT5W3RGHjxp9H4qyrDTroAkJLx1zLse6RGUMKw1ZLVKrqZRxZTL"
+slot = 453243987

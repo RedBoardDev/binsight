@@ -1,0 +1,13 @@
+# Captured by `cargo xtask fixture capture` (finalized commitment). Each JSON file is the
+# node's `result`, byte for byte; do not edit them by hand.
+
+name = "token2022-transfer-fee"
+why = "A withdrawal from a pool whose token has a Token-2022 transfer fee: the reserve sends more than the owner receives."
+perspective = "GymS3jpXvCLPSnMQrdFDJYqoU7SiLUH3D625i1QzZfJY"
+oracles = ["R-28", "C-8"]
+captured_at = "2026-10-04"
+
+[[transaction]]
+file = "tx-1.json"
+signature = "4bhmJEeV1EK9MJjarRwCv6h4iSXcqheugK18uew7VeKn4SRWHW11GzpL37sqd7s7X3EccQfTQvFWtbsNi5oXuYsN"
+slot = 453252783
