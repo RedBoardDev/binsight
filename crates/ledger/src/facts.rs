@@ -8,6 +8,7 @@
 
 mod closed;
 mod entry;
+mod event;
 mod holdings;
 mod mark;
 mod open;
@@ -19,6 +20,7 @@ mod wallet;
 
 pub use closed::{ClosedPositionFacts, PnlMethod};
 pub use entry::{WalletEntry, WalletEntryKind};
+pub use event::{BinRange, PositionEventFact, PositionEventKind, TokenFlow};
 pub use holdings::{UnpricedToken, WalletHoldings};
 pub use mark::OpenPnlMark;
 pub use open::{BinLiquidity, OpenPositionFacts};
