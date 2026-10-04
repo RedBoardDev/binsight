@@ -5,6 +5,7 @@
 //! from built-in defaults, in that order of precedence. No other part of binsight reads the
 //! environment. Validation is pure and reports every problem at once.
 
+mod env_file;
 mod paths;
 mod problems;
 mod sources;

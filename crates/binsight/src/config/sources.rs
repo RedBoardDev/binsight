@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use super::env_file::parse_env_file;
 use super::paths::default_config_file;
 use super::problems::{ConfigProblem, Setting};
 
@@ -89,7 +90,8 @@ fn read_environment() -> BTreeMap<String, String> {
         .collect()
 }
 
-/// Reads a file of `NAME=value` lines (comments, quotes and `export` are understood).
+/// Reads a file of `NAME=value` lines (comments, quotes and `export` are understood; values are
+/// taken literally, with no `$` substitution).
 ///
 /// # Errors
 ///
@@ -104,12 +106,8 @@ pub fn read_env_file(path: &Path) -> Result<ConfigFile, Vec<ConfigProblem>> {
             ),
         )]
     };
-    let lines = dotenvy::from_path_iter(path).map_err(|error| problem(error.to_string()))?;
-    let mut values = BTreeMap::new();
-    for line in lines {
-        let (name, value) = line.map_err(|error| problem(error.to_string()))?;
-        values.insert(name, value);
-    }
+    let text = std::fs::read_to_string(path).map_err(|error| problem(error.to_string()))?;
+    let values = parse_env_file(&text).map_err(|error| problem(error.to_string()))?;
     Ok(ConfigFile {
         path: path.to_path_buf(),
         values,
@@ -131,6 +129,33 @@ fn is_readable_by_others(_path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn takes_a_password_with_dollar_signs_literally() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("binsight.env");
+        std::fs::write(
+            &path,
+            "BINSIGHT_PASSWORD=pa$$word-$HOME\nBINSIGHT_HELIUS_API_KEY=\"key-${PATH}\"\n",
+        )
+        .unwrap();
+
+        let file = read_env_file(&path).unwrap();
+
+        assert_eq!(file.values["BINSIGHT_PASSWORD"], "pa$$word-$HOME");
+        assert_eq!(file.values["BINSIGHT_HELIUS_API_KEY"], "key-${PATH}");
+    }
+
+    #[test]
+    fn names_the_line_it_cannot_read() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("binsight.env");
+        std::fs::write(&path, "BINSIGHT_LOG=info\nBINSIGHT_PASSWORD=two words\n").unwrap();
+
+        let problems = read_env_file(&path).unwrap_err();
+
+        assert!(problems[0].message.contains("line 2"), "{:?}", problems[0]);
+    }
 
     #[test]
     fn reads_comments_quotes_and_exports_from_the_file() {

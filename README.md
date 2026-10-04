@@ -63,7 +63,8 @@ BINSIGHT_IMAGE=binsight docker compose up -d
 ## Configuration
 
 binsight reads environment variables, then a `binsight.env` file, then its defaults (an environment variable
-wins over the file). Invalid settings are all reported at once and the server does not start.
+wins over the file). Invalid settings are all reported at once and the server does not start. The file holds
+`NAME=value` lines; values are taken literally (a `$` is never replaced), and one with spaces goes in quotes.
 
 | Variable | Required | Default | Meaning |
 |---|---|---|---|
