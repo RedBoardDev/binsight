@@ -47,3 +47,23 @@ pub enum DecimalError {
     #[error("the decimal string is too large for a raw token amount")]
     TooLarge,
 }
+
+/// A text is not the name of any value of a named enumeration (a priority, a purpose...).
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{text:?} is not a known {kind}")]
+pub struct UnknownName {
+    /// What kind of value was being read, such as `priority`.
+    pub kind: &'static str,
+    /// The text that matched no name.
+    pub text: String,
+}
+
+impl UnknownName {
+    /// The text `text` is not a known `kind`.
+    pub fn new(kind: &'static str, text: &str) -> Self {
+        Self {
+            kind,
+            text: text.to_owned(),
+        }
+    }
+}
