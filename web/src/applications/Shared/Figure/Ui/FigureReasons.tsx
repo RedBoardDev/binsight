@@ -23,7 +23,7 @@ export const FigureReasons = ({ label, title, reasons, children }: FigureReasons
     <Popover>
       <Button
         aria-label={label}
-        className="cursor-help rounded-sm outline-none data-[focus-visible]:ring-2 data-[focus-visible]:ring-focus"
+        className="figure-reasons-trigger cursor-help rounded-sm outline-none data-[focus-visible]:ring-2 data-[focus-visible]:ring-focus"
       >
         {children}
       </Button>

@@ -124,6 +124,12 @@ web-budget:
 [group('web')]
 web-check: web-lint web-typecheck web-test web-i18n-check web-openapi-check web-build web-budget
 
+# Screenshot the shell and the design reference (desktop and phone, dark and light) into
+# web/test-results/visual, against the dev server and a stub API.
+[group('web')]
+web-visual:
+    {{ web }} visual
+
 # --- Rust -----------------------------------------------------------------
 
 # Format the Rust code.

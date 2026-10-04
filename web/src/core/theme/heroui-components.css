@@ -108,12 +108,14 @@
      around a smaller button instead of making it bigger (the top bar stays compact). */
   @media (pointer: coarse) {
     .button,
-    .toggle-button {
+    .toggle-button,
+    .figure-reasons-trigger {
       position: relative;
     }
 
     .button::after,
-    .toggle-button::after {
+    .toggle-button::after,
+    .figure-reasons-trigger::after {
       content: "";
       position: absolute;
       inset: min(0px, calc((100% - 2.75rem) / 2));
