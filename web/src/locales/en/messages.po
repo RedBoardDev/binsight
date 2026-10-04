@@ -309,6 +309,10 @@ msgstr "Reduce motion"
 msgid "Reload"
 msgstr "Reload"
 
+#: src/applications/Shared/Layout/Ui/SectionError.tsx
+msgid "Retry"
+msgstr "Retry"
+
 #: src/applications/Health/Ui/HealthCard/healthLabels.ts
 msgid "Running"
 msgstr "Running"

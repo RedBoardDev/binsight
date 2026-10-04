@@ -152,6 +152,12 @@
       width var(--duration-spring-default) var(--ease-settle);
   }
 
+  /* A loading placeholder shimmers twice, then rests: nothing on screen loops. */
+  .skeleton--shimmer::after,
+  .skeleton--shimmer::before {
+    animation-iteration-count: 2;
+  }
+
   /* The looks the app gives HeroUI's buttons and links. An instance names one of these modifiers
      and adds layout classes only. */
 
@@ -183,6 +189,11 @@
     font-size: var(--text-small);
     line-height: var(--text-small--line-height);
     font-weight: 500;
+  }
+
+  /* An action inside a sentence ("Could not load. Retry"). */
+  .button--inline-action {
+    color: var(--accent);
   }
 
   /* A switch is neutral: its track takes the text color when on, never the accent. */
