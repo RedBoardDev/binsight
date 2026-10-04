@@ -6,20 +6,29 @@
 //! missing file refuses everything (fail closed).
 //!
 //! Text matching alone would miss an address hidden in binary data (the base64 transaction, an
-//! account's data, an event's base58 instruction data), so every pattern that is a base58 address
-//! is also searched as its 32 raw bytes inside every word of every string of the fixture that
-//! decodes as base64 or base58 (a log line such as `Program data: <base64>` included). This module only checks; it never prints a pattern or what matched it.
+//! account's data, an event's base58 instruction data, a hexadecimal or decimal byte list in a
+//! log), so every base58 address written in a line of the list (alone, or inside a pattern such
+//! as `\bADDRESS\b` or `A|B`) is also searched as its 32 raw bytes in every
+//! [`binary_forms`](super::binary_forms) of the fixture. A line with a long base58 word that is not
+//! an address is searched as text only, and the capture summary counts it.
+//!
+//! The guard only knows what the list names. An address derived from the owner's wallet (its
+//! token accounts, its position accounts) is not the wallet's address: list those too.
+//!
+//! This module only checks; it never prints a pattern or what matched it.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, bail};
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
 use serde_json::Value;
 
+use super::binary_forms::binary_forms;
 use super::identifiers::AddressText;
+use listed_addresses::{LineAddresses, addresses_in_line};
+
+mod listed_addresses;
 
 /// Where the denylist lives, relative to the git common directory.
 const DENYLIST_PATH: &str = "info/private-denylist";
@@ -32,6 +41,7 @@ const GREP_NO_MATCH: i32 = 1;
 pub(crate) struct Denylist {
     path: PathBuf,
     addresses: Vec<[u8; AddressText::BYTES]>,
+    text_only_lines: usize,
 }
 
 impl Denylist {
@@ -49,11 +59,32 @@ impl Denylist {
                 path.display()
             )
         })?;
-        let addresses = text.lines().filter_map(address_bytes).collect();
+        let lines: Vec<LineAddresses> = text.lines().map(addresses_in_line).collect();
+        let text_only_lines = lines
+            .iter()
+            .filter(|line| line.has_an_unreadable_word)
+            .count();
         Ok(Self {
             path: path.to_owned(),
-            addresses,
+            addresses: lines.into_iter().flat_map(|line| line.addresses).collect(),
+            text_only_lines,
         })
+    }
+
+    /// What the guard searches, in counts only (never a pattern), for the capture summary.
+    pub(crate) fn coverage(&self) -> String {
+        let coverage = format!(
+            "the private denylist names {} address(es), searched as text and as bytes",
+            self.addresses.len()
+        );
+        if self.text_only_lines == 0 {
+            return coverage;
+        }
+        format!(
+            "{coverage}; {} line(s) hold a long base58 word that is not an address, searched as \
+             text only",
+            self.text_only_lines
+        )
     }
 
     /// Refuses the JSON answer `json` (named `label` in the error) if it cites anything on the
@@ -104,46 +135,12 @@ impl Denylist {
             return Ok(false);
         }
         let value: Value = serde_json::from_str(json).context("the fixture is not JSON")?;
-        let mut strings = Vec::new();
-        collect_strings(&value, &mut strings);
-        Ok(strings.iter().any(|text| {
-            decodings(text).iter().any(|bytes| {
-                self.addresses
-                    .iter()
-                    .any(|address| contains(bytes, address))
-            })
+        Ok(binary_forms(&value).iter().any(|bytes| {
+            self.addresses
+                .iter()
+                .any(|address| contains(bytes, address))
         }))
     }
-}
-
-/// The 32 bytes of a denylist line that is a whole base58 address.
-fn address_bytes(line: &str) -> Option<[u8; AddressText::BYTES]> {
-    let bytes = bs58::decode(line.trim()).into_vec().ok()?;
-    bytes.try_into().ok()
-}
-
-fn collect_strings<'a>(value: &'a Value, strings: &mut Vec<&'a str>) {
-    match value {
-        Value::String(text) => strings.push(text),
-        Value::Array(items) => items.iter().for_each(|item| collect_strings(item, strings)),
-        Value::Object(fields) => fields
-            .values()
-            .for_each(|item| collect_strings(item, strings)),
-        Value::Null | Value::Bool(_) | Value::Number(_) => {}
-    }
-}
-
-/// The bytes each word of `text` stands for, if it is base64 or base58.
-fn decodings(text: &str) -> Vec<Vec<u8>> {
-    text.split_whitespace()
-        .flat_map(|word| {
-            [
-                STANDARD.decode(word).ok(),
-                bs58::decode(word).into_vec().ok(),
-            ]
-        })
-        .flatten()
-        .collect()
 }
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
@@ -154,6 +151,9 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
+
     use super::*;
 
     /// The bytes of the address standing in for a private one.
@@ -236,5 +236,31 @@ mod tests {
     fn refuses_everything_without_a_denylist() {
         let folder = tempfile::tempdir().unwrap();
         assert!(Denylist::read(&folder.path().join("missing")).is_err());
+    }
+
+    #[test]
+    fn searches_an_address_written_inside_a_pattern_as_bytes() {
+        let other = bs58::encode([8; 32]).into_string();
+        for line in [
+            format!("\\b{}\\b", listed()),
+            format!("^{other}$|({})", listed()),
+        ] {
+            let (_folder, list) = denylist(&format!("{line}\n"));
+            let json = format!(
+                r#"{{"transaction":["{}","base64"]}}"#,
+                STANDARD.encode(LISTED_BYTES)
+            );
+            assert!(list.check_json("tx-1.json", &json).is_err(), "{line}");
+        }
+    }
+
+    #[test]
+    fn counts_the_addresses_and_the_lines_searched_as_text_only() {
+        let not_an_address = "z".repeat(40);
+        let (_folder, list) = denylist(&format!("{}\n{not_an_address}\nshort\n", listed()));
+        let coverage = list.coverage();
+        assert!(coverage.contains("names 1 address(es)"), "{coverage}");
+        assert!(coverage.contains("1 line(s)"), "{coverage}");
+        assert!(!coverage.contains(&listed()), "{coverage}");
     }
 }

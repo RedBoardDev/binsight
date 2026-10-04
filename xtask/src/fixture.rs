@@ -4,6 +4,7 @@
 //! (for the chain client's tests) from Helius, refuses anything that cites a private address,
 //! and writes the node's answers byte for byte. This module only dispatches the subcommand.
 
+mod binary_forms;
 mod capture;
 mod case_file;
 mod command;

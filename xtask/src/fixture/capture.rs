@@ -1,9 +1,12 @@
-//! Captures fixtures from mainnet: fetch, check against the privacy guard, then write.
+//! Captures fixtures from mainnet: check the request, fetch, check the answers, then write.
 //!
-//! Everything is fetched and checked before the first file is written, and the files are moved
-//! into place at once, so a refused or failed case leaves nothing on disk. An existing case or
-//! answer is never overwritten: delete it to capture it again. This module orchestrates; the RPC
-//! client, the guard, the case file and the writer live next to it.
+//! The request itself goes through the privacy guard before any call: an answer does not always
+//! echo what was asked (`getSignaturesForAddress` lists signatures, not the address), so a private
+//! address in the parameters would otherwise slip through. Everything is fetched and checked
+//! before the first file is written, and the files are moved into place at once, so a refused or
+//! failed case leaves nothing on disk. An existing case or answer is never overwritten: delete it
+//! to capture it again. This module orchestrates; the RPC client, the guard, the case file and the
+//! writer live next to it.
 
 use std::path::{Path, PathBuf};
 
@@ -41,10 +44,37 @@ struct SlotOfAccount {
 pub(crate) fn capture(request: &CaptureRequest) -> anyhow::Result<String> {
     let root = git::repository_root()?;
     let denylist = Denylist::of_repository()?;
+    check_request(&denylist, request)?;
     let mut helius = Helius::from_environment()?;
-    match request {
+    let summary = match request {
         CaptureRequest::MainnetCase(case) => capture_case(&root, &denylist, &mut helius, case),
         CaptureRequest::RpcAnswer(answer) => record_answer(&root, &denylist, &mut helius, answer),
+    }?;
+    Ok(format!("{summary} ({})", denylist.coverage()))
+}
+
+/// Refuses a request that cites something private, before anything is sent.
+fn check_request(denylist: &Denylist, request: &CaptureRequest) -> anyhow::Result<()> {
+    match request {
+        CaptureRequest::MainnetCase(case) => {
+            denylist.check_text("--case", case.name.as_str())?;
+            denylist.check_text("--why", &case.why)?;
+            let addresses = case.accounts.iter().chain(&case.perspective);
+            for address in addresses {
+                denylist.check_json(
+                    "--account or --perspective",
+                    &json!(address.as_str()).to_string(),
+                )?;
+            }
+            for signature in &case.signatures {
+                denylist.check_text("a signature", signature.as_str())?;
+            }
+            Ok(())
+        }
+        CaptureRequest::RpcAnswer(answer) => {
+            denylist.check_text("--case", answer.name.as_str())?;
+            denylist.check_json("--params", &answer.params.to_string())
+        }
     }
 }
 
@@ -167,4 +197,62 @@ fn today() -> String {
     )]
     let now = jiff::Timestamp::now();
     now.strftime("%Y-%m-%d").to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
+    use serde_json::Value;
+
+    use super::*;
+    use crate::fixture::identifiers::{CaseName, RpcMethod};
+
+    /// The bytes of the address standing in for a private one.
+    const LISTED_BYTES: [u8; 32] = [7; 32];
+
+    fn denylist() -> (tempfile::TempDir, Denylist) {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("private-denylist");
+        let listed = bs58::encode(LISTED_BYTES).into_string();
+        std::fs::write(&path, format!("{listed}\nsecret-project\n")).unwrap();
+        let list = Denylist::read(&path).unwrap();
+        (folder, list)
+    }
+
+    fn rpc_request(case: &str, params: Value) -> CaptureRequest {
+        CaptureRequest::RpcAnswer(RpcAnswer {
+            name: CaseName::parse(case).unwrap(),
+            method: RpcMethod::parse("getSignaturesForAddress").unwrap(),
+            params,
+        })
+    }
+
+    #[test]
+    fn refuses_rpc_params_that_cite_a_listed_address() {
+        let (_folder, list) = denylist();
+        let listed = bs58::encode(LISTED_BYTES).into_string();
+        let as_text = rpc_request("history", json!([listed, {"limit": 10}]));
+        assert!(check_request(&list, &as_text).is_err());
+        let filter = json!({"memcmp": {"offset": 8, "bytes": STANDARD.encode(LISTED_BYTES)}});
+        let as_bytes = rpc_request(
+            "program-accounts",
+            json!(["11111111111111111111111111111111", {"filters": [filter]}]),
+        );
+        assert!(check_request(&list, &as_bytes).is_err());
+    }
+
+    #[test]
+    fn refuses_an_rpc_case_name_that_matches_the_denylist() {
+        let (_folder, list) = denylist();
+        let request = rpc_request("secret-project", json!([]));
+        assert!(check_request(&list, &request).is_err());
+    }
+
+    #[test]
+    fn accepts_rpc_params_that_cite_nothing_listed() {
+        let (_folder, list) = denylist();
+        let request = rpc_request("history", json!(["11111111111111111111111111111111"]));
+        assert!(check_request(&list, &request).is_ok());
+    }
 }
