@@ -11,6 +11,8 @@ RUN npm install --global "pnpm@$(node -p "require('./package.json').packageManag
 RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 COPY web/ ./
+# The build appends the notices of the server's Rust crates to the web app's own.
+COPY crates/binsight/third-party-licenses.txt /src/crates/binsight/third-party-licenses.txt
 RUN pnpm build
 
 # 2. Rust dependencies, built once per lockfile change thanks to cargo-chef.

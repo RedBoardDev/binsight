@@ -1,0 +1,16 @@
+Third-party software in the binsight server
+
+binsight is MIT-licensed. The server binary includes the Rust crates below, each under its own
+license. The notices are grouped by license text; each text applies to the crates listed above it.
+{{#each licenses}}
+
+================================================================================
+{{{name}}} ({{{id}}})
+Used by:
+{{#each used_by}}
+  {{{crate.name}}} {{{crate.version}}}
+{{/each}}
+--------------------------------------------------------------------------------
+
+{{{text}}}
+{{/each}}

@@ -12,7 +12,8 @@ the rest.
 - [rustup](https://rustup.rs): the toolchain pinned in `rust-toolchain.toml` installs itself on the first
   `cargo` command.
 - The Rust tools the checks use:
-  `cargo install --locked cargo-nextest cargo-deny cargo-machete committed`.
+  `cargo install --locked cargo-nextest cargo-deny cargo-machete committed` and
+  `cargo install --locked cargo-about --features cli`.
 - Node.js 24: `nvm install` reads [`.nvmrc`](.nvmrc).
 - pnpm at the exact version of `packageManager` in [`web/package.json`](web/package.json):
   `npm install --global pnpm@12.8.1` (not Corepack).
@@ -59,6 +60,10 @@ origin, as in production.
 `openapi/v1.json` and `web/src/lib/api/generated/openapi.d.ts` are generated: never edit them by hand. After
 an API change, run `just openapi` and commit both files with the change. On a merge conflict in either one,
 take one side and run `just openapi` again.
+
+`crates/binsight/third-party-licenses.txt` is generated too: after a change to `Cargo.lock`, run
+`just rust-licenses` and commit it (CI fails when it is stale). The web build appends it to the notices of the
+web packages, and the binary serves both at `/third-party-licenses.txt`.
 
 ## Size and structure
 

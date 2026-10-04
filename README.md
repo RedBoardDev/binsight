@@ -146,5 +146,6 @@ Or build the image: `docker build -t binsight .`
 
 - Contributions are welcome: read [CONTRIBUTING.md](CONTRIBUTING.md).
 - Report vulnerabilities privately, as explained in [SECURITY.md](SECURITY.md).
-- binsight is released under the [MIT License](LICENSE). Every instance serves the notices of the third-party
-  software in its web app at `/third-party-licenses.txt`.
+- binsight is released under the [MIT License](LICENSE). Every instance serves the license notices of the
+  third-party software it contains, the Rust crates of the server and the packages of the web app, at
+  `/third-party-licenses.txt`.

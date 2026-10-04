@@ -176,6 +176,19 @@ rust-openapi-check:
 rust-deny:
     cargo deny --locked check
 
+# The notices of the crates the binary ships, which the web build appends to its own (commit it).
+# Some license texts use CRLF line endings; the committed file uses LF, like every text file here.
+[group('rust')]
+rust-licenses:
+    cargo about generate --frozen -c .config/about.toml -m crates/binsight/Cargo.toml .config/about.hbs | tr -d '\r' > crates/binsight/third-party-licenses.txt
+
+# Offline, so the crates must be downloaded first; a stale file means `just rust-licenses` was not run.
+[doc('Check that the committed Rust license notices match Cargo.lock.')]
+[group('rust')]
+rust-licenses-check:
+    cargo fetch --locked
+    cargo about generate --frozen -c .config/about.toml -m crates/binsight/Cargo.toml .config/about.hbs | tr -d '\r' | diff -u crates/binsight/third-party-licenses.txt - || { echo "the Rust license notices are stale: run just rust-licenses"; exit 1; }
+
 # Check that every crate only depends on what its layer allows.
 [group('rust')]
 rust-layering:
@@ -193,7 +206,7 @@ rust-unused-deps:
 
 # Everything CI checks on the Rust side.
 [group('rust')]
-rust-check: rust-fmt-check rust-build-check rust-lint rust-test rust-deny rust-layering rust-structure rust-unused-deps
+rust-check: rust-fmt-check rust-build-check rust-lint rust-test rust-deny rust-licenses-check rust-layering rust-structure rust-unused-deps
 
 # Write a development config in .dev/ (ignored by git).
 [group('rust')]
