@@ -17,6 +17,7 @@ async fn reports_a_healthy_server_with_its_version() {
     assert_eq!(response.header("content-type"), Some("application/json"));
     insta::assert_json_snapshot!(response.json(), { ".version" => "[version]" }, @r#"
     {
+      "data_source": "chain",
       "database": "ok",
       "engine": "starting",
       "status": "ok",

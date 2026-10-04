@@ -116,6 +116,11 @@ export interface components {
          */
         ComponentStatus: "ok" | "unavailable";
         /**
+         * @description Where the figures the API serves come from.
+         * @enum {string}
+         */
+        DataSource: "chain" | "demo";
+        /**
          * @description Where the engine is in its lifecycle.
          * @enum {string}
          */
@@ -141,6 +146,8 @@ export interface components {
         };
         /** @description The health report. */
         Health: {
+            /** @description Where the figures come from. */
+            data_source: components["schemas"]["DataSource"];
             /** @description Whether the database answers. */
             database: components["schemas"]["ComponentStatus"];
             /** @description Where the engine is in its lifecycle. */

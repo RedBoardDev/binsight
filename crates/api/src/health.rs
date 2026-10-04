@@ -1,12 +1,14 @@
-//! `GET /api/v1/health`: is the server up, which version is it, and does its database answer?
+//! `GET /api/v1/health`: is the server up, which version is it, does its database answer, and do
+//! its figures come from the chain or from the demo world?
 //!
-//! The endpoint is public (container health checks and the web app's about box call it) and
-//! answers `503` when the database does not answer, with the same body. This module holds the
-//! handler and its wire types, converted explicitly from the engine's types.
+//! The endpoint is public (container health checks, the web app's about box and its demo badge
+//! call it) and answers `503` when the database does not answer, with the same body. This module
+//! holds the handler and its wire types, converted explicitly from the engine's types.
 
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
+use binsight_engine::portfolio::DataSourceKind;
 use binsight_engine::{ComponentHealth, EngineHealth};
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -45,6 +47,25 @@ pub(crate) enum EngineStatus {
     Stopping,
 }
 
+/// Where the figures the API serves come from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DataSource {
+    /// The engine, from the chain.
+    Chain,
+    /// A generated demo world: nothing is tracked and no figure is real.
+    Demo,
+}
+
+impl From<DataSourceKind> for DataSource {
+    fn from(kind: DataSourceKind) -> Self {
+        match kind {
+            DataSourceKind::Chain => Self::Chain,
+            DataSourceKind::Demo => Self::Demo,
+        }
+    }
+}
+
 /// The health report.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub(crate) struct Health {
@@ -56,6 +77,8 @@ pub(crate) struct Health {
     pub(crate) database: ComponentStatus,
     /// Where the engine is in its lifecycle.
     pub(crate) engine: EngineStatus,
+    /// Where the figures come from.
+    pub(crate) data_source: DataSource,
 }
 
 impl From<binsight_engine::EngineStatus> for EngineStatus {
@@ -68,8 +91,9 @@ impl From<binsight_engine::EngineStatus> for EngineStatus {
     }
 }
 
-impl From<EngineHealth> for Health {
-    fn from(health: EngineHealth) -> Self {
+impl Health {
+    /// The report of an engine with this `health`, serving figures from `data_source`.
+    fn new(health: EngineHealth, data_source: DataSourceKind) -> Self {
         let (status, database) = match health.database {
             ComponentHealth::Ok => (HealthStatus::Ok, ComponentStatus::Ok),
             ComponentHealth::Unavailable => {
@@ -81,6 +105,7 @@ impl From<EngineHealth> for Health {
             version: env!("CARGO_PKG_VERSION").to_owned(),
             database,
             engine: health.engine.into(),
+            data_source: data_source.into(),
         }
     }
 }
@@ -97,7 +122,7 @@ impl From<EngineHealth> for Health {
     ),
 )]
 pub(crate) async fn get_health(State(state): State<AppState>) -> (StatusCode, Json<Health>) {
-    let health = Health::from(state.engine.health().await);
+    let health = Health::new(state.engine.health().await, state.engine.data_source());
     let status = match health.status {
         HealthStatus::Ok => StatusCode::OK,
         HealthStatus::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
@@ -111,13 +136,33 @@ mod tests {
 
     #[test]
     fn reports_unavailable_when_the_database_does_not_answer() {
-        let health = Health::from(EngineHealth {
-            database: ComponentHealth::Unavailable,
-            engine: binsight_engine::EngineStatus::Running,
-        });
+        let health = Health::new(
+            EngineHealth {
+                database: ComponentHealth::Unavailable,
+                engine: binsight_engine::EngineStatus::Running,
+            },
+            DataSourceKind::Chain,
+        );
 
         assert_eq!(health.status, HealthStatus::Unavailable);
         assert_eq!(health.database, ComponentStatus::Unavailable);
         assert_eq!(health.engine, EngineStatus::Running);
+        assert_eq!(health.data_source, DataSource::Chain);
+    }
+
+    #[test]
+    fn says_when_the_figures_come_from_the_demo_world() {
+        let health = Health::new(
+            EngineHealth {
+                database: ComponentHealth::Ok,
+                engine: binsight_engine::EngineStatus::Running,
+            },
+            DataSourceKind::Demo,
+        );
+
+        assert_eq!(
+            serde_json::to_value(&health).unwrap()["data_source"],
+            "demo"
+        );
     }
 }

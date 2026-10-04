@@ -246,6 +246,14 @@
           "unavailable"
         ]
       },
+      "DataSource": {
+        "type": "string",
+        "description": "Where the figures the API serves come from.",
+        "enum": [
+          "chain",
+          "demo"
+        ]
+      },
       "EngineStatus": {
         "type": "string",
         "description": "Where the engine is in its lifecycle.",
@@ -314,9 +322,14 @@
           "status",
           "version",
           "database",
-          "engine"
+          "engine",
+          "data_source"
         ],
         "properties": {
+          "data_source": {
+            "$ref": "#/components/schemas/DataSource",
+            "description": "Where the figures come from."
+          },
           "database": {
             "$ref": "#/components/schemas/ComponentStatus",
             "description": "Whether the database answers."
