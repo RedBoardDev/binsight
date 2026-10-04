@@ -32,6 +32,9 @@ pub(crate) enum ErrorCode {
     /// The server took too long to answer (`503`: the request itself arrived in time, so clients
     /// and proxies must not treat it as a `408` they may replay on their own).
     RequestTimeout,
+    /// A page cursor cannot be read or belongs to another query: start again from the first
+    /// page.
+    InvalidCursor,
     /// The request body is larger than the server accepts.
     PayloadTooLarge,
     /// Too many failed logins; the `Retry-After` header says how long to wait.
@@ -47,7 +50,7 @@ impl ErrorCode {
     /// The HTTP status that goes with the code.
     pub(crate) fn status(self) -> StatusCode {
         match self {
-            Self::InvalidRequest => StatusCode::BAD_REQUEST,
+            Self::InvalidRequest | Self::InvalidCursor => StatusCode::BAD_REQUEST,
             Self::Unauthenticated | Self::InvalidCredentials => StatusCode::UNAUTHORIZED,
             Self::ForbiddenCrossOrigin => StatusCode::FORBIDDEN,
             Self::NotFound | Self::WalletNotFound | Self::PositionNotFound => StatusCode::NOT_FOUND,

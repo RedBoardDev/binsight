@@ -20,7 +20,7 @@ use crate::error::{ApiError, ErrorCode};
 use crate::instance::{health, settings, sync, wallets};
 use crate::openapi::ApiDoc;
 use crate::overview::{open_positions, recent_closes, summary};
-use crate::positions::logo;
+use crate::positions::{candles, detail, events, logo};
 use crate::stats::series;
 use crate::{live, openapi};
 
@@ -66,6 +66,9 @@ impl DocumentedRoutes {
             .routes(routes!(open_positions::list_open_positions))
             .routes(routes!(recent_closes::get_recent_closes))
             .routes(routes!(series::get_stats_series))
+            .routes(routes!(detail::get_position))
+            .routes(routes!(events::list_position_events))
+            .routes(routes!(candles::get_position_candles))
             .routes(routes!(logo::get_token_logo));
         Self { public, protected }
     }

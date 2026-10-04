@@ -7,7 +7,7 @@
       "name": "MIT",
       "identifier": "MIT"
     },
-    "version": "1.2.0"
+    "version": "1.3.0"
   },
   "paths": {
     "/api/v1/auth/login": {
@@ -545,6 +545,293 @@
         ]
       }
     },
+    "/api/v1/positions/{position_id}": {
+      "get": {
+        "tags": [
+          "positions"
+        ],
+        "summary": "Reads one position with its chart.",
+        "operationId": "getPosition",
+        "parameters": [
+          {
+            "name": "position_id",
+            "in": "path",
+            "description": "The position's permanent id: `<address>-<opening signature>`, both in base58.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "currency",
+            "in": "query",
+            "description": "The currency of the figures (`sol` by default).",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Currency"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The position.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PositionDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The id or a query parameter is invalid (`invalid_request`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No tracked wallet holds or held this position (`position_not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The engine does not serve figures yet (`data_not_ready`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/positions/{position_id}/candles": {
+      "get": {
+        "tags": [
+          "positions"
+        ],
+        "summary": "Reads the candles of a position's chart.",
+        "operationId": "getPositionCandles",
+        "parameters": [
+          {
+            "name": "position_id",
+            "in": "path",
+            "description": "The position's permanent id: `<address>-<opening signature>`, both in base58.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "interval",
+            "in": "query",
+            "description": "`auto` (the default: the chart's `default_interval`) or one of the chart's `intervals`.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "A candle size, or `auto`.",
+              "enum": [
+                "auto",
+                "1m",
+                "5m",
+                "15m",
+                "1h",
+                "4h",
+                "1d"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The candles, or why they are unavailable. Cached for a day once the position is closed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PositionCandles"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The id is invalid, or the interval is not one of the chart's (`invalid_request`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No tracked wallet holds or held this position (`position_not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The engine does not serve figures yet (`data_not_ready`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/positions/{position_id}/events": {
+      "get": {
+        "tags": [
+          "positions"
+        ],
+        "summary": "Lists a position's movements, newest first.",
+        "operationId": "listPositionEvents",
+        "parameters": [
+          {
+            "name": "position_id",
+            "in": "path",
+            "description": "The position's permanent id: `<address>-<opening signature>`, both in base58.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "The `next_cursor` of the previous page; absent for the newest movements.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "How many movements at most (50 by default, 200 at most).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "currency",
+            "in": "query",
+            "description": "The currency of the values (`sol` by default).",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Currency"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of movements.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PositionEvents"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The id or a query parameter is invalid (`invalid_request`), or the cursor is not one of this timeline (`invalid_cursor`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No tracked wallet holds or held this position (`position_not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The engine does not serve figures yet (`data_not_ready`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
     "/api/v1/settings": {
       "get": {
         "tags": [
@@ -985,6 +1272,151 @@
           "month"
         ]
       },
+      "Candle": {
+        "type": "object",
+        "description": "One candle, in quote tokens per base token (the chart's quote token).",
+        "required": [
+          "start",
+          "open",
+          "high",
+          "low",
+          "close"
+        ],
+        "properties": {
+          "close": {
+            "$ref": "#/components/schemas/DecimalString",
+            "description": "The last price."
+          },
+          "high": {
+            "$ref": "#/components/schemas/DecimalString",
+            "description": "The highest price."
+          },
+          "low": {
+            "$ref": "#/components/schemas/DecimalString",
+            "description": "The lowest price."
+          },
+          "open": {
+            "$ref": "#/components/schemas/DecimalString",
+            "description": "The first price."
+          },
+          "start": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it starts."
+          },
+          "volume_usd": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DecimalString",
+                "description": "The volume traded, in dollars; `null` when the source does not say it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "CandleInterval": {
+        "type": "string",
+        "description": "The size of a candle.",
+        "enum": [
+          "1m",
+          "5m",
+          "15m",
+          "1h",
+          "4h",
+          "1d"
+        ]
+      },
+      "CandleSource": {
+        "type": "string",
+        "description": "Where candles come from.",
+        "enum": [
+          "geckoterminal",
+          "demo"
+        ]
+      },
+      "CandleStatus": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Read from the source just now.",
+            "required": [
+              "state"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "fresh"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Served from the cache while the source fails.",
+            "required": [
+              "fetched_at",
+              "state"
+            ],
+            "properties": {
+              "fetched_at": {
+                "type": "string",
+                "format": "date-time",
+                "description": "When they were read."
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "stale"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Not available: draw the chart without candles.",
+            "required": [
+              "reason",
+              "state"
+            ],
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/CandlesUnavailable",
+                "description": "Why."
+              },
+              "retry_after_seconds": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "How long to wait before asking again, in seconds, when known.",
+                "minimum": 0
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "unavailable"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Whether candles could be read, tagged by `state`."
+      },
+      "CandlesUnavailable": {
+        "type": "string",
+        "description": "Why candles are not available.",
+        "enum": [
+          "source_unreachable",
+          "rate_limited",
+          "pool_not_indexed",
+          "no_data"
+        ]
+      },
       "ChainTip": {
         "type": "object",
         "description": "The last slot the instance saw.",
@@ -1005,6 +1437,41 @@
             ],
             "format": "date-time",
             "description": "When it was seen."
+          }
+        }
+      },
+      "ChartMarker": {
+        "type": "object",
+        "description": "A movement on the chart.",
+        "required": [
+          "at",
+          "kind",
+          "signature"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it happened."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MovementKind",
+            "description": "What it was."
+          },
+          "price": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Price",
+                "description": "The exact bin price of its transaction; `null` when the transaction does not say it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "signature": {
+            "type": "string",
+            "description": "Its transaction signature (base58)."
           }
         }
       },
@@ -1044,6 +1511,27 @@
             "description": "Its window."
           }
         }
+      },
+      "ClosedPositionDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ClosedPositionRow",
+            "description": "The same figures as in History."
+          },
+          {
+            "type": "object",
+            "required": [
+              "chart"
+            ],
+            "properties": {
+              "chart": {
+                "$ref": "#/components/schemas/PositionChart",
+                "description": "Its price chart."
+              }
+            }
+          }
+        ],
+        "description": "A closed position: its row and its chart."
       },
       "ClosedPositionRow": {
         "type": "object",
@@ -1358,6 +1846,7 @@
           "wallet_not_found",
           "position_not_found",
           "request_timeout",
+          "invalid_cursor",
           "payload_too_large",
           "too_many_attempts",
           "data_not_ready",
@@ -1384,6 +1873,48 @@
           "request_id": {
             "type": "string",
             "description": "The id of the request, also in the `x-request-id` response header."
+          }
+        }
+      },
+      "EventRange": {
+        "type": "object",
+        "description": "The range a movement set.",
+        "required": [
+          "lower_bin_id",
+          "upper_bin_id"
+        ],
+        "properties": {
+          "lower": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Price",
+                "description": "The price of the lowest bin; `null` when the pool's quote cannot be valued."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lower_bin_id": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The lowest bin."
+          },
+          "upper": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Price",
+                "description": "The price of the highest bin; `null` when the pool's quote cannot be valued."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "upper_bin_id": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The highest bin."
           }
         }
       },
@@ -1739,6 +2270,18 @@
           "usdt"
         ]
       },
+      "MovementKind": {
+        "type": "string",
+        "description": "What a movement did.",
+        "enum": [
+          "open",
+          "add",
+          "rebalance",
+          "remove",
+          "claim",
+          "close"
+        ]
+      },
       "NetWorth": {
         "type": "object",
         "description": "The net worth in its parts.",
@@ -1786,6 +2329,32 @@
         "enum": [
           "pool"
         ]
+      },
+      "OpenPositionDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/OpenPositionRow",
+            "description": "The same figures as in the open positions."
+          },
+          {
+            "type": "object",
+            "required": [
+              "freshness",
+              "chart"
+            ],
+            "properties": {
+              "chart": {
+                "$ref": "#/components/schemas/PositionChart",
+                "description": "Its price chart."
+              },
+              "freshness": {
+                "$ref": "#/components/schemas/Freshness",
+                "description": "How fresh its figures are."
+              }
+            }
+          }
+        ],
+        "description": "An open position: its row, how fresh it is, and its chart."
       },
       "OpenPositionRow": {
         "type": "object",
@@ -2327,6 +2896,267 @@
           }
         }
       },
+      "PositionCandles": {
+        "type": "object",
+        "description": "The candles of a position's chart.",
+        "required": [
+          "interval",
+          "from",
+          "to",
+          "source",
+          "status",
+          "candles"
+        ],
+        "properties": {
+          "candles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Candle"
+            },
+            "description": "The candles, oldest first; empty when unavailable."
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The first instant of the chart."
+          },
+          "interval": {
+            "$ref": "#/components/schemas/CandleInterval",
+            "description": "Their size."
+          },
+          "source": {
+            "$ref": "#/components/schemas/CandleSource",
+            "description": "Where they come from (clients credit `geckoterminal`)."
+          },
+          "status": {
+            "$ref": "#/components/schemas/CandleStatus",
+            "description": "Whether they could be read."
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The last instant of the chart."
+          }
+        }
+      },
+      "PositionChart": {
+        "type": "object",
+        "description": "The price chart of a position, always in its pool's quote token (never converted to dollars,\nso the range band stays exact).",
+        "required": [
+          "quote",
+          "from",
+          "to",
+          "default_interval",
+          "intervals",
+          "ranges",
+          "markers"
+        ],
+        "properties": {
+          "current_price": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Price",
+                "description": "The price now, for an open position; `null` once closed."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "default_interval": {
+            "$ref": "#/components/schemas/CandleInterval",
+            "description": "The candle size that suits the window (what `interval=auto` picks)."
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The first instant: a tenth of the position's life before it opened."
+          },
+          "intervals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CandleInterval"
+            },
+            "description": "Every candle size that draws the window in at most 1000 candles, smallest first."
+          },
+          "markers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChartMarker"
+            },
+            "description": "One marker per movement, oldest first."
+          },
+          "quote": {
+            "$ref": "#/components/schemas/TokenRef",
+            "description": "The token prices are expressed in."
+          },
+          "ranges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RangeSpan"
+            },
+            "description": "The range over time, oldest first (it changes when the position rebalances)."
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The last instant: now while open, a tenth of its life after it closed otherwise."
+          }
+        }
+      },
+      "PositionDetail": {
+        "oneOf": [
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OpenPositionDetail",
+                "description": "Still open: valued at its pool's active bin."
+              },
+              {
+                "type": "object",
+                "required": [
+                  "status"
+                ],
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "open"
+                    ]
+                  }
+                }
+              }
+            ],
+            "description": "Still open: valued at its pool's active bin."
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ClosedPositionDetail",
+                "description": "Closed: its figures are final."
+              },
+              {
+                "type": "object",
+                "required": [
+                  "status"
+                ],
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "closed"
+                    ]
+                  }
+                }
+              }
+            ],
+            "description": "Closed: its figures are final."
+          }
+        ],
+        "description": "A position, tagged by `status`."
+      },
+      "PositionEvent": {
+        "type": "object",
+        "description": "One movement of a position.",
+        "required": [
+          "at",
+          "kind",
+          "signature"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When its transaction happened."
+          },
+          "base": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DecimalString",
+                "description": "The base token it moved, in whole tokens; `null` for a rebalance."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MovementKind",
+            "description": "What it did."
+          },
+          "price": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Price",
+                "description": "The exact bin price of its transaction; `null` when the transaction does not say it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "quote": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DecimalString",
+                "description": "The quote token it moved, in whole tokens; `null` for a rebalance."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "range": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EventRange",
+                "description": "The range it set, when it opened or rebalanced the position."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "signature": {
+            "type": "string",
+            "description": "Its transaction signature (base58); several movements can share one."
+          },
+          "value": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Figure",
+                "description": "The value of what it moved, at the bin price of its transaction and the rate of its day;\n`null` for a rebalance."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "PositionEvents": {
+        "type": "object",
+        "description": "A page of movements, newest first.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PositionEvent"
+            },
+            "description": "The movements."
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The cursor of the next (older) page; `null` on the last page."
+          }
+        }
+      },
       "Price": {
         "type": "object",
         "description": "A unit price: quote tokens per base token, with at most twelve significant digits.",
@@ -2405,6 +3235,50 @@
           "above",
           "below"
         ]
+      },
+      "RangeSpan": {
+        "type": "object",
+        "description": "The range of a position over a span of time.",
+        "required": [
+          "from"
+        ],
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the range was set."
+          },
+          "lower": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Price",
+                "description": "The price of its lowest bin; `null` when the pool's quote cannot be valued."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "to": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When it changed or the position closed; `null` while it holds."
+          },
+          "upper": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Price",
+                "description": "The price of its highest bin; `null` when the pool's quote cannot be valued."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
       },
       "RangeStatus": {
         "type": "string",

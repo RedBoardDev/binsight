@@ -157,6 +157,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/positions/{position_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Reads one position with its chart. */
+        get: operations["getPosition"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/positions/{position_id}/candles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Reads the candles of a position's chart. */
+        get: operations["getPositionCandles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/positions/{position_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Lists a position's movements, newest first. */
+        get: operations["listPositionEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/settings": {
         parameters: {
             query?: never;
@@ -286,6 +337,61 @@ export interface components {
          * @enum {string}
          */
         Bucket: "day" | "week" | "month";
+        /** @description One candle, in quote tokens per base token (the chart's quote token). */
+        Candle: {
+            /** @description The last price. */
+            close: components["schemas"]["DecimalString"];
+            /** @description The highest price. */
+            high: components["schemas"]["DecimalString"];
+            /** @description The lowest price. */
+            low: components["schemas"]["DecimalString"];
+            /** @description The first price. */
+            open: components["schemas"]["DecimalString"];
+            /**
+             * Format: date-time
+             * @description When it starts.
+             */
+            start: string;
+            volume_usd?: components["schemas"]["DecimalString"] | null;
+        };
+        /**
+         * @description The size of a candle.
+         * @enum {string}
+         */
+        CandleInterval: "1m" | "5m" | "15m" | "1h" | "4h" | "1d";
+        /**
+         * @description Where candles come from.
+         * @enum {string}
+         */
+        CandleSource: "geckoterminal" | "demo";
+        /** @description Whether candles could be read, tagged by `state`. */
+        CandleStatus: {
+            /** @enum {string} */
+            state: "fresh";
+        } | {
+            /**
+             * Format: date-time
+             * @description When they were read.
+             */
+            fetched_at: string;
+            /** @enum {string} */
+            state: "stale";
+        } | {
+            /** @description Why. */
+            reason: components["schemas"]["CandlesUnavailable"];
+            /**
+             * Format: int64
+             * @description How long to wait before asking again, in seconds, when known.
+             */
+            retry_after_seconds?: number | null;
+            /** @enum {string} */
+            state: "unavailable";
+        };
+        /**
+         * @description Why candles are not available.
+         * @enum {string}
+         */
+        CandlesUnavailable: "source_unreachable" | "rate_limited" | "pool_not_indexed" | "no_data";
         /** @description The last slot the instance saw. */
         ChainTip: {
             /**
@@ -299,6 +405,19 @@ export interface components {
              */
             last_slot_at?: string | null;
         };
+        /** @description A movement on the chart. */
+        ChartMarker: {
+            /**
+             * Format: date-time
+             * @description When it happened.
+             */
+            at: string;
+            /** @description What it was. */
+            kind: components["schemas"]["MovementKind"];
+            price?: components["schemas"]["Price"] | null;
+            /** @description Its transaction signature (base58). */
+            signature: string;
+        };
         /** @description The positions closed on one local day. */
         ClosedDay: {
             /** @description The local date, `YYYY-MM-DD`. */
@@ -311,6 +430,11 @@ export interface components {
             totals: components["schemas"]["ClosedTotals"];
             /** @description Its window. */
             window: components["schemas"]["Window"];
+        };
+        /** @description A closed position: its row and its chart. */
+        ClosedPositionDetail: components["schemas"]["ClosedPositionRow"] & {
+            /** @description Its price chart. */
+            chart: components["schemas"]["PositionChart"];
         };
         /** @description One closed position. Its figures are exact on their own, even while a wallet imports. */
         ClosedPositionRow: {
@@ -460,7 +584,7 @@ export interface components {
          * @description Why a request failed. Stable: clients use it as their translation key.
          * @enum {string}
          */
-        ErrorCode: "invalid_request" | "unauthenticated" | "invalid_credentials" | "forbidden_cross_origin" | "not_found" | "method_not_allowed" | "wallet_not_found" | "position_not_found" | "request_timeout" | "payload_too_large" | "too_many_attempts" | "data_not_ready" | "internal";
+        ErrorCode: "invalid_request" | "unauthenticated" | "invalid_credentials" | "forbidden_cross_origin" | "not_found" | "method_not_allowed" | "wallet_not_found" | "position_not_found" | "request_timeout" | "invalid_cursor" | "payload_too_large" | "too_many_attempts" | "data_not_ready" | "internal";
         /** @description The content of an error body. */
         ErrorDetail: {
             /** @description The stable error code; clients translate it. */
@@ -469,6 +593,21 @@ export interface components {
             message: string;
             /** @description The id of the request, also in the `x-request-id` response header. */
             request_id: string;
+        };
+        /** @description The range a movement set. */
+        EventRange: {
+            lower?: components["schemas"]["Price"] | null;
+            /**
+             * Format: int32
+             * @description The lowest bin.
+             */
+            lower_bin_id: number;
+            upper?: components["schemas"]["Price"] | null;
+            /**
+             * Format: int32
+             * @description The highest bin.
+             */
+            upper_bin_id: number;
         };
         /**
          * @description An amount and how far it can be trusted. `value` is present unless the figure is
@@ -613,6 +752,11 @@ export interface components {
          * @enum {string}
          */
         MoneyUnit: "sol" | "usd" | "usdc" | "usdt";
+        /**
+         * @description What a movement did.
+         * @enum {string}
+         */
+        MovementKind: "open" | "add" | "rebalance" | "remove" | "claim" | "close";
         /** @description The net worth in its parts. */
         NetWorth: {
             /** @description Free SOL and priced tokens. */
@@ -633,6 +777,13 @@ export interface components {
          * @enum {string}
          */
         OpenMethod: "pool";
+        /** @description An open position: its row, how fresh it is, and its chart. */
+        OpenPositionDetail: components["schemas"]["OpenPositionRow"] & {
+            /** @description Its price chart. */
+            chart: components["schemas"]["PositionChart"];
+            /** @description How fresh its figures are. */
+            freshness: components["schemas"]["Freshness"];
+        };
         /** @description One open position. */
         OpenPositionRow: {
             /** @description The position account. */
@@ -815,6 +966,86 @@ export interface components {
             quote: components["schemas"]["TokenRef"];
             quote_kind?: components["schemas"]["QuoteKind"] | null;
         };
+        /** @description The candles of a position's chart. */
+        PositionCandles: {
+            /** @description The candles, oldest first; empty when unavailable. */
+            candles: components["schemas"]["Candle"][];
+            /**
+             * Format: date-time
+             * @description The first instant of the chart.
+             */
+            from: string;
+            /** @description Their size. */
+            interval: components["schemas"]["CandleInterval"];
+            /** @description Where they come from (clients credit `geckoterminal`). */
+            source: components["schemas"]["CandleSource"];
+            /** @description Whether they could be read. */
+            status: components["schemas"]["CandleStatus"];
+            /**
+             * Format: date-time
+             * @description The last instant of the chart.
+             */
+            to: string;
+        };
+        /**
+         * @description The price chart of a position, always in its pool's quote token (never converted to dollars,
+         *     so the range band stays exact).
+         */
+        PositionChart: {
+            current_price?: components["schemas"]["Price"] | null;
+            /** @description The candle size that suits the window (what `interval=auto` picks). */
+            default_interval: components["schemas"]["CandleInterval"];
+            /**
+             * Format: date-time
+             * @description The first instant: a tenth of the position's life before it opened.
+             */
+            from: string;
+            /** @description Every candle size that draws the window in at most 1000 candles, smallest first. */
+            intervals: components["schemas"]["CandleInterval"][];
+            /** @description One marker per movement, oldest first. */
+            markers: components["schemas"]["ChartMarker"][];
+            /** @description The token prices are expressed in. */
+            quote: components["schemas"]["TokenRef"];
+            /** @description The range over time, oldest first (it changes when the position rebalances). */
+            ranges: components["schemas"]["RangeSpan"][];
+            /**
+             * Format: date-time
+             * @description The last instant: now while open, a tenth of its life after it closed otherwise.
+             */
+            to: string;
+        };
+        /** @description A position, tagged by `status`. */
+        PositionDetail: (components["schemas"]["OpenPositionDetail"] & {
+            /** @enum {string} */
+            status: "open";
+        }) | (components["schemas"]["ClosedPositionDetail"] & {
+            /** @enum {string} */
+            status: "closed";
+        });
+        /** @description One movement of a position. */
+        PositionEvent: {
+            /**
+             * Format: date-time
+             * @description When its transaction happened.
+             */
+            at: string;
+            base?: components["schemas"]["DecimalString"] | null;
+            /** @description What it did. */
+            kind: components["schemas"]["MovementKind"];
+            price?: components["schemas"]["Price"] | null;
+            quote?: components["schemas"]["DecimalString"] | null;
+            range?: components["schemas"]["EventRange"] | null;
+            /** @description Its transaction signature (base58); several movements can share one. */
+            signature: string;
+            value?: components["schemas"]["Figure"] | null;
+        };
+        /** @description A page of movements, newest first. */
+        PositionEvents: {
+            /** @description The movements. */
+            items: components["schemas"]["PositionEvent"][];
+            /** @description The cursor of the next (older) page; `null` on the last page. */
+            next_cursor?: string | null;
+        };
         /** @description A unit price: quote tokens per base token, with at most twelve significant digits. */
         Price: {
             /** @description The price. */
@@ -853,6 +1084,21 @@ export interface components {
          * @enum {string}
          */
         RangeSide: "above" | "below";
+        /** @description The range of a position over a span of time. */
+        RangeSpan: {
+            /**
+             * Format: date-time
+             * @description When the range was set.
+             */
+            from: string;
+            lower?: components["schemas"]["Price"] | null;
+            /**
+             * Format: date-time
+             * @description When it changed or the position closed; `null` while it holds.
+             */
+            to?: string | null;
+            upper?: components["schemas"]["Price"] | null;
+        };
         /**
          * @description Where the price stands against a range.
          * @enum {string}
@@ -1606,6 +1852,196 @@ export interface operations {
                 };
             };
             /** @description The wallet is not tracked (`wallet_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The engine does not serve figures yet (`data_not_ready`). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    getPosition: {
+        parameters: {
+            query?: {
+                /** @description The currency of the figures (`sol` by default). */
+                currency?: components["schemas"]["Currency"];
+            };
+            header?: never;
+            path: {
+                /** @description The position's permanent id: `<address>-<opening signature>`, both in base58. */
+                position_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The position. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PositionDetail"];
+                };
+            };
+            /** @description The id or a query parameter is invalid (`invalid_request`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not signed in (`unauthenticated`). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description No tracked wallet holds or held this position (`position_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The engine does not serve figures yet (`data_not_ready`). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    getPositionCandles: {
+        parameters: {
+            query?: {
+                /** @description `auto` (the default: the chart's `default_interval`) or one of the chart's `intervals`. */
+                interval?: "auto" | "1m" | "5m" | "15m" | "1h" | "4h" | "1d";
+            };
+            header?: never;
+            path: {
+                /** @description The position's permanent id: `<address>-<opening signature>`, both in base58. */
+                position_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The candles, or why they are unavailable. Cached for a day once the position is closed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PositionCandles"];
+                };
+            };
+            /** @description The id is invalid, or the interval is not one of the chart's (`invalid_request`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not signed in (`unauthenticated`). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description No tracked wallet holds or held this position (`position_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The engine does not serve figures yet (`data_not_ready`). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    listPositionEvents: {
+        parameters: {
+            query?: {
+                /** @description The `next_cursor` of the previous page; absent for the newest movements. */
+                cursor?: string;
+                /** @description How many movements at most (50 by default, 200 at most). */
+                limit?: number;
+                /** @description The currency of the values (`sol` by default). */
+                currency?: components["schemas"]["Currency"];
+            };
+            header?: never;
+            path: {
+                /** @description The position's permanent id: `<address>-<opening signature>`, both in base58. */
+                position_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of movements. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PositionEvents"];
+                };
+            };
+            /** @description The id or a query parameter is invalid (`invalid_request`), or the cursor is not one of this timeline (`invalid_cursor`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not signed in (`unauthenticated`). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description No tracked wallet holds or held this position (`position_not_found`). */
             404: {
                 headers: {
                     [name: string]: unknown;

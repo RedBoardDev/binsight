@@ -6,6 +6,7 @@
 //! exactness, so an unavailable figure has no value at all. This module defines the wire forms
 //! and converts the engine's views to them; it holds no rule.
 
+mod cursor;
 mod decimal;
 mod figure;
 mod freshness;
@@ -18,6 +19,7 @@ mod token;
 mod wallet_ref;
 mod window;
 
+pub(crate) use cursor::{decode_cursor, encode_cursor, foreign_cursor};
 pub(crate) use decimal::DecimalString;
 pub(crate) use figure::{Figure, PercentFigure};
 pub(crate) use freshness::{Freshness, SyncState};

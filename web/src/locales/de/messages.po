@@ -223,6 +223,10 @@ msgstr "Diese Adresse entspricht keiner Seite von binsight."
 msgid "This item no longer exists."
 msgstr "Dieses Element existiert nicht mehr."
 
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "This list has changed. Reload it to see the latest."
+msgstr "Diese Liste hat sich geändert. Laden Sie sie neu, um den aktuellen Stand zu sehen."
+
 #: src/core/ShellErrorScreen.tsx
 msgid "This page could not be displayed. Try again; if it keeps failing, reload the app."
 msgstr "Diese Seite konnte nicht angezeigt werden. Versuchen Sie es erneut; wenn der Fehler bleibt, laden Sie die App neu."

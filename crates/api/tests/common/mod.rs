@@ -7,6 +7,7 @@
 )]
 
 pub(crate) mod figures;
+pub(crate) mod positions;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
