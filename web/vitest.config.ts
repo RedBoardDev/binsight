@@ -12,6 +12,13 @@ export default defineConfig({
     },
   },
   test: {
+    // The host shares its cores with production and with other builds: under that load a test
+    // that renders the whole app takes several seconds, and 5 s deadlines failed tests that were
+    // only slow. A deadline is not a retry: a test that hangs still fails.
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
+    // Two workers leave room for the cargo builds that run next to the web tests.
+    maxWorkers: 2,
     restoreMocks: true,
     unstubGlobals: true,
     unstubEnvs: true,
