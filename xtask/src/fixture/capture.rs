@@ -1,12 +1,13 @@
 //! Captures fixtures from mainnet: fetch, check against the privacy guard, then write.
 //!
-//! Everything is fetched and checked before the first file is written, so a refused case leaves
-//! nothing on disk. An existing case or answer is never overwritten: delete it to capture it
-//! again. This module orchestrates; the RPC client, the guard and the case file live next to it.
+//! Everything is fetched and checked before the first file is written, and the files are moved
+//! into place at once, so a refused or failed case leaves nothing on disk. An existing case or
+//! answer is never overwritten: delete it to capture it again. This module orchestrates; the RPC
+//! client, the guard, the case file and the writer live next to it.
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, ensure};
+use anyhow::ensure;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -14,6 +15,7 @@ use super::case_file::{CapturedAccount, CapturedTransaction, CaseFile};
 use super::command::{CaptureRequest, MainnetCase, RpcAnswer};
 use super::denylist::Denylist;
 use super::helius::Helius;
+use super::staged_write::{PendingFile, write_new_file, write_new_folder};
 use crate::git;
 
 /// Where the mainnet cases live, relative to the repository root.
@@ -24,12 +26,6 @@ const RPC_FIXTURES: &str = "crates/chain/tests/fixtures/rpc";
 
 /// The newest transaction version requested, as the product requests it.
 const MAX_SUPPORTED_TX_VERSION: u8 = 1;
-
-/// A file to write, relative to its destination folder, and its content.
-struct PendingFile {
-    path: PathBuf,
-    content: String,
-}
 
 #[derive(Deserialize)]
 struct SlotOfTransaction {
@@ -102,7 +98,7 @@ fn capture_case(
         path: PathBuf::from("case.toml"),
         content: case_file,
     });
-    write_all(&folder, &files)?;
+    write_new_folder(&folder, &files)?;
     Ok(format!(
         "captured {} into {} with {} RPC call(s)",
         case.name.as_str(),
@@ -143,40 +139,24 @@ fn record_answer(
     helius: &mut Helius,
     answer: &RpcAnswer,
 ) -> anyhow::Result<String> {
-    let folder = root.join(RPC_FIXTURES).join(answer.method.as_str());
     let file = format!("{}.json", answer.name.as_str());
+    let path = root
+        .join(RPC_FIXTURES)
+        .join(answer.method.as_str())
+        .join(&file);
     ensure!(
-        !folder.join(&file).exists(),
+        !path.exists(),
         "{} already exists; delete it to record it again",
-        folder.join(&file).display()
+        path.display()
     );
     let body = helius.call(answer.method.as_str(), &answer.params)?;
     denylist.check_json(&file, &body)?;
-    write_all(
-        &folder,
-        &[PendingFile {
-            path: PathBuf::from(&file),
-            content: body,
-        }],
-    )?;
+    write_new_file(&path, &body)?;
     Ok(format!(
         "recorded {} into {}",
         answer.method.as_str(),
-        folder.join(file).display()
+        path.display()
     ))
-}
-
-fn write_all(folder: &Path, files: &[PendingFile]) -> anyhow::Result<()> {
-    for file in files {
-        let path = folder.join(&file.path);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("could not create {}", parent.display()))?;
-        }
-        std::fs::write(&path, &file.content)
-            .with_context(|| format!("could not write {}", path.display()))?;
-    }
-    Ok(())
 }
 
 /// Today's date in UTC, `YYYY-MM-DD`.

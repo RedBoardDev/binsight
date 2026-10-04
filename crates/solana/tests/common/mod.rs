@@ -53,11 +53,12 @@ pub(crate) fn case(name: &str) -> Case {
     toml::from_str(&text).unwrap()
 }
 
-/// Every case, sorted by name.
+/// Every case, sorted by name (a hidden folder, such as a capture in progress, is not a case).
 pub(crate) fn all_cases() -> Vec<Case> {
     let mut names: Vec<String> = std::fs::read_dir(mainnet_fixtures())
         .unwrap()
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .filter(|name| !name.starts_with('.'))
         .collect();
     names.sort();
     names.iter().map(|name| case(name)).collect()

@@ -10,6 +10,7 @@ mod command;
 mod denylist;
 mod helius;
 mod identifiers;
+mod staged_write;
 
 use anyhow::bail;
 

@@ -15,11 +15,9 @@ bs58.workspace = true
 jiff.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
+tempfile.workspace = true
 toml = { workspace = true, features = ["display"] }
 ureq.workspace = true
-
-[dev-dependencies]
-tempfile.workspace = true
 
 [lints]
 workspace = true
