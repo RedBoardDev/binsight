@@ -1,10 +1,16 @@
 //! The listing worker: lists the history of each tracked wallet, one page at a time, until it is
 //! complete.
 //!
-//! The worker lists the page of the wallet due first (`listing_schedule`), then the next one. A
+//! The worker lists the page of the wallet due first (`history_schedule`), then the next one. A
 //! page that cannot be listed or written changes nothing; its wallet waits before trying again
 //! while the others go on. A refusal that concerns every request pauses the whole worker
 //! instead. Listing and writing one page is `history_page`'s job.
+
+mod history_cursor;
+mod history_end;
+mod history_page;
+mod history_schedule;
+mod slot_order;
 
 use std::time::Duration;
 
@@ -12,9 +18,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
 use super::Ingestion;
-use super::history_page::{PageError, list_and_write};
-use super::listing_schedule::{ListingSchedule, NextListing};
 use super::refusal::{report_pause, time_until};
+use history_page::{PageError, list_and_write};
+use history_schedule::{ListingSchedule, NextListing};
 
 /// How long to wait after the tracked wallets could not be read.
 const STORE_RETRY_DELAY: Duration = Duration::from_secs(30);

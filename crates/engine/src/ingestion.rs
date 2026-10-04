@@ -8,16 +8,9 @@
 //! stop as soon as shutdown is requested; everything they write is transactional, so stopping
 //! in the middle of a page loses nothing. With no wallet tracked, nothing is ever sent.
 
-mod cursor;
-mod fetch_batch;
-mod fetch_outcome;
-mod fetcher;
-mod history_end;
-mod history_page;
+mod fetching;
 mod listing;
-mod listing_schedule;
 mod refusal;
-mod slot_order;
 
 use std::sync::Arc;
 
@@ -30,7 +23,7 @@ use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use fetcher::run_fetcher;
+use fetching::run_fetcher;
 use listing::run_listing;
 
 /// What the ingestion workers share: the database, the RPC client, the clock, and the wake-up

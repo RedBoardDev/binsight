@@ -5,7 +5,7 @@
 //! their slots and written with their fetch tasks and the cursor move, in one transaction. A
 //! short page is written too, but leaves the cursor where it was until a second listing confirms
 //! it ends the history. A page that cannot be listed or written changes nothing. Which page comes
-//! next is the listing worker's decision; the cursor rules live in `cursor`.
+//! next is the listing worker's decision; the cursor rules live in `history_cursor`.
 
 use binsight_chain::{CallContext, RpcError, SignatureInfo, SignaturesRequest};
 use binsight_core::credits::{Priority, Purpose};
@@ -13,11 +13,11 @@ use binsight_store::{ListingPage, StoreError, TrackedWallet, WalletCursor};
 use jiff::Timestamp;
 use tracing::{debug, info};
 
-use super::Ingestion;
-use super::cursor::{HistoryStep, step_after_history_page};
+use super::history_cursor::{HistoryStep, step_after_history_page};
 use super::history_end::ListedEnd;
-use super::refusal::resume_after_refusal;
 use super::slot_order::{PageBoundary, rank_in_slots};
+use crate::ingestion::Ingestion;
+use crate::ingestion::refusal::resume_after_refusal;
 
 /// Why a page was not written.
 #[derive(Debug, thiserror::Error)]

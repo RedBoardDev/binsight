@@ -14,9 +14,9 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
-use super::Ingestion;
 use super::fetch_outcome::{FetchStep, next_step};
-use super::refusal::report_pause;
+use crate::ingestion::Ingestion;
+use crate::ingestion::refusal::report_pause;
 
 /// How many transactions are fetched at the same time; the rate limiter paces them anyway.
 const FETCH_CONCURRENCY: usize = 4;

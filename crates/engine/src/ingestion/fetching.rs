@@ -5,6 +5,9 @@
 //! falls due, or until the listing queues new ones. A refusal that concerns every request pauses
 //! it, and so does a database failure; new tasks do not cut a pause short.
 
+mod fetch_batch;
+mod fetch_outcome;
+
 use std::time::Duration;
 
 use jiff::Timestamp;
@@ -12,8 +15,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::error;
 
 use super::Ingestion;
-use super::fetch_batch::{Fetched, fetch_all};
 use super::refusal::time_until;
+use fetch_batch::{Fetched, fetch_all};
 
 /// How many due tasks are read from the queue at once.
 const FETCH_BATCH_SIZE: u32 = 32;

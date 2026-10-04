@@ -3,7 +3,7 @@
 //! Each wallet has its own retry delay: a page that cannot be listed or written is tried again
 //! after 30 seconds, then twice as long after each failure in a row, up to an hour, and the
 //! delay resets once a page of that wallet is written. A short page that may end a history waits
-//! five minutes for its confirmation, the second listing `cursor` asks for. The worker always
+//! five minutes for its confirmation, the second listing `history_cursor` asks for. The worker always
 //! lists the wallet that is due first, so a wallet whose page keeps failing neither blocks the
 //! others nor spends credits every few seconds. All of this lives in memory only: a restart tries
 //! every wallet again at once, which costs one page each. This module decides; it does no I/O.
@@ -15,7 +15,7 @@ use binsight_solana::Address;
 use binsight_store::TrackedWallet;
 use jiff::{SignedDuration, Timestamp};
 
-use super::cursor::next_history_request;
+use super::history_cursor::next_history_request;
 use super::history_end::ListedEnd;
 
 /// The delay before trying a wallet's page again after its first failure in a row.

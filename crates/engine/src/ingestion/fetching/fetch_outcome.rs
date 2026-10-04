@@ -13,7 +13,7 @@ use binsight_solana::transaction::MAX_SUPPORTED_TX_VERSION;
 use binsight_store::{FetchFailure, FetchSetback, FetchTask, FetchedTx, RetryState};
 use jiff::{SignedDuration, Timestamp};
 
-use super::refusal::resume_after_refusal;
+use crate::ingestion::refusal::resume_after_refusal;
 
 /// The waits before each new attempt, in seconds, after the first, second... failed attempt.
 const RETRY_SCHEDULE_SECS: [i64; 8] = [1, 2, 4, 8, 30, 120, 600, 3_600];
