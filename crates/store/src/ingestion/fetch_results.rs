@@ -105,6 +105,7 @@ fn store_fetched(connection: &Connection, fetched: &FetchedTx) -> Result<(), Sto
 
 #[cfg(test)]
 mod tests {
+    use binsight_core::credits::Priority;
     use binsight_solana::Signature;
 
     use super::*;
@@ -137,10 +138,21 @@ mod tests {
         let counts = store.fetch_queue().counts(WALLET).await.unwrap();
         assert_eq!((counts.fetched, counts.pending), (1, 0));
         assert_eq!(
-            store.fetch_queue().due(later(60), 10).await.unwrap(),
+            store
+                .fetch_queue()
+                .due(later(60), 10, Priority::History)
+                .await
+                .unwrap(),
             Vec::new()
         );
-        assert_eq!(store.fetch_queue().next_attempt_at().await.unwrap(), None);
+        assert_eq!(
+            store
+                .fetch_queue()
+                .next_attempt_at(Priority::History)
+                .await
+                .unwrap(),
+            None
+        );
     }
 
     #[tokio::test]
@@ -164,13 +176,25 @@ mod tests {
         let counts = store.fetch_queue().counts(WALLET).await.unwrap();
         assert_eq!((counts.listed, counts.empty_retry), (1, 1));
         assert_eq!(
-            store.fetch_queue().due(later(29), 10).await.unwrap(),
+            store
+                .fetch_queue()
+                .due(later(29), 10, Priority::History)
+                .await
+                .unwrap(),
             Vec::new()
         );
-        let due = store.fetch_queue().due(later(30), 10).await.unwrap();
+        let due = store
+            .fetch_queue()
+            .due(later(30), 10, Priority::History)
+            .await
+            .unwrap();
         assert_eq!(due[0].attempts, 1);
         assert_eq!(
-            store.fetch_queue().next_attempt_at().await.unwrap(),
+            store
+                .fetch_queue()
+                .next_attempt_at(Priority::History)
+                .await
+                .unwrap(),
             Some(later(30))
         );
     }
@@ -194,7 +218,10 @@ mod tests {
 
         let queue = store.fetch_queue();
         assert_eq!(queue.counts(WALLET).await.unwrap().unsupported_version, 1);
-        assert_eq!(queue.next_attempt_at().await.unwrap(), None);
+        assert_eq!(
+            queue.next_attempt_at(Priority::History).await.unwrap(),
+            None
+        );
         assert_eq!(
             queue
                 .requeue_unsupported_versions(1, later(60))
@@ -208,6 +235,13 @@ mod tests {
         assert_eq!(requeued.unwrap(), 1);
         let counts = queue.counts(WALLET).await.unwrap();
         assert_eq!((counts.unsupported_version, counts.pending), (0, 1));
-        assert_eq!(queue.due(later(60), 10).await.unwrap().len(), 1);
+        assert_eq!(
+            queue
+                .due(later(60), 10, Priority::History)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
     }
 }

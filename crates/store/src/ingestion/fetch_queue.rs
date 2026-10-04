@@ -26,10 +26,13 @@ use crate::store::Store;
 const SELECT_DUE: &str = "
     SELECT signature, slot, priority, attempts FROM tx_fetch
     WHERE next_attempt_at IS NOT NULL AND +next_attempt_at <= ?1
+      AND (CASE priority WHEN 'realtime' THEN 0 WHEN 'catch_up' THEN 1 ELSE 2 END) <= ?3
     ORDER BY (CASE priority WHEN 'realtime' THEN 0 WHEN 'catch_up' THEN 1 ELSE 2 END), slot DESC
     LIMIT ?2";
-const SELECT_NEXT_ATTEMPT: &str =
-    "SELECT min(next_attempt_at) FROM tx_fetch WHERE next_attempt_at IS NOT NULL";
+const SELECT_NEXT_ATTEMPT: &str = "
+    SELECT min(next_attempt_at) FROM tx_fetch
+    WHERE next_attempt_at IS NOT NULL
+      AND (CASE priority WHEN 'realtime' THEN 0 WHEN 'catch_up' THEN 1 ELSE 2 END) <= ?1";
 const REQUEUE_UNSUPPORTED: &str = "
     UPDATE tx_fetch
     SET state = 'pending', next_attempt_at = ?2, max_supported_version = NULL, updated_at = ?2
@@ -50,34 +53,48 @@ impl Store {
 }
 
 impl FetchQueueRepo {
-    /// At most `limit` tasks due at `now`: the most urgent class first, then the newest slots.
+    /// At most `limit` tasks due at `now`, of `least_urgent` or a more urgent class: the most
+    /// urgent class first, then the newest slots.
     ///
     /// # Errors
     ///
     /// Returns an error if the database cannot be read or holds an invalid row.
-    pub async fn due(&self, now: Timestamp, limit: u32) -> Result<Vec<FetchTask>, StoreError> {
+    pub async fn due(
+        &self,
+        now: Timestamp,
+        limit: u32,
+        least_urgent: Priority,
+    ) -> Result<Vec<FetchTask>, StoreError> {
         self.database
             .read(move |connection| {
                 let mut query = connection.prepare(SELECT_DUE)?;
-                let rows = query
-                    .query_map(params![timestamp_to_sql(now), i64::from(limit)], |row| {
-                        Ok(task_from_row(row))
-                    })?;
+                let parameters = params![
+                    timestamp_to_sql(now),
+                    i64::from(limit),
+                    urgency_rank(least_urgent)
+                ];
+                let rows = query.query_map(parameters, |row| Ok(task_from_row(row)))?;
                 rows.map(|row| row?).collect()
             })
             .await
     }
 
-    /// When the next task falls due, if any task waits.
+    /// When the next task of `least_urgent` or a more urgent class falls due, if any waits.
     ///
     /// # Errors
     ///
     /// Returns an error if the database cannot be read.
-    pub async fn next_attempt_at(&self) -> Result<Option<Timestamp>, StoreError> {
+    pub async fn next_attempt_at(
+        &self,
+        least_urgent: Priority,
+    ) -> Result<Option<Timestamp>, StoreError> {
         self.database
-            .read(|connection| {
-                let next: Option<i64> =
-                    connection.query_row(SELECT_NEXT_ATTEMPT, [], |row| row.get(0))?;
+            .read(move |connection| {
+                let next: Option<i64> = connection.query_row(
+                    SELECT_NEXT_ATTEMPT,
+                    [urgency_rank(least_urgent)],
+                    |row| row.get(0),
+                )?;
                 next.map(timestamp_from_sql).transpose()
             })
             .await
@@ -117,6 +134,17 @@ impl FetchQueueRepo {
     }
 }
 
+/// The rank the queries order classes by, the most urgent first; it matches the `CASE` of the
+/// queries and of the `tx_fetch_by_urgency` index.
+fn urgency_rank(priority: Priority) -> i64 {
+    match priority {
+        Priority::Realtime => 0,
+        Priority::CatchUp => 1,
+        Priority::History => 2,
+        Priority::Valuation => 3,
+    }
+}
+
 fn task_from_row(row: &Row<'_>) -> Result<FetchTask, StoreError> {
     Ok(FetchTask {
         signature: parse_from_sql(&row.get::<_, String>(0)?, "signature")?,
@@ -131,7 +159,7 @@ mod tests {
     use super::*;
     use crate::database::test_database::assert_queries_prepare;
     use crate::ingestion::test_pages::{
-        WALLET, history_page, listed, listed_at, page_after, store_with_wallet,
+        WALLET, history_page, later, listed, listed_at, page_after, store_with_wallet,
     };
 
     #[tokio::test]
@@ -147,7 +175,7 @@ mod tests {
             .database()
             .read(|connection| {
                 let mut query = connection.prepare(&format!("EXPLAIN QUERY PLAN {SELECT_DUE}"))?;
-                let steps = query.query_map(params![0, 32], |row| row.get::<_, String>(3))?;
+                let steps = query.query_map(params![0, 32, 2], |row| row.get::<_, String>(3))?;
                 Ok(steps.collect::<Result<Vec<String>, _>>()?)
             })
             .await
@@ -176,13 +204,37 @@ mod tests {
         realtime.fetch_priority = Priority::Realtime;
         store.signatures().record_listing(realtime).await.unwrap();
 
-        let due = store.fetch_queue().due(listed_at(), 10).await.unwrap();
+        let queue = store.fetch_queue();
+        let due = queue.due(listed_at(), 10, Priority::History).await.unwrap();
 
         let order: Vec<u64> = due.iter().map(|task| task.slot).collect();
         assert_eq!(order, vec![20, 30, 10]);
-        assert_eq!(
-            store.fetch_queue().due(listed_at(), 1).await.unwrap().len(),
-            1
-        );
+        let first = queue.due(listed_at(), 1, Priority::History).await.unwrap();
+        assert_eq!(first.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn leaves_the_deferred_classes_out_of_the_due_tasks_and_the_next_attempt() {
+        let (_folder, store) = store_with_wallet().await;
+        let history = history_page(WALLET, vec![listed(2, 30)]);
+        store
+            .signatures()
+            .record_listing(history.clone())
+            .await
+            .unwrap();
+        let mut realtime = page_after(&history, vec![listed(4, 20)]);
+        realtime.fetch_priority = Priority::Realtime;
+        realtime.listed_at = later(60);
+        store.signatures().record_listing(realtime).await.unwrap();
+        let queue = store.fetch_queue();
+
+        let due = queue.due(later(60), 10, Priority::Realtime).await.unwrap();
+        let next = queue.next_attempt_at(Priority::Realtime).await.unwrap();
+
+        let order: Vec<u64> = due.iter().map(|task| task.slot).collect();
+        assert_eq!(order, vec![20]);
+        assert_eq!(next, Some(later(60)));
+        let every_class = queue.next_attempt_at(Priority::History).await.unwrap();
+        assert_eq!(every_class, Some(listed_at()));
     }
 }

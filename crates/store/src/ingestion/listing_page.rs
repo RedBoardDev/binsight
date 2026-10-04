@@ -190,7 +190,11 @@ mod tests {
         );
         let counts = store.fetch_queue().counts(WALLET).await.unwrap();
         assert_eq!(counts.listed, 0);
-        let due = store.fetch_queue().due(listed_at(), 10).await.unwrap();
+        let due = store
+            .fetch_queue()
+            .due(listed_at(), 10, Priority::History)
+            .await
+            .unwrap();
         assert_eq!(due, Vec::new());
     }
 
@@ -205,7 +209,11 @@ mod tests {
             assert_eq!(store.signatures().record_listing(page).await.unwrap(), 1);
         }
 
-        let due = store.fetch_queue().due(listed_at(), 10).await.unwrap();
+        let due = store
+            .fetch_queue()
+            .due(listed_at(), 10, Priority::History)
+            .await
+            .unwrap();
         assert_eq!(due.len(), 1);
         assert_eq!(store.fetch_queue().counts(other).await.unwrap().listed, 1);
     }

@@ -10,6 +10,7 @@ mod fetch_outcome;
 
 use std::time::Duration;
 
+use binsight_core::credits::Priority;
 use jiff::Timestamp;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
@@ -68,7 +69,7 @@ async fn fetch_due_tasks(ingestion: &Ingestion, shutdown: &CancellationToken) ->
     let tasks = match ingestion
         .store
         .fetch_queue()
-        .due(now, FETCH_BATCH_SIZE)
+        .due(now, FETCH_BATCH_SIZE, Priority::Valuation)
         .await
     {
         Ok(tasks) => tasks,
@@ -90,7 +91,12 @@ async fn fetch_due_tasks(ingestion: &Ingestion, shutdown: &CancellationToken) ->
 
 /// How long to sleep when nothing is due: until the next task falls due, at most a minute.
 async fn idle_wait(ingestion: &Ingestion, now: Timestamp) -> Duration {
-    match ingestion.store.fetch_queue().next_attempt_at().await {
+    match ingestion
+        .store
+        .fetch_queue()
+        .next_attempt_at(Priority::Valuation)
+        .await
+    {
         Ok(Some(next)) => time_until(now, next).min(IDLE_RECHECK),
         Ok(None) => IDLE_RECHECK,
         Err(error) => {
