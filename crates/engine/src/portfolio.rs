@@ -23,7 +23,7 @@ pub use instance_status::InstanceStatus;
 pub use not_ready::NotReadyPortfolio;
 pub use read_error::ReadError;
 pub use read_model::{
-    InstanceReads, PortfolioReads, PositionReads, ReadModel, StatsReads, WalletReads,
+    HistoryReads, InstanceReads, PortfolioReads, PositionReads, ReadModel, StatsReads, WalletReads,
 };
 pub use scope::{ReadContext, Scope};
 pub use snapshot::{

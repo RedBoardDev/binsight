@@ -4,12 +4,14 @@
 //! what a source of figures implements (the demo world today, the engine later). Every method
 //! answers a boxed future, so a source can be shared as `Arc<dyn ReadModel>`.
 
+mod history;
 mod instance;
 mod portfolio;
 mod positions;
 mod stats;
 mod wallets;
 
+pub use history::HistoryReads;
 pub use instance::InstanceReads;
 pub use portfolio::PortfolioReads;
 pub use positions::PositionReads;
@@ -18,11 +20,11 @@ pub use wallets::WalletReads;
 
 /// Everything the API reads, implemented once per source of figures.
 pub trait ReadModel:
-    InstanceReads + WalletReads + PortfolioReads + PositionReads + StatsReads
+    InstanceReads + WalletReads + PortfolioReads + HistoryReads + PositionReads + StatsReads
 {
 }
 
 impl<T> ReadModel for T where
-    T: InstanceReads + WalletReads + PortfolioReads + PositionReads + StatsReads
+    T: InstanceReads + WalletReads + PortfolioReads + HistoryReads + PositionReads + StatsReads
 {
 }

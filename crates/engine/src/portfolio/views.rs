@@ -5,6 +5,7 @@
 //! figure comes from `binsight_ledger::report`, applied by the queries.
 
 mod closed;
+mod history;
 mod logo;
 mod overview;
 mod position;
@@ -19,6 +20,7 @@ pub use closed::{
     ClosedDay, ClosedPositionRow, ClosedTotalsView, PnlMethodView, RECENT_CLOSES_PER_DAY,
     RecentClosesView,
 };
+pub use history::{ClosedKey, ClosedPage, DayGroup, PoolOption};
 pub use logo::TokenLogoImage;
 pub use overview::{
     GainView, NetWorthView, OpenSummary, OverviewSync, OverviewView, TodayView, UnpricedHolding,

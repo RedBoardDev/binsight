@@ -52,7 +52,7 @@ impl OpenSort {
 
 impl SortOrder {
     /// `ordering` in this direction.
-    pub(super) fn apply(self, ordering: Ordering) -> Ordering {
+    pub(in crate::portfolio::query) fn apply(self, ordering: Ordering) -> Ordering {
         match self {
             Self::Ascending => ordering,
             Self::Descending => ordering.reverse(),
@@ -105,7 +105,11 @@ fn pair(row: &OpenPositionRow) -> (Option<String>, Option<String>) {
 }
 
 /// Orders `left` and `right` by their known values; unknown values come last whatever the order.
-pub(super) fn known_last<T: Ord>(left: Option<T>, right: Option<T>, order: SortOrder) -> Ordering {
+pub(in crate::portfolio::query) fn known_last<T: Ord>(
+    left: Option<T>,
+    right: Option<T>,
+    order: SortOrder,
+) -> Ordering {
     match (left, right) {
         (Some(left), Some(right)) => order.apply(left.cmp(&right)),
         (Some(_), None) => Ordering::Less,

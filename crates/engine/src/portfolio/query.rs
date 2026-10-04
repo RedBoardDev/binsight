@@ -6,6 +6,7 @@
 //! never do I/O, so the demo world and the engine answer with the same semantics.
 
 mod closed_rows;
+mod history;
 mod overview;
 mod positions;
 mod recent_closes;
@@ -16,6 +17,10 @@ mod sync;
 mod wallets;
 mod window;
 
+pub use history::{
+    ClosedPageRequest, ClosedQuery, ClosedSort, MAX_CLOSED_PAGE, MAX_POOL_OPTIONS,
+    MAX_SEARCH_CHARS, PoolQuery, PoolSelection, SearchText, SearchTextError, closed_page, pools,
+};
 pub use overview::{OverviewRequest, overview};
 pub use positions::{
     CandleRequest, EventPageRequest, IntervalChoice, MAX_CANDLES, MAX_EVENT_PAGE,

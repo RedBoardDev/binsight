@@ -14,4 +14,5 @@ pub use chart::MAX_CANDLES;
 pub use detail::{PositionRequest, position};
 pub use events::{EventPageRequest, MAX_EVENT_PAGE, position_events};
 pub use open::{OpenPositionsRequest, open_positions};
+pub(super) use sort::known_last;
 pub use sort::{OpenSort, SortOrder};

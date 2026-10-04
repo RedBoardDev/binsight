@@ -4,16 +4,17 @@ use std::sync::Arc;
 
 use binsight_core::clock::Clock;
 use binsight_engine::portfolio::query::{
-    EventPageRequest, IntervalChoice, OpenPositionsRequest, OverviewRequest, PositionRequest,
-    SeriesRequest,
+    ClosedPageRequest, ClosedQuery, EventPageRequest, IntervalChoice, OpenPositionsRequest,
+    OverviewRequest, PoolQuery, PositionRequest, SeriesRequest,
 };
 use binsight_engine::portfolio::views::{
-    CandlesView, EventPage, InstanceSettings, OpenPositionsView, OverviewView, PositionDetailView,
-    RecentClosesView, SeriesView, SyncReport, TokenLogoImage, WalletsView,
+    CandlesView, ClosedPage, EventPage, InstanceSettings, OpenPositionsView, OverviewView,
+    PoolOption, PositionDetailView, RecentClosesView, SeriesView, SyncReport, TokenLogoImage,
+    WalletsView,
 };
 use binsight_engine::portfolio::{
-    Answer, InstanceReads, PortfolioReads, PositionReads, ReadContext, Scope, StatsReads,
-    WalletReads, answered, query,
+    Answer, HistoryReads, InstanceReads, PortfolioReads, PositionReads, ReadContext, Scope,
+    StatsReads, WalletReads, answered, query,
 };
 use binsight_ledger::facts::PositionId;
 use binsight_ledger::report::valued::Currency;
@@ -110,6 +111,21 @@ impl PortfolioReads for DemoPortfolio {
             currency,
             &self.context(),
         ))
+    }
+}
+
+impl HistoryReads for DemoPortfolio {
+    fn closed_page(&self, query: ClosedQuery, page: ClosedPageRequest) -> Answer<'_, ClosedPage> {
+        answered(query::closed_page(
+            &self.world.snapshot,
+            &query,
+            page,
+            &self.context(),
+        ))
+    }
+
+    fn pools(&self, query: PoolQuery) -> Answer<'_, Vec<PoolOption>> {
+        answered(query::pools(&self.world.snapshot, &query))
     }
 }
 
