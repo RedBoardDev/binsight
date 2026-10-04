@@ -1,15 +1,16 @@
 //! A cursor over a byte slice that reads little-endian integers and Solana's compact-u16.
 //!
 //! Transactions and instruction data are untrusted bytes, so every read checks that the bytes are
-//! there and returns [`MalformedBytes`] otherwise, instead of panicking. This module knows nothing
-//! about what the bytes mean.
+//! there and returns [`MalformedBytes`] otherwise, instead of panicking. The fields of a Solana
+//! program's instructions and events are written this way (Borsh), so the crates that decode one
+//! program read them with this cursor too. This module knows nothing about what the bytes mean.
 
 use crate::Address;
 use crate::error::MalformedBytes;
 
 /// Reads values one after the other from a byte slice.
 #[derive(Debug)]
-pub(crate) struct ByteReader<'a> {
+pub struct ByteReader<'a> {
     bytes: &'a [u8],
     offset: usize,
 }
@@ -22,12 +23,12 @@ const COMPACT_U16_CONTINUATION: u8 = 0x80;
 
 impl<'a> ByteReader<'a> {
     /// A reader positioned at the first byte of `bytes`.
-    pub(crate) fn new(bytes: &'a [u8]) -> Self {
+    pub fn new(bytes: &'a [u8]) -> Self {
         Self { bytes, offset: 0 }
     }
 
     /// How many bytes have been read so far.
-    pub(crate) fn offset(&self) -> usize {
+    pub fn offset(&self) -> usize {
         self.offset
     }
 
@@ -37,7 +38,11 @@ impl<'a> ByteReader<'a> {
     }
 
     /// Refuses bytes left after the last value read.
-    pub(crate) fn finish(&self, what: &'static str) -> Result<(), MalformedBytes> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MalformedBytes::TrailingBytes`] when bytes are left.
+    pub fn finish(&self, what: &'static str) -> Result<(), MalformedBytes> {
         match self.remaining() {
             0 => Ok(()),
             count => Err(MalformedBytes::TrailingBytes { what, count }),
@@ -45,7 +50,11 @@ impl<'a> ByteReader<'a> {
     }
 
     /// The next `length` bytes.
-    pub(crate) fn read_bytes(
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MalformedBytes::UnexpectedEnd`] when the bytes end before the value.
+    pub fn read_bytes(
         &mut self,
         length: usize,
         what: &'static str,
@@ -61,7 +70,11 @@ impl<'a> ByteReader<'a> {
     }
 
     /// The next `N` bytes as an array.
-    pub(crate) fn read_array<const N: usize>(
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MalformedBytes::UnexpectedEnd`] when the bytes end before the value.
+    pub fn read_array<const N: usize>(
         &mut self,
         what: &'static str,
     ) -> Result<[u8; N], MalformedBytes> {
@@ -71,7 +84,11 @@ impl<'a> ByteReader<'a> {
     }
 
     /// The next byte, without moving past it.
-    pub(crate) fn peek_u8(&self, what: &'static str) -> Result<u8, MalformedBytes> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MalformedBytes::UnexpectedEnd`] when the bytes end before the value.
+    pub fn peek_u8(&self, what: &'static str) -> Result<u8, MalformedBytes> {
         self.bytes
             .get(self.offset)
             .copied()
@@ -82,33 +99,100 @@ impl<'a> ByteReader<'a> {
     }
 
     /// One byte.
-    pub(crate) fn read_u8(&mut self, what: &'static str) -> Result<u8, MalformedBytes> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MalformedBytes::UnexpectedEnd`] when the bytes end before the value.
+    pub fn read_u8(&mut self, what: &'static str) -> Result<u8, MalformedBytes> {
         self.read_array::<1>(what).map(u8::from_le_bytes)
     }
 
     /// A little-endian `u16`.
-    pub(crate) fn read_u16(&mut self, what: &'static str) -> Result<u16, MalformedBytes> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MalformedBytes::UnexpectedEnd`] when the bytes end before the value.
+    pub fn read_u16(&mut self, what: &'static str) -> Result<u16, MalformedBytes> {
         self.read_array(what).map(u16::from_le_bytes)
     }
 
     /// A little-endian `u32`.
-    pub(crate) fn read_u32(&mut self, what: &'static str) -> Result<u32, MalformedBytes> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MalformedBytes::UnexpectedEnd`] when the bytes end before the value.
+    pub fn read_u32(&mut self, what: &'static str) -> Result<u32, MalformedBytes> {
         self.read_array(what).map(u32::from_le_bytes)
     }
 
     /// A little-endian `u64`.
-    pub(crate) fn read_u64(&mut self, what: &'static str) -> Result<u64, MalformedBytes> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MalformedBytes::UnexpectedEnd`] when the bytes end before the value.
+    pub fn read_u64(&mut self, what: &'static str) -> Result<u64, MalformedBytes> {
         self.read_array(what).map(u64::from_le_bytes)
     }
 
+    /// A little-endian `u128`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MalformedBytes::UnexpectedEnd`] when the bytes end before the value.
+    pub fn read_u128(&mut self, what: &'static str) -> Result<u128, MalformedBytes> {
+        self.read_array(what).map(u128::from_le_bytes)
+    }
+
+    /// A little-endian `i16`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MalformedBytes::UnexpectedEnd`] when the bytes end before the value.
+    pub fn read_i16(&mut self, what: &'static str) -> Result<i16, MalformedBytes> {
+        self.read_array(what).map(i16::from_le_bytes)
+    }
+
+    /// A little-endian `i32`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MalformedBytes::UnexpectedEnd`] when the bytes end before the value.
+    pub fn read_i32(&mut self, what: &'static str) -> Result<i32, MalformedBytes> {
+        self.read_array(what).map(i32::from_le_bytes)
+    }
+
+    /// A boolean: one byte, 0 or 1 (Borsh refuses any other value, and so does this reader).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MalformedBytes::UnexpectedEnd`] when the bytes end before the value, and
+    /// [`MalformedBytes::InvalidBool`] when the byte is neither 0 nor 1.
+    pub fn read_bool(&mut self, what: &'static str) -> Result<bool, MalformedBytes> {
+        let offset = self.offset;
+        match self.read_u8(what)? {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(MalformedBytes::InvalidBool { what, offset }),
+        }
+    }
+
     /// A 32-byte address.
-    pub(crate) fn read_address(&mut self, what: &'static str) -> Result<Address, MalformedBytes> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MalformedBytes::UnexpectedEnd`] when the bytes end before the value.
+    pub fn read_address(&mut self, what: &'static str) -> Result<Address, MalformedBytes> {
         self.read_array(what).map(Address::from_bytes)
     }
 
     /// A compact-u16: 7 bits per byte, low bits first, at most 3 bytes, in its shortest form
     /// (the rules the Solana runtime applies, so a value it would refuse is refused here too).
-    pub(crate) fn read_compact_u16(&mut self, what: &'static str) -> Result<u16, MalformedBytes> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MalformedBytes::UnexpectedEnd`] when the bytes end before the value, and
+    /// [`MalformedBytes::InvalidCompactU16`] when the encoding is not one the runtime accepts.
+    pub fn read_compact_u16(&mut self, what: &'static str) -> Result<u16, MalformedBytes> {
         let invalid = MalformedBytes::InvalidCompactU16 {
             what,
             offset: self.offset,
@@ -159,6 +243,33 @@ mod tests {
         assert_eq!(reader.read_u32("c"), Ok(3));
         assert_eq!(reader.read_u64("d"), Ok(4));
         assert_eq!(reader.remaining(), 0);
+    }
+
+    #[test]
+    fn reads_signed_and_wide_integers_in_little_endian() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&(-2_i16).to_le_bytes());
+        bytes.extend_from_slice(&(-443_636_i32).to_le_bytes());
+        bytes.extend_from_slice(&(u128::MAX - 1).to_le_bytes());
+        let mut reader = ByteReader::new(&bytes);
+        assert_eq!(reader.read_i16("a"), Ok(-2));
+        assert_eq!(reader.read_i32("b"), Ok(-443_636));
+        assert_eq!(reader.read_u128("c"), Ok(u128::MAX - 1));
+        assert_eq!(reader.finish("the values"), Ok(()));
+    }
+
+    #[test]
+    fn refuses_a_boolean_that_is_neither_0_nor_1() {
+        let mut reader = ByteReader::new(&[1, 0, 2]);
+        assert_eq!(reader.read_bool("a"), Ok(true));
+        assert_eq!(reader.read_bool("b"), Ok(false));
+        assert_eq!(
+            reader.read_bool("the side"),
+            Err(MalformedBytes::InvalidBool {
+                what: "the side",
+                offset: 2
+            })
+        );
     }
 
     #[test]

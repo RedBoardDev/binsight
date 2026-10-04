@@ -2,8 +2,8 @@
 //!
 //! **Responsibility:** Solana primitives without any network access: base58 addresses,
 //! transaction signatures, commitment levels, reading legacy, version 0 and version 1
-//! transactions from a node's answer, and decoding the instructions of the native and SPL
-//! programs.
+//! transactions from a node's answer, decoding the instructions of the native and SPL programs,
+//! and the little-endian byte cursor other programs' decoders read their fields with.
 //!
 //! **May depend on:** `binsight-core`.
 //! **Must not depend on:** `binsight-dlmm`, `binsight-ledger`, `binsight-store`, `binsight-chain`,
@@ -30,6 +30,7 @@ pub mod transaction;
 pub mod well_known;
 
 pub use address::Address;
+pub use byte_reader::ByteReader;
 pub use commitment::Commitment;
 pub use error::{MalformedBytes, ParseError};
 pub use signature::Signature;

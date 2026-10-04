@@ -75,6 +75,20 @@ pub enum MalformedBytes {
         /// How many bytes are left.
         count: usize,
     },
+    /// A boolean byte is neither 0 nor 1.
+    #[error("invalid boolean for {what} (offset {offset})")]
+    InvalidBool {
+        /// What was being read.
+        what: &'static str,
+        /// Where the value starts.
+        offset: usize,
+    },
+    /// A value read from several fields does not fit its type.
+    #[error("{what} is too large")]
+    TooLarge {
+        /// What was being computed.
+        what: &'static str,
+    },
     /// A compact-u16 is longer than 3 bytes, above `u16::MAX`, or not in its shortest form.
     #[error("invalid compact-u16 for {what} (offset {offset})")]
     InvalidCompactU16 {
