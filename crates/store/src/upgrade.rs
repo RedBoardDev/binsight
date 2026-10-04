@@ -47,7 +47,8 @@ pub struct UpgradeReport {
     pub to_version: u32,
     /// The names of the migrations applied, in order (empty if the schema was up to date).
     pub applied: Vec<&'static str>,
-    /// The backup taken before the upgrade, if one was needed.
+    /// The backup of the database as it was before the upgrade, if one was needed (an identical
+    /// backup left by an earlier failed start is reused rather than copied again).
     pub backup: Option<PathBuf>,
 }
 
@@ -66,7 +67,7 @@ impl Store {
     /// Opens the database at `path`, creating it if needed, and brings it up to date.
     ///
     /// An existing database is first backed up when migrations are pending or when a different
-    /// binsight version last opened it; old backups are then rotated.
+    /// binsight version last opened it; old backups are then rotated, before any migration runs.
     ///
     /// # Errors
     ///

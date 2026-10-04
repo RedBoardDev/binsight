@@ -10,18 +10,21 @@
 
 mod naming;
 mod rotation;
+mod twin;
 
 use std::ffi::OsString;
 use std::fs::OpenOptions;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use jiff::Timestamp;
 use rusqlite::Connection;
 
 use crate::error::StoreError;
 use naming::alternative_name;
 pub(crate) use naming::backup_file_name;
 pub(crate) use rotation::rotate_backups;
+use twin::{has_same_content, latest_backup_of};
 
 /// Appended to the name of a backup while it is being written.
 const PARTIAL_SUFFIX: &str = ".partial";
@@ -50,6 +53,30 @@ pub(crate) fn write_backup(
 ) -> Result<PathBuf, StoreError> {
     let partial = write_partial_backup(connection, destination)?;
     finish_backup(&partial, &free_destination(destination))
+}
+
+/// Like [`write_backup`], unless the newest backup taken by `binary_version` of a database at
+/// `schema_version` already holds exactly the same bytes: then nothing is added and that backup's
+/// path is returned. A copy of an unchanged database is identical, so a start that keeps failing
+/// after its backup does not pile up copies of the same database.
+pub(crate) fn write_backup_unless_identical(
+    connection: &Connection,
+    folder: &Path,
+    now: Timestamp,
+    versions: (&str, u32),
+) -> Result<PathBuf, StoreError> {
+    let (binary_version, schema_version) = versions;
+    let destination = folder.join(backup_file_name(now, binary_version, schema_version));
+    let partial = write_partial_backup(connection, &destination)?;
+    let twin = latest_backup_of(folder, binary_version, schema_version)
+        .filter(|existing| has_same_content(existing, &partial).unwrap_or(false));
+    match twin {
+        Some(existing) => {
+            discard(&partial);
+            Ok(existing)
+        }
+        None => finish_backup(&partial, &free_destination(&destination)),
+    }
 }
 
 /// Copies the database to `<destination>.partial` and returns that path; nothing is left behind
@@ -138,8 +165,6 @@ fn create_private_file(path: &Path) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use jiff::Timestamp;
-
     use super::naming::is_backup_file_name;
     use super::*;
 
@@ -227,5 +252,35 @@ mod tests {
         assert!(first.exists() && second.exists());
         let second_name = second.file_name().unwrap().to_str().unwrap();
         assert!(is_backup_file_name(second_name), "{second_name}");
+    }
+
+    #[test]
+    fn adds_no_backup_when_the_newest_one_is_identical() {
+        let folder = tempfile::tempdir().unwrap();
+        let connection = database_with_one_table(folder.path());
+        let backups = folder.path().join("backups");
+        let at = |second| Timestamp::from_second(second).unwrap();
+
+        let first = write_backup_unless_identical(&connection, &backups, at(0), ("0.2.0", 1));
+        let again = write_backup_unless_identical(&connection, &backups, at(60), ("0.2.0", 1));
+
+        assert_eq!(first.unwrap(), again.unwrap());
+        assert_eq!(file_names(&backups).len(), 1);
+    }
+
+    #[test]
+    fn adds_a_backup_when_the_database_changed() {
+        let folder = tempfile::tempdir().unwrap();
+        let connection = database_with_one_table(folder.path());
+        let backups = folder.path().join("backups");
+        let at = |second| Timestamp::from_second(second).unwrap();
+        write_backup_unless_identical(&connection, &backups, at(0), ("0.2.0", 1)).unwrap();
+
+        connection
+            .execute("INSERT INTO kept VALUES ('new')", [])
+            .unwrap();
+        write_backup_unless_identical(&connection, &backups, at(60), ("0.2.0", 1)).unwrap();
+
+        assert_eq!(file_names(&backups).len(), 2);
     }
 }

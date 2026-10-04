@@ -1,19 +1,23 @@
 //! The ordered steps of an upgrade, on the writer connection.
 //!
 //! 1. Read the migration history and refuse a database this binary cannot use.
-//! 2. Back up an existing database if migrations are pending or the binary version changed.
+//! 2. Back up an existing database if migrations are pending or the binary version changed, then
+//!    rotate the old backups.
 //! 3. Apply the pending migrations in one transaction.
-//! 4. Record the binary version and rotate the old backups.
+//! 4. Record the binary version.
 //!
 //! If the backup fails, nothing is migrated. A brand-new database is never backed up: there is
-//! nothing in it to lose.
+//! nothing in it to lose. Rotation comes before the migrations, so a migration that fails on
+//! every start (with a restart policy, in a loop) cannot fill the disk; and a backup identical to
+//! the newest one of the same versions is not written again, so those restarts do not push the
+//! older backups out either.
 
 use std::path::PathBuf;
 
 use rusqlite::Connection;
 use tracing::{info, warn};
 
-use super::backup::{backup_file_name, rotate_backups, write_backup};
+use super::backup::{rotate_backups, write_backup_unless_identical};
 use super::history::{ensure_history_table, read_applied};
 use super::migrate::{MigrationPlan, apply_migrations, plan_migrations};
 use super::migrations::Migration;
@@ -32,7 +36,9 @@ pub(crate) fn upgrade(
     let plan = plan_migrations(migrations, &applied)?;
     let is_new_database = applied.is_empty();
     let backup = if !is_new_database && needs_backup(connection, &plan, options)? {
-        Some(back_up_before_upgrade(connection, &plan, options)?)
+        let path = back_up_before_upgrade(connection, &plan, options)?;
+        rotate_old_backups(options);
+        Some(path)
     } else {
         None
     };
@@ -47,9 +53,6 @@ pub(crate) fn upgrade(
         MetaKey::LastStartedVersion,
         &options.binary_version,
     )?;
-    if backup.is_some() {
-        rotate_old_backups(options);
-    }
     let report = UpgradeReport {
         from_version: plan.current_version,
         to_version: plan.target_version(),
@@ -85,8 +88,9 @@ fn back_up_before_upgrade(
     plan: &MigrationPlan,
     options: &UpgradeOptions,
 ) -> Result<PathBuf, StoreError> {
-    let name = backup_file_name(options.now, &options.binary_version, plan.current_version);
-    let path = write_backup(connection, &options.backups.folder.join(name))?;
+    let versions = (options.binary_version.as_str(), plan.current_version);
+    let path =
+        write_backup_unless_identical(connection, &options.backups.folder, options.now, versions)?;
     info!(path = %path.display(), "database backed up before the upgrade");
     Ok(path)
 }
@@ -119,6 +123,11 @@ mod tests {
         name: "extra",
         sql: "CREATE TABLE extra (id INTEGER PRIMARY KEY) STRICT;",
     };
+    const BROKEN: Migration = Migration {
+        version: 2,
+        name: "broken",
+        sql: "NOT SQL AT ALL;",
+    };
 
     struct Setup {
         folder: tempfile::TempDir,
@@ -148,8 +157,25 @@ mod tests {
             upgrade(&mut self.connection, migrations, &options).unwrap()
         }
 
-        fn backup_count(&self) -> usize {
-            std::fs::read_dir(self.folder.path().join("backups")).map_or(0, Iterator::count)
+        /// The files in the backups folder, sorted (none if it does not exist).
+        fn backup_names(&self) -> Vec<String> {
+            let Ok(entries) = std::fs::read_dir(self.folder.path().join("backups")) else {
+                return Vec::new();
+            };
+            let mut names: Vec<String> = entries
+                .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+                .collect();
+            names.sort();
+            names
+        }
+
+        /// Starts `days` times in a row with a migration that always fails.
+        fn fail_to_migrate(&mut self, version: &str, days: std::ops::RangeInclusive<i64>) {
+            for day in days {
+                let options = self.options(version, day);
+                let result = upgrade(&mut self.connection, &[FOUNDATION, BROKEN], &options);
+                assert!(matches!(result, Err(StoreError::MigrationFailed { .. })));
+            }
         }
     }
 
@@ -160,7 +186,7 @@ mod tests {
         let report = setup.run(&[FOUNDATION], "0.1.0", 0);
 
         assert_eq!(report.backup, None);
-        assert_eq!(setup.backup_count(), 0);
+        assert_eq!(setup.backup_names().len(), 0);
     }
 
     #[test]
@@ -209,7 +235,55 @@ mod tests {
             setup.run(&[FOUNDATION], version, i64::try_from(day).unwrap() + 1);
         }
 
-        assert_eq!(setup.backup_count(), 3);
+        assert_eq!(setup.backup_names().len(), 3);
+    }
+
+    #[test]
+    fn backs_up_once_when_the_same_migration_keeps_failing() {
+        let mut setup = Setup::new();
+        setup.run(&[FOUNDATION], "0.1.0", 0);
+
+        setup.fail_to_migrate("0.2.0", 1..=10);
+
+        assert_eq!(setup.backup_names().len(), 1);
+    }
+
+    #[test]
+    fn keeps_the_older_backups_when_the_same_migration_keeps_failing() {
+        let mut setup = Setup::new();
+        setup.run(&[FOUNDATION], "0.1.0", 0);
+        setup.run(&[FOUNDATION], "0.1.1", 1);
+        setup.run(&[FOUNDATION], "0.1.2", 2);
+
+        setup.fail_to_migrate("0.2.0", 3..=12);
+
+        let names = setup.backup_names();
+        assert_eq!(names.len(), 3, "{names:?}");
+        assert!(
+            names.iter().any(|name| name.contains("-v0.1.2-")),
+            "{names:?}"
+        );
+        assert!(
+            names.iter().any(|name| name.contains("-v0.2.0-")),
+            "{names:?}"
+        );
+    }
+
+    #[test]
+    fn never_keeps_more_backups_than_asked_while_a_migration_fails() {
+        let mut setup = Setup::new();
+        setup.run(&[FOUNDATION], "0.1.0", 0);
+
+        for day in 1..=10 {
+            // Each failed start finds the database changed, so each one backs it up.
+            setup
+                .connection
+                .execute_batch(&format!("CREATE TABLE changed_{day} (id INTEGER) STRICT"))
+                .unwrap();
+            setup.fail_to_migrate("0.2.0", day..=day);
+        }
+
+        assert_eq!(setup.backup_names().len(), 3);
     }
 
     #[cfg(unix)]
