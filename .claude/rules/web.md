@@ -47,6 +47,10 @@ React + TypeScript (strict) + Vite, served as a same-origin SPA by the Rust bina
 
 - Reuse order: `Shared/Ui` compositions → `@heroui/react` → a composition of both. Never a home-made primitive.
 - Theme tokens only: no hex colors and no `dark:` variants in components. Icons from `lucide-react`.
+- Text sizes come from the named scale of `core/theme/typography.css` (`text-hero` … `text-micro`, `caps-label`),
+  never a Tailwind size (`text-sm`) or an arbitrary one (`text-[13px]`). Figures use `num` (tabular digits).
+- The app-wide look of a HeroUI component lives in `core/theme/heroui-components.css`; an instance only gets layout
+  classes.
 - `onPress`, never `onClick`. Touch targets ≥ 44 px.
 - The shell: a translucent top bar from `lg` (64rem) and a floating tab bar below it; content sits in one centred
   column. The document scrolls, never an inner `main`.

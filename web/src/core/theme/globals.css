@@ -6,6 +6,8 @@
 @import "./typography.css";
 @import "./midnight.css";
 @import "./heroui-bridge.css";
+@import "./heroui-components.css";
+@import "./base.css";
 
 html,
 body,

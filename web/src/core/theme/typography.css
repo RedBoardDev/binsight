@@ -42,7 +42,85 @@
     U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
+/*
+ * The type scale. These names are the only text sizes of the app (Tailwind's own sizes stay for
+ * HeroUI's internals). Each size carries its leading and its tracking: large text is tightened,
+ * small capitals are opened up, body text stays at 0.
+ */
 @theme {
   --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+
+  /* Today on a desktop. */
+  --text-hero: 3.25rem;
+  --text-hero--line-height: 1;
+  --text-hero--letter-spacing: -0.035em;
+  --text-hero--font-weight: 600;
+  /* The Real PnL of Stats, or a hero in a narrow column. */
+  --text-hero-compact: 2.75rem;
+  --text-hero-compact--line-height: 1;
+  --text-hero-compact--letter-spacing: -0.035em;
+  --text-hero-compact--font-weight: 600;
+  /* A hero on a phone. */
+  --text-hero-phone: 2.25rem;
+  --text-hero-phone--line-height: 1;
+  --text-hero-phone--letter-spacing: -0.03em;
+  --text-hero-phone--font-weight: 600;
+  /* A page title on a desktop (a phone uses text-key). */
+  --text-page-title: 1.5rem;
+  --text-page-title--line-height: 2rem;
+  --text-page-title--letter-spacing: -0.02em;
+  --text-page-title--font-weight: 600;
+  /* A key figure: the drawer's figures, Net worth. */
+  --text-key: 1.25rem;
+  --text-key--line-height: 1.75rem;
+  --text-key--letter-spacing: -0.02em;
+  --text-key--font-weight: 600;
+  /* A pair of performance figures. */
+  --text-pair: 1.0625rem;
+  --text-pair--line-height: 1.5rem;
+  --text-pair--letter-spacing: -0.015em;
+  --text-pair--font-weight: 600;
+  /* A section title. */
+  --text-section: 1rem;
+  --text-section--line-height: 1.5rem;
+  --text-section--letter-spacing: -0.01em;
+  --text-section--font-weight: 600;
+  /* Rows, totals, body copy. */
+  --text-body: 0.875rem;
+  --text-body--line-height: 1.25rem;
+  /* Menus, row labels, secondary copy. */
+  --text-meta: 0.8125rem;
+  --text-meta--line-height: 1.125rem;
+  /* Sublines and metadata. */
+  --text-small: 0.75rem;
+  --text-small--line-height: 1rem;
+  /* Capital labels: column headers, the drawer's and the phone's labels (see caps-label). */
+  --text-label: 0.6875rem;
+  --text-label--line-height: 1rem;
+  --text-label--letter-spacing: 0.06em;
+  --text-label--font-weight: 500;
+  /* The labels of the floating tab bar. */
+  --text-micro: 0.625rem;
+  --text-micro--line-height: 0.75rem;
+  --text-micro--letter-spacing: 0.01em;
+  --text-micro--font-weight: 600;
+}
+
+/* Figures line up in columns. */
+@utility num {
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * A capital label. Never name it "label": HeroUI renders every <Label> with that class, and each
+ * menu option would turn into capitals.
+ */
+@utility caps-label {
+  font-size: var(--text-label);
+  line-height: var(--text-label--line-height);
+  letter-spacing: var(--text-label--letter-spacing);
+  font-weight: var(--text-label--font-weight);
+  text-transform: uppercase;
+  color: var(--faint);
 }

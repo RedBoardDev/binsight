@@ -17,7 +17,7 @@ export const HealthReport = ({ health }: HealthReportProps) => {
   const { i18n, t } = useLingui();
 
   return (
-    <dl className="grid grid-cols-[auto_1fr] items-center gap-x-6 gap-y-3 text-sm">
+    <dl className="grid grid-cols-[auto_1fr] items-center gap-x-6 gap-y-3 text-body">
       <dt className="text-muted">{t`Status`}</dt>
       <dd>
         <Chip color={STATUS_COLORS[health.status]} variant="soft">

@@ -6,7 +6,7 @@ import { ThemeSwitcher } from '@app/core/theme/ThemeSwitcher';
 // Wraps onto a second row on narrow screens rather than pushing its last buttons off-screen.
 export const AppHeader = () => (
   <header className="flex min-h-16 shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-border border-b bg-surface px-4 py-2">
-    <span className="font-semibold text-accent text-lg md:hidden">binsight</span>
+    <span className="text-accent text-section md:hidden">binsight</span>
     <RealtimeStatusIndicator />
     <div className="ml-auto flex items-center gap-2">
       <LocaleSwitcher />

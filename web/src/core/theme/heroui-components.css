@@ -1,0 +1,54 @@
+/*
+ * The app-wide look of HeroUI components, in one place: a component passes only layout classes.
+ * Selectors are HeroUI's BEM classes. Everything here stays in the components layer, so a layout
+ * utility on one instance still wins.
+ */
+@layer components {
+  /* Controls are rounded rectangles (radius 10), not capsules; capsules are for pills. */
+  .button,
+  .toggle-button {
+    border-radius: var(--field-radius);
+  }
+
+  /* Floating layers: the elevated tone, a soft shadow, no border, radius 12. */
+  .popover,
+  .dropdown__popover,
+  .select__popover,
+  .tooltip {
+    border-radius: var(--radius);
+  }
+
+  .tooltip {
+    max-width: 17.5rem;
+    color: var(--overlay-foreground);
+    font-size: var(--text-small);
+    line-height: var(--text-small--line-height);
+    font-weight: 500;
+    word-break: normal;
+  }
+
+  .list-box-item,
+  .menu-item {
+    border-radius: 0.5rem;
+  }
+
+  /* The drawer is an opaque card, the page behind is veiled without blur. */
+  .drawer__dialog {
+    background: var(--surface);
+  }
+
+  .drawer__backdrop,
+  .modal__backdrop {
+    background: var(--backdrop);
+    backdrop-filter: none;
+  }
+
+  /* A finger needs 44 px, whatever the visual size of the control. */
+  @media (pointer: coarse) {
+    .button,
+    .toggle-button {
+      min-height: 2.75rem;
+      min-width: 2.75rem;
+    }
+  }
+}

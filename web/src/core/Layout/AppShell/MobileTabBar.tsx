@@ -15,7 +15,7 @@ export const MobileTabBar = () => {
           key={to}
           to={to}
           activeOptions={{ exact: true }}
-          className="flex min-h-14 flex-1 flex-col items-center justify-center gap-1 font-medium text-muted text-xs data-[status=active]:text-accent"
+          className="flex min-h-14 flex-1 flex-col items-center justify-center gap-1 font-medium text-muted text-small data-[status=active]:text-accent"
         >
           <Icon aria-hidden className="size-5" />
           {i18n._(label)}

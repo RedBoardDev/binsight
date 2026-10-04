@@ -7,7 +7,7 @@ export const DashboardPage = () => {
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="font-semibold text-2xl">{t`Dashboard`}</h1>
+      <h1 className="text-page-title">{t`Dashboard`}</h1>
       <div className="grid gap-4 md:grid-cols-2">
         <HealthCard />
         <RealtimeStatusCard />

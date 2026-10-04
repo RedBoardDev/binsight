@@ -10,7 +10,7 @@ interface ErrorScreenProps {
 export const ErrorScreen = ({ title, description, action }: ErrorScreenProps) => (
   <div className="grid h-full place-content-center justify-items-center gap-4 p-6 text-center">
     <CircleAlert aria-hidden className="size-10 text-muted" />
-    <h1 className="font-semibold text-xl">{title}</h1>
+    <h1 className="text-key">{title}</h1>
     <p className="max-w-md text-muted">{description}</p>
     {action}
   </div>

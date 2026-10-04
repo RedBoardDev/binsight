@@ -10,14 +10,14 @@ export const AboutFooter = () => {
   const health = useHealth();
 
   return (
-    <footer className="mt-auto flex flex-wrap items-center gap-x-2 px-3 py-2 text-muted text-xs">
+    <footer className="mt-auto flex flex-wrap items-center gap-x-2 px-3 py-2 text-muted text-small">
       <span>binsight{health.data === undefined ? '' : ` v${health.data.version}`}</span>
       <span aria-hidden>·</span>
-      <Link href={LICENSES_PATH} target="_blank" className="text-xs">
+      <Link href={LICENSES_PATH} target="_blank" className="text-small">
         {t`Licenses`}
       </Link>
       <span aria-hidden>·</span>
-      <Link href={SOURCE_CODE_URL} target="_blank" rel="noreferrer" className="text-xs">
+      <Link href={SOURCE_CODE_URL} target="_blank" rel="noreferrer" className="text-small">
         GitHub
       </Link>
     </footer>
