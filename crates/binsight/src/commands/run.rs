@@ -90,7 +90,11 @@ async fn serve(config: Config) -> Result<(), Failure> {
     outcome
 }
 
-async fn open_store(data_dir: &LockedDataDir, clock: &dyn Clock) -> Result<Store, Failure> {
+/// Opens the database of `data_dir`, creating it or upgrading it first (after a backup).
+pub(in crate::commands) async fn open_store(
+    data_dir: &LockedDataDir,
+    clock: &dyn Clock,
+) -> Result<Store, Failure> {
     let options = UpgradeOptions {
         binary_version: VERSION.to_owned(),
         now: clock.now(),

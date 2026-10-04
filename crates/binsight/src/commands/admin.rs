@@ -4,9 +4,16 @@
 //! - `backup` writes a backup now; it only reads the database, so it works while `run` runs;
 //! - `db-status` shows the schema version, the pending migrations and the projections;
 //! - `rotate-sessions` signs everyone out; it writes, so it takes the data folder lock and
-//!   refuses while `run` runs.
+//!   refuses while `run` runs;
+//! - `wallet-add` tracks a wallet; it writes too, so the same applies, and it creates or upgrades
+//!   the database like `run`;
+//! - `sync-status` shows each wallet's import and the credits spent, and `export-tx` prints a
+//!   stored transaction; both only read, so they work while `run` runs.
 
 mod effective_config;
+mod export_tx;
+mod sync_status;
+mod wallet_add;
 
 use std::path::Path;
 
@@ -22,6 +29,9 @@ use crate::failure::Failure;
 use crate::instance_secrets::rotate_session_secret;
 use crate::output::print_line;
 use effective_config::describe;
+use export_tx::export_tx;
+use sync_status::show_sync_status;
+use wallet_add::add_wallet;
 
 /// Runs one maintenance task.
 pub(super) fn execute(config_file: Option<&Path>, command: &AdminCommand) -> Result<(), Failure> {
@@ -34,6 +44,9 @@ pub(super) fn execute(config_file: Option<&Path>, command: &AdminCommand) -> Res
         AdminCommand::Backup => block_on(back_up(&config)),
         AdminCommand::DbStatus => block_on(show_database_status(&config)),
         AdminCommand::RotateSessions => block_on(rotate_sessions(&config)),
+        AdminCommand::WalletAdd { address } => block_on(add_wallet(&config, *address)),
+        AdminCommand::SyncStatus => block_on(show_sync_status(&config)),
+        AdminCommand::ExportTx { signature } => block_on(export_tx(&config, *signature)),
     }
 }
 

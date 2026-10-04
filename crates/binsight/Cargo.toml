@@ -24,6 +24,7 @@ binsight-api.workspace = true
 binsight-chain.workspace = true
 binsight-core.workspace = true
 binsight-engine.workspace = true
+binsight-solana.workspace = true
 binsight-store.workspace = true
 clap.workspace = true
 dialoguer.workspace = true
@@ -38,6 +39,7 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
+jiff.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["process"] }

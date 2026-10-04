@@ -6,6 +6,7 @@
 
 use std::path::PathBuf;
 
+use binsight_solana::{Address, Signature};
 use clap::{Parser, Subcommand};
 
 /// Self-hostable portfolio tracker for Meteora DLMM liquidity positions, with exact, on-chain
@@ -62,4 +63,16 @@ pub enum AdminCommand {
     DbStatus,
     /// Sign out every session by replacing the session secret (the server must be stopped)
     RotateSessions,
+    /// Track a wallet; its history is imported when the server starts (the server must be stopped)
+    WalletAdd {
+        /// The wallet's address (base58)
+        address: Address,
+    },
+    /// Show how far each wallet is imported and the credits spent (works while the server runs)
+    SyncStatus,
+    /// Print a stored transaction exactly as the RPC node returned it (works while the server runs)
+    ExportTx {
+        /// The transaction signature (base58)
+        signature: Signature,
+    },
 }

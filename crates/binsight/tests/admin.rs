@@ -98,3 +98,89 @@ async fn shows_the_configuration_without_its_secrets() {
     assert!(!shown.contains(common::PASSWORD), "{shown}");
     assert!(!shown.contains("test-placeholder-key"), "{shown}");
 }
+
+#[tokio::test]
+async fn tracks_a_wallet_and_reports_its_import_once_stopped() {
+    let home = tempfile::tempdir().unwrap();
+    let variables = valid_variables(home.path(), "127.0.0.1:0");
+    let server = Server::start(home.path(), &as_pairs(&variables)).await;
+    server.send_sigterm().await;
+    let mut child = server.child;
+    child.wait().await.unwrap();
+    let wallet = "11111111111111111111111111111111";
+    let signature = "1".repeat(64);
+
+    let added = run(
+        home.path(),
+        &["admin", "wallet-add", wallet],
+        &as_pairs(&variables),
+    )
+    .await;
+    let again = run(
+        home.path(),
+        &["admin", "wallet-add", wallet],
+        &as_pairs(&variables),
+    )
+    .await;
+    let status = run(
+        home.path(),
+        &["admin", "sync-status"],
+        &as_pairs(&variables),
+    )
+    .await;
+    let export = run(
+        home.path(),
+        &["admin", "export-tx", &signature],
+        &as_pairs(&variables),
+    )
+    .await;
+
+    assert_eq!(added.status.code(), Some(0), "{added:?}");
+    assert!(stdout(&added).starts_with(&format!("Tracking {wallet}")));
+    assert!(stdout(&again).contains("already tracked"));
+    let shown = stdout(&status);
+    assert!(
+        shown.contains(&format!("Wallet {wallet}\n  history: not listed yet")),
+        "{shown}"
+    );
+    assert!(shown.contains("Credits today"), "{shown}");
+    assert_eq!(export.status.code(), Some(64));
+}
+
+#[tokio::test]
+async fn tracks_a_wallet_before_the_first_run() {
+    let home = tempfile::tempdir().unwrap();
+    let variables = valid_variables(home.path(), "127.0.0.1:0");
+    let wallet = "11111111111111111111111111111111";
+
+    let added = run(
+        home.path(),
+        &["admin", "wallet-add", wallet],
+        &as_pairs(&variables),
+    )
+    .await;
+    let status = run(
+        home.path(),
+        &["admin", "sync-status"],
+        &as_pairs(&variables),
+    )
+    .await;
+
+    assert_eq!(added.status.code(), Some(0), "{added:?}");
+    assert!(stdout(&status).contains(&format!("Wallet {wallet}")));
+}
+
+#[tokio::test]
+async fn refuses_an_address_that_is_not_base58() {
+    let home = tempfile::tempdir().unwrap();
+    let variables = valid_variables(home.path(), "127.0.0.1:0");
+
+    let output = run(
+        home.path(),
+        &["admin", "wallet-add", "not-an-address"],
+        &as_pairs(&variables),
+    )
+    .await;
+
+    assert_eq!(output.status.code(), Some(2));
+}
