@@ -36,7 +36,7 @@ pub(super) fn execute(config_file: Option<&Path>) -> Result<(), Failure> {
     let loaded = config::load(config_file)?;
     logging::init(&loaded.config.log).map_err(|error| Failure::Unexpected(error.into()))?;
     for warning in &loaded.warnings {
-        warn!("{warning}");
+        warn!(%warning, "configuration warning");
     }
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -107,7 +107,7 @@ async fn listen(address: SocketAddr) -> Result<TcpListener, Failure> {
     let bound = listener
         .local_addr()
         .map_err(|error| Failure::io("read the listening address", error))?;
-    info!("listening on http://{bound}");
+    info!(url = %format_args!("http://{bound}"), "listening");
     Ok(listener)
 }
 

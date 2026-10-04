@@ -79,9 +79,9 @@ impl Server {
             address: String::new(),
             lines,
         };
-        let listening = server.wait_for_line("listening on http://").await;
+        let listening = server.wait_for_line("listening url=http://").await;
         listening
-            .rsplit("http://")
+            .rsplit("url=http://")
             .next()
             .unwrap()
             .trim()
