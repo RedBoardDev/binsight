@@ -10,7 +10,9 @@ services:
     image: ${BINSIGHT_IMAGE:-binsight:local}
     restart: unless-stopped
     ports:
-      - "${BINSIGHT_PORT:-8080}:8080"
+      # This machine only. Set BINSIGHT_PUBLISH_ADDRESS=0.0.0.0 to open the port to the network on
+      # purpose: Docker's published ports bypass most host firewalls.
+      - "${BINSIGHT_PUBLISH_ADDRESS:-127.0.0.1}:${BINSIGHT_PORT:-8080}:8080"
     environment:
       BINSIGHT_PASSWORD: ${BINSIGHT_PASSWORD:?set BINSIGHT_PASSWORD (at least 12 characters)}
       BINSIGHT_HELIUS_API_KEY: ${BINSIGHT_HELIUS_API_KEY:?set BINSIGHT_HELIUS_API_KEY}

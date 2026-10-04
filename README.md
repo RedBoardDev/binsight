@@ -50,6 +50,9 @@ Open <http://localhost:8080> and sign in with your password. The data lives in t
 Keep the single quotes around the values: Compose reads them literally, while it would replace a `$` in an
 unquoted or double-quoted value. Set `BINSIGHT_PORT` in `.env` to publish another port than 8080.
 
+The port is published on this machine only (`127.0.0.1`). To reach binsight from other devices, read
+[Exposing it safely](#exposing-it-safely) first.
+
 You can also build the image yourself and run it under another name:
 
 ```sh
@@ -100,8 +103,17 @@ binsight.example.com {
 }
 ```
 
-Then set `BINSIGHT_PUBLIC_URL=https://binsight.example.com`. With Docker, publish the port on the loopback
-interface only (`BINSIGHT_PORT=127.0.0.1:8080`): Docker's published ports bypass most host firewalls.
+Then set `BINSIGHT_PUBLIC_URL=https://binsight.example.com`.
+
+With Docker Compose, the port is published on the loopback interface by default, which is what a reverse
+proxy on the same machine needs. To publish it on every interface instead (a proxy on another machine, a
+private network), set it deliberately in `.env`:
+
+```sh
+BINSIGHT_PUBLISH_ADDRESS='0.0.0.0'
+```
+
+Docker's published ports bypass most host firewalls (ufw included), so only do this on a network you trust.
 
 ## Updating and backups
 
