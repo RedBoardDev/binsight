@@ -2,14 +2,14 @@
 //!
 //! At startup the engine brings the projection bookkeeping in step with the code, restores the
 //! credits already spent today and this billing cycle, and queues again the transactions parked
-//! for a version it now reads; then it reports that it is running and runs ingestion until the
-//! shutdown signal, persisting the credit counts as it goes and once more after ingestion has
-//! stopped. Every status change is published both as the current status and as an event. This
+//! for a version it now reads; then it reports that it is running and runs ingestion and the
+//! live stream until the shutdown signal, persisting the credit counts as it goes and once more
+//! after both have stopped. Every status change is published both as the current status and as an event. This
 //! module owns the lifecycle; what the work is belongs to other modules.
 
 use std::sync::Arc;
 
-use binsight_chain::RpcClient;
+use binsight_chain::{RpcClient, WalletStream, WsConnector};
 use binsight_core::clock::Clock;
 use binsight_store::Store;
 use tokio::sync::{broadcast, watch};
@@ -31,6 +31,7 @@ const EVENT_BUFFER_SIZE: usize = 256;
 pub struct Engine {
     store: Store,
     rpc: RpcClient,
+    stream: Arc<dyn WsConnector>,
     clock: Arc<dyn Clock>,
     status: watch::Sender<EngineStatus>,
     events: broadcast::Sender<EngineEvent>,
@@ -43,10 +44,15 @@ impl std::fmt::Debug for Engine {
 }
 
 impl Engine {
-    /// Builds an engine on `store` that reaches the chain through `rpc` and reads the time from
-    /// `clock`, and the handle to share with the rest of the application. The engine does
-    /// nothing until [`Engine::run`] is called.
-    pub fn new(store: Store, rpc: RpcClient, clock: Arc<dyn Clock>) -> (Self, EngineHandle) {
+    /// Builds an engine on `store` that reaches the chain through `rpc` and the live stream
+    /// through `stream`, and reads the time from `clock`, and the handle to share with the rest
+    /// of the application. The engine does nothing until [`Engine::run`] is called.
+    pub fn new(
+        store: Store,
+        rpc: RpcClient,
+        stream: Arc<dyn WsConnector>,
+        clock: Arc<dyn Clock>,
+    ) -> (Self, EngineHandle) {
         let (status, status_receiver) = watch::channel(EngineStatus::Starting);
         let (events, _) = broadcast::channel(EVENT_BUFFER_SIZE);
         let handle = EngineHandle::new(store.clone(), rpc.clone(), status_receiver, events.clone());
@@ -54,6 +60,7 @@ impl Engine {
             Self {
                 store,
                 rpc,
+                stream,
                 clock,
                 status,
                 events,
@@ -74,11 +81,21 @@ impl Engine {
         requeue_readable_versions(&self.store, self.clock.now()).await?;
         self.change_status(EngineStatus::Running);
         info!("engine running");
-        let ingestion = Ingestion::new(self.store.clone(), self.rpc.clone(), self.clock.clone());
+        let (stream, watch, stream_events) =
+            WalletStream::new(self.stream.clone(), self.rpc.clone());
+        let ingestion = Ingestion::new(
+            self.store.clone(),
+            self.rpc.clone(),
+            self.clock.clone(),
+            watch,
+        );
         let ingestion_stopped = CancellationToken::new();
         tokio::join!(
             async {
-                ingestion.run(&shutdown).await;
+                tokio::join!(
+                    ingestion.run(stream_events, &shutdown),
+                    stream.run(shutdown.cancelled()),
+                );
                 ingestion_stopped.cancel();
             },
             run_credit_usage(&self.store, &self.rpc, &ingestion_stopped),
@@ -105,8 +122,8 @@ mod tests {
     use serde_json::json;
 
     use crate::test_support::{
-        RunningEngine, TEST_START, expect_transactions, numbered_signature, reopened_engine,
-        signature_page, temporary_engine,
+        RunningEngine, TEST_START, expect_nothing_new, expect_transactions, numbered_signature,
+        reopened_engine, signature_page, temporary_engine,
     };
 
     #[tokio::test]
@@ -176,11 +193,12 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_secs(600)).await;
 
         assert_eq!(engine.transport.calls(), Vec::new());
+        assert_eq!(engine.stream.connections_opened(), 0);
         engine.stop().await;
     }
 
     #[tokio::test(start_paused = true)]
-    async fn resumes_after_a_restart_without_listing_or_fetching_again() {
+    async fn resumes_after_a_restart_with_one_top_up_and_nothing_fetched_again() {
         let wallet = binsight_solana::Address::from_bytes([1; 32]);
         let setup = temporary_engine().await;
         setup.store.wallets().add(wallet, TEST_START).await.unwrap();
@@ -196,10 +214,12 @@ mod tests {
             .await;
         let folder = engine.stop().await;
 
-        let restarted = RunningEngine::start(reopened_engine(folder).await);
+        let setup = reopened_engine(folder).await;
+        expect_nothing_new(&setup.transport, wallet, 0);
+        let restarted = RunningEngine::start(setup);
         tokio::time::sleep(std::time::Duration::from_secs(600)).await;
 
-        assert_eq!(restarted.transport.calls(), Vec::new());
+        assert_eq!(restarted.transport.calls().len(), 1);
         restarted.stop().await;
     }
 
@@ -237,6 +257,7 @@ mod tests {
                 .with_params(below_first_page.clone())
                 .respond(signature_page(full, 2));
         }
+        expect_nothing_new(&setup.transport, wallet, 0);
         let unfetched = usize::try_from(interrupted.listed - interrupted.fetched).unwrap();
         expect_transactions(&setup.transport, unfetched + 2);
         let restarted = RunningEngine::start(setup);

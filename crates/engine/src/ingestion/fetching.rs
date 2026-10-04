@@ -258,11 +258,12 @@ mod tests {
             .wait_for_counts(WALLET, |counts| counts.fetched == 20)
             .await;
 
-        // One credit every 86,400 s / 80,750 credits; the two listings count too.
+        // One credit every 86,400 s / 80,750 credits; the two listings, the stream's opening and
+        // its first data (3 credits) count too.
         let one_credit_of_pace = Duration::from_millis(86_400_000 / 80_750);
         let elapsed = started.elapsed();
-        assert!(elapsed >= one_credit_of_pace * 21, "{elapsed:?}");
-        assert!(elapsed <= one_credit_of_pace * 26, "{elapsed:?}");
+        assert!(elapsed >= one_credit_of_pace * 24, "{elapsed:?}");
+        assert!(elapsed <= one_credit_of_pace * 29, "{elapsed:?}");
         assert_eq!(fetch_calls(&engine), 20);
         engine.stop().await;
     }

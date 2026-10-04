@@ -1,54 +1,91 @@
-//! Ingestion: listing the history of every tracked wallet and fetching each listed transaction
-//! once, into the raw registry.
+//! Ingestion: every tracked wallet's transactions, from its first to the one it just made, each
+//! fetched once into the raw registry.
 //!
-//! Two workers run side by side. The listing worker lists each wallet's signatures page by page,
-//! and writes every page with its fetch tasks and the cursor move in one transaction. The fetch
-//! worker reads the queue of tasks the database holds and fetches what is due. The database is
-//! the only source of truth: the in-memory wake-up only saves the fetcher a wait. Both workers
-//! stop as soon as shutdown is requested; everything they write is transactional, so stopping
-//! in the middle of a page loses nothing. With no wallet tracked, nothing is ever sent.
+//! Three workers run side by side. The listing worker lists each wallet's signatures (its whole
+//! history page by page, then again from its newest on a schedule) and writes every page with its
+//! fetch tasks and the cursor move in one transaction. The live listener turns what the stream
+//! reports into fetches and into checks for the listing worker. The fetch worker reads the queue
+//! of tasks the database holds and fetches what is due. The database is the only source of truth:
+//! the in-memory wake-ups only save a wait. Every worker stops as soon as shutdown is requested;
+//! everything they write is transactional, so stopping in the middle of a page loses nothing.
+//! With no wallet tracked, nothing is ever sent, not even a stream opened.
 
+mod failure_backoff;
 mod fetching;
 mod listing;
+mod live;
 mod refusal;
 
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex, PoisonError};
 
-use binsight_chain::RpcClient;
+use binsight_chain::{RpcClient, StreamEvent, WalletWatch};
 use binsight_core::clock::Clock;
+use binsight_solana::Address;
 use binsight_solana::transaction::MAX_SUPPORTED_TX_VERSION;
-use binsight_store::{Store, StoreError};
+use binsight_store::{Store, StoreError, TrackedWallet};
 use jiff::Timestamp;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, mpsc};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use fetching::run_fetcher;
 use listing::run_listing;
+use live::{LiveState, run_live_listener};
 
-/// What the ingestion workers share: the database, the RPC client, the clock, and the wake-up
-/// the listing gives the fetcher when it queues new tasks.
+/// What the ingestion workers share: the database, the RPC client, the clock, the stream's watch
+/// list, the live state, and the wake-up the listings give the fetcher when they queue tasks.
 #[derive(Clone)]
 pub(crate) struct Ingestion {
     store: Store,
     rpc: RpcClient,
     clock: Arc<dyn Clock>,
     new_tasks: Arc<Notify>,
+    live: Arc<LiveState>,
+    watch: WalletWatch,
+    watched: Arc<Mutex<HashSet<Address>>>,
 }
 
 impl Ingestion {
-    pub(crate) fn new(store: Store, rpc: RpcClient, clock: Arc<dyn Clock>) -> Self {
+    pub(crate) fn new(
+        store: Store,
+        rpc: RpcClient,
+        clock: Arc<dyn Clock>,
+        watch: WalletWatch,
+    ) -> Self {
+        let live = Arc::new(LiveState::new(clock.now()));
         Self {
             store,
             rpc,
             clock,
             new_tasks: Arc::new(Notify::new()),
+            live,
+            watch,
+            watched: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
-    /// Runs the listing and fetch workers until `shutdown` is cancelled.
-    pub(crate) async fn run(&self, shutdown: &CancellationToken) {
-        tokio::join!(run_listing(self, shutdown), run_fetcher(self, shutdown));
+    /// Runs the workers until `shutdown` is cancelled, the listener on the stream's `events`.
+    pub(crate) async fn run(
+        &self,
+        events: mpsc::Receiver<StreamEvent>,
+        shutdown: &CancellationToken,
+    ) {
+        tokio::join!(
+            run_listing(self, shutdown),
+            run_fetcher(self, shutdown),
+            run_live_listener(self, events, shutdown),
+        );
+    }
+
+    /// Asks the stream to watch the wallets of `wallets` it does not watch yet.
+    fn watch_new_wallets(&self, wallets: &[TrackedWallet]) {
+        let mut watched = self.watched.lock().unwrap_or_else(PoisonError::into_inner);
+        for wallet in wallets {
+            if watched.insert(wallet.address) {
+                self.watch.watch(wallet.address);
+            }
+        }
     }
 }
 

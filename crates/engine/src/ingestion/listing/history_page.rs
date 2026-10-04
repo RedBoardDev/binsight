@@ -7,42 +7,16 @@
 //! it ends the history. A page that cannot be listed or written changes nothing. Which page comes
 //! next is the listing worker's decision; the cursor rules live in `history_cursor`.
 
-use binsight_chain::{CallContext, RpcError, SignatureInfo, SignaturesRequest};
+use binsight_chain::{CallContext, SignatureInfo, SignaturesRequest};
 use binsight_core::credits::{Priority, Purpose};
 use binsight_store::{ListingPage, StoreError, TrackedWallet, WalletCursor};
-use jiff::Timestamp;
 use tracing::{debug, info};
 
 use super::history_cursor::{HistoryStep, step_after_history_page};
 use super::history_end::ListedEnd;
+use super::page_listing::{PageError, list_page};
 use super::slot_order::{PageBoundary, rank_in_slots};
 use crate::ingestion::Ingestion;
-use crate::ingestion::refusal::{Refusal, refusal_of};
-
-/// Why a page was not written.
-#[derive(Debug, thiserror::Error)]
-pub(super) enum PageError {
-    /// The credit budget holds history listings back until this instant.
-    #[error("history listing deferred by the credit budget until {until}")]
-    Deferred {
-        /// When listing may resume.
-        until: Timestamp,
-    },
-    /// The provider refuses every request until this instant.
-    #[error("{reason}")]
-    Paused {
-        /// When work may resume.
-        until: Timestamp,
-        /// The refusal.
-        reason: RpcError,
-    },
-    /// The page could not be listed.
-    #[error(transparent)]
-    Rpc(RpcError),
-    /// The page could not be written, or where the previous page ended could not be read.
-    #[error(transparent)]
-    Store(#[from] StoreError),
-}
 
 /// Lists one page of `wallet`'s history and writes it. `unconfirmed_end` is the short page an
 /// earlier listing of the same page returned, if any. Returns the page if it may end the history
@@ -58,19 +32,7 @@ pub(super) async fn list_and_write(
         purpose: Purpose::HistoryListing,
         wallet: Some(wallet.address),
     };
-    let page = match ingestion.rpc.signatures_for_address(request, context).await {
-        Ok(page) => page,
-        Err(error) => {
-            return Err(match refusal_of(&error, ingestion.clock.now()) {
-                Some(Refusal::Deferred(until)) => PageError::Deferred { until },
-                Some(Refusal::Paused(until)) => PageError::Paused {
-                    until,
-                    reason: error,
-                },
-                None => PageError::Rpc(error),
-            });
-        }
-    };
+    let page = list_page(ingestion, request, context).await?;
     let step = step_after_history_page(&wallet.cursor, &request, &page, unconfirmed_end);
     write_page(ingestion, wallet, request, &page, &step).await?;
     Ok(match step {

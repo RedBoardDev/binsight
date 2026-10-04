@@ -106,7 +106,8 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn stops_every_call_at_the_daily_limit_and_persists_the_credits_spent() {
-        let setup = temporary_engine_with_limit(Some(Credits(2))).await;
+        // The stream's opening and its first data cost 3 credits, the listing and a fetch 2.
+        let setup = temporary_engine_with_limit(Some(Credits(5))).await;
         setup.store.wallets().add(WALLET, TEST_START).await.unwrap();
         let listing = setup.transport.expect("getSignaturesForAddress");
         listing.respond(signature_page(0, 3));
@@ -126,7 +127,7 @@ mod tests {
         assert_eq!(still_fetched, 1);
         let today = utc_day(TEST_START);
         let spent = store.credits().spent_between(today, today).await.unwrap();
-        assert_eq!(spent, Credits(2));
+        assert_eq!(spent, Credits(5));
     }
 
     #[tokio::test(start_paused = true)]
@@ -185,6 +186,8 @@ mod tests {
             vec![
                 ("getSignaturesForAddress", CallOutcome::Ok, 1),
                 ("getTransaction", CallOutcome::Cancelled, 1),
+                ("ws_data", CallOutcome::Ok, 1),
+                ("ws_open", CallOutcome::Ok, 1),
             ]
         );
     }

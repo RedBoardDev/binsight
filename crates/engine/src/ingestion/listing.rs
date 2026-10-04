@@ -1,105 +1,49 @@
-//! The listing worker: lists the history of each tracked wallet, one page at a time, until it is
-//! complete.
+//! The listing worker: lists what each tracked wallet did, from its first transaction to its
+//! newest, and keeps listing its newest ones.
 //!
-//! The worker lists the page of the wallet due first (`history_schedule`), then the next one. A
-//! page that cannot be listed or written changes nothing; its wallet waits before trying again
-//! while the others go on. A credit budget that defers history listings, or a refusal that
-//! concerns every request, makes the whole worker wait. Listing and writing one page is `history_page`'s job.
+//! One worker does every listing, so a wallet's cursor has a single writer. Each step runs the
+//! most urgent listing due (`listing_step`): a check or a top-up from the newest signature
+//! (`top_up`), else the next page of a history (`history_page`). Between steps it sleeps until
+//! the next listing falls due, or until the live stream changes something.
 
 mod history_cursor;
 mod history_end;
 mod history_page;
 mod history_schedule;
+mod listing_step;
+mod page_listing;
 mod slot_order;
-
-use std::time::Duration;
+mod top_up;
+mod top_up_rules;
 
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, warn};
 
 use super::Ingestion;
-use super::refusal::{report_pause, time_until};
-use history_page::{PageError, list_and_write};
-use history_schedule::{ListingSchedule, NextListing};
+use listing_step::{ListingWorker, Progress};
 
-/// How long to wait after the tracked wallets could not be read.
-const STORE_RETRY_DELAY: Duration = Duration::from_secs(30);
-
-/// From this many failures in a row, a wallet's failing page is reported as an error: it is not
-/// healing by itself, and a human should look.
-const FAILURES_BEFORE_ALERT: u32 = 5;
-
-/// How the latest listing step ended.
-enum Progress {
-    /// Look for the next page to list at once.
-    Continue,
-    /// Every tracked wallet's history is complete.
-    NothingToList,
-    /// Nothing is due; look again after this delay.
-    Wait(Duration),
-}
-
-/// Lists pages until every history is complete or `shutdown` is cancelled.
+/// Lists until `shutdown` is cancelled.
 pub(super) async fn run_listing(ingestion: &Ingestion, shutdown: &CancellationToken) {
-    let mut schedule = ListingSchedule::default();
+    let mut worker = ListingWorker::default();
     loop {
         let progress = tokio::select! {
             () = shutdown.cancelled() => return,
-            progress = list_next_page(ingestion, &mut schedule) => progress,
+            progress = worker.step(ingestion) => progress,
         };
-        match progress {
-            Progress::Continue => {}
-            Progress::NothingToList => {
-                debug!("every tracked history is listed");
-                return;
+        let Progress::Wait(delay) = progress else {
+            continue;
+        };
+        let timer = async {
+            match delay {
+                Some(delay) => tokio::time::sleep(delay).await,
+                None => std::future::pending().await,
             }
-            Progress::Wait(delay) => {
-                tokio::select! {
-                    () = shutdown.cancelled() => return,
-                    () = tokio::time::sleep(delay) => {}
-                }
-            }
+        };
+        tokio::select! {
+            () = shutdown.cancelled() => return,
+            () = ingestion.live.changed() => {}
+            () = timer => {}
         }
     }
-}
-
-/// Lists and writes the page of the wallet due first, if one is due.
-async fn list_next_page(ingestion: &Ingestion, schedule: &mut ListingSchedule) -> Progress {
-    let wallets = match ingestion.store.wallets().list().await {
-        Ok(wallets) => wallets,
-        Err(error) => {
-            error!(%error, "could not read the tracked wallets");
-            return Progress::Wait(STORE_RETRY_DELAY);
-        }
-    };
-    let now = ingestion.clock.now();
-    let (wallet, request) = match schedule.next(&wallets, now) {
-        NextListing::Nothing => return Progress::NothingToList,
-        NextListing::WaitUntil(due_at) => return Progress::Wait(time_until(now, due_at)),
-        NextListing::List { wallet, request } => (wallet, request),
-    };
-    let unconfirmed_end = schedule.unconfirmed_end(wallet.address).cloned();
-    match list_and_write(ingestion, wallet, request, unconfirmed_end.as_ref()).await {
-        Ok(end) => schedule.record_page(wallet.address, end, ingestion.clock.now()),
-        Err(PageError::Deferred { until }) => {
-            debug!(%until, "history listing deferred by the credit budget");
-            return Progress::Wait(time_until(ingestion.clock.now(), until));
-        }
-        Err(PageError::Paused { until, reason }) => {
-            report_pause("listing", &reason, until);
-            return Progress::Wait(time_until(ingestion.clock.now(), until));
-        }
-        Err(error) => {
-            let (failures, retry_at) =
-                schedule.record_failure(wallet.address, ingestion.clock.now());
-            if failures >= FAILURES_BEFORE_ALERT {
-                error!(wallet = %wallet.address, %error, failures, %retry_at, "a history page keeps failing");
-            } else {
-                warn!(wallet = %wallet.address, %error, failures, %retry_at, "could not list a history page; trying again later");
-            }
-        }
-    }
-    Progress::Continue
 }
 
 #[cfg(test)]
@@ -115,8 +59,8 @@ mod tests {
     use binsight_core::credits::Credits;
 
     use crate::test_support::{
-        RunningEngine, TEST_START, expect_transactions, numbered_signature, record_spent_today,
-        signature_page, temporary_engine,
+        RunningEngine, TEST_START, expect_nothing_new, expect_transactions, numbered_signature,
+        record_spent_today, signature_page, temporary_engine,
     };
 
     const WALLET: Address = Address::from_bytes([1; 32]);
@@ -211,6 +155,8 @@ mod tests {
                 .respond(signature_page(0, 2));
         }
         expect_transactions(&setup.transport, 2);
+        let cadence_check = 1;
+        expect_nothing_new(&setup.transport, WALLET, 0);
         let engine = RunningEngine::start(setup);
 
         engine.wait_for_complete_history(WALLET).await;
@@ -218,6 +164,7 @@ mod tests {
             .wait_for_counts(WALLET, |counts| counts.fetched == 2)
             .await;
         tokio::time::sleep(Duration::from_secs(1_000)).await;
+        assert_eq!(engine.transport.calls().len(), 2 + 2 + cadence_check + 6);
 
         let stuck_listings = engine
             .transport

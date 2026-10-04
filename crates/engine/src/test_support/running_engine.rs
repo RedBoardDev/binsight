@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use binsight_chain::test_support::ScriptedTransport;
+use binsight_chain::test_support::{ScriptedConnector, ScriptedTransport};
 use binsight_solana::Address;
 use binsight_store::{FetchCounts, Store, WalletCursor};
 use tokio::task::JoinHandle;
@@ -27,6 +27,8 @@ pub struct RunningEngine {
     pub store: Store,
     /// The scripted provider.
     pub transport: Arc<ScriptedTransport>,
+    /// The scripted stream.
+    pub stream: Arc<ScriptedConnector>,
     shutdown: CancellationToken,
     task: JoinHandle<Result<(), EngineError>>,
 }
@@ -40,6 +42,7 @@ impl RunningEngine {
             folder: setup.folder,
             store: setup.store,
             transport: setup.transport,
+            stream: setup.stream,
             shutdown,
             task,
         }
@@ -108,6 +111,23 @@ impl RunningEngine {
                 "the history was never completely listed: {cursor:?}"
             );
             tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }
+
+    /// Waits until the scripted provider received `count` requests.
+    ///
+    /// # Panics
+    ///
+    /// Panics if it still has not after an hour of (paused) time.
+    pub async fn wait_for_calls(&self, count: usize) {
+        let started = tokio::time::Instant::now();
+        while self.transport.calls().len() < count {
+            assert!(
+                started.elapsed() <= PATIENCE,
+                "the engine never sent {count} requests: {:?}",
+                self.transport.calls()
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
 

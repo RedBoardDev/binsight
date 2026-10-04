@@ -13,7 +13,10 @@ use std::time::Duration;
 
 use binsight_api::auth::AuthSettings;
 use binsight_api::{AppState, AppStateParts, router};
-use binsight_chain::{GovernorSettings, HttpTransport, RpcClient, RpcEndpoint};
+use binsight_chain::{
+    GovernorSettings, HttpTransport, RpcClient, RpcEndpoint, StreamEndpoint, TungsteniteConnector,
+    WsConnector,
+};
 use binsight_core::clock::Clock;
 use binsight_engine::{Engine, SystemClock};
 use binsight_store::{BackupOptions, Store, UpgradeOptions};
@@ -69,7 +72,8 @@ async fn serve(config: Config) -> Result<(), Failure> {
     let session_secret = ensure_instance_secrets(&store).await?;
     let listener = listen(config.bind).await?;
     let rpc = rpc_client(&config, clock.clone())?;
-    let (engine, handle) = Engine::new(store.clone(), rpc, clock.clone());
+    let stream = stream_connector(&config)?;
+    let (engine, handle) = Engine::new(store.clone(), rpc, stream, clock.clone());
     let state = AppState::new(AppStateParts {
         engine: handle,
         auth: AuthSettings {
@@ -129,6 +133,15 @@ fn rpc_client(config: &Config, clock: Arc<dyn Clock>) -> Result<RpcClient, Failu
         daily_credit_limit: budget.daily_credit_limit,
     };
     Ok(RpcClient::new(Arc::new(transport), governor, clock))
+}
+
+/// The Helius WebSocket stream. Nothing is opened until a wallet is watched.
+fn stream_connector(config: &Config) -> Result<Arc<dyn WsConnector>, Failure> {
+    let endpoint = StreamEndpoint::helius_mainnet(&config.helius_api_key);
+    let connector = TungsteniteConnector::new(endpoint).map_err(|error| {
+        Failure::Unexpected(anyhow::Error::new(error).context("prepare the stream"))
+    })?;
+    Ok(Arc::new(connector))
 }
 
 async fn listen(address: SocketAddr) -> Result<TcpListener, Failure> {

@@ -1,10 +1,8 @@
 //! Which wallet's history page to list next, and when, as pure bookkeeping.
 //!
-//! Each wallet has its own retry delay: a page that cannot be listed or written is tried again
-//! after 30 seconds, then twice as long after each failure in a row, up to an hour, and the
-//! delay resets once a page of that wallet is written. A short page that may end a history waits
-//! five minutes for its confirmation, the second listing `history_cursor` asks for. The worker
-//! always lists the wallet that is due first, so a wallet whose page keeps failing neither blocks
+//! Each wallet has its own retry delay (`failure_backoff`), which resets once a page of that
+//! wallet is written. A short page that may end a history waits five minutes for its
+//! confirmation, the second listing `history_cursor` asks for. The worker always lists the wallet that is due first, so a wallet whose page keeps failing neither blocks
 //! the others nor spends credits every few seconds. All of this lives in memory: a restart tries
 //! every wallet again at once, which costs one page each. This module decides; it does no I/O.
 
@@ -17,12 +15,7 @@ use jiff::{SignedDuration, Timestamp};
 
 use super::history_cursor::next_history_request;
 use super::history_end::ListedEnd;
-
-/// The delay before trying a wallet's page again after its first failure in a row.
-const FIRST_RETRY_DELAY_SECS: i64 = 30;
-
-/// The longest delay between two attempts at a wallet's page.
-const LONGEST_RETRY_DELAY_SECS: i64 = 3_600;
+use crate::ingestion::failure_backoff::retry_delay;
 
 /// How long a short page waits before it is listed again to confirm the end of a history: long
 /// enough for a node that could not read its long-term storage to recover.
@@ -133,19 +126,6 @@ impl ListingSchedule {
     }
 }
 
-/// The delay after `failures_in_a_row` failures: 30 s doubled for each failure after the first,
-/// at most an hour.
-fn retry_delay(failures_in_a_row: u32) -> SignedDuration {
-    let doublings = failures_in_a_row.saturating_sub(1);
-    let secs = 2_i64
-        .checked_pow(doublings)
-        .and_then(|factor| factor.checked_mul(FIRST_RETRY_DELAY_SECS))
-        .map_or(LONGEST_RETRY_DELAY_SECS, |secs| {
-            secs.min(LONGEST_RETRY_DELAY_SECS)
-        });
-    SignedDuration::from_secs(secs)
-}
-
 #[cfg(test)]
 mod tests {
     use binsight_store::WalletCursor;
@@ -228,21 +208,6 @@ mod tests {
             schedule.next(&wallets, later(30)),
             NextListing::List { .. }
         ));
-    }
-
-    #[test]
-    fn doubles_the_delay_after_each_failure_in_a_row_up_to_an_hour() {
-        let address = Address::from_bytes([1; 32]);
-        let mut schedule = ListingSchedule::default();
-
-        let delays: Vec<i64> = (0..10)
-            .map(|_| schedule.record_failure(address, now()).1.as_second() - now().as_second())
-            .collect();
-
-        assert_eq!(
-            delays,
-            [30, 60, 120, 240, 480, 960, 1_920, 3_600, 3_600, 3_600]
-        );
     }
 
     #[test]
