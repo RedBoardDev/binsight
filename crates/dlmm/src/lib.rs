@@ -1,7 +1,8 @@
 //! # binsight-dlmm
 //!
-//! **Responsibility:** everything specific to the Meteora DLMM program: its identifier now, and
-//! later its account layouts, its Event-CPI decoding and the fixed-point maths of its bins.
+//! **Responsibility:** everything specific to the Meteora DLMM program: its identifier and event
+//! tag now, and later its account layouts, its Event-CPI decoding and the fixed-point maths of its
+//! bins.
 //!
 //! **May depend on:** `binsight-core`, `binsight-solana`.
 //! **Must not depend on:** `binsight-ledger`, `binsight-store`, `binsight-chain`,

@@ -268,6 +268,7 @@ name = "binsight-dlmm"
 version = "0.1.0"
 dependencies = [
  "binsight-solana",
+ "sha2 0.11.0",
 ]
 
 [[package]]
