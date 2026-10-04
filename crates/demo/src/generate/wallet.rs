@@ -14,13 +14,12 @@ use binsight_solana::Address;
 use jiff::{SignedDuration, Timestamp};
 
 use super::Timeline;
-use super::catalog::{Catalog, CatalogPool};
 use super::closed::{ClosedPlan, closed_positions};
 use super::entries::{EntryPlan, wallet_entries};
 use super::instance::wallet_sync;
+use super::market::{Catalog, CatalogPool, PricePath};
 use super::marks::hourly_marks;
 use super::open::open_position;
-use super::price_path::PricePath;
 use super::sweep::{CashFlows, idle_now, top_ups};
 use crate::addresses::address;
 use crate::error::DemoError;

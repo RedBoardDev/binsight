@@ -13,7 +13,7 @@ use binsight_solana::Address;
 use jiff::{SignedDuration, Timestamp};
 
 use super::Timeline;
-use super::catalog::CatalogPool;
+use super::market::CatalogPool;
 use crate::addresses::{address, signature};
 use crate::error::DemoError;
 use crate::random::Stream;

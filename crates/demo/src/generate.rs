@@ -4,16 +4,12 @@
 //! entries, then the top-ups its cash needs, then its idle SOL and its marks, which both follow
 //! from the rest. Nothing reads the clock: the anchor instant and the time zone come in the spec.
 
-mod bins;
-mod catalog;
 mod closed;
 mod entries;
 mod instance;
-mod logos;
+mod market;
 mod marks;
 mod open;
-mod price_path;
-mod rates;
 mod sweep;
 mod wallet;
 
@@ -26,9 +22,10 @@ use jiff::{SignedDuration, Timestamp, ToSpan};
 use crate::error::DemoError;
 use crate::scenario::{HISTORY_DAYS, WALLETS, WalletProfile};
 use crate::world::WorldSpec;
-use catalog::{Catalog, CatalogPool, catalog};
-use price_path::{PricePath, following_rates, random_walk};
-use rates::sol_usd_rates;
+use market::{
+    Catalog, CatalogPool, PricePath, catalog, following_rates, random_walk, sol_usd_rates,
+    token_logos,
+};
 
 /// Seconds in an hour.
 const SECONDS_PER_HOUR: i64 = 3_600;
@@ -70,7 +67,7 @@ pub(crate) fn generate(spec: &WorldSpec) -> Result<Generated, DemoError> {
             .map(|pool| pool.facts.clone())
             .collect(),
         tokens: vec![catalog.unpriced_token.clone()],
-        logos: logos::token_logos(&catalog),
+        logos: token_logos(&catalog),
         rates,
         ..SnapshotFacts::default()
     };

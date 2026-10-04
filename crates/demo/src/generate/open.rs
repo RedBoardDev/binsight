@@ -15,10 +15,8 @@ use binsight_solana::Address;
 use jiff::Timestamp;
 
 use super::Timeline;
-use super::bins::bin_price;
-use super::catalog::CatalogPool;
 use super::closed::{in_quote, share};
-use super::price_path::PricePath;
+use super::market::{CatalogPool, PricePath, bin_price};
 use crate::addresses::{address, signature};
 use crate::error::DemoError;
 use crate::random::Stream;

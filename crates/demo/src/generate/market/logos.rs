@@ -14,12 +14,12 @@ use super::catalog::Catalog;
 
 /// The logo of each busy token, by ticker.
 const LOGOS: [(&str, &[u8]); 6] = [
-    ("JUP", include_bytes!("../../assets/logos/jup.png")),
-    ("JTO", include_bytes!("../../assets/logos/jto.png")),
-    ("WIF", include_bytes!("../../assets/logos/wif.png")),
-    ("POPCAT", include_bytes!("../../assets/logos/popcat.png")),
-    ("BONK", include_bytes!("../../assets/logos/bonk.png")),
-    ("USDC", include_bytes!("../../assets/logos/usdc.png")),
+    ("JUP", include_bytes!("../../../assets/logos/jup.png")),
+    ("JTO", include_bytes!("../../../assets/logos/jto.png")),
+    ("WIF", include_bytes!("../../../assets/logos/wif.png")),
+    ("POPCAT", include_bytes!("../../../assets/logos/popcat.png")),
+    ("BONK", include_bytes!("../../../assets/logos/bonk.png")),
+    ("USDC", include_bytes!("../../../assets/logos/usdc.png")),
 ];
 
 /// How many bytes of the image hash version its URL (two hex digits each).
