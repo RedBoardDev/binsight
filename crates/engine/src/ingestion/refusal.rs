@@ -15,6 +15,8 @@ use binsight_core::credits::Priority;
 use jiff::{SignedDuration, Timestamp};
 use tracing::{error, warn};
 
+use super::Ingestion;
+
 /// How long work waits after the provider refused the key, the plan or the credits.
 const PROVIDER_REFUSAL_PAUSE_SECS: i64 = 600;
 
@@ -47,12 +49,19 @@ pub(super) fn refusal_of(error: &RpcError, now: Timestamp) -> Option<Refusal> {
     }
 }
 
-/// Logs a pause: a warning for a budget limit, which lifts by itself, an error otherwise.
-pub(super) fn report_pause(worker: &'static str, reason: &RpcError, until: Timestamp) {
+/// Logs a pause: a warning for a budget limit, which lifts by itself; an error otherwise, which
+/// the sync state reports until the pause ends.
+pub(super) fn report_pause(
+    ingestion: &Ingestion,
+    worker: &'static str,
+    reason: &RpcError,
+    until: Timestamp,
+) {
     if matches!(reason, RpcError::Budget(_)) {
         warn!(worker, %reason, %until, "rpc work paused");
     } else {
         error!(worker, %reason, %until, "the rpc provider refuses requests; rpc work paused");
+        ingestion.provider_refused(until);
     }
 }
 

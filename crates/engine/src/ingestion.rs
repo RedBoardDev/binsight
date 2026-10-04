@@ -15,6 +15,10 @@ mod fetching;
 mod listing;
 mod live;
 mod refusal;
+mod sync;
+
+pub(crate) use sync::SyncPublisher;
+pub use sync::SyncState;
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -32,9 +36,11 @@ use tracing::info;
 use fetching::run_fetcher;
 use listing::run_listing;
 use live::{LiveState, run_live_listener};
+use sync::run_sync_monitor;
 
 /// What the ingestion workers share: the database, the RPC client, the clock, the stream's watch
-/// list, the live state, and the wake-up the listings give the fetcher when they queue tasks.
+/// list, the live state, the provider's latest refusal, where sync states are published, and the
+/// wake-up the listings give the fetcher when they queue tasks.
 #[derive(Clone)]
 pub(crate) struct Ingestion {
     store: Store,
@@ -44,6 +50,8 @@ pub(crate) struct Ingestion {
     live: Arc<LiveState>,
     watch: WalletWatch,
     watched: Arc<Mutex<HashSet<Address>>>,
+    provider_refuses_until: Arc<Mutex<Option<Timestamp>>>,
+    sync: SyncPublisher,
 }
 
 impl Ingestion {
@@ -51,7 +59,7 @@ impl Ingestion {
         store: Store,
         rpc: RpcClient,
         clock: Arc<dyn Clock>,
-        watch: WalletWatch,
+        (watch, sync): (WalletWatch, SyncPublisher),
     ) -> Self {
         let live = Arc::new(LiveState::new(clock.now()));
         Self {
@@ -62,6 +70,8 @@ impl Ingestion {
             live,
             watch,
             watched: Arc::new(Mutex::new(HashSet::new())),
+            provider_refuses_until: Arc::new(Mutex::new(None)),
+            sync,
         }
     }
 
@@ -75,7 +85,25 @@ impl Ingestion {
             run_listing(self, shutdown),
             run_fetcher(self, shutdown),
             run_live_listener(self, events, shutdown),
+            run_sync_monitor(self, shutdown),
         );
+    }
+
+    /// The provider refuses every request until `until` (the key, the plan, the credits).
+    fn provider_refused(&self, until: Timestamp) {
+        let mut refusal = self
+            .provider_refuses_until
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        *refusal = Some(refusal.map_or(until, |current| current.max(until)));
+    }
+
+    /// Whether the provider refuses every request at `now`.
+    fn is_provider_refusing(&self, now: Timestamp) -> bool {
+        self.provider_refuses_until
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some_and(|until| until > now)
     }
 
     /// Asks the stream to watch the wallets of `wallets` it does not watch yet.

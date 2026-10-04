@@ -58,8 +58,11 @@ pub(crate) fn live_events(
     // First the subscription, then the status: see the module documentation.
     let subscription = BroadcastStream::new(engine.subscribe());
     let current_status = stream::once(ready(current_status_event(&engine)));
-    let engine_events = subscription.map(move |received| {
-        received.map_or_else(|_lagged| current_status_event(&engine), LiveEvent::from)
+    let engine_events = subscription.filter_map(move |received| {
+        ready(received.map_or_else(
+            |_lagged| Some(current_status_event(&engine)),
+            |event| LiveEvent::from_engine(&event),
+        ))
     });
     current_status
         .chain(stream::select(heartbeats(clock), engine_events))

@@ -90,9 +90,11 @@ impl LiveState {
     pub(super) fn apply(&self, event: &StreamEvent, now: Timestamp) {
         let mut checks = self.lock();
         match event {
-            StreamEvent::Disconnected { .. } => checks.stream_down(),
+            StreamEvent::Disconnected { .. } => checks.stream_down(now),
             StreamEvent::Subscribed { wallet } => checks.subscribed(*wallet, now),
-            StreamEvent::SubscriptionRefused { wallet, .. } => checks.unsubscribed(*wallet),
+            StreamEvent::SubscriptionRefused { wallet, .. } => {
+                checks.unsubscribed(*wallet, now);
+            }
             StreamEvent::Activity(activity) => checks.activity(activity.wallet, now),
             StreamEvent::Overflowed => checks.events_lost(now),
             StreamEvent::Connected | StreamEvent::ServerError { .. } => {}
@@ -110,6 +112,12 @@ impl LiveState {
     /// again.
     pub(super) fn check_failed(&self, wallet: Address, now: Timestamp) -> (u32, Timestamp) {
         self.lock().failed(wallet, now)
+    }
+
+    /// Since when `wallet`'s subscription is down, if it is, and whether its check is late, at
+    /// `now`.
+    pub(super) fn lag(&self, wallet: Address, now: Timestamp) -> (Option<Timestamp>, bool) {
+        self.lock().lag(wallet, now)
     }
 
     fn lock(&self) -> MutexGuard<'_, CheckSchedule> {

@@ -32,4 +32,5 @@ pub use error::EngineError;
 pub use events::EngineEvent;
 pub use handle::EngineHandle;
 pub use health::{ComponentHealth, CreditHealth, EngineHealth};
+pub use ingestion::SyncState;
 pub use status::EngineStatus;

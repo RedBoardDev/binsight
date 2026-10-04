@@ -4,6 +4,9 @@
 //! Events describe what happened, in domain terms; how they travel over the wire is the API's
 //! business. This module only defines them.
 
+use binsight_solana::Address;
+
+use crate::ingestion::SyncState;
 use crate::status::EngineStatus;
 
 /// Something the engine wants the rest of the application to know.
@@ -13,5 +16,12 @@ pub enum EngineEvent {
     StatusChanged {
         /// The new status.
         status: EngineStatus,
+    },
+    /// A wallet's sync state changed.
+    WalletSyncChanged {
+        /// The wallet.
+        wallet: Address,
+        /// Its new state.
+        state: SyncState,
     },
 }

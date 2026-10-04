@@ -2,7 +2,8 @@
 //!
 //! [`LiveEvent`] is a union tagged by `type`; the SSE `event:` name of each message equals that
 //! `type`, so a browser can listen to each kind by name. It is registered in the contract so the
-//! clients' types follow it. This module defines the wire form and converts engine events to it.
+//! clients' types follow it. This module defines the wire form and converts engine events to it;
+//! the events the wire does not carry yet (a wallet's sync state) are left out.
 
 use binsight_engine::EngineEvent;
 use jiff::Timestamp;
@@ -37,12 +38,14 @@ impl LiveEvent {
     }
 }
 
-impl From<EngineEvent> for LiveEvent {
-    fn from(event: EngineEvent) -> Self {
-        match event {
-            EngineEvent::StatusChanged { status } => Self::EngineStatus {
+impl LiveEvent {
+    /// The wire form of an engine event, if the stream carries that kind yet.
+    pub(crate) fn from_engine(event: &EngineEvent) -> Option<Self> {
+        match *event {
+            EngineEvent::StatusChanged { status } => Some(Self::EngineStatus {
                 status: status.into(),
-            },
+            }),
+            EngineEvent::WalletSyncChanged { .. } => None,
         }
     }
 }

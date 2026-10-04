@@ -64,6 +64,8 @@ impl CheckReason {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(super) struct WalletChecks {
     is_subscribed: bool,
+    /// Since when its subscription is down, once it was up.
+    unsubscribed_since: Option<Timestamp>,
     /// When the last listing from the newest signature started.
     last_check_at: Option<Timestamp>,
     /// Since when a top-up is owed.
@@ -138,12 +140,14 @@ impl WalletChecks {
     /// The subscription was confirmed at `at`: a top-up is owed.
     pub(super) fn subscribed(&mut self, at: Timestamp) {
         self.is_subscribed = true;
+        self.unsubscribed_since = None;
         self.top_up_since.get_or_insert(at);
     }
 
-    /// The subscription was lost.
-    pub(super) fn unsubscribed(&mut self) {
+    /// The subscription was lost at `at`.
+    pub(super) fn unsubscribed(&mut self, at: Timestamp) {
         self.is_subscribed = false;
+        self.unsubscribed_since.get_or_insert(at);
     }
 
     /// Events were lost at `at`: a top-up is owed.
@@ -154,6 +158,17 @@ impl WalletChecks {
     /// Whether the subscription is live.
     pub(super) const fn is_subscribed(&self) -> bool {
         self.is_subscribed
+    }
+
+    /// Since when the subscription is down (since `started_at` if it never came up), and
+    /// whether the check is late by more than twice its cadence, at `now`.
+    pub(super) fn lag(&self, started_at: Timestamp, now: Timestamp) -> (Option<Timestamp>, bool) {
+        let unsubscribed_since =
+            (!self.is_subscribed).then(|| self.unsubscribed_since.unwrap_or(started_at));
+        let is_overdue = self
+            .last_check_at
+            .is_some_and(|last| later(last, self.cadence().saturating_mul(2)) < now);
+        (unsubscribed_since, is_overdue)
     }
 
     fn cadence(&self) -> SignedDuration {
@@ -245,7 +260,7 @@ mod tests {
     fn checks_every_minute_while_unsubscribed() {
         let mut checks = checked_at_startup();
 
-        checks.unsubscribed();
+        checks.unsubscribed(at(1));
 
         assert_eq!(first_due(&checks), (at(60), CheckReason::Cadence));
     }
@@ -260,5 +275,19 @@ mod tests {
         assert_eq!(checks.failed(at(30)), (2, at(90)));
         checks.checked(at(90));
         assert_eq!(checks.failed(at(100)), (1, at(130)));
+    }
+
+    #[test]
+    fn tells_how_long_a_subscription_is_down_and_whether_a_check_is_late() {
+        let mut checks = WalletChecks::default();
+        assert_eq!(checks.lag(start(), at(5)), (Some(start()), false));
+        checks.subscribed(at(1));
+        checks.checked(at(1));
+        assert_eq!(checks.lag(start(), at(1_801)), (None, false));
+        assert_eq!(checks.lag(start(), at(1_802)), (None, true));
+
+        checks.unsubscribed(at(1_900));
+
+        assert_eq!(checks.lag(start(), at(1_950)).0, Some(at(1_900)));
     }
 }

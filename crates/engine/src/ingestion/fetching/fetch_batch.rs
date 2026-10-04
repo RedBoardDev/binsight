@@ -155,7 +155,7 @@ async fn fetch_one(ingestion: Ingestion, task: FetchTask) -> Fetched {
             Fetched::Deferred { class, until }
         }
         FetchStep::Pause { until, reason } => {
-            report_pause("fetch", &reason, until);
+            report_pause(&ingestion, "fetch", &reason, until);
             Fetched::PausedUntil(until)
         }
     }

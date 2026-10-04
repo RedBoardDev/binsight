@@ -7,10 +7,12 @@
 //! after both have stopped. Every status change is published both as the current status and as an event. This
 //! module owns the lifecycle; what the work is belongs to other modules.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use binsight_chain::{RpcClient, WalletStream, WsConnector};
 use binsight_core::clock::Clock;
+use binsight_solana::Address;
 use binsight_store::Store;
 use tokio::sync::{broadcast, watch};
 use tokio_util::sync::CancellationToken;
@@ -20,7 +22,7 @@ use crate::credit_usage::{restore_spending, run_credit_usage};
 use crate::error::EngineError;
 use crate::events::EngineEvent;
 use crate::handle::EngineHandle;
-use crate::ingestion::{Ingestion, requeue_readable_versions};
+use crate::ingestion::{Ingestion, SyncPublisher, SyncState, requeue_readable_versions};
 use crate::projections::{REGISTRY, reconcile_projections};
 use crate::status::EngineStatus;
 
@@ -35,6 +37,7 @@ pub struct Engine {
     clock: Arc<dyn Clock>,
     status: watch::Sender<EngineStatus>,
     events: broadcast::Sender<EngineEvent>,
+    sync_states: watch::Sender<BTreeMap<Address, SyncState>>,
 }
 
 impl std::fmt::Debug for Engine {
@@ -55,7 +58,13 @@ impl Engine {
     ) -> (Self, EngineHandle) {
         let (status, status_receiver) = watch::channel(EngineStatus::Starting);
         let (events, _) = broadcast::channel(EVENT_BUFFER_SIZE);
-        let handle = EngineHandle::new(store.clone(), rpc.clone(), status_receiver, events.clone());
+        let (sync_states, sync_receiver) = watch::channel(BTreeMap::new());
+        let handle = EngineHandle::new(
+            store.clone(),
+            rpc.clone(),
+            (status_receiver, sync_receiver),
+            events.clone(),
+        );
         (
             Self {
                 store,
@@ -64,6 +73,7 @@ impl Engine {
                 clock,
                 status,
                 events,
+                sync_states,
             },
             handle,
         )
@@ -83,11 +93,15 @@ impl Engine {
         info!("engine running");
         let (stream, watch, stream_events) =
             WalletStream::new(self.stream.clone(), self.rpc.clone());
+        let sync = SyncPublisher {
+            states: self.sync_states.clone(),
+            events: self.events.clone(),
+        };
         let ingestion = Ingestion::new(
             self.store.clone(),
             self.rpc.clone(),
             self.clock.clone(),
-            watch,
+            (watch, sync),
         );
         let ingestion_stopped = CancellationToken::new();
         tokio::join!(
@@ -199,7 +213,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn resumes_after_a_restart_with_one_top_up_and_nothing_fetched_again() {
-        let wallet = binsight_solana::Address::from_bytes([1; 32]);
+        let wallet = Address::from_bytes([1; 32]);
         let setup = temporary_engine().await;
         setup.store.wallets().add(wallet, TEST_START).await.unwrap();
         for _listing_and_its_confirmation in 0..2 {
@@ -225,7 +239,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn resumes_an_interrupted_history_from_the_last_written_page() {
-        let wallet = binsight_solana::Address::from_bytes([1; 32]);
+        let wallet = Address::from_bytes([1; 32]);
         let full = u16::try_from(SIGNATURE_PAGE_LIMIT).unwrap();
         let setup = temporary_engine().await;
         setup.store.wallets().add(wallet, TEST_START).await.unwrap();

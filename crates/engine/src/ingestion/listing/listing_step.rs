@@ -186,7 +186,7 @@ fn setback_failure(
     match error {
         PageError::Deferred { until } => Setback::Defer(until),
         PageError::Paused { until, reason } => {
-            report_pause("listing", &reason, until);
+            report_pause(ingestion, "listing", &reason, until);
             Setback::Pause(until)
         }
         error @ (PageError::Rpc(_) | PageError::Store(_)) => {

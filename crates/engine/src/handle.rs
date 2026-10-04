@@ -1,15 +1,19 @@
 //! The handle the rest of the application uses to talk to the engine.
 //!
-//! A handle is cheap to clone and safe to share between tasks. It reads the current status,
-//! checks the health and subscribes to the engine's events; it cannot stop or drive the engine,
+//! A handle is cheap to clone and safe to share between tasks. It reads the current status and
+//! each wallet's sync state, checks the health and subscribes to the engine's events; it cannot stop or drive the engine,
 //! which only the owner of [`crate::Engine`] can do.
 
+use std::collections::BTreeMap;
+
 use binsight_chain::RpcClient;
+use binsight_solana::Address;
 use binsight_store::Store;
 use tokio::sync::{broadcast, watch};
 
 use crate::events::EngineEvent;
 use crate::health::{EngineHealth, check_database};
+use crate::ingestion::SyncState;
 use crate::status::EngineStatus;
 
 /// A shared, read-only view of a running engine.
@@ -18,6 +22,7 @@ pub struct EngineHandle {
     store: Store,
     rpc: RpcClient,
     status: watch::Receiver<EngineStatus>,
+    sync_states: watch::Receiver<BTreeMap<Address, SyncState>>,
     events: broadcast::Sender<EngineEvent>,
 }
 
@@ -25,13 +30,17 @@ impl EngineHandle {
     pub(crate) fn new(
         store: Store,
         rpc: RpcClient,
-        status: watch::Receiver<EngineStatus>,
+        (status, sync_states): (
+            watch::Receiver<EngineStatus>,
+            watch::Receiver<BTreeMap<Address, SyncState>>,
+        ),
         events: broadcast::Sender<EngineEvent>,
     ) -> Self {
         Self {
             store,
             rpc,
             status,
+            sync_states,
             events,
         }
     }
@@ -55,6 +64,12 @@ impl EngineHandle {
             engine: self.status(),
             credits: self.rpc.credit_meter().standing().into(),
         }
+    }
+
+    /// How up to date each tracked wallet is, as last decided (empty until the first decision,
+    /// a few moments after startup).
+    pub fn sync_states(&self) -> BTreeMap<Address, SyncState> {
+        self.sync_states.borrow().clone()
     }
 
     /// Starts receiving the events published from now on.

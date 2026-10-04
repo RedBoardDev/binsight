@@ -104,15 +104,15 @@ impl CheckSchedule {
         self.wallets.entry(wallet).or_default().subscribed(at);
     }
 
-    /// `wallet` lost its subscription (refused).
-    pub(in crate::ingestion) fn unsubscribed(&mut self, wallet: Address) {
-        self.wallets.entry(wallet).or_default().unsubscribed();
+    /// `wallet` lost its subscription at `at` (refused).
+    pub(in crate::ingestion) fn unsubscribed(&mut self, wallet: Address, at: Timestamp) {
+        self.wallets.entry(wallet).or_default().unsubscribed(at);
     }
 
-    /// The stream went down: no wallet is subscribed.
-    pub(in crate::ingestion) fn stream_down(&mut self) {
+    /// The stream went down at `at`: no wallet is subscribed.
+    pub(in crate::ingestion) fn stream_down(&mut self, at: Timestamp) {
         for checks in self.wallets.values_mut() {
-            checks.unsubscribed();
+            checks.unsubscribed(at);
         }
     }
 
@@ -129,6 +129,17 @@ impl CheckSchedule {
         self.wallets
             .get(&wallet)
             .is_some_and(WalletChecks::is_subscribed)
+    }
+
+    /// Since when `wallet`'s subscription is down, if it is, and whether its check is late, at
+    /// `now`.
+    pub(in crate::ingestion) fn lag(
+        &self,
+        wallet: Address,
+        now: Timestamp,
+    ) -> (Option<Timestamp>, bool) {
+        let checks = self.wallets.get(&wallet).copied().unwrap_or_default();
+        checks.lag(self.started_at, now)
     }
 }
 
@@ -224,7 +235,7 @@ mod tests {
         schedule.subscribed(WALLET, at(0));
         schedule.checked(WALLET, at(0));
 
-        schedule.stream_down();
+        schedule.stream_down(at(1));
 
         assert_eq!(
             schedule.next(&complete(), Priority::Valuation, at(1)),
