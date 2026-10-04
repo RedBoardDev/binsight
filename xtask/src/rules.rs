@@ -104,6 +104,13 @@ pub(crate) const EXCLUSIVE_OWNERS: &[ExclusiveOwner] = &[
         dependency: "tokio-tungstenite",
         owners: &[CHAIN],
     },
+    // The capture of mainnet fixtures is tooling, outside the product: it may not use the chain
+    // client (nothing may depend on a binsight crate from xtask), so it has its own blocking
+    // HTTP client, which no product crate may use.
+    ExclusiveOwner {
+        dependency: "ureq",
+        owners: &[XTASK],
+    },
     // HTTP and sessions belong to the API.
     ExclusiveOwner {
         dependency: "axum",

@@ -12,6 +12,14 @@ pub(crate) fn repository_root() -> anyhow::Result<PathBuf> {
     rev_parse(&["--show-toplevel"], "the repository root")
 }
 
+/// The git directory shared by every worktree of the repository (where `info/` lives).
+pub(crate) fn common_directory() -> anyhow::Result<PathBuf> {
+    rev_parse(
+        &["--path-format=absolute", "--git-common-dir"],
+        "the git common directory",
+    )
+}
+
 /// Runs `git rev-parse` with `arguments` and returns the path it prints.
 fn rev_parse(arguments: &[&str], what: &str) -> anyhow::Result<PathBuf> {
     let output = Command::new("git")

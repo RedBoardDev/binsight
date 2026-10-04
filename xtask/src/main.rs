@@ -2,11 +2,13 @@
 //!
 //! **Responsibility:** repository tooling, run with `cargo xtask <task>`:
 //! - `layering` checks that every workspace crate only depends on what `rules.rs` allows;
-//! - `structure` checks that source files and folders stay within the size limits.
+//! - `structure` checks that source files and folders stay within the size limits;
+//! - `fixture capture` records real mainnet data for the tests (see `fixture.rs`).
 //!
 //! **May depend on:** no binsight crate; nobody depends on it.
 //! (Checked in CI by `cargo xtask layering`.)
 
+mod fixture;
 mod git;
 mod layering;
 mod metadata;
@@ -22,12 +24,13 @@ use crate::structure::Report;
 const USAGE_ERROR_EXIT_CODE: u8 = 2;
 
 fn main() -> ExitCode {
-    let task = std::env::args().nth(1);
-    match task.as_deref() {
-        Some("layering") => run_layering(),
-        Some("structure") => run_structure(),
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    match arguments.split_first() {
+        Some((task, _)) if task == "layering" => run_layering(),
+        Some((task, _)) if task == "structure" => run_structure(),
+        Some((task, rest)) if task == "fixture" => run_fixture(rest),
         _ => {
-            report_error("usage: cargo xtask <layering|structure>");
+            report_error("usage: cargo xtask <layering|structure|fixture>");
             ExitCode::from(USAGE_ERROR_EXIT_CODE)
         }
     }
@@ -61,6 +64,20 @@ fn find_layering_violations() -> anyhow::Result<Vec<Violation>> {
     let json = metadata::run_cargo_metadata()?;
     let packages = metadata::parse_packages(&json)?;
     Ok(layering::check(&packages))
+}
+
+/// Captures fixtures from mainnet.
+fn run_fixture(arguments: &[String]) -> ExitCode {
+    match fixture::run(arguments) {
+        Ok(summary) => {
+            report(&format!("fixture: {summary}"));
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            report_error(&format!("fixture: {error:#}"));
+            ExitCode::FAILURE
+        }
+    }
 }
 
 /// Checks the size of files and folders, printing warnings first and every error at once.

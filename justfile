@@ -214,6 +214,27 @@ rust-build:
     cargo clean -p binsight --release
     cargo build --release --locked -p binsight
 
+# --- Fixtures -------------------------------------------------------------
+
+# The key line is read with sed, never echoed; a worktree falls back to the main checkout's .env.
+[doc('Capture mainnet fixtures with the Helius key of .env (see `cargo xtask fixture`).')]
+[group('fixtures')]
+[positional-arguments]
+fixture-capture *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    env_file=.env
+    if [ ! -f "$env_file" ]; then
+        env_file="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/.env"
+    fi
+    key=""
+    if [ -f "$env_file" ]; then
+        key="$(sed -n 's/^BINSIGHT_HELIUS_API_KEY=//p' "$env_file" | tail -n 1)"
+        key="${key%\"}"; key="${key#\"}"
+    fi
+    if [ -z "$key" ]; then echo "no BINSIGHT_HELIUS_API_KEY in $env_file" >&2; exit 1; fi
+    HELIUS_API_KEY="$key" exec cargo xtask fixture capture "$@"
+
 # --- Docker: always under the project name binsight-local, never another one -----
 
 # Build the image as binsight:local.
