@@ -38,8 +38,6 @@ pub use decoded::{DecodeOutcome, DecodeRecord, DecodedEvent, DecodedRepo};
 pub use error::StoreError;
 pub use meta::{MetaKey, MetaRepo};
 pub use projections::{ProjectionMetaRepo, ProjectionState, ProjectionStatus};
-pub use raw_tx::{
-    Commitment, PayloadCompression, PayloadEncoding, RawTxRecord, RawTxRepo, TxVersion,
-};
+pub use raw_tx::{PayloadCompression, RawTxRecord, RawTxRepo};
 pub use store::Store;
 pub use upgrade::{BackupOptions, SchemaStatus, UpgradeOptions, UpgradeReport};

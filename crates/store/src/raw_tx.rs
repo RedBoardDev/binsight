@@ -6,9 +6,10 @@
 
 mod attributes;
 
-pub use attributes::{Commitment, PayloadCompression, PayloadEncoding, TxVersion};
+pub use attributes::PayloadCompression;
 
-use binsight_solana::Signature;
+use binsight_solana::transaction::{TxEncoding, TxVersion};
+use binsight_solana::{Commitment, Signature};
 use jiff::Timestamp;
 use rusqlite::{OptionalExtension, Row, params};
 
@@ -46,7 +47,7 @@ pub struct RawTxRecord {
     /// How final it was when fetched.
     pub commitment: Commitment,
     /// The requested RPC encoding.
-    pub encoding: PayloadEncoding,
+    pub encoding: TxEncoding,
     /// How `payload` is compressed.
     pub compression: PayloadCompression,
     /// The node's answer, as stored.
@@ -168,9 +169,9 @@ pub(crate) mod tests {
             signature: Signature::from_bytes([seed; 64]),
             slot: 300_000_000,
             block_time: Some(Timestamp::from_second(1_790_000_000).unwrap()),
-            tx_version: TxVersion::Versioned(0),
+            tx_version: TxVersion::V0,
             commitment: Commitment::Finalized,
-            encoding: PayloadEncoding::Json,
+            encoding: TxEncoding::Json,
             compression: PayloadCompression::None,
             payload: b"{\"slot\":300000000}".to_vec(),
             payload_sha256: [7; 32],
