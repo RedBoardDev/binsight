@@ -1,7 +1,11 @@
-/* The app's only stylesheet. HeroUI's styles bring Tailwind with them. */
+/*
+ * The app's only stylesheet. HeroUI's styles bring Tailwind with them; every file after them must
+ * stay after them (see midnight.css).
+ */
 @import "@heroui/styles";
 @import "./typography.css";
-@import "./theme.css";
+@import "./midnight.css";
+@import "./heroui-bridge.css";
 
 html,
 body,

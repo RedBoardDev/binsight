@@ -1,0 +1,87 @@
+/*
+ * What HeroUI derives from the palette, and the utilities the app's components use. No color value
+ * lives here: everything points at midnight.css.
+ *
+ * Same layer as midnight.css, for the same reason: imported after @heroui/styles, declarations made
+ * directly in the theme layer beat HeroUI's own (theme.base).
+ */
+@layer theme {
+  :root,
+  [data-theme="light"],
+  .dark,
+  [data-theme="dark"] {
+    --surface-secondary: var(--inset);
+    --surface-tertiary: var(--hover);
+    --surface-shadow: none;
+    --overlay-foreground: var(--foreground);
+
+    --default: var(--inset);
+    --default-foreground: var(--foreground);
+    --segment: var(--overlay);
+    --segment-foreground: var(--foreground);
+    --separator: var(--border);
+
+    --success: var(--gain);
+    --danger: var(--loss);
+    --focus: var(--accent);
+    --link: var(--foreground);
+
+    --field-background: var(--inset);
+    --field-border: transparent;
+    --field-placeholder: var(--faint);
+    --field-shadow: none;
+
+    --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+    --gain-soft: color-mix(in srgb, var(--gain) 13%, transparent);
+    --loss-soft: color-mix(in srgb, var(--loss) 13%, transparent);
+    --warning-soft: color-mix(in srgb, var(--warning) 13%, transparent);
+    --success-soft: var(--gain-soft);
+    --danger-soft: var(--loss-soft);
+
+    /* Liquidity by bin: the SOL (quote) side in the accent, the token (base) side neutral. */
+    --bin-quote: var(--accent);
+    --bin-base: var(--n-500);
+
+    --wallet-1: oklch(from var(--wallet-hue-1) calc(l * var(--wallet-darkening)) c h);
+    --wallet-2: oklch(from var(--wallet-hue-2) calc(l * var(--wallet-darkening)) c h);
+    --wallet-3: oklch(from var(--wallet-hue-3) calc(l * var(--wallet-darkening)) c h);
+    --wallet-4: oklch(from var(--wallet-hue-4) calc(l * var(--wallet-darkening)) c h);
+    --wallet-5: oklch(from var(--wallet-hue-5) calc(l * var(--wallet-darkening)) c h);
+    --wallet-6: oklch(from var(--wallet-hue-6) calc(l * var(--wallet-darkening)) c h);
+    --wallet-7: oklch(from var(--wallet-hue-7) calc(l * var(--wallet-darkening)) c h);
+    --wallet-8: oklch(from var(--wallet-hue-8) calc(l * var(--wallet-darkening)) c h);
+  }
+
+  :root {
+    --radius: 0.75rem;
+    --field-radius: 0.625rem;
+  }
+}
+
+@theme inline {
+  --color-faint: var(--faint);
+  --color-inset: var(--inset);
+  --color-hover: var(--hover);
+  --color-border-subtle: var(--border-subtle);
+  --color-gain: var(--gain);
+  --color-gain-soft: var(--gain-soft);
+  --color-loss: var(--loss);
+  --color-loss-soft: var(--loss-soft);
+  --color-warning-soft: var(--warning-soft);
+  --color-info: var(--info);
+  --color-avatar: var(--avatar-background);
+  --color-avatar-foreground: var(--avatar-foreground);
+  --color-bin-quote: var(--bin-quote);
+  --color-bin-base: var(--bin-base);
+  --color-wallet-1: var(--wallet-1);
+  --color-wallet-2: var(--wallet-2);
+  --color-wallet-3: var(--wallet-3);
+  --color-wallet-4: var(--wallet-4);
+  --color-wallet-5: var(--wallet-5);
+  --color-wallet-6: var(--wallet-6);
+  --color-wallet-7: var(--wallet-7);
+  --color-wallet-8: var(--wallet-8);
+
+  --shadow-thumb: var(--thumb-shadow);
+  --shadow-glass: var(--glass-shadow);
+}

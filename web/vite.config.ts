@@ -15,8 +15,8 @@ const manifest: Partial<ManifestOptions> = {
   scope: '/',
   display: 'standalone',
   orientation: 'any',
-  background_color: '#0b0f14',
-  theme_color: '#0b0f14',
+  background_color: '#0b0f17',
+  theme_color: '#0b0f17',
   icons: [
     { src: '/icons/pwa-64x64.png', sizes: '64x64', type: 'image/png' },
     { src: '/icons/pwa-192x192.png', sizes: '192x192', type: 'image/png' },

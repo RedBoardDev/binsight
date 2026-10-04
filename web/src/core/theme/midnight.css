@@ -1,0 +1,113 @@
+/*
+ * Midnight, the app's only palette, in a light and a dark theme. This is the only file of the app
+ * that holds color values: everything else reads these variables (heroui-bridge.css maps them onto
+ * HeroUI's own names and onto Tailwind utilities).
+ *
+ * It must stay imported after @heroui/styles. HeroUI declares its variables in a nested layer
+ * (theme.base), and declarations made directly in the theme layer beat it; imported first, every
+ * value below would silently lose.
+ *
+ * Contrast (WCAG 2.2): every text color is at least 4.5:1 on --background and --surface. One known
+ * exception: --faint on the dark --overlay is 4.3:1, so secondary text inside popovers, menus and
+ * tooltips uses --muted.
+ */
+@layer theme {
+  :root {
+    /* The neutral scale, shared by both themes. */
+    --n-50: #f1f4f9;
+    --n-100: #e4e9f1;
+    --n-200: #cbd3e0;
+    --n-300: #b4becd;
+    --n-400: #a3adbd;
+    --n-500: #7c8799;
+    --n-600: #5b6678;
+    --n-700: #2a3447;
+    --n-800: #1b2333;
+    --n-900: #121826;
+    --n-950: #0b0f17;
+
+    /* Wallet dots, distinct from the gain and loss colors. The light theme darkens them. */
+    --wallet-hue-1: #6ea8fe;
+    --wallet-hue-2: #a99bf0;
+    --wallet-hue-3: #8fc08a;
+    --wallet-hue-4: #e6a26b;
+    --wallet-hue-5: #6cc5c0;
+    --wallet-hue-6: #d58bb5;
+    --wallet-hue-7: #c9c06a;
+    --wallet-hue-8: #9aa7b8;
+  }
+
+  :root,
+  [data-theme="light"] {
+    --background: #eef1f6;
+    --foreground: #0f172a;
+    --surface: #ffffff;
+    --overlay: #ffffff;
+    --muted: #475569;
+    --faint: var(--n-600);
+    --border: rgba(15, 23, 42, 0.1);
+    --border-subtle: rgba(15, 23, 42, 0.06);
+    --inset: rgba(0, 0, 0, 0.045);
+    --hover: rgba(0, 0, 0, 0.035);
+
+    --accent: #0e7490;
+    --accent-foreground: #ffffff;
+    --gain: #13763a;
+    --loss: #b91c1c;
+    --warning: #92580a;
+    --info: #0369a1;
+
+    --backdrop: rgba(30, 30, 35, 0.2);
+    --avatar-background: var(--n-100);
+    --avatar-foreground: var(--n-600);
+
+    --thumb-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
+    --overlay-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.04);
+    --glass-shadow: 0 8px 28px rgba(15, 23, 42, 0.14), 0 1px 2px rgba(15, 23, 42, 0.08);
+
+    /* Thick glass: the floating tab bar. */
+    --glass-thick: rgba(255, 255, 255, 0.68);
+    --glass-edge: rgba(15, 23, 42, 0.08);
+    --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+
+    --wallet-darkening: 0.8;
+  }
+
+  .dark,
+  [data-theme="dark"] {
+    --background: #0b0f17;
+    --foreground: #eef1f6;
+    --surface: var(--n-900);
+    --overlay: var(--n-800);
+    --muted: var(--n-400);
+    --faint: var(--n-500);
+    --border: rgba(148, 163, 184, 0.14);
+    --border-subtle: rgba(148, 163, 184, 0.08);
+    --inset: rgba(255, 255, 255, 0.055);
+    --hover: rgba(255, 255, 255, 0.04);
+
+    --accent: #22d3ee;
+    --accent-foreground: #04222a;
+    --gain: #4ade80;
+    --loss: #f87171;
+    --warning: #fbbf24;
+    --info: #7dd3fc;
+
+    --backdrop: color-mix(in srgb, var(--background) 40%, transparent);
+    --avatar-background: var(--n-800);
+    --avatar-foreground: var(--n-300);
+
+    --thumb-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+    --overlay-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.07), inset 0 1px 0 rgba(255, 255, 255, 0.06),
+      0 2px 6px rgba(0, 0, 0, 0.3), 0 24px 64px rgba(0, 0, 0, 0.55);
+    --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.25);
+
+    --glass-thick: rgba(27, 35, 51, 0.62);
+    --glass-edge: rgba(255, 255, 255, 0.14);
+    --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+
+    --wallet-darkening: 1;
+  }
+}

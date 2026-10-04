@@ -7,6 +7,7 @@ import { createQueryClient } from '@app/core/query/createQueryClient';
 import { RootErrorBoundary } from '@app/core/RootErrorBoundary';
 import { redirectToSignIn } from '@app/core/redirectToSignIn';
 import { createAppRouter } from '@app/core/router';
+import { syncThemeAttribute } from '@app/core/theme/themeStore';
 import { apiClient } from '@app/lib/api/client';
 import { createUnauthorizedMiddleware } from '@app/lib/api/unauthorizedMiddleware';
 import { RouterProvider } from '@tanstack/react-router';
@@ -19,6 +20,7 @@ if (rootElement === null) {
 }
 
 registerStaleChunkReload();
+syncThemeAttribute();
 
 // Activated before the first render, so no component ever renders without its messages.
 await activateInitialLocale();
