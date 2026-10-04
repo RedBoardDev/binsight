@@ -1,7 +1,7 @@
-//! The identity of the Meteora DLMM program on Solana mainnet, and the tag of its events.
+//! The identity of the Meteora DLMM program on Solana mainnet, and how its events are marked.
 //!
-//! This module only names the program and how its events are marked; decoding its accounts and
-//! events comes later, in other modules of this crate.
+//! This module only names the program, its event authority and its event tag; decoding the
+//! events is the job of [`crate::event`].
 
 use binsight_solana::Address;
 
@@ -12,6 +12,17 @@ use binsight_solana::Address;
 pub const PROGRAM_ID: Address = Address::from_bytes([
     4, 233, 225, 47, 188, 132, 232, 38, 201, 50, 204, 233, 226, 100, 12, 206, 21, 89, 12, 28, 98,
     115, 176, 146, 87, 8, 186, 59, 133, 32, 176, 188,
+]);
+
+/// The account that signs every event the program emits,
+/// `D1ZN9Wj1fRSUQfCjhvnu1hqDMT7hzjzBBpi12nVniYD6`.
+///
+/// It is the program's address derived from the seed `__event_authority`. Only the program can
+/// sign for it, so an instruction to the program that carries the event tag but not this account
+/// is not an event.
+pub const EVENT_AUTHORITY: Address = Address::from_bytes([
+    178, 112, 214, 127, 169, 140, 81, 207, 2, 19, 5, 19, 88, 150, 43, 175, 53, 116, 43, 237, 89,
+    201, 217, 68, 94, 156, 13, 12, 133, 199, 205, 145,
 ]);
 
 /// The first 8 bytes of the data of every event the program emits.
@@ -33,6 +44,14 @@ mod tests {
         assert_eq!(
             PROGRAM_ID.to_string(),
             "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"
+        );
+    }
+
+    #[test]
+    fn the_event_authority_is_the_one_that_signs_mainnet_events() {
+        assert_eq!(
+            EVENT_AUTHORITY.to_string(),
+            "D1ZN9Wj1fRSUQfCjhvnu1hqDMT7hzjzBBpi12nVniYD6"
         );
     }
 

@@ -285,8 +285,12 @@ dependencies = [
 name = "binsight-dlmm"
 version = "0.1.0"
 dependencies = [
+ "binsight-core",
  "binsight-solana",
+ "serde",
+ "serde_json",
  "sha2 0.11.0",
+ "thiserror",
 ]
 
 [[package]]

@@ -1,8 +1,9 @@
 //! # binsight-dlmm
 //!
-//! **Responsibility:** everything specific to the Meteora DLMM program: its identifier and event
-//! tag now, and later its account layouts, its Event-CPI decoding and the fixed-point maths of its
-//! bins.
+//! **Responsibility:** everything specific to the Meteora DLMM program: its identity, the events
+//! it emits ([`event::decode_events`]), and the name and version under which their decoding is
+//! stored.
+//! Later: its account layouts and the fixed-point maths of its bins.
 //!
 //! **May depend on:** `binsight-core`, `binsight-solana`.
 //! **Must not depend on:** `binsight-ledger`, `binsight-store`, `binsight-chain`,
@@ -18,4 +19,12 @@
     clippy::arithmetic_side_effects
 )]
 
+pub mod decoder_version;
+pub mod event;
 pub mod program;
+
+#[cfg(test)]
+mod test_events;
+
+pub use decoder_version::{DECODER_NAME, DECODER_VERSION};
+pub use event::{DlmmEvent, LocatedEvent, decode_events};
