@@ -19,6 +19,7 @@ test-support = ["dep:tempfile", "dep:serde_json", "binsight-chain/test-support"]
 [dependencies]
 binsight-chain.workspace = true
 binsight-core.workspace = true
+binsight-ledger.workspace = true
 binsight-solana.workspace = true
 binsight-store.workspace = true
 jiff.workspace = true

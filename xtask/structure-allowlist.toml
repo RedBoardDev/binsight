@@ -12,3 +12,7 @@
 # [[folder]]
 # path = "crates/example/src/routes"
 # reason = "why this folder cannot be split"
+
+[[folder]]
+path = "crates/engine/src"
+reason = "the portfolio read port joined the root while the ingestion track filled it to twelve; the lifecycle files (engine, handle, status, events, health) move into one module once the ingestion work in progress lands, rather than under it"

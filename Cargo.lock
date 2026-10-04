@@ -295,6 +295,7 @@ version = "0.1.0"
 dependencies = [
  "binsight-chain",
  "binsight-core",
+ "binsight-ledger",
  "binsight-solana",
  "binsight-store",
  "jiff",
