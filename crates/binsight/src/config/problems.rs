@@ -18,6 +18,8 @@ pub enum Setting {
     HeliusPlan,
     /// `BINSIGHT_MONTHLY_CREDITS`: the credits the plan grants per billing cycle.
     MonthlyCredits,
+    /// `BINSIGHT_CREDIT_CYCLE_DAY`: the day of the month the plan's credits reset on.
+    CreditCycleDay,
     /// `BINSIGHT_DAILY_CREDIT_LIMIT`: the credits that may be spent per UTC day, at most.
     DailyCreditLimit,
     /// `BINSIGHT_DATA_DIR`: where the database and its backups live.
@@ -38,11 +40,12 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting, in the order they are reported.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::Password,
         Self::HeliusApiKey,
         Self::HeliusPlan,
         Self::MonthlyCredits,
+        Self::CreditCycleDay,
         Self::DailyCreditLimit,
         Self::DataDir,
         Self::Bind,
@@ -60,6 +63,7 @@ impl Setting {
             Self::HeliusApiKey => "BINSIGHT_HELIUS_API_KEY",
             Self::HeliusPlan => "BINSIGHT_HELIUS_PLAN",
             Self::MonthlyCredits => "BINSIGHT_MONTHLY_CREDITS",
+            Self::CreditCycleDay => "BINSIGHT_CREDIT_CYCLE_DAY",
             Self::DailyCreditLimit => "BINSIGHT_DAILY_CREDIT_LIMIT",
             Self::DataDir => "BINSIGHT_DATA_DIR",
             Self::Bind => "BINSIGHT_BIND",

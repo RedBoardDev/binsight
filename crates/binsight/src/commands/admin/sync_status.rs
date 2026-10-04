@@ -2,9 +2,8 @@
 //!
 //! For each tracked wallet: where its history listing stands and how its transactions stand in
 //! the fetch queue. Then the credits spent today (UTC, the provider's day), request kind by
-//! request kind, against the daily limit, and this calendar month's total against the plan (the
-//! provider's billing cycle may start on another day). It only reads, so it works while the
-//! server runs.
+//! request kind, against the daily limit, and the current billing cycle's total against the
+//! plan. It only reads, so it works while the server runs.
 
 use binsight_core::clock::{Clock, utc_day};
 use binsight_engine::SystemClock;
@@ -30,11 +29,9 @@ pub(super) async fn show_sync_status(config: &Config) -> Result<(), Failure> {
     }
     let today = utc_day(SystemClock.now());
     let totals = store.credits().totals_between(today, today).await?;
-    let month = store
-        .credits()
-        .spent_between(today.first_of_month(), today)
-        .await?;
     let budget = config.credit_budget;
+    let cycle_start = budget.cycle_day.cycle_start(today);
+    let cycle = store.credits().spent_between(cycle_start, today).await?;
     let limit = budget.daily_credit_limit.map_or_else(
         || "no daily limit".to_owned(),
         |limit| format!("daily limit {}", limit.0),
@@ -47,10 +44,8 @@ pub(super) async fn show_sync_status(config: &Config) -> Result<(), Failure> {
         print_line(&describe_total(total));
     }
     print_line(&format!(
-        "Credits this calendar month (since {}, UTC): {} of {}",
-        today.first_of_month(),
-        month.0,
-        budget.monthly_credits.0
+        "Credits this billing cycle (since {cycle_start}, UTC): {} of {}",
+        cycle.0, budget.monthly_credits.0
     ));
     Ok(())
 }

@@ -72,6 +72,7 @@ wins over the file). Invalid settings are all reported at once and the server do
 | `BINSIGHT_HELIUS_API_KEY` | yes | — | Your Helius API key. |
 | `BINSIGHT_HELIUS_PLAN` | no | `free` | Your Helius plan (`free`, `developer`, `business` or `professional`): it sets how fast binsight may send requests. |
 | `BINSIGHT_MONTHLY_CREDITS` | no | the plan's (1000000 on `free`) | The credits your plan grants per month, if they differ from the plan's. |
+| `BINSIGHT_CREDIT_CYCLE_DAY` | no | `1` | The day of the month (1 to 28, UTC) your plan's credits reset on; binsight spreads what is left of them over the days until then. |
 | `BINSIGHT_DAILY_CREDIT_LIMIT` | no | — | A hard cap on the credits spent per UTC day: once it is reached, binsight sends nothing until the next day. |
 | `BINSIGHT_DATA_DIR` | no | `$XDG_DATA_HOME/binsight`, else `~/.local/share/binsight`; `/data` in the image | Where the database, its backups and the instance secrets live. |
 | `BINSIGHT_BIND` | no | `127.0.0.1:8080`; `0.0.0.0:8080` in the image | The address and port the server listens on. |

@@ -117,10 +117,17 @@ fn rpc_client(config: &Config, clock: Arc<dyn Clock>) -> Result<RpcClient, Failu
     let budget = config.credit_budget;
     info!(
         plan = %budget.plan,
+        monthly_credits = budget.monthly_credits.0,
+        cycle_day = budget.cycle_day.get(),
         daily_credit_limit = budget.daily_credit_limit.map(|limit| limit.0),
         "rpc credit budget"
     );
-    let governor = GovernorSettings::for_plan(budget.plan, budget.daily_credit_limit);
+    let governor = GovernorSettings {
+        requests_per_second: budget.plan.requests_per_second(),
+        cycle_credits: budget.monthly_credits,
+        cycle_day: budget.cycle_day,
+        daily_credit_limit: budget.daily_credit_limit,
+    };
     Ok(RpcClient::new(Arc::new(transport), governor, clock))
 }
 

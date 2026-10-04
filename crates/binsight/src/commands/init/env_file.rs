@@ -25,6 +25,7 @@ pub(crate) fn render_env_file(helius_api_key: &str, password: &str) -> String {
         text,
         "\n# Optional settings, shown with their defaults or an example:\n\
          # BINSIGHT_HELIUS_PLAN=free\n\
+         # BINSIGHT_CREDIT_CYCLE_DAY=1\n\
          # BINSIGHT_DAILY_CREDIT_LIMIT=5000\n\
          # BINSIGHT_DATA_DIR=~/.local/share/binsight\n\
          # BINSIGHT_BIND={DEFAULT_BIND}\n\

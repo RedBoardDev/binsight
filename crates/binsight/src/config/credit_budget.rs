@@ -1,12 +1,14 @@
-//! The RPC credit settings: the Helius plan, the credits it grants per cycle, and the optional
-//! hard daily limit.
+//! The RPC credit settings: the Helius plan, the credits it grants per cycle, the day the cycle
+//! starts, and the optional hard daily limit.
 //!
 //! The plan sets the request rate and, unless the owner says otherwise, the monthly credits. The
-//! daily limit is a guard: once it is spent, binsight sends nothing until the next UTC day, so a
-//! development run or a runaway loop cannot eat the month. This module reads and checks the three
-//! values; the chain client enforces them.
+//! cycle day says when they reset (Helius resets them on the day the subscription started), so
+//! the budget spreads what is left over the right number of days. The daily limit is a guard:
+//! once it is spent, binsight sends nothing until the next UTC day, so a development run or a
+//! runaway loop cannot eat the month. This module reads and checks the four values; the chain
+//! client enforces them.
 
-use binsight_chain::HeliusPlan;
+use binsight_chain::{BillingCycleDay, HeliusPlan};
 use binsight_core::credits::Credits;
 
 use super::problems::{Setting, Source};
@@ -22,6 +24,8 @@ pub struct CreditBudget {
     pub plan: HeliusPlan,
     /// The credits a billing cycle grants.
     pub monthly_credits: Credits,
+    /// The day of the month billing cycles start on.
+    pub cycle_day: BillingCycleDay,
     /// The most credits spent per UTC day, if limited.
     pub daily_credit_limit: Option<Credits>,
 }
@@ -41,10 +45,12 @@ impl SettingReader<'_> {
                 .insert(Setting::MonthlyCredits, Source::Default);
             plan.map(HeliusPlan::monthly_credits)
         };
+        let cycle_day = self.with_default(Setting::CreditCycleDay, "1", parse_cycle_day);
         let daily_credit_limit = self.optional(Setting::DailyCreditLimit, parse_credits);
         Some(CreditBudget {
             plan: plan?,
             monthly_credits: monthly_credits?,
+            cycle_day: cycle_day?,
             daily_credit_limit,
         })
     }
@@ -59,6 +65,16 @@ fn parse_credits(text: &str) -> Result<Credits, String> {
             "{text:?} is not a number of credits (a whole number, at least 1)"
         )),
     }
+}
+
+/// A day of the month a billing cycle can start on: digits only, from 1 to 28.
+fn parse_cycle_day(text: &str) -> Result<BillingCycleDay, String> {
+    let is_digits = !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit());
+    text.parse::<u8>()
+        .ok()
+        .filter(|_| is_digits)
+        .and_then(|day| BillingCycleDay::try_from(day).ok())
+        .ok_or_else(|| format!("{text:?} is not a day of the month from 1 to 28"))
 }
 
 #[cfg(test)]
@@ -103,6 +119,14 @@ mod tests {
     }
 
     #[test]
+    fn reads_a_cycle_day_every_month_has() {
+        assert_eq!(parse_cycle_day("28").map(BillingCycleDay::get), Ok(28));
+        for text in ["0", "29", "+3", "1.5", ""] {
+            assert!(parse_cycle_day(text).is_err(), "{text}");
+        }
+    }
+
+    #[test]
     fn spends_the_free_plan_credits_without_a_daily_limit_by_default() {
         let loaded = validate(&sources(
             &[
@@ -117,6 +141,7 @@ mod tests {
         let budget = loaded.config.credit_budget;
         assert_eq!(budget.plan, HeliusPlan::Free);
         assert_eq!(budget.monthly_credits, Credits(1_000_000));
+        assert_eq!(budget.cycle_day, BillingCycleDay::FIRST);
         assert_eq!(budget.daily_credit_limit, None);
         assert_eq!(
             loaded.config.origins[&Setting::MonthlyCredits],
@@ -132,6 +157,7 @@ mod tests {
                 ("BINSIGHT_PASSWORD", PASSWORD),
                 ("BINSIGHT_HELIUS_API_KEY", KEY),
                 ("BINSIGHT_HELIUS_PLAN", "developer"),
+                ("BINSIGHT_CREDIT_CYCLE_DAY", "17"),
                 ("BINSIGHT_DAILY_CREDIT_LIMIT", "5000"),
             ],
             Some(&[("BINSIGHT_MONTHLY_CREDITS", "2500000")]),
@@ -141,6 +167,7 @@ mod tests {
         let budget = loaded.config.credit_budget;
         assert_eq!(budget.plan, HeliusPlan::Developer);
         assert_eq!(budget.monthly_credits, Credits(2_500_000));
+        assert_eq!(budget.cycle_day.get(), 17);
         assert_eq!(budget.daily_credit_limit, Some(Credits(5_000)));
     }
 
