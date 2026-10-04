@@ -2,8 +2,8 @@
 //!
 //! The chain client's meter counts every request in memory; this worker moves the counts into the
 //! database every minute and once more when ingestion has stopped, so the credit report is
-//! complete and the hard daily limit survives a restart: at startup, the day's spending is read
-//! back into the meter before the first request. Counts that cannot be written go back to the
+//! complete and the budget survives a restart: at startup, the day's and the billing cycle's
+//! spending are read back into the meter before the first request. Counts that cannot be written go back to the
 //! meter for the next attempt. This module moves counts; it does not decide what a request
 //! costs.
 
@@ -18,16 +18,23 @@ use tracing::{debug, error, warn};
 /// How often the counts are written to the database.
 const FLUSH_INTERVAL: Duration = Duration::from_secs(60);
 
-/// Restores what was already spent today, so the hard daily limit holds across restarts.
-pub(crate) async fn restore_spent_today(
+/// Restores what was already spent today and this billing cycle, so the budget and its limits
+/// hold across restarts.
+pub(crate) async fn restore_spending(
     store: &Store,
     rpc: &RpcClient,
     clock: &dyn Clock,
 ) -> Result<(), StoreError> {
     let today = utc_day(clock.now());
-    let spent = store.credits().spent_between(today, today).await?;
-    rpc.credit_meter().seed_spent_today(spent);
-    debug!(%spent, "credits spent today restored");
+    let meter = rpc.credit_meter();
+    let spent_today = store.credits().spent_between(today, today).await?;
+    let cycle_first_day = meter.cycle_first_day();
+    let spent_cycle = store
+        .credits()
+        .spent_between(cycle_first_day, today)
+        .await?;
+    meter.seed(spent_today, spent_cycle);
+    debug!(%spent_today, %spent_cycle, %cycle_first_day, "credits spent restored");
     Ok(())
 }
 

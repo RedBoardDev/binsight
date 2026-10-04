@@ -1,9 +1,9 @@
 //! The engine: the long-running task that owns the background work.
 //!
 //! At startup the engine brings the projection bookkeeping in step with the code, restores the
-//! credits already spent today and queues again the transactions parked for a version it now
-//! reads; then it reports that it is running and runs ingestion until
-//! the shutdown signal, persisting the credit counts as it goes and once more after ingestion has
+//! credits already spent today and this billing cycle, and queues again the transactions parked
+//! for a version it now reads; then it reports that it is running and runs ingestion until the
+//! shutdown signal, persisting the credit counts as it goes and once more after ingestion has
 //! stopped. Every status change is published both as the current status and as an event. This
 //! module owns the lifecycle; what the work is belongs to other modules.
 
@@ -16,7 +16,7 @@ use tokio::sync::{broadcast, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use crate::credit_usage::{restore_spent_today, run_credit_usage};
+use crate::credit_usage::{restore_spending, run_credit_usage};
 use crate::error::EngineError;
 use crate::events::EngineEvent;
 use crate::handle::EngineHandle;
@@ -70,7 +70,7 @@ impl Engine {
     /// engine never reaches the running status then.
     pub async fn run(self, shutdown: CancellationToken) -> Result<(), EngineError> {
         reconcile_projections(&self.store, REGISTRY).await?;
-        restore_spent_today(&self.store, &self.rpc, self.clock.as_ref()).await?;
+        restore_spending(&self.store, &self.rpc, self.clock.as_ref()).await?;
         requeue_readable_versions(&self.store, self.clock.now()).await?;
         self.change_status(EngineStatus::Running);
         info!("engine running");

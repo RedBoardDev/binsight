@@ -1,21 +1,33 @@
 //! The governor: what every request goes through before and after it is sent.
 //!
-//! Before: the credit meter books its cost against the day's allowance (and refuses it past the
-//! hard daily limit), then the rate limiter waits for a slot. After: the meter counts it with its
-//! outcome, or as cancelled if the caller dropped it before the answer (at shutdown). The client calls the governor on every attempt, retries included, so each one is paced
-//! and counted. This module assembles the parts; each one lives in its own module.
+//! Before: the credit meter books its cost against the budget, which may refuse it or defer its
+//! class, then the rate limiter waits for a slot in the lane of its priority (a full lane defers
+//! it too, and gives the credits back). After: the meter counts it with its outcome, or as
+//! cancelled if the caller dropped it before the answer (at shutdown). The client calls the
+//! governor on every attempt, retries included, so each one is paced and counted. This module
+//! assembles the parts; each one lives in its own module.
 
+mod billing_cycle;
+mod budget_guard;
 mod cost_table;
 mod credit_meter;
+mod daily_budget;
+mod day_pace;
 mod rate_limiter;
+mod usage_counts;
+mod waiting_lanes;
 
-pub use credit_meter::{CreditMeter, CreditUsage};
+pub use billing_cycle::{BillingCycleDay, InvalidCycleDay};
+pub use budget_guard::CreditStanding;
+pub use credit_meter::CreditMeter;
+pub use usage_counts::CreditUsage;
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use binsight_core::clock::Clock;
-use binsight_core::credits::{CallOutcome, Credits};
+use binsight_core::credits::{CallOutcome, Credits, Priority};
+use jiff::{SignedDuration, Timestamp};
 
 use crate::error::BudgetRefusal;
 use crate::plan::HeliusPlan;
@@ -26,37 +38,60 @@ use rate_limiter::RateLimiter;
 /// The pause after a 429 that did not say how long to wait.
 const DEFAULT_COOL_DOWN_SECS: u64 = 1;
 
-/// How the governor paces and caps requests.
+/// How the governor paces and budgets requests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GovernorSettings {
     /// The requests sent per second, evenly spaced.
     pub requests_per_second: u32,
+    /// The credits a billing cycle grants.
+    pub cycle_credits: Credits,
+    /// The day of the month billing cycles start on.
+    pub cycle_day: BillingCycleDay,
     /// The credits that may be spent per UTC day before every request is refused, if any.
     pub daily_credit_limit: Option<Credits>,
 }
 
 impl GovernorSettings {
-    /// The settings for `plan`, with an optional hard daily limit.
+    /// The settings for `plan`, with cycles starting on the first of the month and an optional
+    /// hard daily limit.
     pub const fn for_plan(plan: HeliusPlan, daily_credit_limit: Option<Credits>) -> Self {
         Self {
             requests_per_second: plan.requests_per_second(),
+            cycle_credits: plan.monthly_credits(),
+            cycle_day: BillingCycleDay::FIRST,
             daily_credit_limit,
         }
     }
 }
 
 /// Paces, admits and counts the requests of one client.
-#[derive(Debug)]
 pub(crate) struct Governor {
+    clock: Arc<dyn Clock>,
     limiter: RateLimiter,
     meter: CreditMeter,
+}
+
+impl std::fmt::Debug for Governor {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Governor")
+            .field("limiter", &self.limiter)
+            .field("meter", &self.meter)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Governor {
     pub(crate) fn new(settings: GovernorSettings, clock: Arc<dyn Clock>) -> Self {
         Self {
             limiter: RateLimiter::new(settings.requests_per_second),
-            meter: CreditMeter::new(clock, settings.daily_credit_limit),
+            meter: CreditMeter::new(
+                clock.clone(),
+                settings.cycle_credits,
+                settings.cycle_day,
+                settings.daily_credit_limit,
+            ),
+            clock,
         }
     }
 
@@ -65,10 +100,20 @@ impl Governor {
         &self.meter
     }
 
-    /// Books the request's cost, then waits for a slot to send it.
-    pub(crate) async fn admit(&self, method: RpcMethod) -> Result<(), BudgetRefusal> {
-        self.meter.reserve(cost(method))?;
-        self.limiter.acquire().await;
+    /// Books the request's cost, then waits for a slot in its priority's lane to send it.
+    pub(crate) async fn admit(
+        &self,
+        method: RpcMethod,
+        priority: Priority,
+    ) -> Result<(), BudgetRefusal> {
+        let cost = cost(method);
+        self.meter.reserve(cost, priority)?;
+        if let Err(full) = self.limiter.acquire(priority).await {
+            self.meter.release(cost);
+            let wait = SignedDuration::try_from(full.wait).unwrap_or(SignedDuration::MAX);
+            let until = self.clock.now().checked_add(wait).unwrap_or(Timestamp::MAX);
+            return Err(BudgetRefusal::Deferred { until });
+        }
         Ok(())
     }
 
@@ -89,6 +134,12 @@ impl Governor {
     pub(crate) fn cool_down(&self, retry_after: Option<Duration>) {
         let pause = retry_after.unwrap_or(Duration::from_secs(DEFAULT_COOL_DOWN_SECS));
         self.limiter.cool_down(pause);
+    }
+
+    /// Refuses everything but an hourly probe after the provider said the cycle's credits are
+    /// used up.
+    pub(crate) fn credits_exhausted(&self) {
+        self.meter.provider_refused();
     }
 }
 

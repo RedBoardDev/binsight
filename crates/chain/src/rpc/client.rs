@@ -1,7 +1,7 @@
 //! The JSON-RPC client: one call, with its budget, pacing, deadline and retries.
 //!
 //! [`RpcClient`] is a cheap handle (clones share everything). Each call gets a request id, then
-//! loops: the governor admits the attempt (credits, then a rate slot), the transport sends it
+//! loops: the governor admits the attempt (the budget, then a rate slot in its priority's lane), the transport sends it
 //! under the method's deadline, the meter counts it with its outcome, and the call either returns
 //! or waits as the retry policy says. Every attempt is admitted and counted, so retries are never
 //! invisible. There is exactly one retry policy, here; the transport never retries on its own.
@@ -71,7 +71,7 @@ impl RpcClient {
         loop {
             attempt = attempt.saturating_add(1);
             let governor = &self.inner.governor;
-            governor.admit(method).await?;
+            governor.admit(method, context.priority).await?;
             let sent = governor.send(method, *context);
             let (outcome, result) = self.exchange(method, body.clone()).await.settle(method);
             sent.settle(outcome);
@@ -79,8 +79,10 @@ impl RpcClient {
                 Ok(result) => return Ok(result),
                 Err(error) => error,
             };
-            if let RpcError::RateLimited { retry_after } = error {
-                governor.cool_down(retry_after);
+            match error {
+                RpcError::RateLimited { retry_after } => governor.cool_down(retry_after),
+                RpcError::CreditsExhausted => governor.credits_exhausted(),
+                _ => {}
             }
             match decide(&error, attempt, context.priority, request_id) {
                 Retry::Never => return Err(error),

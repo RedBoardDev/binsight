@@ -29,6 +29,9 @@ pub enum TransportError {
 }
 
 /// The governor refused to send a request.
+///
+/// Only [`BudgetRefusal::Deferred`] concerns the request's class alone and lifts by itself soon;
+/// the others hold until a limit resets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum BudgetRefusal {
     /// The configured hard daily limit is spent; nothing is sent until the next UTC day.
@@ -39,6 +42,42 @@ pub enum BudgetRefusal {
         /// When the next UTC day starts.
         resets_at: Timestamp,
     },
+    /// The request's class has spent its share of today's credits, or too many requests of its
+    /// class already wait: it is not dropped, only delayed until `until`.
+    #[error("requests of this class are deferred until {until}")]
+    Deferred {
+        /// When a request of this class may be sent.
+        until: Timestamp,
+    },
+    /// Nearly all the billing cycle's credits are spent: only live work goes on until the cycle
+    /// ends, so the last credits keep the live view up to date.
+    #[error(
+        "the billing cycle's credits are nearly spent; only live requests go until {resets_at}"
+    )]
+    CycleReserveReached {
+        /// When the next billing cycle starts.
+        resets_at: Timestamp,
+    },
+    /// The billing cycle's credits are spent, by binsight's count or by the provider's word;
+    /// nothing is sent until the next cycle, except, when the provider refused, one probe an
+    /// hour in case it was wrong.
+    #[error("the billing cycle's credits are spent; requests resume at {resume_at}")]
+    CycleQuotaSpent {
+        /// When the next request may go: the next probe, or the next cycle.
+        resume_at: Timestamp,
+    },
+}
+
+impl BudgetRefusal {
+    /// When requests may be tried again.
+    pub const fn resume_at(&self) -> Timestamp {
+        match *self {
+            Self::DailyHardLimitReached { resets_at, .. }
+            | Self::CycleReserveReached { resets_at } => resets_at,
+            Self::Deferred { until } => until,
+            Self::CycleQuotaSpent { resume_at } => resume_at,
+        }
+    }
 }
 
 /// An RPC call failed.

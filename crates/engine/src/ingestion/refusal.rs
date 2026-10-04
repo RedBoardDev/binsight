@@ -1,14 +1,14 @@
 //! Refusals that concern every request, not the one that met them, and how long work waits.
 //!
-//! The daily credit limit, a refused key, used-up credits or a method outside the plan will refuse
-//! the next request just the same: retrying, or charging the attempt to a transaction, would only
-//! waste time. The worker that meets one pauses instead: until the next UTC day for the daily
-//! limit, a while for the provider's refusals, which a human has to fix. Both workers read the
-//! same rule here.
+//! A budget refusal (the daily credit limit, the cycle's credits, a class deferred), a refused
+//! key, used-up credits or a method outside the plan will refuse the next request just the same:
+//! retrying, or charging the attempt to a transaction, would only waste time. The worker that
+//! meets one pauses instead: until the budget lets requests go again, a while for the provider's
+//! refusals, which a human has to fix. Both workers read the same rule here.
 
 use std::time::Duration;
 
-use binsight_chain::{BudgetRefusal, RpcError};
+use binsight_chain::RpcError;
 use jiff::{SignedDuration, Timestamp};
 use tracing::{error, warn};
 
@@ -18,9 +18,7 @@ const PROVIDER_REFUSAL_PAUSE_SECS: i64 = 600;
 /// When work may resume after `error`, or `None` if the error only concerns this request.
 pub(super) fn resume_after_refusal(error: &RpcError, now: Timestamp) -> Option<Timestamp> {
     match error {
-        RpcError::Budget(BudgetRefusal::DailyHardLimitReached { resets_at, .. }) => {
-            Some(*resets_at)
-        }
+        RpcError::Budget(refusal) => Some(refusal.resume_at()),
         RpcError::Unauthorized
         | RpcError::CreditsExhausted
         | RpcError::NotAvailableOnPlan { .. } => Some(
@@ -31,7 +29,7 @@ pub(super) fn resume_after_refusal(error: &RpcError, now: Timestamp) -> Option<T
     }
 }
 
-/// Logs a pause: a warning for the daily limit, which lifts by itself, an error otherwise.
+/// Logs a pause: a warning for a budget limit, which lifts by itself, an error otherwise.
 pub(super) fn report_pause(worker: &'static str, reason: &RpcError, until: Timestamp) {
     if matches!(reason, RpcError::Budget(_)) {
         warn!(worker, %reason, %until, "rpc work paused");
@@ -47,7 +45,7 @@ pub(super) fn time_until(now: Timestamp, instant: Timestamp) -> Duration {
 
 #[cfg(test)]
 mod tests {
-    use binsight_chain::TransportError;
+    use binsight_chain::{BudgetRefusal, TransportError};
     use binsight_core::credits::Credits;
 
     use super::*;

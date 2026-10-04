@@ -26,7 +26,9 @@ pub mod test_support;
 
 pub use endpoint::RpcEndpoint;
 pub use error::{BudgetRefusal, RpcError, TransportError};
-pub use governor::{CreditMeter, CreditUsage, GovernorSettings};
+pub use governor::{
+    BillingCycleDay, CreditMeter, CreditStanding, CreditUsage, GovernorSettings, InvalidCycleDay,
+};
 pub use helius_key::{HeliusApiKey, HeliusKeyError};
 pub use plan::HeliusPlan;
 pub use rpc::{
