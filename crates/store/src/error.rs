@@ -5,6 +5,8 @@
 
 use std::path::PathBuf;
 
+use binsight_solana::Address;
+
 /// A database operation failed.
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -105,5 +107,27 @@ pub enum StoreError {
         what: &'static str,
         /// The value found, as text.
         value: String,
+    },
+    /// A transaction payload could not be compressed or decompressed.
+    #[error("could not compress or decompress a transaction payload")]
+    Compression {
+        /// What zstd reported.
+        #[source]
+        source: std::io::Error,
+    },
+    /// A stored transaction payload does not match the hash recorded with it: the row is damaged.
+    #[error("a stored transaction payload does not match its checksum")]
+    PayloadChecksumMismatch,
+    /// The wallet is not tracked.
+    #[error("the wallet {address} is not tracked")]
+    UnknownWallet {
+        /// The wallet's address.
+        address: Address,
+    },
+    /// The wallet's listing cursor moved since it was read: another writer listed a page.
+    #[error("the listing cursor of {address} moved since it was read")]
+    CursorMoved {
+        /// The wallet's address.
+        address: Address,
     },
 }

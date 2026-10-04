@@ -95,6 +95,11 @@ pub(crate) const EXCLUSIVE_OWNERS: &[ExclusiveOwner] = &[
         dependency: "libsqlite3-sys",
         owners: &[STORE],
     },
+    // Payload compression is a storage detail of the registry.
+    ExclusiveOwner {
+        dependency: "zstd",
+        owners: &[STORE],
+    },
     // The network belongs to the chain client.
     ExclusiveOwner {
         dependency: "reqwest",

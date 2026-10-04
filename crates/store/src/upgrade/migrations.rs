@@ -17,11 +17,23 @@ pub(crate) struct Migration {
 }
 
 /// Every migration, in the order they are applied.
-pub(crate) const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "foundation",
-    sql: include_str!("../../migrations/0001_foundation.sql"),
-}];
+pub(crate) const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "foundation",
+        sql: include_str!("../../migrations/0001_foundation.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "credit_ledger",
+        sql: include_str!("../../migrations/0002_credit_ledger.sql"),
+    },
+    Migration {
+        version: 3,
+        name: "wallet_ingestion",
+        sql: include_str!("../../migrations/0003_wallet_ingestion.sql"),
+    },
+];
 
 #[cfg(test)]
 mod tests {

@@ -167,8 +167,11 @@ mod tests {
             .unwrap();
 
         assert_eq!(report.from_version, 0);
-        assert_eq!(report.to_version, 1);
-        assert_eq!(report.applied, vec!["foundation"]);
+        assert_eq!(report.to_version, 3);
+        assert_eq!(
+            report.applied,
+            vec!["foundation", "credit_ledger", "wallet_ingestion"]
+        );
         store.ping().await.unwrap();
     }
 
@@ -198,7 +201,7 @@ mod tests {
     async fn applies_nothing_the_second_time() {
         let folder = tempfile::tempdir().unwrap();
         let path = folder.path().join("binsight.db");
-        Store::open_and_upgrade(&path, options(&folder))
+        let (_store, first) = Store::open_and_upgrade(&path, options(&folder))
             .await
             .unwrap();
 
@@ -206,7 +209,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!((report.from_version, report.to_version), (1, 1));
+        let latest = first.to_version;
+        assert_eq!((report.from_version, report.to_version), (latest, latest));
         assert_eq!(report.applied, Vec::<&str>::new());
     }
 
@@ -270,9 +274,9 @@ mod tests {
 
         assert_eq!(
             path.file_name().unwrap(),
-            "binsight-19700101T000000Z-v0.1.0-schema1.db"
+            "binsight-19700101T000000Z-v0.1.0-schema3.db"
         );
         let copy = Store::open_existing(&path).await.unwrap();
-        assert_eq!(copy.schema_status().await.unwrap().current_version, 1);
+        assert_eq!(copy.schema_status().await.unwrap().current_version, 3);
     }
 }

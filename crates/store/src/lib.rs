@@ -12,7 +12,9 @@
 //! The data lives in three layers: the raw transactions ([`Store::raw_tx`]), immutable; the
 //! decoded events ([`Store::decoded`]), versioned by decoder; and the disposable projections
 //! ([`Store::projections`]), versioned by calculation. Instance settings live in
-//! [`Store::meta`].
+//! [`Store::meta`]. Ingestion keeps its bookkeeping next to them: the tracked wallets
+//! ([`Store::wallets`]), their listed signatures ([`Store::signatures`]), the queue of
+//! transactions to fetch ([`Store::fetch_queue`]) and the credits spent ([`Store::credits`]).
 //!
 //! Inside the crate, SQL runs in plain synchronous functions that receive a connection; only the
 //! connection pools in `database` run them, on a blocking thread. Callers outside the crate see
@@ -22,17 +24,24 @@
 
 #![deny(clippy::float_arithmetic, clippy::float_cmp)]
 
+mod credits;
 mod database;
 mod decoded;
 mod error;
+mod ingestion;
 mod meta;
 mod projections;
 mod raw_tx;
 mod store;
 mod upgrade;
 
+pub use credits::{CreditTotal, CreditUsage, CreditsRepo};
 pub use decoded::{DecodeOutcome, DecodeRecord, DecodedEvent, DecodedRepo};
 pub use error::StoreError;
+pub use ingestion::{
+    FetchCounts, FetchFailure, FetchQueueRepo, FetchSetback, FetchTask, FetchedTx, ListedSignature,
+    ListedTop, ListingPage, RetryState, SignaturesRepo, TrackedWallet, WalletCursor, WalletsRepo,
+};
 pub use meta::{MetaKey, MetaRepo};
 pub use projections::{ProjectionMetaRepo, ProjectionState, ProjectionStatus};
 pub use raw_tx::{PayloadCompression, RawTxRecord, RawTxRepo};

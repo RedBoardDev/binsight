@@ -2,38 +2,27 @@
 //!
 //! A transaction is stored once per signature and never changed afterwards (a trigger refuses any
 //! update), so everything derived from it can be recomputed locally without asking the chain
-//! again. This module stores and reads rows; it does not fetch, decompress or interpret payloads.
+//! again. Payloads are stored compressed, with the hash of their uncompressed bytes; this module
+//! stores rows and gives payloads back intact. It does not fetch or interpret them.
 
 mod attributes;
+mod compression;
+mod statements;
 
 pub use attributes::PayloadCompression;
+pub(crate) use compression::compress;
+pub(crate) use statements::insert_record;
 
 use binsight_solana::transaction::{TxEncoding, TxVersion};
 use binsight_solana::{Commitment, Signature};
 use jiff::Timestamp;
-use rusqlite::{OptionalExtension, Row, params};
 
 use crate::database::Database;
-use crate::database::codec::{
-    timestamp_from_sql, timestamp_to_sql, unsigned_from_sql, unsigned_to_sql,
-};
+use crate::database::codec::unsigned_from_sql;
 use crate::error::StoreError;
 use crate::store::Store;
-use attributes::{
-    commitment_from_sql, commitment_to_sql, compression_from_sql, compression_to_sql,
-    encoding_from_sql, encoding_to_sql, invalid, tx_version_from_sql, tx_version_to_sql,
-};
-
-const INSERT_IF_ABSENT: &str = "
-    INSERT INTO raw_tx (signature, slot, block_time, tx_version, commitment, encoding,
-                        compression, payload, payload_sha256, fetched_at)
-    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-    ON CONFLICT (signature) DO NOTHING";
-const SELECT_BY_SIGNATURE: &str = "
-    SELECT slot, block_time, tx_version, commitment, encoding, compression, payload,
-           payload_sha256, fetched_at
-    FROM raw_tx WHERE signature = ?1";
-const COUNT: &str = "SELECT count(*) FROM raw_tx";
+use compression::{StoredPayload, decompress};
+use statements::{COUNT, read_record};
 
 /// One transaction of the registry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,24 +73,7 @@ impl RawTxRepo {
     /// Returns an error if a value does not fit its column or the database cannot be written.
     pub async fn insert_if_absent(&self, record: RawTxRecord) -> Result<bool, StoreError> {
         self.database
-            .write(move |connection| {
-                let inserted = connection.execute(
-                    INSERT_IF_ABSENT,
-                    params![
-                        record.signature.to_string(),
-                        unsigned_to_sql(record.slot, "slot")?,
-                        record.block_time.map(timestamp_to_sql),
-                        tx_version_to_sql(record.tx_version),
-                        commitment_to_sql(record.commitment),
-                        encoding_to_sql(record.encoding),
-                        compression_to_sql(record.compression),
-                        record.payload,
-                        record.payload_sha256.as_slice(),
-                        timestamp_to_sql(record.fetched_at),
-                    ],
-                )?;
-                Ok(inserted == 1)
-            })
+            .write(move |connection| insert_record(connection, &record))
             .await
     }
 
@@ -112,15 +84,27 @@ impl RawTxRepo {
     /// Returns an error if the database cannot be read or holds an invalid row.
     pub async fn get(&self, signature: Signature) -> Result<Option<RawTxRecord>, StoreError> {
         self.database
-            .read(move |connection| {
-                connection
-                    .query_row(SELECT_BY_SIGNATURE, [signature.to_string()], |row| {
-                        Ok(record_from_row(signature, row))
-                    })
-                    .optional()?
-                    .transpose()
-            })
+            .read(move |connection| read_record(connection, signature))
             .await
+    }
+
+    /// The node's answer for this signature, uncompressed and checked against its hash, if the
+    /// transaction is in the registry.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::PayloadChecksumMismatch`] if the stored payload is damaged, or another
+    /// error if the database cannot be read.
+    pub async fn payload(&self, signature: Signature) -> Result<Option<Vec<u8>>, StoreError> {
+        let Some(record) = self.get(signature).await? else {
+            return Ok(None);
+        };
+        let stored = StoredPayload {
+            compression: record.compression,
+            bytes: record.payload,
+            sha256: record.payload_sha256,
+        };
+        decompress(&stored).map(Some)
     }
 
     /// How many transactions the registry holds.
@@ -138,30 +122,9 @@ impl RawTxRepo {
     }
 }
 
-/// Builds a record from a row of [`SELECT_BY_SIGNATURE`].
-fn record_from_row(signature: Signature, row: &Row<'_>) -> Result<RawTxRecord, StoreError> {
-    let sha256: Vec<u8> = row.get(7)?;
-    Ok(RawTxRecord {
-        signature,
-        slot: unsigned_from_sql(row.get(0)?, "slot")?,
-        block_time: row
-            .get::<_, Option<i64>>(1)?
-            .map(timestamp_from_sql)
-            .transpose()?,
-        tx_version: tx_version_from_sql(&row.get::<_, String>(2)?)?,
-        commitment: commitment_from_sql(&row.get::<_, String>(3)?)?,
-        encoding: encoding_from_sql(&row.get::<_, String>(4)?)?,
-        compression: compression_from_sql(&row.get::<_, String>(5)?)?,
-        payload: row.get(6)?,
-        payload_sha256: sha256
-            .try_into()
-            .map_err(|_| invalid("payload checksum", "not 32 bytes"))?,
-        fetched_at: timestamp_from_sql(row.get(8)?)?,
-    })
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
+    use super::statements::{INSERT_IF_ABSENT, SELECT_BY_SIGNATURE};
     use super::*;
     use crate::database::test_database::{assert_queries_prepare, migrated_store};
 
@@ -268,5 +231,25 @@ pub(crate) mod tests {
             .await;
 
         assert!(matches!(attempt, Err(StoreError::Sqlite(_))));
+    }
+
+    #[tokio::test]
+    async fn gives_back_the_uncompressed_payload_of_a_stored_transaction() {
+        let (_folder, store) = migrated_store().await;
+        let payload = br#"{"slot":300000000,"transaction":["AQID","base64"]}"#;
+        let stored = compress(payload).unwrap();
+        let record = RawTxRecord {
+            compression: stored.compression,
+            payload: stored.bytes,
+            payload_sha256: stored.sha256,
+            ..sample_record(4)
+        };
+        store.raw_tx().insert_if_absent(record).await.unwrap();
+
+        let read = store.raw_tx().payload(Signature::from_bytes([4; 64])).await;
+
+        assert_eq!(read.unwrap(), Some(payload.to_vec()));
+        let missing = store.raw_tx().payload(Signature::from_bytes([5; 64])).await;
+        assert_eq!(missing.unwrap(), None);
     }
 }

@@ -12,6 +12,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+binsight-core.workspace = true
 binsight-solana.workspace = true
 deadpool-sqlite.workspace = true
 hex.workspace = true
@@ -20,6 +21,7 @@ rusqlite.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+zstd.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
