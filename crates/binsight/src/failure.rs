@@ -44,9 +44,13 @@ pub enum Failure {
         /// The locked data folder.
         path: PathBuf,
     },
-    /// The database was written by a newer binsight, or a migration was edited.
-    #[error("this binsight cannot use the database; the latest backup is in the backups folder")]
+    /// The database was written by a newer binsight, or a migration was edited; the cause says
+    /// which, and what to do.
+    #[error("this binsight cannot use the database, which was left untouched")]
     IncompatibleDatabase(#[source] StoreError),
+    /// The database file is missing or cannot be opened (a path or permission problem).
+    #[error("could not open the database")]
+    DatabaseUnavailable(#[source] StoreError),
     /// A file, folder or socket operation failed.
     #[error("could not {action}")]
     Io {
@@ -91,7 +95,7 @@ impl Failure {
             Self::Usage(_) => EXIT_USAGE,
             Self::DataDirLocked { .. } => EXIT_LOCKED,
             Self::IncompatibleDatabase(_) => EXIT_INCOMPATIBLE_DATABASE,
-            Self::Io { .. } | Self::BackupFailed(_) => EXIT_IO,
+            Self::Io { .. } | Self::DatabaseUnavailable(_) | Self::BackupFailed(_) => EXIT_IO,
             Self::ShutdownTimedOut { .. } | Self::Unhealthy(_) | Self::Unexpected(_) => {
                 EXIT_UNEXPECTED
             }
@@ -105,6 +109,9 @@ impl From<StoreError> for Failure {
             StoreError::DatabaseNewerThanBinary { .. }
             | StoreError::MigrationChecksumMismatch { .. } => Self::IncompatibleDatabase(error),
             StoreError::Backup { .. } => Self::BackupFailed(error),
+            StoreError::NotFound { .. } | StoreError::Open { .. } | StoreError::Connection(_) => {
+                Self::DatabaseUnavailable(error)
+            }
             other => Self::Unexpected(anyhow::Error::new(other).context("the database failed")),
         }
     }
@@ -124,6 +131,23 @@ mod tests {
             failure.exit_code(),
             ExitCode::from(EXIT_INCOMPATIBLE_DATABASE)
         );
+    }
+
+    #[test]
+    fn treats_a_database_it_cannot_open_as_an_input_output_error() {
+        let failure = Failure::from(StoreError::NotFound {
+            path: PathBuf::from("/data/binsight.db"),
+        });
+        assert_eq!(failure.exit_code(), ExitCode::from(EXIT_IO));
+    }
+
+    #[test]
+    fn never_claims_a_backup_was_made_for_a_newer_database() {
+        let failure = Failure::from(StoreError::DatabaseNewerThanBinary {
+            database: 9,
+            binary: 1,
+        });
+        assert!(!failure.to_string().contains("backup"), "{failure}");
     }
 
     #[test]
