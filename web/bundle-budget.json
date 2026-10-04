@@ -1,0 +1,8 @@
+{
+  "firstLoadKb": 260,
+  "lazyChunkKb": 60,
+  "lazyChunkKbOverrides": {
+    "src/routes/login.tsx": 30
+  },
+  "cssKb": 50
+}

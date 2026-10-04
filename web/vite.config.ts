@@ -70,5 +70,12 @@ export default defineConfig(({ mode }) => ({
   resolve: { alias: { '@app': fileURLToPath(new URL('./src', import.meta.url)) } },
   server: { port: 5173, strictPort: true, proxy: apiProxy },
   preview: { port: 4173, strictPort: true, proxy: apiProxy },
-  build: { outDir: 'dist', emptyOutDir: true, assetsDir: 'assets', sourcemap: false },
+  // The manifest feeds the bundle budget (scripts/bundleBudget.ts).
+  build: {
+    outDir: 'dist',
+    emptyOutDir: true,
+    assetsDir: 'assets',
+    sourcemap: false,
+    manifest: true,
+  },
 }));

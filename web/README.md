@@ -55,6 +55,9 @@ Vite plugin and by `pnpm typecheck` and `pnpm test` (`tsr generate`); it is igno
 5. `pnpm openapi:check`: the typed API client matches `openapi/v1.json`.
 6. `pnpm build`: the production build in `dist/`. It fails on a missing translation, and on a production
    dependency whose license is not on the allowlist of `scripts/thirdPartyNotices.ts`.
+7. `pnpm budget`: the gzip size of the build against `bundle-budget.json`, from the build manifest: the
+   entry every page loads, each lazy chunk beyond what its entry and layouts already loaded, the first load
+   of each route, and the CSS. A budget only moves with a reason in the commit body.
 
 ## API client
 

@@ -115,9 +115,14 @@ web-openapi-check:
 web-build:
     {{ web }} build
 
+# Check the gzip size of every route and chunk of the build against web/bundle-budget.json.
+[group('web')]
+web-budget:
+    {{ web }} budget
+
 # Everything CI checks on the web side.
 [group('web')]
-web-check: web-lint web-typecheck web-test web-i18n-check web-openapi-check web-build
+web-check: web-lint web-typecheck web-test web-i18n-check web-openapi-check web-build web-budget
 
 # --- Rust -----------------------------------------------------------------
 
