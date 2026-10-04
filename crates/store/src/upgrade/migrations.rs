@@ -33,6 +33,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "wallet_ingestion",
         sql: include_str!("../../migrations/0003_wallet_ingestion.sql"),
     },
+    Migration {
+        version: 4,
+        name: "live_credit_purposes",
+        sql: include_str!("../../migrations/0004_live_credit_purposes.sql"),
+    },
 ];
 
 #[cfg(test)]
@@ -93,5 +98,38 @@ mod tests {
                 migration.name
             );
         }
+    }
+
+    #[test]
+    fn keeps_the_credits_spent_when_their_purposes_widen() {
+        let folder = tempfile::tempdir().unwrap();
+        let mut connection = rusqlite::Connection::open(folder.path().join("binsight.db")).unwrap();
+        let (before, widening) = MIGRATIONS.split_at(3);
+        for migration in before {
+            connection.execute_batch(migration.sql).unwrap();
+        }
+        connection
+            .execute(
+                "INSERT INTO credit_daily VALUES
+                 ('2026-09-21', 'getTransaction', 'history', 'transaction_fetch', '', 'ok', 7, 7)",
+                [],
+            )
+            .unwrap();
+
+        let transaction = connection.transaction().unwrap();
+        transaction.execute_batch(widening[0].sql).unwrap();
+        transaction.commit().unwrap();
+
+        let kept: i64 = connection
+            .query_row("SELECT credits FROM credit_daily", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(kept, 7);
+        connection
+            .execute(
+                "INSERT INTO credit_daily VALUES
+                 ('2026-09-21', 'ws_open', 'realtime', 'live_stream', '', 'ok', 1, 1)",
+                [],
+            )
+            .unwrap();
     }
 }

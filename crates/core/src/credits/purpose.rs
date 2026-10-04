@@ -14,17 +14,34 @@ pub enum Purpose {
     HistoryListing,
     /// Reading one listed transaction of the registry.
     TransactionFetch,
+    /// Listing what a wallet did since its newest listed signature, after the live stream was
+    /// down or a subscription started.
+    TopUp,
+    /// The guaranteed check: listing what a wallet did since its newest listed signature, on a
+    /// schedule and after activity, in case the live stream missed something.
+    LiveCheck,
+    /// The live stream itself: opening it and the data it delivers.
+    LiveStream,
 }
 
 impl Purpose {
     /// Every purpose.
-    pub const ALL: [Self; 2] = [Self::HistoryListing, Self::TransactionFetch];
+    pub const ALL: [Self; 5] = [
+        Self::HistoryListing,
+        Self::TransactionFetch,
+        Self::TopUp,
+        Self::LiveCheck,
+        Self::LiveStream,
+    ];
 
     /// The stable `snake_case` name, as stored and shown.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::HistoryListing => "history_listing",
             Self::TransactionFetch => "transaction_fetch",
+            Self::TopUp => "top_up",
+            Self::LiveCheck => "live_check",
+            Self::LiveStream => "live_stream",
         }
     }
 }
