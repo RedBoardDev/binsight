@@ -17,9 +17,12 @@ use super::public_url::PublicUrl;
 
 type HmacSha256 = Hmac<Sha256>;
 
-/// The labels that make the two halves of the key independent of each other.
-const ENCRYPTION_KEY_LABEL: &[u8] = b"binsight-session-enc-v1";
+/// The label of the half of the key that signs session cookies.
 const SIGNING_KEY_LABEL: &[u8] = b"binsight-session-sig-v1";
+
+/// The label of the half that would encrypt private cookies. binsight sets none, but a cookie key
+/// has both halves, and an independent label keeps them unrelated.
+const ENCRYPTION_KEY_LABEL: &[u8] = b"binsight-session-enc-v1";
 
 /// The instance's random session secret: 32 bytes generated once and kept in the database.
 #[derive(Clone)]
@@ -53,13 +56,16 @@ pub struct AuthSettings {
 
 impl AuthSettings {
     /// The key that signs session cookies, derived from the secret and the password.
+    ///
+    /// A cookie key is 64 bytes: the first half signs, the second half encrypts. Each half is
+    /// derived under its own label.
     pub(crate) fn cookie_key(&self) -> Key {
-        let encryption = labelled_mac(&self.session_secret, ENCRYPTION_KEY_LABEL, &self.password);
         let signing = labelled_mac(&self.session_secret, SIGNING_KEY_LABEL, &self.password);
+        let encryption = labelled_mac(&self.session_secret, ENCRYPTION_KEY_LABEL, &self.password);
         let mut material = [0_u8; 64];
         let (first_half, second_half) = material.split_at_mut(32);
-        first_half.copy_from_slice(&encryption);
-        second_half.copy_from_slice(&signing);
+        first_half.copy_from_slice(&signing);
+        second_half.copy_from_slice(&encryption);
         // Cannot panic: `Key::from` only requires at least 64 bytes, and `material` has 64.
         Key::from(&material)
     }
@@ -119,6 +125,18 @@ mod tests {
         let first = settings("correct horse battery", 1).cookie_key();
         let second = settings("correct horse battery", 1).cookie_key();
         assert_eq!(first.master(), second.master());
+    }
+
+    #[test]
+    fn signs_with_the_half_derived_under_the_signing_label() {
+        let auth = settings("correct horse battery", 1);
+
+        let key = auth.cookie_key();
+
+        let signing = labelled_mac(&auth.session_secret, SIGNING_KEY_LABEL, &auth.password);
+        let encryption = labelled_mac(&auth.session_secret, ENCRYPTION_KEY_LABEL, &auth.password);
+        assert_eq!(key.signing(), signing);
+        assert_eq!(key.encryption(), encryption);
     }
 
     #[test]
