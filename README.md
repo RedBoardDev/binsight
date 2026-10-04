@@ -70,6 +70,9 @@ wins over the file). Invalid settings are all reported at once and the server do
 |---|---|---|---|
 | `BINSIGHT_PASSWORD` | yes | — | The owner's password, 12 to 1024 characters. |
 | `BINSIGHT_HELIUS_API_KEY` | yes | — | Your Helius API key. |
+| `BINSIGHT_HELIUS_PLAN` | no | `free` | Your Helius plan (`free`, `developer`, `business` or `professional`): it sets how fast binsight may send requests. |
+| `BINSIGHT_MONTHLY_CREDITS` | no | the plan's (1000000 on `free`) | The credits your plan grants per month, if they differ from the plan's. |
+| `BINSIGHT_DAILY_CREDIT_LIMIT` | no | — | A hard cap on the credits spent per UTC day: once it is reached, binsight sends nothing until the next day. |
 | `BINSIGHT_DATA_DIR` | no | `$XDG_DATA_HOME/binsight`, else `~/.local/share/binsight`; `/data` in the image | Where the database, its backups and the instance secrets live. |
 | `BINSIGHT_BIND` | no | `127.0.0.1:8080`; `0.0.0.0:8080` in the image | The address and port the server listens on. |
 | `BINSIGHT_PUBLIC_URL` | no | — | The address browsers use, such as `https://binsight.example.com` (no path). Set it behind a reverse proxy: it is trusted for cross-site checks, and `https` makes the session cookie `Secure`. |

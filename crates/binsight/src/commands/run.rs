@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use binsight_api::auth::AuthSettings;
 use binsight_api::{AppState, AppStateParts, router};
-use binsight_chain::{GovernorSettings, HeliusPlan, HttpTransport, RpcClient, RpcEndpoint};
+use binsight_chain::{GovernorSettings, HttpTransport, RpcClient, RpcEndpoint};
 use binsight_core::clock::Clock;
 use binsight_engine::{Engine, SystemClock};
 use binsight_store::{BackupOptions, Store, UpgradeOptions};
@@ -110,7 +110,13 @@ fn rpc_client(config: &Config, clock: Arc<dyn Clock>) -> Result<RpcClient, Failu
     let transport = HttpTransport::new(endpoint).map_err(|error| {
         Failure::Unexpected(anyhow::Error::new(error).context("prepare the RPC client"))
     })?;
-    let governor = GovernorSettings::for_plan(HeliusPlan::Free, None);
+    let budget = config.credit_budget;
+    info!(
+        plan = %budget.plan,
+        daily_credit_limit = budget.daily_credit_limit.map(|limit| limit.0),
+        "rpc credit budget"
+    );
+    let governor = GovernorSettings::for_plan(budget.plan, budget.daily_credit_limit);
     Ok(RpcClient::new(Arc::new(transport), governor, clock))
 }
 

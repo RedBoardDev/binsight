@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use binsight_api::auth::{ClientIpHeader, OwnerPassword, PublicUrl};
 use binsight_chain::HeliusApiKey;
 
+use super::credit_budget::CreditBudget;
 use super::paths::{default_data_dir, expand_home};
 use super::problems::{ConfigError, ConfigProblem, ConfigWarning, Setting, Source};
 use super::sources::{ConfigSources, VARIABLE_PREFIX};
@@ -31,6 +32,8 @@ pub struct Config {
     pub password: OwnerPassword,
     /// The Helius API key.
     pub helius_api_key: HeliusApiKey,
+    /// How the provider's credits may be spent.
+    pub credit_budget: CreditBudget,
     /// Where the database and its backups live (absolute).
     pub data_dir: PathBuf,
     /// The address and port the server listens on.
@@ -65,6 +68,7 @@ pub fn validate(sources: &ConfigSources) -> Result<LoadedConfig, ConfigError> {
     let mut reader = SettingReader::new(sources);
     let password = reader.required(Setting::Password, OwnerPassword::parse);
     let helius_api_key = reader.required(Setting::HeliusApiKey, HeliusApiKey::parse);
+    let credit_budget = reader.credit_budget();
     let data_dir = reader.data_dir();
     let bind = reader.with_default(Setting::Bind, DEFAULT_BIND, str::parse::<SocketAddr>);
     let public_url = reader.optional(Setting::PublicUrl, PublicUrl::parse);
@@ -72,24 +76,19 @@ pub fn validate(sources: &ConfigSources) -> Result<LoadedConfig, ConfigError> {
     let log_filter = reader.with_default(Setting::Log, DEFAULT_LOG_FILTER, parse_filter);
     let log_format = reader.with_default(Setting::LogFormat, DEFAULT_LOG_FORMAT, LogFormat::parse);
     match (
-        password,
-        helius_api_key,
-        data_dir,
-        bind,
-        log_filter,
-        log_format,
+        (password, helius_api_key, credit_budget),
+        (data_dir, bind),
+        (log_filter, log_format),
     ) {
         (
-            Some(password),
-            Some(helius_api_key),
-            Some(data_dir),
-            Some(bind),
-            Some(filter),
-            Some(format),
+            (Some(password), Some(helius_api_key), Some(credit_budget)),
+            (Some(data_dir), Some(bind)),
+            (Some(filter), Some(format)),
         ) if reader.problems.is_empty() => Ok(LoadedConfig {
             config: Config {
                 password,
                 helius_api_key,
+                credit_budget,
                 data_dir,
                 bind,
                 public_url,
@@ -110,9 +109,9 @@ pub fn validate(sources: &ConfigSources) -> Result<LoadedConfig, ConfigError> {
 ///
 /// A value that fails to parse is recorded as a problem and read as `None`, so validation goes on
 /// and reports every problem; the caller checks `problems` at the end.
-struct SettingReader<'sources> {
+pub(super) struct SettingReader<'sources> {
     sources: &'sources ConfigSources,
-    origins: BTreeMap<Setting, Source>,
+    pub(super) origins: BTreeMap<Setting, Source>,
     problems: Vec<ConfigProblem>,
 }
 
@@ -126,7 +125,7 @@ impl<'sources> SettingReader<'sources> {
     }
 
     /// The raw value of `setting` and where it came from; an empty value counts as unset.
-    fn find(&self, setting: Setting) -> Option<(&'sources str, Source)> {
+    pub(super) fn find(&self, setting: Setting) -> Option<(&'sources str, Source)> {
         let name = setting.variable();
         if let Some(value) = self.sources.env.get(name).filter(|value| !value.is_empty()) {
             return Some((value, Source::Environment));
@@ -137,7 +136,7 @@ impl<'sources> SettingReader<'sources> {
     }
 
     /// The parsed value of `setting`, or `None` if it is unset or invalid.
-    fn optional<T, E: Display>(
+    pub(super) fn optional<T, E: Display>(
         &mut self,
         setting: Setting,
         parse: impl Fn(&str) -> Result<T, E>,
@@ -171,7 +170,7 @@ impl<'sources> SettingReader<'sources> {
     }
 
     /// The parsed value of `setting`, or `default` when it is unset.
-    fn with_default<T, E: Display>(
+    pub(super) fn with_default<T, E: Display>(
         &mut self,
         setting: Setting,
         default: &str,

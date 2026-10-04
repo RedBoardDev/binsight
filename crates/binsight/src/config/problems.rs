@@ -14,6 +14,12 @@ pub enum Setting {
     Password,
     /// `BINSIGHT_HELIUS_API_KEY`: the Helius API key.
     HeliusApiKey,
+    /// `BINSIGHT_HELIUS_PLAN`: the Helius plan the key belongs to.
+    HeliusPlan,
+    /// `BINSIGHT_MONTHLY_CREDITS`: the credits the plan grants per billing cycle.
+    MonthlyCredits,
+    /// `BINSIGHT_DAILY_CREDIT_LIMIT`: the credits that may be spent per UTC day, at most.
+    DailyCreditLimit,
     /// `BINSIGHT_DATA_DIR`: where the database and its backups live.
     DataDir,
     /// `BINSIGHT_BIND`: the address and port the server listens on.
@@ -32,9 +38,12 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting, in the order they are reported.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 12] = [
         Self::Password,
         Self::HeliusApiKey,
+        Self::HeliusPlan,
+        Self::MonthlyCredits,
+        Self::DailyCreditLimit,
         Self::DataDir,
         Self::Bind,
         Self::PublicUrl,
@@ -49,6 +58,9 @@ impl Setting {
         match self {
             Self::Password => "BINSIGHT_PASSWORD",
             Self::HeliusApiKey => "BINSIGHT_HELIUS_API_KEY",
+            Self::HeliusPlan => "BINSIGHT_HELIUS_PLAN",
+            Self::MonthlyCredits => "BINSIGHT_MONTHLY_CREDITS",
+            Self::DailyCreditLimit => "BINSIGHT_DAILY_CREDIT_LIMIT",
             Self::DataDir => "BINSIGHT_DATA_DIR",
             Self::Bind => "BINSIGHT_BIND",
             Self::PublicUrl => "BINSIGHT_PUBLIC_URL",

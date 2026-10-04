@@ -5,6 +5,7 @@
 //! from built-in defaults, in that order of precedence. No other part of binsight reads the
 //! environment. Validation is pure and reports every problem at once.
 
+mod credit_budget;
 mod env_file;
 mod paths;
 mod problems;
@@ -14,6 +15,7 @@ mod validate;
 
 use std::path::Path;
 
+pub use credit_budget::CreditBudget;
 pub use problems::{ConfigError, ConfigProblem, ConfigWarning, Setting, Source};
 pub use sources::{ConfigFile, ConfigSources, config_file_path, read_env_file, read_sources};
 pub use validate::{Config, DEFAULT_BIND, LoadedConfig, validate};

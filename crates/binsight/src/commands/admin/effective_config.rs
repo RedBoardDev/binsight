@@ -24,6 +24,12 @@ pub(super) fn describe(config: &Config) -> Vec<String> {
 fn displayed_value(config: &Config, setting: Setting) -> String {
     match setting {
         Setting::Password | Setting::HeliusApiKey => "(set)".to_owned(),
+        Setting::HeliusPlan => config.credit_budget.plan.to_string(),
+        Setting::MonthlyCredits => config.credit_budget.monthly_credits.0.to_string(),
+        Setting::DailyCreditLimit => config
+            .credit_budget
+            .daily_credit_limit
+            .map_or_else(|| "(not set)".to_owned(), |limit| limit.0.to_string()),
         Setting::DataDir => config.data_dir.display().to_string(),
         Setting::Bind => config.bind.to_string(),
         Setting::PublicUrl => config
@@ -71,6 +77,9 @@ mod tests {
             lines,
             "BINSIGHT_PASSWORD=(set) (from the environment)\n\
              BINSIGHT_HELIUS_API_KEY=(set) (from the environment)\n\
+             BINSIGHT_HELIUS_PLAN=free (from the default)\n\
+             BINSIGHT_MONTHLY_CREDITS=1000000 (from the default)\n\
+             BINSIGHT_DAILY_CREDIT_LIMIT=(not set)\n\
              BINSIGHT_DATA_DIR=/home/owner/.local/share/binsight (from the default)\n\
              BINSIGHT_BIND=127.0.0.1:8080 (from the default)\n\
              BINSIGHT_PUBLIC_URL=(not set)\n\
