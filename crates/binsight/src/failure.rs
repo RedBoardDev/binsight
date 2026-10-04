@@ -59,6 +59,14 @@ pub enum Failure {
     /// The database could not be backed up, so it was not touched.
     #[error("could not back up the database; nothing was changed")]
     BackupFailed(#[source] StoreError),
+    /// The server did not finish stopping in time; what was left was dropped.
+    #[error(
+        "the shutdown took longer than {deadline_secs} seconds; the remaining work was dropped"
+    )]
+    ShutdownTimedOut {
+        /// How long the shutdown was given.
+        deadline_secs: u64,
+    },
     /// The server answered its health check with an error, or not like a binsight server.
     #[error("the server is not healthy: {0}")]
     Unhealthy(String),
@@ -84,7 +92,9 @@ impl Failure {
             Self::DataDirLocked { .. } => EXIT_LOCKED,
             Self::IncompatibleDatabase(_) => EXIT_INCOMPATIBLE_DATABASE,
             Self::Io { .. } | Self::BackupFailed(_) => EXIT_IO,
-            Self::Unhealthy(_) | Self::Unexpected(_) => EXIT_UNEXPECTED,
+            Self::ShutdownTimedOut { .. } | Self::Unhealthy(_) | Self::Unexpected(_) => {
+                EXIT_UNEXPECTED
+            }
         })
     }
 }
@@ -114,6 +124,12 @@ mod tests {
             failure.exit_code(),
             ExitCode::from(EXIT_INCOMPATIBLE_DATABASE)
         );
+    }
+
+    #[test]
+    fn never_reports_a_forced_shutdown_as_a_clean_one() {
+        let failure = Failure::ShutdownTimedOut { deadline_secs: 10 };
+        assert_eq!(failure.exit_code(), ExitCode::from(EXIT_UNEXPECTED));
     }
 
     #[test]

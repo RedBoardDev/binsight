@@ -141,10 +141,9 @@ async fn supervise(
         (engine_outcome, server_outcome) = async { tokio::join!(engine, server) } => {
             engine_outcome.and(server_outcome)
         }
-        () = deadline => {
-            warn!(deadline_secs = SHUTDOWN_DEADLINE_SECS, "shutdown took too long; stopping anyway");
-            Ok(())
-        }
+        () = deadline => Err(Failure::ShutdownTimedOut {
+            deadline_secs: SHUTDOWN_DEADLINE_SECS,
+        }),
     }
 }
 
