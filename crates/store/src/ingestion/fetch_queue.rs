@@ -1,6 +1,6 @@
 //! The queue of transactions to fetch: which tasks are due, when the next one falls due, how a
-//! wallet's transactions stand, and putting back the tasks parked for a version binsight now
-//! reads.
+//! wallet's transactions stand and what keeps it behind, and putting back the tasks parked for a
+//! version binsight now reads.
 //!
 //! Tasks are served the most urgent class first, then the newest slots. Recording what a fetch
 //! found lives in `fetch_results`. This module reads the queue; it does not decide when to try
@@ -11,7 +11,7 @@ use binsight_solana::Address;
 use jiff::Timestamp;
 use rusqlite::{Row, params};
 
-use super::fetch_counts::{FetchCounts, count_states};
+use super::fetch_counts::{FetchCounts, WalletBacklog, count_states, read_backlog};
 use super::fetch_task::FetchTask;
 use crate::database::Database;
 use crate::database::codec::{
@@ -119,6 +119,18 @@ impl FetchQueueRepo {
                 )?;
                 Ok(u64::try_from(requeued).unwrap_or(u64::MAX))
             })
+            .await
+    }
+
+    /// What keeps `wallet`'s registry behind: the history still to fetch, the failed fetches,
+    /// and the oldest live work waiting.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database cannot be read or holds an invalid row.
+    pub async fn backlog(&self, wallet: Address) -> Result<WalletBacklog, StoreError> {
+        self.database
+            .read(move |connection| read_backlog(connection, wallet))
             .await
     }
 

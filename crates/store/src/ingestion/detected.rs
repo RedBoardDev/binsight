@@ -183,4 +183,22 @@ mod tests {
         assert_eq!(stored.slot_order, Some(0));
         assert_eq!(stored.block_time, Some(listed_at()));
     }
+
+    #[tokio::test]
+    async fn tells_the_history_left_to_fetch_from_the_live_work_waiting() {
+        let (_folder, store) = store_with_wallet().await;
+        let history = history_page(WALLET, vec![listed(3, 40), listed(4, 10)]);
+        store.signatures().record_listing(history).await.unwrap();
+        store
+            .signatures()
+            .record_detected(detected(2, later(13)))
+            .await
+            .unwrap();
+
+        let backlog = store.fetch_queue().backlog(WALLET).await.unwrap();
+
+        assert_eq!(backlog.history_unfetched, 2);
+        assert_eq!(backlog.failed, 0);
+        assert_eq!(backlog.oldest_live_due_at, Some(later(13)));
+    }
 }

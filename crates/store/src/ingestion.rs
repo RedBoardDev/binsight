@@ -20,7 +20,7 @@ mod wallets;
 
 pub use cursor::{ListedTop, WalletCursor};
 pub use detected::DetectedSignature;
-pub use fetch_counts::FetchCounts;
+pub use fetch_counts::{FetchCounts, WalletBacklog};
 pub use fetch_queue::FetchQueueRepo;
 pub use fetch_task::{FetchFailure, FetchSetback, FetchTask, FetchedTx, RetryState};
 pub use listing_page::ListingPage;
