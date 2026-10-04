@@ -3,17 +3,17 @@ source: crates/solana/tests/fixture_corpus.rs
 expression: view
 ---
 TransactionView {
-    signature: Signature(4JzRsYip6jwUhqFDqDybXdJi15nTSpwxhKmwa8BazTjRTFjkdcBBsVonFCStFbULDeZdxgqBHSACTCeJguFEFgdc),
-    slot: 453251199,
+    signature: Signature(3VPJGWBXrM9Sxr3emMLV65r3oSc3ocJWMU6Csb9VhCWJGT5Rkj6r4YRoiFod5ZD6fXqiY6g8GRuwRfFk1YR3CMWN),
+    slot: 453265775,
     block_time: Some(
-        2026-10-04T12:04:34Z,
+        2026-10-04T13:09:29Z,
     ),
     transaction_index: Some(
-        70,
+        815,
     ),
     version: Legacy,
     outcome: Succeeded,
-    fee_payer: Address(BMfZRMJUyWP3JChbsvkLfHrkDz3ZwQiEJgRWsRwJWD27),
+    fee_payer: Address(9sdtCBadNXG18oh51wKKctvYzamCZA4PqippXzV4wmz),
     fee: FeeBreakdown {
         total: Lamports(
             5000,
@@ -27,19 +27,25 @@ TransactionView {
     },
     accounts: [
         AccountKey {
-            address: Address(BMfZRMJUyWP3JChbsvkLfHrkDz3ZwQiEJgRWsRwJWD27),
+            address: Address(9sdtCBadNXG18oh51wKKctvYzamCZA4PqippXzV4wmz),
             is_signer: true,
             is_writable: true,
             source: Message,
         },
         AccountKey {
-            address: Address(54o5FyoYF4hMVvTanQRbWYeU7Fv7X31zLVrW8j8JKQ2i),
+            address: Address(3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT),
             is_signer: false,
             is_writable: true,
             source: Message,
         },
         AccountKey {
             address: Address(11111111111111111111111111111111),
+            is_signer: false,
+            is_writable: false,
+            source: Message,
+        },
+        AccountKey {
+            address: Address(ComputeBudget111111111111111111111111111111),
             is_signer: false,
             is_writable: false,
             source: Message,
@@ -54,35 +60,56 @@ TransactionView {
             stack_height: Some(
                 1,
             ),
+            program: Address(ComputeBudget111111111111111111111111111111),
+            accounts: [],
+            data: 0x022c010000,
+        },
+        InstructionNode {
+            position: InstructionPosition {
+                top: 1,
+                inner: None,
+            },
+            stack_height: Some(
+                1,
+            ),
             program: Address(11111111111111111111111111111111),
             accounts: [
-                Address(BMfZRMJUyWP3JChbsvkLfHrkDz3ZwQiEJgRWsRwJWD27),
-                Address(54o5FyoYF4hMVvTanQRbWYeU7Fv7X31zLVrW8j8JKQ2i),
+                Address(9sdtCBadNXG18oh51wKKctvYzamCZA4PqippXzV4wmz),
+                Address(3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT),
             ],
-            data: 0x02000000303c8e0000000000,
+            data: 0x02000000e803000000000000,
         },
     ],
     native_balances: [
         NativeBalance {
-            account: Address(BMfZRMJUyWP3JChbsvkLfHrkDz3ZwQiEJgRWsRwJWD27),
+            account: Address(9sdtCBadNXG18oh51wKKctvYzamCZA4PqippXzV4wmz),
             pre: Lamports(
-                498441280,
+                10822135028,
             ),
             post: Lamports(
-                489114760,
+                10822129028,
             ),
         },
         NativeBalance {
-            account: Address(54o5FyoYF4hMVvTanQRbWYeU7Fv7X31zLVrW8j8JKQ2i),
+            account: Address(3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT),
             pre: Lamports(
-                0,
+                4277206,
             ),
             post: Lamports(
-                9321520,
+                4278206,
             ),
         },
         NativeBalance {
             account: Address(11111111111111111111111111111111),
+            pre: Lamports(
+                1,
+            ),
+            post: Lamports(
+                1,
+            ),
+        },
+        NativeBalance {
+            account: Address(ComputeBudget111111111111111111111111111111),
             pre: Lamports(
                 1,
             ),

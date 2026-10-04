@@ -3,7 +3,7 @@
 mod common;
 
 use binsight_core::units::{Lamports, RawTokenAmount};
-use binsight_solana::programs::TokenProgram;
+use binsight_solana::programs::{self, ProgramInstruction, SystemInstruction, TokenProgram};
 use binsight_solana::transaction::{
     AccountSource, FeeBreakdown, TransactionReadError, TxOutcome, TxVersion, read,
 };
@@ -18,14 +18,25 @@ fn reads_a_legacy_transaction_with_its_signers_and_fee_payer() {
     assert_eq!(view.fee_payer.to_string(), case.perspective.unwrap());
     let signers: Vec<bool> = view.accounts.iter().map(|key| key.is_signer).collect();
     let writable: Vec<bool> = view.accounts.iter().map(|key| key.is_writable).collect();
-    assert_eq!(signers, [true, false, false]);
-    assert_eq!(writable, [true, true, false]);
+    assert_eq!(signers, [true, false, false, false]);
+    assert_eq!(writable, [true, true, false, false]);
     assert_eq!(view.outcome, TxOutcome::Succeeded);
-    assert_eq!(view.native_balances[1].pre, Lamports(0));
-    assert_eq!(view.native_balances[1].post, Lamports(9_321_520));
+    let decoded: Vec<_> = view
+        .instructions
+        .iter()
+        .map(|instruction| programs::decode(instruction).unwrap())
+        .collect();
+    let transfer = SystemInstruction::Transfer {
+        from: view.fee_payer,
+        to: view.accounts[1].address,
+        lamports: Lamports(1_000),
+    };
+    assert!(decoded.contains(&Some(ProgramInstruction::System(transfer))));
+    assert_eq!(view.native_balances[1].pre, Lamports(4_277_206));
+    assert_eq!(view.native_balances[1].post, Lamports(4_278_206));
     assert_eq!(
         view.block_time.map(jiff::Timestamp::as_second),
-        Some(1_791_115_474)
+        Some(1_791_119_369)
     );
 }
 

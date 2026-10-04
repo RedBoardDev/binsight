@@ -2,12 +2,12 @@
 # node's `result`, byte for byte; do not edit them by hand.
 
 name = "legacy-sol-transfer"
-why = "A legacy transaction whose only instruction is a System transfer of SOL to a new account."
-perspective = "BMfZRMJUyWP3JChbsvkLfHrkDz3ZwQiEJgRWsRwJWD27"
+why = "A legacy transaction whose only transfer is a System transfer of SOL from a high-volume bot to a Jito tip account."
+perspective = "9sdtCBadNXG18oh51wKKctvYzamCZA4PqippXzV4wmz"
 oracles = ["L-2", "L-3"]
 captured_at = "2026-10-04"
 
 [[transaction]]
 file = "tx-1.json"
-signature = "4JzRsYip6jwUhqFDqDybXdJi15nTSpwxhKmwa8BazTjRTFjkdcBBsVonFCStFbULDeZdxgqBHSACTCeJguFEFgdc"
-slot = 453251199
+signature = "3VPJGWBXrM9Sxr3emMLV65r3oSc3ocJWMU6Csb9VhCWJGT5Rkj6r4YRoiFod5ZD6fXqiY6g8GRuwRfFk1YR3CMWN"
+slot = 453265775
