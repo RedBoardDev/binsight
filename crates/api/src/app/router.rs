@@ -17,8 +17,9 @@ use super::state::AppState;
 use super::web_app::serve_web_app;
 use crate::auth::{require_session, routes as auth};
 use crate::error::{ApiError, ErrorCode};
+use crate::instance::health;
 use crate::openapi::ApiDoc;
-use crate::{health, live, openapi};
+use crate::{live, openapi};
 
 /// The complete application: every route, its fallbacks and the middleware stack.
 pub fn router(state: AppState) -> Router {

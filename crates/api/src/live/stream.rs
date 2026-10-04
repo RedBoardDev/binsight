@@ -88,7 +88,7 @@ mod tests {
     use jiff::Timestamp;
 
     use super::*;
-    use crate::health;
+    use crate::instance::health;
 
     /// An engine whose status changes right after it is read, before anything else happens.
     struct ChangingRightAfterTheRead {

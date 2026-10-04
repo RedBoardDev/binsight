@@ -16,7 +16,7 @@
 mod app;
 pub mod auth;
 mod error;
-mod health;
+mod instance;
 mod live;
 pub mod openapi;
 

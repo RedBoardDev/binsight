@@ -9,7 +9,7 @@ use jiff::Timestamp;
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use crate::health::EngineStatus;
+use crate::instance::health::EngineStatus;
 
 /// A message of the live event stream.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
