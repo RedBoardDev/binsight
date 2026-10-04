@@ -37,6 +37,8 @@ React + TypeScript (strict) + Vite, served as a same-origin SPA by the Rust bina
 - Writes never throw: they return `{ status: 'success', … } | { status: 'error', fieldErrors | formError }`. List
   fetchers throw `ApiError`; detail fetchers return `null` on 404. No `useMutation`.
 - The URL is the state (page, filters, sort, open item) via validated search params; `useState` only for local UI.
+  A search key is named like the API parameter it feeds (`wallet`, `period`, `position`, `search`…): one concept,
+  one name, from the URL to the server.
 - **Amounts are strings from the API: format them, never compute with them** (see money-and-exactness).
 - Toasts only through `Shared/Ui/toast.ts`. Forms: react-hook-form + zod, schema in `Domain/`, server errors via
   `setError`. API error `code` is the translation key (exhaustive table); the server message is never displayed.
@@ -45,7 +47,11 @@ React + TypeScript (strict) + Vite, served as a same-origin SPA by the Rust bina
 
 - Reuse order: `Shared/Ui` compositions → `@heroui/react` → a composition of both. Never a home-made primitive.
 - Theme tokens only: no hex colors and no `dark:` variants in components. Icons from `lucide-react`.
-- `onPress`, never `onClick`. Touch targets ≥ 44 px. Desktop sidebar ≥ 48rem, mobile tab bar below.
+- `onPress`, never `onClick`. Touch targets ≥ 44 px.
+- The shell: a translucent top bar from `lg` (64rem) and a floating tab bar below it; content sits in one centred
+  column. The document scrolls, never an inner `main`.
+- One justified exception to "HeroUI first": a virtualized list (History) cannot be a HeroUI `Table`, which TanStack
+  Virtual cannot window and which cannot hold day rows. `Shared/List` builds it with the ARIA table roles instead.
 
 ## i18n
 

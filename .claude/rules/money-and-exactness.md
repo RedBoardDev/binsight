@@ -36,6 +36,9 @@ Exact PnL is the promise of this project. One float in the wrong place breaks it
   `estimated` (reconstructed history) or `unavailable`.
 - **The web app never computes with amounts.** No `Number(amount)`, no arithmetic: it only formats strings with
   `Intl.NumberFormat`. Any figure the UI shows is computed by the server.
+- One exception, to **draw** a chart: a single function (`Shared/Chart/Domain/plotValue.ts`) turns a decimal string
+  into a number for a pixel position. A plotted number is never displayed, summed or compared; the figures next to a
+  chart are still the server's strings.
 
 ## Definitions
 
