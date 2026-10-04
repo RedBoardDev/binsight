@@ -28,16 +28,15 @@ fn reads_every_fixture_with_its_signature_and_slot() {
 
 #[test]
 fn the_base_fee_is_5000_lamports_per_signature_on_every_fixture() {
-    for case in common::all_cases() {
-        let view = read(&case.transaction_json(0)).unwrap();
+    for (label, json) in common::every_transaction() {
+        let view = read(&json).unwrap();
         let signers = view.accounts.iter().filter(|key| key.is_signer).count();
         let expected = LAMPORTS_PER_SIGNATURE.0 * u64::try_from(signers).unwrap();
-        assert_eq!(view.fee.base, Lamports(expected), "{}", case.name);
+        assert_eq!(view.fee.base, Lamports(expected), "{label}");
         assert_eq!(
             view.fee.base.try_add(view.fee.priority),
             Ok(view.fee.total),
-            "{}",
-            case.name
+            "{label}"
         );
     }
 }
@@ -52,23 +51,22 @@ fn splits_the_fee_into_base_and_priority() {
 
 #[test]
 fn decodes_every_known_instruction_of_every_successful_fixture() {
-    for case in common::all_cases() {
-        let view = read(&case.transaction_json(0)).unwrap();
+    for (label, json) in common::every_transaction() {
+        let view = read(&json).unwrap();
         if view.outcome != TxOutcome::Succeeded {
             continue;
         }
         for instruction in &view.instructions {
-            programs::decode(instruction).unwrap_or_else(|error| {
-                panic!("{} {:?}: {error}", case.name, instruction.position)
-            });
+            programs::decode(instruction)
+                .unwrap_or_else(|error| panic!("{label} {:?}: {error}", instruction.position));
         }
     }
 }
 
 #[test]
 fn every_fixture_reads_as_its_snapshot() {
-    for case in common::all_cases() {
-        let view = read(&case.transaction_json(0)).unwrap();
-        insta::assert_debug_snapshot!(case.name.clone(), view);
+    for (label, json) in common::every_transaction() {
+        let view = read(&json).unwrap();
+        insta::assert_debug_snapshot!(label, view);
     }
 }

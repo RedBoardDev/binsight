@@ -64,6 +64,25 @@ pub(crate) fn all_cases() -> Vec<Case> {
     names.iter().map(|name| case(name)).collect()
 }
 
+/// Every transaction of every case, labelled `<case>-<file stem>` (`v0-add-liquidity-alt-tx-1`).
+pub(crate) fn every_transaction() -> Vec<(String, Vec<u8>)> {
+    all_cases()
+        .iter()
+        .flat_map(|case| {
+            case.transactions
+                .iter()
+                .enumerate()
+                .map(move |(position, transaction)| {
+                    let stem = transaction.file.trim_end_matches(".json");
+                    (
+                        format!("{}-{stem}", case.name),
+                        case.transaction_json(position),
+                    )
+                })
+        })
+        .collect()
+}
+
 impl Case {
     /// The `getTransaction` result of the transaction at `position` (from 0).
     pub(crate) fn transaction_json(&self, position: usize) -> Vec<u8> {
