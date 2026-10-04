@@ -1,18 +1,26 @@
 //! The engine: the long-running task that owns the background work.
 //!
-//! At startup the engine brings the projection bookkeeping in step with the code; then, having no
-//! other work yet, it reports that it is running and waits for the shutdown signal. Every status
-//! change is published both as the current status and as an event. This module owns the
-//! lifecycle; what the work is belongs to other modules.
+//! At startup the engine brings the projection bookkeeping in step with the code, restores the
+//! credits already spent today and queues again the transactions parked for a version it now
+//! reads; then it reports that it is running and runs ingestion until
+//! the shutdown signal, persisting the credit counts as it goes and once more after ingestion has
+//! stopped. Every status change is published both as the current status and as an event. This
+//! module owns the lifecycle; what the work is belongs to other modules.
 
+use std::sync::Arc;
+
+use binsight_chain::RpcClient;
+use binsight_core::clock::Clock;
 use binsight_store::Store;
 use tokio::sync::{broadcast, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
+use crate::credit_usage::{restore_spent_today, run_credit_usage};
 use crate::error::EngineError;
 use crate::events::EngineEvent;
 use crate::handle::EngineHandle;
+use crate::ingestion::{Ingestion, requeue_readable_versions};
 use crate::projections::{REGISTRY, reconcile_projections};
 use crate::status::EngineStatus;
 
@@ -20,23 +28,33 @@ use crate::status::EngineStatus;
 const EVENT_BUFFER_SIZE: usize = 256;
 
 /// The engine, ready to run.
-#[derive(Debug)]
 pub struct Engine {
     store: Store,
+    rpc: RpcClient,
+    clock: Arc<dyn Clock>,
     status: watch::Sender<EngineStatus>,
     events: broadcast::Sender<EngineEvent>,
 }
 
+impl std::fmt::Debug for Engine {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("Engine").finish_non_exhaustive()
+    }
+}
+
 impl Engine {
-    /// Builds an engine on `store` and the handle to share with the rest of the application.
-    /// The engine does nothing until [`Engine::run`] is called.
-    pub fn new(store: Store) -> (Self, EngineHandle) {
+    /// Builds an engine on `store` that reaches the chain through `rpc` and reads the time from
+    /// `clock`, and the handle to share with the rest of the application. The engine does
+    /// nothing until [`Engine::run`] is called.
+    pub fn new(store: Store, rpc: RpcClient, clock: Arc<dyn Clock>) -> (Self, EngineHandle) {
         let (status, status_receiver) = watch::channel(EngineStatus::Starting);
         let (events, _) = broadcast::channel(EVENT_BUFFER_SIZE);
         let handle = EngineHandle::new(store.clone(), status_receiver, events.clone());
         (
             Self {
                 store,
+                rpc,
+                clock,
                 status,
                 events,
             },
@@ -44,7 +62,7 @@ impl Engine {
         )
     }
 
-    /// Runs the startup work, then runs until `shutdown` is cancelled.
+    /// Runs the startup work, then ingestion until `shutdown` is cancelled.
     ///
     /// # Errors
     ///
@@ -52,9 +70,19 @@ impl Engine {
     /// engine never reaches the running status then.
     pub async fn run(self, shutdown: CancellationToken) -> Result<(), EngineError> {
         reconcile_projections(&self.store, REGISTRY).await?;
+        restore_spent_today(&self.store, &self.rpc, self.clock.as_ref()).await?;
+        requeue_readable_versions(&self.store, self.clock.now()).await?;
         self.change_status(EngineStatus::Running);
         info!("engine running");
-        shutdown.cancelled().await;
+        let ingestion = Ingestion::new(self.store.clone(), self.rpc.clone(), self.clock.clone());
+        let ingestion_stopped = CancellationToken::new();
+        tokio::join!(
+            async {
+                ingestion.run(&shutdown).await;
+                ingestion_stopped.cancel();
+            },
+            run_credit_usage(&self.store, &self.rpc, &ingestion_stopped),
+        );
         self.change_status(EngineStatus::Stopping);
         info!("engine stopped");
         Ok(())
@@ -72,7 +100,14 @@ impl Engine {
 mod tests {
     use super::*;
     use crate::health::ComponentHealth;
-    use crate::test_support::temporary_engine;
+    use binsight_chain::SIGNATURE_PAGE_LIMIT;
+    use binsight_chain::test_support::ScriptedReply;
+    use serde_json::json;
+
+    use crate::test_support::{
+        RunningEngine, TEST_START, expect_transactions, numbered_signature, reopened_engine,
+        signature_page, temporary_engine,
+    };
 
     #[tokio::test]
     async fn moves_from_starting_to_running_to_stopping() {
@@ -127,5 +162,86 @@ mod tests {
 
         assert_eq!(health.database, ComponentHealth::Ok);
         assert_eq!(health.engine, EngineStatus::Starting);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn makes_no_network_call_when_no_wallet_is_tracked() {
+        let engine = RunningEngine::start(temporary_engine().await);
+
+        tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+
+        assert_eq!(engine.transport.calls(), Vec::new());
+        engine.stop().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn resumes_after_a_restart_without_listing_or_fetching_again() {
+        let wallet = binsight_solana::Address::from_bytes([1; 32]);
+        let setup = temporary_engine().await;
+        setup.store.wallets().add(wallet, TEST_START).await.unwrap();
+        for _listing_and_its_confirmation in 0..2 {
+            let listing = setup.transport.expect("getSignaturesForAddress");
+            listing.respond(signature_page(0, 3));
+        }
+        expect_transactions(&setup.transport, 3);
+        let engine = RunningEngine::start(setup);
+        engine.wait_for_complete_history(wallet).await;
+        engine
+            .wait_for_counts(wallet, |counts| counts.fetched == 3)
+            .await;
+        let folder = engine.stop().await;
+
+        let restarted = RunningEngine::start(reopened_engine(folder).await);
+        tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+
+        assert_eq!(restarted.transport.calls(), Vec::new());
+        restarted.stop().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn resumes_an_interrupted_history_from_the_last_written_page() {
+        let wallet = binsight_solana::Address::from_bytes([1; 32]);
+        let full = u16::try_from(SIGNATURE_PAGE_LIMIT).unwrap();
+        let setup = temporary_engine().await;
+        setup.store.wallets().add(wallet, TEST_START).await.unwrap();
+        let transport = &setup.transport;
+        transport
+            .expect("getSignaturesForAddress")
+            .respond(signature_page(0, full));
+        transport
+            .expect("getSignaturesForAddress")
+            .respond(ScriptedReply::Result(json!("not a page")));
+        expect_transactions(transport, SIGNATURE_PAGE_LIMIT);
+        let engine = RunningEngine::start(setup);
+        while engine.transport.calls().len() < 2 {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        let interrupted = engine.store.fetch_queue().counts(wallet).await.unwrap();
+        let folder = engine.stop().await;
+
+        let setup = reopened_engine(folder).await;
+        let below_first_page = json!([
+            wallet.to_string(),
+            {"limit": 1_000, "commitment": "finalized",
+             "before": numbered_signature(full - 1).to_string()}
+        ]);
+        for _listing_and_its_confirmation in 0..2 {
+            setup
+                .transport
+                .expect("getSignaturesForAddress")
+                .with_params(below_first_page.clone())
+                .respond(signature_page(full, 2));
+        }
+        let unfetched = usize::try_from(interrupted.listed - interrupted.fetched).unwrap();
+        expect_transactions(&setup.transport, unfetched + 2);
+        let restarted = RunningEngine::start(setup);
+        restarted.wait_for_complete_history(wallet).await;
+        let counts = restarted
+            .wait_for_counts(wallet, |counts| counts.fetched == 1_002)
+            .await;
+
+        assert_eq!(interrupted.listed, 1_000);
+        assert_eq!(counts.listed, 1_002);
+        restarted.stop().await;
     }
 }

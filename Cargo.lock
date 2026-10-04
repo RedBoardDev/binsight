@@ -291,9 +291,12 @@ dependencies = [
 name = "binsight-engine"
 version = "0.1.0"
 dependencies = [
+ "binsight-chain",
  "binsight-core",
+ "binsight-solana",
  "binsight-store",
  "jiff",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tokio",

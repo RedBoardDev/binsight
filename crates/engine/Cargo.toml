@@ -14,18 +14,23 @@ workspace = true
 [features]
 # Lets the tests of other crates (the API) run a real engine on a temporary database, without
 # depending on the store themselves.
-test-support = ["dep:tempfile"]
+test-support = ["dep:tempfile", "dep:serde_json", "binsight-chain/test-support"]
 
 [dependencies]
+binsight-chain.workspace = true
 binsight-core.workspace = true
+binsight-solana.workspace = true
 binsight-store.workspace = true
 jiff.workspace = true
+serde_json = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
 thiserror.workspace = true
-tokio = { workspace = true, features = ["sync", "time"] }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
 tokio-util.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+binsight-chain = { workspace = true, features = ["test-support"] }
+serde_json.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }

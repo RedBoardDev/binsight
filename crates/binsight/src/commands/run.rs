@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use binsight_api::auth::AuthSettings;
 use binsight_api::{AppState, AppStateParts, router};
+use binsight_chain::{GovernorSettings, HeliusPlan, HttpTransport, RpcClient, RpcEndpoint};
 use binsight_core::clock::Clock;
 use binsight_engine::{Engine, SystemClock};
 use binsight_store::{BackupOptions, Store, UpgradeOptions};
@@ -67,7 +68,8 @@ async fn serve(config: Config) -> Result<(), Failure> {
     let store = open_store(&data_dir, clock.as_ref()).await?;
     let session_secret = ensure_instance_secrets(&store).await?;
     let listener = listen(config.bind).await?;
-    let (engine, handle) = Engine::new(store.clone());
+    let rpc = rpc_client(&config, clock.clone())?;
+    let (engine, handle) = Engine::new(store.clone(), rpc, clock.clone());
     let state = AppState::new(AppStateParts {
         engine: handle,
         auth: AuthSettings {
@@ -102,6 +104,16 @@ async fn open_store(data_dir: &LockedDataDir, clock: &dyn Clock) -> Result<Store
     Ok(store)
 }
 
+/// The Helius client. Nothing is sent until the engine has a wallet to ingest.
+fn rpc_client(config: &Config, clock: Arc<dyn Clock>) -> Result<RpcClient, Failure> {
+    let endpoint = RpcEndpoint::helius_mainnet(&config.helius_api_key);
+    let transport = HttpTransport::new(endpoint).map_err(|error| {
+        Failure::Unexpected(anyhow::Error::new(error).context("prepare the RPC client"))
+    })?;
+    let governor = GovernorSettings::for_plan(HeliusPlan::Free, None);
+    Ok(RpcClient::new(Arc::new(transport), governor, clock))
+}
+
 async fn listen(address: SocketAddr) -> Result<TcpListener, Failure> {
     let listener = TcpListener::bind(address)
         .await
@@ -122,9 +134,9 @@ async fn supervise(
     listener: TcpListener,
     shutdown: CancellationToken,
 ) -> Result<(), Failure> {
+    // The engine's future holds every ingestion worker: it lives on the heap, not in this one.
     let engine = stop_all_when_done(shutdown.clone(), async {
-        engine
-            .run(shutdown.clone())
+        Box::pin(engine.run(shutdown.clone()))
             .await
             .map_err(|error| Failure::Unexpected(error.into()))
     });

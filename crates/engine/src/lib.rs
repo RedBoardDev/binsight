@@ -1,7 +1,8 @@
 //! # binsight-engine
 //!
-//! **Responsibility:** orchestration. It runs the engine lifecycle, schedules the work (later: one
-//! actor per wallet), publishes domain events and keeps projections in step with their calculation
+//! **Responsibility:** orchestration. It runs the engine lifecycle, ingests each tracked wallet's
+//! history into the raw registry (listing, then fetching every transaction once), persists the
+//! credits spent, publishes domain events and keeps projections in step with their calculation
 //! versions.
 //!
 //! **May depend on:** `binsight-core`, `binsight-solana`, `binsight-dlmm`, `binsight-ledger`,
@@ -13,11 +14,13 @@
 //! runs it until shutdown. The rest of the application only ever talks to the handle.
 
 mod clock;
+mod credit_usage;
 mod engine;
 mod error;
 mod events;
 mod handle;
 mod health;
+mod ingestion;
 pub mod projections;
 mod status;
 #[cfg(any(test, feature = "test-support"))]
