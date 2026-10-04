@@ -1,9 +1,10 @@
 //! `binsight run`: the server.
 //!
-//! In order: validate the configuration (nothing starts if it is invalid), start logging, lock
-//! the data folder, open and upgrade the database (backing it up first), create the instance
-//! secrets, listen, then run the engine and the HTTP server until a stop signal. Shutdown is
-//! graceful but bounded: after [`SHUTDOWN_DEADLINE_SECS`] seconds whatever is left is dropped.
+//! In order: validate the configuration (nothing starts if it is invalid), start logging, handle
+//! the stop signals, lock the data folder, open and upgrade the database (backing it up first),
+//! create the instance secrets, listen, then run the engine and the HTTP server until a stop
+//! signal. Shutdown is graceful but bounded: after [`SHUTDOWN_DEADLINE_SECS`] seconds whatever is
+//! left is dropped.
 
 use std::net::SocketAddr;
 use std::path::Path;
@@ -56,14 +57,15 @@ async fn serve(config: Config) -> Result<(), Failure> {
     if !EmbeddedWebApp.is_built() {
         warn!("this binary was built without the web app; it serves a placeholder page");
     }
+    // Stop signals are handled from the start: one that arrives during the backup or the
+    // migrations lets them finish (the default action would kill the process halfway through a
+    // copy) and stops the server as soon as it is up.
+    let shutdown = CancellationToken::new();
+    tokio::spawn(StopSignals::listen().cancel_on_signal(shutdown.clone()));
     let data_dir = LockedDataDir::open(&config.data_dir)?;
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let store = open_store(&data_dir, clock.as_ref()).await?;
     let session_secret = ensure_instance_secrets(&store).await?;
-    let shutdown = CancellationToken::new();
-    // Listening for stop signals starts here, before the server says it is up: a signal sent
-    // before then would otherwise kill the process without a graceful shutdown.
-    tokio::spawn(StopSignals::listen().cancel_on_signal(shutdown.clone()));
     let listener = listen(config.bind).await?;
     let (engine, handle) = Engine::new(store.clone());
     let state = AppState::new(AppStateParts {
