@@ -53,7 +53,7 @@ origin, as in production.
 | Path | What lives there |
 |---|---|
 | `crates/` | The Rust workspace: pure crates (`core`, `solana`, `dlmm`, `ledger`), adapters (`store`, `chain`), orchestration (`engine`), HTTP (`api`) and the `binsight` binary. Dependencies only point downwards; `cargo xtask layering` checks it ([architecture rules](.claude/rules/architecture.md)). |
-| `xtask/` | Repository checks: crate layering and file/folder size limits. |
+| `xtask/` | Repository tooling: crate layering and file/folder size checks, and the capture of mainnet test fixtures. |
 | `web/` | The web app (React, TypeScript, Vite, HeroUI, Tailwind, Lingui). [`web/README.md`](web/README.md) explains how to work on it; its conventions are in [`.claude/rules/web.md`](.claude/rules/web.md). |
 | `openapi/v1.json` | The API contract, generated from the Rust code. |
 
@@ -99,6 +99,13 @@ A behaviour without a test does not exist, and a bug fix comes with the test tha
 - Web: Vitest specs next to each file (domain code without a DOM, components with Testing Library), and the
   Playwright smoke test with axe against the real binary.
 - Tests never touch the network or a real RPC provider.
+
+Decoding and accounting are tested on real mainnet transactions under `tests/fixtures/mainnet/`.
+`just fixture-capture <signature> --case <name> --why <sentence>` records one with the Helius key of your
+`.env` (`cargo xtask fixture` lists the options). It refuses everything until the private denylist exists:
+if you have no private address to protect, create it empty with
+`touch "$(git rev-parse --git-common-dir)/info/private-denylist"`. Pick public pools and high-volume bots,
+never a wallet that could belong to a private person.
 
 See [testing](.claude/rules/testing.md).
 

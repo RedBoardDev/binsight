@@ -3,6 +3,9 @@
 //! `capture` fetches transactions and accounts (for the domain tests) or one raw JSON-RPC answer
 //! (for the chain client's tests) from Helius, refuses anything that cites a private address,
 //! and writes the node's answers byte for byte. This module only dispatches the subcommand.
+//!
+//! `fixture find` (searching a pool's history for candidate transactions of a kind) is not
+//! written yet: candidates are picked by hand, from public pools and high-volume bots.
 
 mod binary_forms;
 mod capture;
