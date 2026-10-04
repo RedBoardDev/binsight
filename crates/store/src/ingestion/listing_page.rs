@@ -22,7 +22,7 @@ const INSERT_SIGNATURE: &str = "
     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
     ON CONFLICT (wallet, signature) DO NOTHING";
 const RANK_SIGNATURE: &str = "
-    UPDATE wallet_signature SET slot_order = ?3
+    UPDATE wallet_signature SET slot_order = ?3, block_time = coalesce(block_time, ?4)
     WHERE wallet = ?1 AND signature = ?2 AND slot_order IS NULL";
 const INSERT_FETCH_TASK: &str = "
     INSERT INTO tx_fetch (signature, state, priority, slot, attempts, next_attempt_at,
@@ -56,7 +56,8 @@ pub struct ListingPage {
 
 impl SignaturesRepo {
     /// Writes a listed page, its fetch tasks and the cursor move, all or nothing. A signature
-    /// already recorded without its rank gets the page's. Returns how many of the page's
+    /// already recorded without its rank (seen first by the live stream) gets the page's rank
+    /// and block time. Returns how many of the page's
     /// signatures were new for the wallet.
     ///
     /// # Errors
@@ -100,7 +101,11 @@ fn write_page(connection: &Connection, page: &ListingPage) -> Result<u64, StoreE
         if inserted == 1 {
             new_signatures = new_signatures.saturating_add(1);
         } else if slot_order.is_some() {
-            connection.execute(RANK_SIGNATURE, params![wallet, signature, slot_order])?;
+            let block_time = listed.block_time.map(timestamp_to_sql);
+            connection.execute(
+                RANK_SIGNATURE,
+                params![wallet, signature, slot_order, block_time],
+            )?;
         }
         connection.execute(
             INSERT_FETCH_TASK,

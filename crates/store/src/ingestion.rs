@@ -7,6 +7,7 @@
 //! registry". This module stores what the engine decided; it decides nothing.
 
 mod cursor;
+mod detected;
 mod fetch_counts;
 mod fetch_queue;
 mod fetch_results;
@@ -18,6 +19,7 @@ mod test_pages;
 mod wallets;
 
 pub use cursor::{ListedTop, WalletCursor};
+pub use detected::DetectedSignature;
 pub use fetch_counts::FetchCounts;
 pub use fetch_queue::FetchQueueRepo;
 pub use fetch_task::{FetchFailure, FetchSetback, FetchTask, FetchedTx, RetryState};

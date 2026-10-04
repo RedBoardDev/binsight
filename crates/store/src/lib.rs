@@ -39,8 +39,9 @@ pub use credits::{CreditTotal, CreditUsage, CreditsRepo};
 pub use decoded::{DecodeOutcome, DecodeRecord, DecodedEvent, DecodedRepo};
 pub use error::StoreError;
 pub use ingestion::{
-    FetchCounts, FetchFailure, FetchQueueRepo, FetchSetback, FetchTask, FetchedTx, ListedSignature,
-    ListedTop, ListingPage, RetryState, SignaturesRepo, TrackedWallet, WalletCursor, WalletsRepo,
+    DetectedSignature, FetchCounts, FetchFailure, FetchQueueRepo, FetchSetback, FetchTask,
+    FetchedTx, ListedSignature, ListedTop, ListingPage, RetryState, SignaturesRepo, TrackedWallet,
+    WalletCursor, WalletsRepo,
 };
 pub use meta::{MetaKey, MetaRepo};
 pub use projections::{ProjectionMetaRepo, ProjectionState, ProjectionStatus};
