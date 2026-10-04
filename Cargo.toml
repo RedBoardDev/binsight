@@ -47,8 +47,8 @@ tokio-stream = { version = "0.1.19", default-features = false, features = ["time
 tokio-util = "0.7.18"
 tower = { version = "0.5.3", features = ["util"] }
 tower-http = { version = "0.7.1", features = [
-    "trace", "request-id", "set-header", "sensitive-headers", "compression-gzip",
-    "compression-br", "timeout", "limit", "catch-panic", "csrf",
+    "trace", "request-id", "sensitive-headers", "compression-gzip", "compression-br",
+    "catch-panic", "csrf",
 ] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json", "fmt", "ansi"] }
