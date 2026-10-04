@@ -27,7 +27,7 @@ const INVESTED_LAMPORTS: (i64, i64) = (500_000_000, 15_000_000_000);
 
 /// The range of a winning, then a losing PnL, in basis points of the amount invested.
 const WIN_BPS: (i64, i64) = (1, 600);
-const LOSS_BPS: (i64, i64) = (-800, -1);
+const LOSS_BPS: (i64, i64) = (-500, -1);
 
 /// A forced loss is clear enough that a FIFO adjustment cannot turn it into a win.
 const FORCED_LOSS_BPS: (i64, i64) = (-800, -200);
@@ -36,7 +36,7 @@ const FORCED_LOSS_BPS: (i64, i64) = (-800, -200);
 const FEES_BPS: (i64, i64) = (10, 200);
 
 /// The range of the FIFO adjustment, in basis points of the amount invested.
-const FIFO_ADJUSTMENT_BPS: (i64, i64) = (-150, 50);
+const FIFO_ADJUSTMENT_BPS: (i64, i64) = (-100, 50);
 
 /// One in basis points.
 const BASIS_POINTS: i128 = 10_000;
