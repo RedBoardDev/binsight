@@ -8,7 +8,7 @@ TransactionView {
     block_time: Some(
         2026-10-04T12:04:34Z,
     ),
-    index_in_block: Some(
+    transaction_index: Some(
         70,
     ),
     version: Legacy,

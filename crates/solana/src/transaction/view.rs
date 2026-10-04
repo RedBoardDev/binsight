@@ -20,8 +20,9 @@ pub struct TransactionView {
     /// The estimated time of its block; `None` when the node does not know it (never replaced
     /// by a made-up date).
     pub block_time: Option<Timestamp>,
-    /// Its position in the block, when the node reports it.
-    pub index_in_block: Option<u32>,
+    /// Its position in its block (the node's `transactionIndex`), when the node reports it: with
+    /// the slot, it orders transactions exactly.
+    pub transaction_index: Option<u32>,
     /// Its format.
     pub version: TxVersion,
     /// Whether it succeeded.

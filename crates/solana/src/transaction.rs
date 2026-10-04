@@ -79,7 +79,7 @@ pub fn read(json: &[u8]) -> Result<TransactionView, TransactionReadError> {
         signature: *wire.signatures.first().ok_or_else(first_signer)?,
         slot: response.slot,
         block_time: response.block_time.map(timestamp).transpose()?,
-        index_in_block: response.transaction_index,
+        transaction_index: response.transaction_index,
         version,
         outcome: outcome(meta.err),
         fee_payer: accounts.first().ok_or_else(first_signer)?.address,
