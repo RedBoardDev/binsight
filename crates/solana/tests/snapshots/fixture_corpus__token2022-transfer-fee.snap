@@ -1,0 +1,796 @@
+---
+source: crates/solana/tests/fixture_corpus.rs
+expression: view
+---
+TransactionView {
+    signature: Signature(4bhmJEeV1EK9MJjarRwCv6h4iSXcqheugK18uew7VeKn4SRWHW11GzpL37sqd7s7X3EccQfTQvFWtbsNi5oXuYsN),
+    slot: 453252783,
+    block_time: Some(
+        2026-10-04T12:11:35Z,
+    ),
+    index_in_block: Some(
+        177,
+    ),
+    version: Legacy,
+    outcome: Succeeded,
+    fee_payer: Address(GymS3jpXvCLPSnMQrdFDJYqoU7SiLUH3D625i1QzZfJY),
+    fee: FeeBreakdown {
+        total: Lamports(
+            5000,
+        ),
+        base: Lamports(
+            5000,
+        ),
+        priority: Lamports(
+            0,
+        ),
+    },
+    accounts: [
+        AccountKey {
+            address: Address(GymS3jpXvCLPSnMQrdFDJYqoU7SiLUH3D625i1QzZfJY),
+            is_signer: true,
+            is_writable: true,
+            source: Message,
+        },
+        AccountKey {
+            address: Address(3AcfUtyjm4wuwKV3KtEnnt2rQgcXJDdScjm6BNphRocu),
+            is_signer: false,
+            is_writable: true,
+            source: Message,
+        },
+        AccountKey {
+            address: Address(3rfQ3ChWgxLPk54BoyvZG1ShgJyfWdy5VQFHGebw7HBb),
+            is_signer: false,
+            is_writable: true,
+            source: Message,
+        },
+        AccountKey {
+            address: Address(6NAqZ68A2U6KsULx5XBTDTuCXogM2qqfNwKk7iL14jct),
+            is_signer: false,
+            is_writable: true,
+            source: Message,
+        },
+        AccountKey {
+            address: Address(6PoZrxwXyFa3udkiJVTojh4dP29mFNRdiaYpKEgvpq7G),
+            is_signer: false,
+            is_writable: true,
+            source: Message,
+        },
+        AccountKey {
+            address: Address(ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt),
+            is_signer: false,
+            is_writable: true,
+            source: Message,
+        },
+        AccountKey {
+            address: Address(AG1EhPjsBrkxQWkViuLXF6pQnHwfr9f9sdNneeoykcEJ),
+            is_signer: false,
+            is_writable: true,
+            source: Message,
+        },
+        AccountKey {
+            address: Address(Ark8oyUYM3K7YkAp5F5WGGq2u3g9Ly6HWzxn7M51UUTu),
+            is_signer: false,
+            is_writable: true,
+            source: Message,
+        },
+        AccountKey {
+            address: Address(B9b1o3tF61ceQYE9RG69sEm9y2zwf1oV2VnYkkQhP6CG),
+            is_signer: false,
+            is_writable: true,
+            source: Message,
+        },
+        AccountKey {
+            address: Address(o2ySAxrsqJ8NxF4YDram2jyefm3vWGAESiZRfRAVaCW),
+            is_signer: false,
+            is_writable: true,
+            source: Message,
+        },
+        AccountKey {
+            address: Address(11111111111111111111111111111111),
+            is_signer: false,
+            is_writable: false,
+            source: Message,
+        },
+        AccountKey {
+            address: Address(ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL),
+            is_signer: false,
+            is_writable: false,
+            source: Message,
+        },
+        AccountKey {
+            address: Address(ComputeBudget111111111111111111111111111111),
+            is_signer: false,
+            is_writable: false,
+            source: Message,
+        },
+        AccountKey {
+            address: Address(D1ZN9Wj1fRSUQfCjhvnu1hqDMT7hzjzBBpi12nVniYD6),
+            is_signer: false,
+            is_writable: false,
+            source: Message,
+        },
+        AccountKey {
+            address: Address(DEW9dSN6QpWyNthphCpMmAbZP1Q4cEKR9xQXAri98WDP),
+            is_signer: false,
+            is_writable: false,
+            source: Message,
+        },
+        AccountKey {
+            address: Address(LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo),
+            is_signer: false,
+            is_writable: false,
+            source: Message,
+        },
+        AccountKey {
+            address: Address(MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr),
+            is_signer: false,
+            is_writable: false,
+            source: Message,
+        },
+        AccountKey {
+            address: Address(So11111111111111111111111111111111111111112),
+            is_signer: false,
+            is_writable: false,
+            source: Message,
+        },
+        AccountKey {
+            address: Address(TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA),
+            is_signer: false,
+            is_writable: false,
+            source: Message,
+        },
+        AccountKey {
+            address: Address(TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb),
+            is_signer: false,
+            is_writable: false,
+            source: Message,
+        },
+    ],
+    instructions: [
+        InstructionNode {
+            position: InstructionPosition {
+                top: 0,
+                inner: None,
+            },
+            stack_height: Some(
+                1,
+            ),
+            program: Address(ComputeBudget111111111111111111111111111111),
+            accounts: [],
+            data: 0x02f6900200,
+        },
+        InstructionNode {
+            position: InstructionPosition {
+                top: 1,
+                inner: None,
+            },
+            stack_height: Some(
+                1,
+            ),
+            program: Address(ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL),
+            accounts: [
+                Address(GymS3jpXvCLPSnMQrdFDJYqoU7SiLUH3D625i1QzZfJY),
+                Address(6NAqZ68A2U6KsULx5XBTDTuCXogM2qqfNwKk7iL14jct),
+                Address(GymS3jpXvCLPSnMQrdFDJYqoU7SiLUH3D625i1QzZfJY),
+                Address(DEW9dSN6QpWyNthphCpMmAbZP1Q4cEKR9xQXAri98WDP),
+                Address(11111111111111111111111111111111),
+                Address(TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb),
+            ],
+            data: 0x01,
+        },
+        InstructionNode {
+            position: InstructionPosition {
+                top: 2,
+                inner: None,
+            },
+            stack_height: Some(
+                1,
+            ),
+            program: Address(ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL),
+            accounts: [
+                Address(GymS3jpXvCLPSnMQrdFDJYqoU7SiLUH3D625i1QzZfJY),
+                Address(3rfQ3ChWgxLPk54BoyvZG1ShgJyfWdy5VQFHGebw7HBb),
+                Address(GymS3jpXvCLPSnMQrdFDJYqoU7SiLUH3D625i1QzZfJY),
+                Address(So11111111111111111111111111111111111111112),
+                Address(11111111111111111111111111111111),
+                Address(TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA),
+            ],
+            data: 0x01,
+        },
+        InstructionNode {
+            position: InstructionPosition {
+                top: 2,
+                inner: Some(
+                    0,
+                ),
+            },
+            stack_height: Some(
+                2,
+            ),
+            program: Address(TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA),
+            accounts: [
+                Address(So11111111111111111111111111111111111111112),
+            ],
+            data: 0x150700,
+        },
+        InstructionNode {
+            position: InstructionPosition {
+                top: 2,
+                inner: Some(
+                    1,
+                ),
+            },
+            stack_height: Some(
+                2,
+            ),
+            program: Address(11111111111111111111111111111111),
+            accounts: [
+                Address(GymS3jpXvCLPSnMQrdFDJYqoU7SiLUH3D625i1QzZfJY),
+                Address(3rfQ3ChWgxLPk54BoyvZG1ShgJyfWdy5VQFHGebw7HBb),
+            ],
+            data: 0x0000000038b6160000000000a50000000000000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a9,
+        },
+        InstructionNode {
+            position: InstructionPosition {
+                top: 2,
+                inner: Some(
+                    2,
+                ),
+            },
+            stack_height: Some(
+                2,
+            ),
+            program: Address(TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA),
+            accounts: [
+                Address(3rfQ3ChWgxLPk54BoyvZG1ShgJyfWdy5VQFHGebw7HBb),
+            ],
+            data: 0x16,
+        },
+        InstructionNode {
+            position: InstructionPosition {
+                top: 2,
+                inner: Some(
+                    3,
+                ),
+            },
+            stack_height: Some(
+                2,
+            ),
+            program: Address(TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA),
+            accounts: [
+                Address(3rfQ3ChWgxLPk54BoyvZG1ShgJyfWdy5VQFHGebw7HBb),
+                Address(So11111111111111111111111111111111111111112),
+            ],
+            data: 0x12ed6a11863fadc00aec06f2e6d742eacbaa7f0089de425bb45d58d8f01f1756c1,
+        },
+        InstructionNode {
+            position: InstructionPosition {
+                top: 3,
+                inner: None,
+            },
+            stack_height: Some(
+                1,
+            ),
+            program: Address(ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL),
+            accounts: [
+                Address(GymS3jpXvCLPSnMQrdFDJYqoU7SiLUH3D625i1QzZfJY),
+                Address(6NAqZ68A2U6KsULx5XBTDTuCXogM2qqfNwKk7iL14jct),
+                Address(GymS3jpXvCLPSnMQrdFDJYqoU7SiLUH3D625i1QzZfJY),
+                Address(DEW9dSN6QpWyNthphCpMmAbZP1Q4cEKR9xQXAri98WDP),
+                Address(11111111111111111111111111111111),
+                Address(TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb),
+            ],
+            data: 0x01,
+        },
+        InstructionNode {
+            position: InstructionPosition {
+                top: 4,
+                inner: None,
+            },
+            stack_height: Some(
+                1,
+            ),
+            program: Address(ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL),
+            accounts: [
+                Address(GymS3jpXvCLPSnMQrdFDJYqoU7SiLUH3D625i1QzZfJY),
+                Address(3rfQ3ChWgxLPk54BoyvZG1ShgJyfWdy5VQFHGebw7HBb),
+                Address(GymS3jpXvCLPSnMQrdFDJYqoU7SiLUH3D625i1QzZfJY),
+                Address(So11111111111111111111111111111111111111112),
+                Address(11111111111111111111111111111111),
+                Address(TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA),
+            ],
+            data: 0x01,
+        },
+        InstructionNode {
+            position: InstructionPosition {
+                top: 5,
+                inner: None,
+            },
+            stack_height: Some(
+                1,
+            ),
+            program: Address(LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo),
+            accounts: [
+                Address(3AcfUtyjm4wuwKV3KtEnnt2rQgcXJDdScjm6BNphRocu),
+                Address(AG1EhPjsBrkxQWkViuLXF6pQnHwfr9f9sdNneeoykcEJ),
+                Address(Ark8oyUYM3K7YkAp5F5WGGq2u3g9Ly6HWzxn7M51UUTu),
+                Address(6NAqZ68A2U6KsULx5XBTDTuCXogM2qqfNwKk7iL14jct),
+                Address(3rfQ3ChWgxLPk54BoyvZG1ShgJyfWdy5VQFHGebw7HBb),
+                Address(B9b1o3tF61ceQYE9RG69sEm9y2zwf1oV2VnYkkQhP6CG),
+                Address(6PoZrxwXyFa3udkiJVTojh4dP29mFNRdiaYpKEgvpq7G),
+                Address(DEW9dSN6QpWyNthphCpMmAbZP1Q4cEKR9xQXAri98WDP),
+                Address(So11111111111111111111111111111111111111112),
+                Address(GymS3jpXvCLPSnMQrdFDJYqoU7SiLUH3D625i1QzZfJY),
+                Address(TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb),
+                Address(TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA),
+                Address(MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr),
+                Address(D1ZN9Wj1fRSUQfCjhvnu1hqDMT7hzjzBBpi12nVniYD6),
+                Address(LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo),
+                Address(o2ySAxrsqJ8NxF4YDram2jyefm3vWGAESiZRfRAVaCW),
+            ],
+            data: 0xcc02c391359191cd89ffffff8dffffff10270200000000000100,
+        },
+        InstructionNode {
+            position: InstructionPosition {
+                top: 5,
+                inner: Some(
+                    0,
+                ),
+            },
+            stack_height: Some(
+                2,
+            ),
+            program: Address(TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb),
+            accounts: [
+                Address(B9b1o3tF61ceQYE9RG69sEm9y2zwf1oV2VnYkkQhP6CG),
+                Address(DEW9dSN6QpWyNthphCpMmAbZP1Q4cEKR9xQXAri98WDP),
+                Address(6NAqZ68A2U6KsULx5XBTDTuCXogM2qqfNwKk7iL14jct),
+                Address(AG1EhPjsBrkxQWkViuLXF6pQnHwfr9f9sdNneeoykcEJ),
+            ],
+            data: 0x0c000000000000000006,
+        },
+        InstructionNode {
+            position: InstructionPosition {
+                top: 5,
+                inner: Some(
+                    1,
+                ),
+            },
+            stack_height: Some(
+                2,
+            ),
+            program: Address(TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA),
+            accounts: [
+                Address(6PoZrxwXyFa3udkiJVTojh4dP29mFNRdiaYpKEgvpq7G),
+                Address(So11111111111111111111111111111111111111112),
+                Address(3rfQ3ChWgxLPk54BoyvZG1ShgJyfWdy5VQFHGebw7HBb),
+                Address(AG1EhPjsBrkxQWkViuLXF6pQnHwfr9f9sdNneeoykcEJ),
+            ],
+            data: 0x0c03f7b26e0100000009,
+        },
+        InstructionNode {
+            position: InstructionPosition {
+                top: 5,
+                inner: Some(
+                    2,
+                ),
+            },
+            stack_height: Some(
+                2,
+            ),
+            program: Address(LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo),
+            accounts: [
+                Address(D1ZN9Wj1fRSUQfCjhvnu1hqDMT7hzjzBBpi12nVniYD6),
+            ],
+            data: 0xe445a52e51cb9a1d74f461e8671f983a89912956f9bce9c2c4f1312c1b821e50cfd6364cf6d520ad6b4da0d07b096ca7ed6a11863fadc00aec06f2e6d742eacbaa7f0089de425bb45d58d8f01f1756c1202ded0a961bf5838d463a7831f0ee9fa23d7193d3edfd509e12228634b9947a000000000000000003f7b26e0100000097ffffff,
+        },
+        InstructionNode {
+            position: InstructionPosition {
+                top: 6,
+                inner: None,
+            },
+            stack_height: Some(
+                1,
+            ),
+            program: Address(LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo),
+            accounts: [
+                Address(AG1EhPjsBrkxQWkViuLXF6pQnHwfr9f9sdNneeoykcEJ),
+                Address(3AcfUtyjm4wuwKV3KtEnnt2rQgcXJDdScjm6BNphRocu),
+                Address(GymS3jpXvCLPSnMQrdFDJYqoU7SiLUH3D625i1QzZfJY),
+                Address(B9b1o3tF61ceQYE9RG69sEm9y2zwf1oV2VnYkkQhP6CG),
+                Address(6PoZrxwXyFa3udkiJVTojh4dP29mFNRdiaYpKEgvpq7G),
+                Address(6NAqZ68A2U6KsULx5XBTDTuCXogM2qqfNwKk7iL14jct),
+                Address(3rfQ3ChWgxLPk54BoyvZG1ShgJyfWdy5VQFHGebw7HBb),
+                Address(DEW9dSN6QpWyNthphCpMmAbZP1Q4cEKR9xQXAri98WDP),
+                Address(So11111111111111111111111111111111111111112),
+                Address(TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb),
+                Address(TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA),
+                Address(MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr),
+                Address(D1ZN9Wj1fRSUQfCjhvnu1hqDMT7hzjzBBpi12nVniYD6),
+                Address(LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo),
+                Address(o2ySAxrsqJ8NxF4YDram2jyefm3vWGAESiZRfRAVaCW),
+            ],
+            data: 0x70bf65ab1c907fbb89ffffff8dffffff0200000000000100,
+        },
+        InstructionNode {
+            position: InstructionPosition {
+                top: 6,
+                inner: Some(
+                    0,
+                ),
+            },
+            stack_height: Some(
+                2,
+            ),
+            program: Address(TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb),
+            accounts: [
+                Address(B9b1o3tF61ceQYE9RG69sEm9y2zwf1oV2VnYkkQhP6CG),
+                Address(DEW9dSN6QpWyNthphCpMmAbZP1Q4cEKR9xQXAri98WDP),
+                Address(6NAqZ68A2U6KsULx5XBTDTuCXogM2qqfNwKk7iL14jct),
+                Address(AG1EhPjsBrkxQWkViuLXF6pQnHwfr9f9sdNneeoykcEJ),
+            ],
+            data: 0x0c057b04020000000006,
+        },
+        InstructionNode {
+            position: InstructionPosition {
+                top: 6,
+                inner: Some(
+                    1,
+                ),
+            },
+            stack_height: Some(
+                2,
+            ),
+            program: Address(TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA),
+            accounts: [
+                Address(6PoZrxwXyFa3udkiJVTojh4dP29mFNRdiaYpKEgvpq7G),
+                Address(So11111111111111111111111111111111111111112),
+                Address(3rfQ3ChWgxLPk54BoyvZG1ShgJyfWdy5VQFHGebw7HBb),
+                Address(AG1EhPjsBrkxQWkViuLXF6pQnHwfr9f9sdNneeoykcEJ),
+            ],
+            data: 0x0c6953be040000000009,
+        },
+        InstructionNode {
+            position: InstructionPosition {
+                top: 6,
+                inner: Some(
+                    2,
+                ),
+            },
+            stack_height: Some(
+                2,
+            ),
+            program: Address(LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo),
+            accounts: [
+                Address(D1ZN9Wj1fRSUQfCjhvnu1hqDMT7hzjzBBpi12nVniYD6),
+            ],
+            data: 0xe445a52e51cb9a1d4b7a9a308c4a7ba389912956f9bce9c2c4f1312c1b821e50cfd6364cf6d520ad6b4da0d07b096ca7202ded0a961bf5838d463a7831f0ee9fa23d7193d3edfd509e12228634b9947aed6a11863fadc00aec06f2e6d742eacbaa7f0089de425bb45d58d8f01f1756c1057b0402000000006953be0400000000,
+        },
+        InstructionNode {
+            position: InstructionPosition {
+                top: 6,
+                inner: Some(
+                    3,
+                ),
+            },
+            stack_height: Some(
+                2,
+            ),
+            program: Address(LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo),
+            accounts: [
+                Address(D1ZN9Wj1fRSUQfCjhvnu1hqDMT7hzjzBBpi12nVniYD6),
+            ],
+            data: 0xe445a52e51cb9a1de8abf2613a4d232d89912956f9bce9c2c4f1312c1b821e50cfd6364cf6d520ad6b4da0d07b096ca7202ded0a961bf5838d463a7831f0ee9fa23d7193d3edfd509e12228634b9947aed6a11863fadc00aec06f2e6d742eacbaa7f0089de425bb45d58d8f01f1756c1057b0402000000006953be040000000097ffffff,
+        },
+        InstructionNode {
+            position: InstructionPosition {
+                top: 7,
+                inner: None,
+            },
+            stack_height: Some(
+                1,
+            ),
+            program: Address(LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo),
+            accounts: [
+                Address(3AcfUtyjm4wuwKV3KtEnnt2rQgcXJDdScjm6BNphRocu),
+                Address(GymS3jpXvCLPSnMQrdFDJYqoU7SiLUH3D625i1QzZfJY),
+                Address(GymS3jpXvCLPSnMQrdFDJYqoU7SiLUH3D625i1QzZfJY),
+                Address(D1ZN9Wj1fRSUQfCjhvnu1hqDMT7hzjzBBpi12nVniYD6),
+                Address(LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo),
+            ],
+            data: 0x3b7cd4765b986e9d,
+        },
+        InstructionNode {
+            position: InstructionPosition {
+                top: 7,
+                inner: Some(
+                    0,
+                ),
+            },
+            stack_height: Some(
+                2,
+            ),
+            program: Address(LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo),
+            accounts: [
+                Address(D1ZN9Wj1fRSUQfCjhvnu1hqDMT7hzjzBBpi12nVniYD6),
+            ],
+            data: 0xe445a52e51cb9a1dffc4106b1cca3580202ded0a961bf5838d463a7831f0ee9fa23d7193d3edfd509e12228634b9947aed6a11863fadc00aec06f2e6d742eacbaa7f0089de425bb45d58d8f01f1756c1,
+        },
+        InstructionNode {
+            position: InstructionPosition {
+                top: 8,
+                inner: None,
+            },
+            stack_height: Some(
+                1,
+            ),
+            program: Address(TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA),
+            accounts: [
+                Address(3rfQ3ChWgxLPk54BoyvZG1ShgJyfWdy5VQFHGebw7HBb),
+                Address(GymS3jpXvCLPSnMQrdFDJYqoU7SiLUH3D625i1QzZfJY),
+                Address(GymS3jpXvCLPSnMQrdFDJYqoU7SiLUH3D625i1QzZfJY),
+            ],
+            data: 0x09,
+        },
+        InstructionNode {
+            position: InstructionPosition {
+                top: 9,
+                inner: None,
+            },
+            stack_height: Some(
+                1,
+            ),
+            program: Address(11111111111111111111111111111111),
+            accounts: [
+                Address(GymS3jpXvCLPSnMQrdFDJYqoU7SiLUH3D625i1QzZfJY),
+                Address(ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt),
+            ],
+            data: 0x02000000eb14000000000000,
+        },
+    ],
+    native_balances: [
+        NativeBalance {
+            account: Address(GymS3jpXvCLPSnMQrdFDJYqoU7SiLUH3D625i1QzZfJY),
+            pre: Lamports(
+                5120522796,
+            ),
+            post: Lamports(
+                11394184037,
+            ),
+        },
+        NativeBalance {
+            account: Address(3AcfUtyjm4wuwKV3KtEnnt2rQgcXJDdScjm6BNphRocu),
+            pre: Lamports(
+                41899840,
+            ),
+            post: Lamports(
+                0,
+            ),
+        },
+        NativeBalance {
+            account: Address(3rfQ3ChWgxLPk54BoyvZG1ShgJyfWdy5VQFHGebw7HBb),
+            pre: Lamports(
+                0,
+            ),
+            post: Lamports(
+                0,
+            ),
+        },
+        NativeBalance {
+            account: Address(6NAqZ68A2U6KsULx5XBTDTuCXogM2qqfNwKk7iL14jct),
+            pre: Lamports(
+                1574800,
+            ),
+            post: Lamports(
+                1574800,
+            ),
+        },
+        NativeBalance {
+            account: Address(6PoZrxwXyFa3udkiJVTojh4dP29mFNRdiaYpKEgvpq7G),
+            pre: Lamports(
+                7029715392854,
+            ),
+            post: Lamports(
+                7023483621098,
+            ),
+        },
+        NativeBalance {
+            account: Address(ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt),
+            pre: Lamports(
+                1008103,
+            ),
+            post: Lamports(
+                1013458,
+            ),
+        },
+        NativeBalance {
+            account: Address(AG1EhPjsBrkxQWkViuLXF6pQnHwfr9f9sdNneeoykcEJ),
+            pre: Lamports(
+                5242560,
+            ),
+            post: Lamports(
+                5242560,
+            ),
+        },
+        NativeBalance {
+            account: Address(Ark8oyUYM3K7YkAp5F5WGGq2u3g9Ly6HWzxn7M51UUTu),
+            pre: Lamports(
+                8656320,
+            ),
+            post: Lamports(
+                8656320,
+            ),
+        },
+        NativeBalance {
+            account: Address(B9b1o3tF61ceQYE9RG69sEm9y2zwf1oV2VnYkkQhP6CG),
+            pre: Lamports(
+                1554480,
+            ),
+            post: Lamports(
+                1554480,
+            ),
+        },
+        NativeBalance {
+            account: Address(o2ySAxrsqJ8NxF4YDram2jyefm3vWGAESiZRfRAVaCW),
+            pre: Lamports(
+                52141120,
+            ),
+            post: Lamports(
+                52141120,
+            ),
+        },
+        NativeBalance {
+            account: Address(11111111111111111111111111111111),
+            pre: Lamports(
+                1,
+            ),
+            post: Lamports(
+                1,
+            ),
+        },
+        NativeBalance {
+            account: Address(ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL),
+            pre: Lamports(
+                3388612899,
+            ),
+            post: Lamports(
+                3388612899,
+            ),
+        },
+        NativeBalance {
+            account: Address(ComputeBudget111111111111111111111111111111),
+            pre: Lamports(
+                1,
+            ),
+            post: Lamports(
+                1,
+            ),
+        },
+        NativeBalance {
+            account: Address(D1ZN9Wj1fRSUQfCjhvnu1hqDMT7hzjzBBpi12nVniYD6),
+            pre: Lamports(
+                5987435,
+            ),
+            post: Lamports(
+                5987435,
+            ),
+        },
+        NativeBalance {
+            account: Address(DEW9dSN6QpWyNthphCpMmAbZP1Q4cEKR9xQXAri98WDP),
+            pre: Lamports(
+                26333572377,
+            ),
+            post: Lamports(
+                26333572377,
+            ),
+        },
+        NativeBalance {
+            account: Address(LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo),
+            pre: Lamports(
+                72027466,
+            ),
+            post: Lamports(
+                72027466,
+            ),
+        },
+        NativeBalance {
+            account: Address(MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr),
+            pre: Lamports(
+                523015235,
+            ),
+            post: Lamports(
+                523015235,
+            ),
+        },
+        NativeBalance {
+            account: Address(So11111111111111111111111111111111111111112),
+            pre: Lamports(
+                1849280395886,
+            ),
+            post: Lamports(
+                1849280395886,
+            ),
+        },
+        NativeBalance {
+            account: Address(TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA),
+            pre: Lamports(
+                200653906,
+            ),
+            post: Lamports(
+                200653906,
+            ),
+        },
+        NativeBalance {
+            account: Address(TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb),
+            pre: Lamports(
+                70228638,
+            ),
+            post: Lamports(
+                70228638,
+            ),
+        },
+    ],
+    token_balances: [
+        TokenBalance {
+            account: Address(6NAqZ68A2U6KsULx5XBTDTuCXogM2qqfNwKk7iL14jct),
+            mint: Address(DEW9dSN6QpWyNthphCpMmAbZP1Q4cEKR9xQXAri98WDP),
+            program: Token2022,
+            decimals: Decimals(
+                6,
+            ),
+            owner_pre: Some(
+                Address(GymS3jpXvCLPSnMQrdFDJYqoU7SiLUH3D625i1QzZfJY),
+            ),
+            owner_post: Some(
+                Address(GymS3jpXvCLPSnMQrdFDJYqoU7SiLUH3D625i1QzZfJY),
+            ),
+            pre: RawTokenAmount(
+                107651560026,
+            ),
+            post: RawTokenAmount(
+                107685069614,
+            ),
+        },
+        TokenBalance {
+            account: Address(6PoZrxwXyFa3udkiJVTojh4dP29mFNRdiaYpKEgvpq7G),
+            mint: Address(So11111111111111111111111111111111111111112),
+            program: Token,
+            decimals: Decimals(
+                9,
+            ),
+            owner_pre: Some(
+                Address(AG1EhPjsBrkxQWkViuLXF6pQnHwfr9f9sdNneeoykcEJ),
+            ),
+            owner_post: Some(
+                Address(AG1EhPjsBrkxQWkViuLXF6pQnHwfr9f9sdNneeoykcEJ),
+            ),
+            pre: RawTokenAmount(
+                7029713399213,
+            ),
+            post: RawTokenAmount(
+                7023481627457,
+            ),
+        },
+        TokenBalance {
+            account: Address(B9b1o3tF61ceQYE9RG69sEm9y2zwf1oV2VnYkkQhP6CG),
+            mint: Address(DEW9dSN6QpWyNthphCpMmAbZP1Q4cEKR9xQXAri98WDP),
+            program: Token2022,
+            decimals: Decimals(
+                6,
+            ),
+            owner_pre: Some(
+                Address(AG1EhPjsBrkxQWkViuLXF6pQnHwfr9f9sdNneeoykcEJ),
+            ),
+            owner_post: Some(
+                Address(AG1EhPjsBrkxQWkViuLXF6pQnHwfr9f9sdNneeoykcEJ),
+            ),
+            pre: RawTokenAmount(
+                4383607916533,
+            ),
+            post: RawTokenAmount(
+                4383574068464,
+            ),
+        },
+    ],
+}

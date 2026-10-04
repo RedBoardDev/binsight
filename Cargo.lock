@@ -299,9 +299,16 @@ version = "0.1.0"
 name = "binsight-solana"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "binsight-core",
  "bs58",
+ "insta",
+ "jiff",
  "proptest",
+ "serde",
+ "serde_json",
  "thiserror",
+ "toml",
 ]
 
 [[package]]

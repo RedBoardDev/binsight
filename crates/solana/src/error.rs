@@ -1,7 +1,7 @@
 //! The errors of the Solana primitives.
 //!
-//! Parsing errors say which kind of value was being read and why it was refused. This module only
-//! describes failures; it does not log or recover from them.
+//! Parsing errors say which kind of value was being read and why it was refused, and where bytes
+//! ran out. This module only describes failures; it does not log or recover from them.
 
 use std::fmt;
 
@@ -53,5 +53,34 @@ pub enum ParseError {
         expected: usize,
         /// The number of bytes the text decoded to.
         found: usize,
+    },
+}
+
+/// Bytes that could not be read as the value they should hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum MalformedBytes {
+    /// The bytes end before the value.
+    #[error("the bytes end before {what} (offset {offset})")]
+    UnexpectedEnd {
+        /// What was being read.
+        what: &'static str,
+        /// Where the value starts.
+        offset: usize,
+    },
+    /// Bytes are left after the value.
+    #[error("{count} bytes are left after {what}")]
+    TrailingBytes {
+        /// What was read.
+        what: &'static str,
+        /// How many bytes are left.
+        count: usize,
+    },
+    /// A compact-u16 is longer than 3 bytes, above `u16::MAX`, or not in its shortest form.
+    #[error("invalid compact-u16 for {what} (offset {offset})")]
+    InvalidCompactU16 {
+        /// What was being read.
+        what: &'static str,
+        /// Where the value starts.
+        offset: usize,
     },
 }

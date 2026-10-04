@@ -1,0 +1,95 @@
+---
+source: crates/solana/tests/fixture_corpus.rs
+expression: view
+---
+TransactionView {
+    signature: Signature(4JzRsYip6jwUhqFDqDybXdJi15nTSpwxhKmwa8BazTjRTFjkdcBBsVonFCStFbULDeZdxgqBHSACTCeJguFEFgdc),
+    slot: 453251199,
+    block_time: Some(
+        2026-10-04T12:04:34Z,
+    ),
+    index_in_block: Some(
+        70,
+    ),
+    version: Legacy,
+    outcome: Succeeded,
+    fee_payer: Address(BMfZRMJUyWP3JChbsvkLfHrkDz3ZwQiEJgRWsRwJWD27),
+    fee: FeeBreakdown {
+        total: Lamports(
+            5000,
+        ),
+        base: Lamports(
+            5000,
+        ),
+        priority: Lamports(
+            0,
+        ),
+    },
+    accounts: [
+        AccountKey {
+            address: Address(BMfZRMJUyWP3JChbsvkLfHrkDz3ZwQiEJgRWsRwJWD27),
+            is_signer: true,
+            is_writable: true,
+            source: Message,
+        },
+        AccountKey {
+            address: Address(54o5FyoYF4hMVvTanQRbWYeU7Fv7X31zLVrW8j8JKQ2i),
+            is_signer: false,
+            is_writable: true,
+            source: Message,
+        },
+        AccountKey {
+            address: Address(11111111111111111111111111111111),
+            is_signer: false,
+            is_writable: false,
+            source: Message,
+        },
+    ],
+    instructions: [
+        InstructionNode {
+            position: InstructionPosition {
+                top: 0,
+                inner: None,
+            },
+            stack_height: Some(
+                1,
+            ),
+            program: Address(11111111111111111111111111111111),
+            accounts: [
+                Address(BMfZRMJUyWP3JChbsvkLfHrkDz3ZwQiEJgRWsRwJWD27),
+                Address(54o5FyoYF4hMVvTanQRbWYeU7Fv7X31zLVrW8j8JKQ2i),
+            ],
+            data: 0x02000000303c8e0000000000,
+        },
+    ],
+    native_balances: [
+        NativeBalance {
+            account: Address(BMfZRMJUyWP3JChbsvkLfHrkDz3ZwQiEJgRWsRwJWD27),
+            pre: Lamports(
+                498441280,
+            ),
+            post: Lamports(
+                489114760,
+            ),
+        },
+        NativeBalance {
+            account: Address(54o5FyoYF4hMVvTanQRbWYeU7Fv7X31zLVrW8j8JKQ2i),
+            pre: Lamports(
+                0,
+            ),
+            post: Lamports(
+                9321520,
+            ),
+        },
+        NativeBalance {
+            account: Address(11111111111111111111111111111111),
+            pre: Lamports(
+                1,
+            ),
+            post: Lamports(
+                1,
+            ),
+        },
+    ],
+    token_balances: [],
+}
