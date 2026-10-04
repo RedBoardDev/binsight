@@ -1,9 +1,10 @@
+import { healthyServer } from '@test/fixtures/health';
 import { renderAppAt } from '@test/renderAppAt';
 import { jsonResponse, signedInSession, signedOutSession, stubApi } from '@test/stubApi';
 import { act, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-const HEALTHY = { status: 'ok', version: '0.1.0', database: 'ok', engine: 'running' };
+const HEALTHY = healthyServer();
 
 const stubEventSource = () => {
   const sources: ControlledEventSource[] = [];

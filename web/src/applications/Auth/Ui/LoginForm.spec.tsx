@@ -1,3 +1,4 @@
+import { activeSession } from '@test/fixtures/session';
 import { renderAppAt } from '@test/renderAppAt';
 import {
   errorResponse,
@@ -10,7 +11,7 @@ import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
-const SESSION = { authenticated: true, expires_at: '2026-11-02T12:00:00Z' };
+const SESSION = activeSession();
 
 const openLoginPage = async (path = '/login') => {
   const user = userEvent.setup();

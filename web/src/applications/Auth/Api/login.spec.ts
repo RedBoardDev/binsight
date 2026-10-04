@@ -1,8 +1,9 @@
 import { login } from '@app/applications/Auth/Api/login';
+import { activeSession } from '@test/fixtures/session';
 import { errorResponse, jsonResponse, stubApi } from '@test/stubApi';
 import { describe, expect, it, vi } from 'vitest';
 
-const SESSION = { authenticated: true, expires_at: '2026-11-02T12:00:00Z' };
+const SESSION = activeSession();
 
 describe('login', () => {
   it('returns the session when the password is right', async () => {

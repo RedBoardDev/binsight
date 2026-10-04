@@ -1,11 +1,12 @@
 import { HealthCard } from '@app/applications/Health/Ui/HealthCard';
+import { healthyServer } from '@test/fixtures/health';
 import { renderWithProviders } from '@test/renderWithProviders';
 import { errorResponse, jsonResponse, stubApi } from '@test/stubApi';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
-const HEALTHY = { status: 'ok', version: '0.1.0', database: 'ok', engine: 'running' };
+const HEALTHY = healthyServer();
 
 describe('HealthCard', () => {
   it('shows the status, the version and each component of a healthy server', async () => {
@@ -21,7 +22,7 @@ describe('HealthCard', () => {
   it('shows the report of a server whose database does not answer', async () => {
     stubApi({
       'GET /api/v1/health': () =>
-        jsonResponse(503, { ...HEALTHY, status: 'unavailable', database: 'unavailable' }),
+        jsonResponse(503, healthyServer({ status: 'unavailable', database: 'unavailable' })),
     });
     renderWithProviders(<HealthCard />);
 
