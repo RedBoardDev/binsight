@@ -54,6 +54,21 @@ async fn back_up(config: &Config) -> Result<(), Failure> {
     Ok(())
 }
 
+/// Opens a database this binary may write to: one at exactly its schema version. A newer one is
+/// refused like `run` refuses it (exit 65), an older one until `run` has upgraded it.
+async fn open_up_to_date(path: &Path) -> Result<Store, Failure> {
+    let store = Store::open_existing(path).await?;
+    let schema = store.schema_status().await?;
+    if !schema.pending.is_empty() {
+        return Err(Failure::Usage(
+            "the database is older than this binsight; start `binsight run` once to upgrade it, \
+             then try again"
+                .to_owned(),
+        ));
+    }
+    Ok(store)
+}
+
 async fn show_database_status(config: &Config) -> Result<(), Failure> {
     let store = Store::open_existing(&database_path(&config.data_dir)).await?;
     let schema = store.schema_status().await?;
@@ -88,8 +103,24 @@ async fn show_database_status(config: &Config) -> Result<(), Failure> {
 
 async fn rotate_sessions(config: &Config) -> Result<(), Failure> {
     let data_dir = LockedDataDir::open(&config.data_dir)?;
-    let store = Store::open_existing(&data_dir.database_path()).await?;
+    let store = open_up_to_date(&data_dir.database_path()).await?;
     rotate_session_secret(&store).await?;
     print_line("Every session is signed out; sign in again with the password.");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn refuses_to_write_to_a_database_that_was_never_upgraded() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("binsight.db");
+        std::fs::File::create(&path).unwrap();
+
+        let refusal = open_up_to_date(&path).await.unwrap_err();
+
+        assert!(matches!(refusal, Failure::Usage(_)), "{refusal}");
+    }
 }

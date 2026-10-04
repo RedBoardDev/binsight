@@ -90,6 +90,9 @@ impl Store {
     /// Writes a backup of the database into `backups.folder`, named after `now`, the binary
     /// version and the schema version, and returns its path. Old backups are not rotated.
     ///
+    /// Any database can be backed up, including one newer than this binary (a backup is then
+    /// especially welcome) or one whose migrations were edited.
+    ///
     /// # Errors
     ///
     /// Returns [`StoreError::Backup`] if the copy cannot be written.
@@ -103,8 +106,12 @@ impl Store {
         let binary_version = binary_version.to_owned();
         self.database()
             .write(move |connection| {
-                let schema = plan_migrations(MIGRATIONS, &read_applied(connection)?)?;
-                let name = backup_file_name(now, &binary_version, schema.current_version);
+                let schema_version = read_applied(connection)?
+                    .iter()
+                    .map(|migration| migration.version)
+                    .max()
+                    .unwrap_or(0);
+                let name = backup_file_name(now, &binary_version, schema_version);
                 write_backup(connection, &folder.join(name))
             })
             .await
@@ -193,6 +200,36 @@ mod tests {
 
         assert_eq!(status.current_version, status.latest_version);
         assert_eq!(status.pending, Vec::<&str>::new());
+    }
+
+    #[tokio::test]
+    async fn backs_up_a_database_newer_than_the_binary() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("binsight.db");
+        let (store, _report) = Store::open_and_upgrade(&path, options(&folder))
+            .await
+            .unwrap();
+        store
+            .database()
+            .write(|connection| {
+                connection.execute(
+                    "INSERT INTO schema_migrations VALUES (99, 'future', '', 0, '9.9.9')",
+                    [],
+                )?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+        let backup = store
+            .back_up(&options(&folder).backups, "0.1.0", Timestamp::UNIX_EPOCH)
+            .await
+            .unwrap();
+
+        assert!(
+            backup.to_string_lossy().ends_with("-schema99.db"),
+            "{backup:?}"
+        );
     }
 
     #[tokio::test]
