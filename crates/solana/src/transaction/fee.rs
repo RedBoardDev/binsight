@@ -104,8 +104,12 @@ fn compute_budget_request(instructions: &[InstructionNode]) -> PriorityRequest {
             Err(_) => return PriorityRequest::PriceWithoutLimit,
         };
         let is_repeated = match decoded {
-            ComputeBudgetInstruction::SetComputeUnitPrice(value) => price.replace(value).is_some(),
-            ComputeBudgetInstruction::SetComputeUnitLimit(value) => limit.replace(value).is_some(),
+            ComputeBudgetInstruction::SetComputeUnitPrice { micro_lamports } => {
+                price.replace(micro_lamports).is_some()
+            }
+            ComputeBudgetInstruction::SetComputeUnitLimit { units } => {
+                limit.replace(units).is_some()
+            }
             _ => false,
         };
         if is_repeated {

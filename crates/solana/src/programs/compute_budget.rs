@@ -19,14 +19,26 @@ const SET_LOADED_ACCOUNTS_DATA_SIZE_LIMIT: u8 = 4;
 /// A Compute Budget instruction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComputeBudgetInstruction {
-    /// Requests a heap of this many bytes.
-    RequestHeapFrame(u32),
+    /// Requests a heap.
+    RequestHeapFrame {
+        /// Its size.
+        bytes: u32,
+    },
     /// Sets the compute-unit limit.
-    SetComputeUnitLimit(u32),
-    /// Sets the price of a compute unit, in micro-lamports (10^-6 lamport).
-    SetComputeUnitPrice(u64),
-    /// Sets the limit on the account data the transaction loads, in bytes.
-    SetLoadedAccountsDataSizeLimit(u32),
+    SetComputeUnitLimit {
+        /// The limit.
+        units: u32,
+    },
+    /// Sets the price of a compute unit.
+    SetComputeUnitPrice {
+        /// The price, in micro-lamports (10^-6 lamport) per compute unit.
+        micro_lamports: u64,
+    },
+    /// Sets the limit on the account data the transaction loads.
+    SetLoadedAccountsDataSizeLimit {
+        /// The limit.
+        bytes: u32,
+    },
     /// Another (deprecated) instruction.
     Other {
         /// Its discriminator.
@@ -38,19 +50,19 @@ pub enum ComputeBudgetInstruction {
 pub(super) fn decode(data: &[u8]) -> Result<ComputeBudgetInstruction, InstructionDecodeError> {
     let mut fields = InstructionFields::new(data, PROGRAM);
     let instruction = match fields.u8("the instruction")? {
-        REQUEST_HEAP_FRAME => {
-            ComputeBudgetInstruction::RequestHeapFrame(fields.u32("the heap size")?)
-        }
-        SET_COMPUTE_UNIT_LIMIT => {
-            ComputeBudgetInstruction::SetComputeUnitLimit(fields.u32("the compute-unit limit")?)
-        }
-        SET_COMPUTE_UNIT_PRICE => {
-            ComputeBudgetInstruction::SetComputeUnitPrice(fields.u64("the compute-unit price")?)
-        }
+        REQUEST_HEAP_FRAME => ComputeBudgetInstruction::RequestHeapFrame {
+            bytes: fields.u32("the heap size")?,
+        },
+        SET_COMPUTE_UNIT_LIMIT => ComputeBudgetInstruction::SetComputeUnitLimit {
+            units: fields.u32("the compute-unit limit")?,
+        },
+        SET_COMPUTE_UNIT_PRICE => ComputeBudgetInstruction::SetComputeUnitPrice {
+            micro_lamports: fields.u64("the compute-unit price")?,
+        },
         SET_LOADED_ACCOUNTS_DATA_SIZE_LIMIT => {
-            ComputeBudgetInstruction::SetLoadedAccountsDataSizeLimit(
-                fields.u32("the data size limit")?,
-            )
+            ComputeBudgetInstruction::SetLoadedAccountsDataSizeLimit {
+                bytes: fields.u32("the data size limit")?,
+            }
         }
         discriminator => return Ok(ComputeBudgetInstruction::Other { discriminator }),
     };
@@ -68,7 +80,9 @@ mod tests {
         data.extend(133_333_334_u64.to_le_bytes());
         assert_eq!(
             decode(&data),
-            Ok(ComputeBudgetInstruction::SetComputeUnitPrice(133_333_334))
+            Ok(ComputeBudgetInstruction::SetComputeUnitPrice {
+                micro_lamports: 133_333_334
+            })
         );
     }
 
