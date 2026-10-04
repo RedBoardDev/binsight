@@ -1,8 +1,9 @@
+import { displayPreferenceStore } from '@app/applications/Shared/Preference/Ui/displayPreferenceStore';
 import { renderAppAt } from '@test/renderAppAt';
 import { signedInSession, stubApi } from '@test/stubApi';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 // Both navigations are in the DOM: CSS shows the top bar on a desktop and the tab bar on a phone.
 const [TOP_BAR, TAB_BAR] = [0, 1];
@@ -10,6 +11,11 @@ const [TOP_BAR, TAB_BAR] = [0, 1];
 const mainNavigations = (): HTMLElement[] => screen.getAllByRole('navigation', { name: 'Main' });
 
 describe('AppShell', () => {
+  afterEach(() => {
+    displayPreferenceStore.setCurrency('sol');
+    displayPreferenceStore.setAmountsHidden(false);
+  });
+
   it('marks the current page in both navigations', async () => {
     stubApi({ 'GET /api/v1/auth/session': signedInSession });
     renderAppAt('/stats');
@@ -55,6 +61,20 @@ describe('AppShell', () => {
       '#content',
     );
     expect(screen.getByRole('main')).toHaveAttribute('id', 'content');
+  });
+
+  it('switches the currency with u and hides amounts with .', async () => {
+    const user = userEvent.setup();
+    stubApi({ 'GET /api/v1/auth/session': signedInSession });
+    renderAppAt('/');
+    await screen.findByRole('heading', { name: 'Overview' });
+
+    await user.keyboard('u.');
+
+    expect(displayPreferenceStore.getSnapshot()).toEqual({
+      currency: 'usd',
+      areAmountsHidden: true,
+    });
   });
 
   it('names the tab after the page and focuses its title after a navigation', async () => {

@@ -11,6 +11,14 @@ msgstr ""
 msgid "{seconds, plural, one {Too many failed attempts. Try again in # second.} other {Too many failed attempts. Try again in # seconds.}}"
 msgstr "{seconds, plural, one {Zu viele fehlgeschlagene Versuche. Versuchen Sie es in # Sekunde erneut.} other {Zu viele fehlgeschlagene Versuche. Versuchen Sie es in # Sekunden erneut.}}"
 
+#: src/applications/Shared/Figure/Ui/figureSpeech.ts
+msgid "{symbol} has no price yet: it counts as zero."
+msgstr "{symbol} hat noch keinen Preis: Es zählt als null."
+
+#: src/applications/Shared/Figure/Ui/figureSpeech.ts
+msgid "A movement of the position has no price."
+msgstr "Eine Bewegung der Position hat keinen Preis."
+
 #: src/core/pwa/UpdatePrompt.tsx
 msgid "A new version of binsight is available."
 msgstr "Eine neue Version von binsight ist verfügbar."
@@ -22,6 +30,18 @@ msgstr "Über"
 #: src/applications/Shared/Motion/Ui/ReduceMotionSwitch.tsx
 msgid "Always on when your device asks for less motion."
 msgstr "Immer aktiv, wenn Ihr Gerät weniger Bewegung verlangt."
+
+#: src/applications/Shared/Figure/Ui/figureSpeech.ts
+msgid "amount hidden"
+msgstr "Betrag ausgeblendet"
+
+#: src/applications/Shared/Preference/Ui/CurrencyToggle.tsx
+msgid "Amounts in dollars"
+msgstr "Beträge in Dollar"
+
+#: src/applications/Shared/Preference/Ui/CurrencyToggle.tsx
+msgid "Amounts in SOL"
+msgstr "Beträge in SOL"
 
 #: src/core/RootErrorBoundary.tsx
 msgid "An unexpected error stopped the app. Reload the page to start again."
@@ -59,6 +79,10 @@ msgstr "Verbindung"
 msgid "Could not sign out."
 msgstr "Abmelden fehlgeschlagen."
 
+#: src/applications/Shared/Preference/Ui/CurrencyToggle.tsx
+msgid "Currency"
+msgstr "Währung"
+
 #: src/core/theme/ThemeSwitcher.tsx
 msgid "Dark theme"
 msgstr "Dunkles Design"
@@ -83,6 +107,14 @@ msgstr "Engine"
 msgid "Enter the password."
 msgstr "Geben Sie das Passwort ein."
 
+#: src/applications/Shared/Figure/Ui/figureSpeech.ts
+msgid "estimated"
+msgstr "geschätzt"
+
+#: src/applications/Shared/Figure/Ui/figureSpeech.ts
+msgid "Estimated"
+msgstr "Geschätzt"
+
 #: src/applications/Health/Ui/HealthPage.tsx
 #: src/core/Layout/AppShell/navItems.ts
 msgid "Health"
@@ -92,10 +124,18 @@ msgstr "Zustand"
 msgid "Healthy"
 msgstr "Betriebsbereit"
 
+#: src/applications/Shared/Preference/Ui/HideAmountsToggle.tsx
+msgid "Hide amounts"
+msgstr "Beträge ausblenden"
+
 #: src/applications/ClosedPosition/Ui/HistoryPage.tsx
 #: src/core/Layout/AppShell/navItems.ts
 msgid "History"
 msgstr "Verlauf"
+
+#: src/applications/Shared/Figure/Ui/figureSpeech.ts
+msgid "History still importing: {progress} done."
+msgstr "Verlauf wird noch importiert: {progress} erledigt."
 
 #: src/applications/Auth/Ui/LoginForm/errorCopy.ts
 #: src/applications/Shared/Ui/apiErrorMessages.ts
@@ -131,15 +171,47 @@ msgstr "Live-Aktualisierungen"
 msgid "Live updates:"
 msgstr "Live-Aktualisierungen:"
 
+#: src/applications/Shared/Figure/Ui/figureSpeech.ts
+msgid "lower bound"
+msgstr "Untergrenze"
+
+#: src/applications/Shared/Figure/Ui/figureSpeech.ts
+msgid "Lower bound"
+msgstr "Untergrenze"
+
 #: src/core/Layout/AppShell/DesktopNav.tsx
 #: src/core/Layout/AppShell/FloatingTabBar.tsx
 msgid "Main"
 msgstr "Haupt"
 
+#: src/applications/Shared/Figure/Ui/figureSpeech.ts
+msgid "minus"
+msgstr "minus"
+
 #: src/core/Layout/AppShell/MoreSheet.tsx
 #: src/core/Layout/AppShell/navItems.ts
 msgid "More"
 msgstr "Mehr"
+
+#: src/applications/Shared/Figure/Ui/figureSpeech.ts
+msgid "No losing position yet."
+msgstr "Noch keine Verlustposition."
+
+#: src/applications/Shared/Figure/Ui/figureSpeech.ts
+msgid "No SOL to dollar rate for {day}."
+msgstr "Kein SOL-Dollar-Kurs für {day}."
+
+#: src/applications/Shared/Figure/Ui/figureSpeech.ts
+msgid "not available"
+msgstr "nicht verfügbar"
+
+#: src/applications/Shared/Figure/Ui/figureSpeech.ts
+msgid "Not available"
+msgstr "Nicht verfügbar"
+
+#: src/applications/Shared/Figure/Ui/figureSpeech.ts
+msgid "Nothing to compare with yet."
+msgstr "Noch nichts zum Vergleichen."
 
 #: src/applications/Setting/Ui/SettingsPage/AboutSection.tsx
 msgid "Open-source licenses"
@@ -166,9 +238,17 @@ msgstr "Passwort"
 msgid "Paused"
 msgstr "Pausiert"
 
+#: src/applications/Shared/Figure/Ui/figureSpeech.ts
+msgid "plus"
+msgstr "plus"
+
 #: src/applications/Realtime/Ui/streamStateLabels.ts
 msgid "Reconnecting"
 msgstr "Verbindet erneut"
+
+#: src/applications/Shared/Figure/Ui/figureSpeech.ts
+msgid "Reconstructed for the time before the wallet was added."
+msgstr "Rekonstruiert für die Zeit vor dem Hinzufügen der Wallet."
 
 #: src/applications/Shared/Motion/Ui/ReduceMotionSwitch.tsx
 msgid "Reduce motion"
@@ -334,6 +414,18 @@ msgstr "Version"
 #: src/core/Layout/AppShell/navItems.ts
 msgid "Wallets"
 msgstr "Wallets"
+
+#: src/applications/Shared/Figure/Ui/figureSpeech.ts
+msgid "Why a lower bound?"
+msgstr "Warum eine Untergrenze?"
+
+#: src/applications/Shared/Figure/Ui/figureSpeech.ts
+msgid "Why an estimate?"
+msgstr "Warum eine Schätzung?"
+
+#: src/applications/Shared/Figure/Ui/figureSpeech.ts
+msgid "Why not available?"
+msgstr "Warum nicht verfügbar?"
 
 #: src/applications/Shared/Ui/apiErrorMessages.ts
 msgid "Your session has ended. Sign in again."

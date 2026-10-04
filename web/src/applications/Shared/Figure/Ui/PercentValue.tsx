@@ -1,0 +1,42 @@
+import type { PercentFigure } from '@app/applications/Shared/Figure/Domain/figure';
+import type { PercentPlacement } from '@app/applications/Shared/Figure/Domain/formatPercent';
+import {
+  type FigureSigning,
+  formattedText,
+} from '@app/applications/Shared/Figure/Domain/formattedNumber';
+import { ExactnessMark, type FigureLayout } from '@app/applications/Shared/Figure/Ui/ExactnessMark';
+import { TONE_CLASSES } from '@app/applications/Shared/Figure/Ui/FigureAmount';
+import { useFigureFormatter } from '@app/applications/Shared/Figure/Ui/useFigureFormatter';
+
+interface PercentValueProps {
+  figure: PercentFigure;
+  placement: PercentPlacement;
+  signing: FigureSigning;
+  layout?: FigureLayout;
+}
+
+// A percentage. Never hidden with the amounts: a ratio reveals no balance.
+export const PercentValue = ({
+  figure,
+  placement,
+  signing,
+  layout = 'inline',
+}: PercentValueProps) => {
+  const format = useFigureFormatter();
+  const reasons = figure.exactness === 'complete' ? [] : figure.reasons;
+  const mark = <ExactnessMark exactness={figure.exactness} reasons={reasons} layout={layout} />;
+  if (figure.exactness === 'unavailable') {
+    return <span className="num inline-flex items-baseline whitespace-nowrap">{mark}</span>;
+  }
+  const formatted = format.percent(figure.value, placement, signing);
+
+  return (
+    <span className="num inline-flex items-baseline gap-[0.2em] whitespace-nowrap">
+      {mark}
+      <span className={TONE_CLASSES[formatted.tone]}>
+        {formatted.sign}
+        {formattedText(formatted)}
+      </span>
+    </span>
+  );
+};

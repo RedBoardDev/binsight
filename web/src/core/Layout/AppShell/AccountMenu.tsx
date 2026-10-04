@@ -17,7 +17,7 @@ export const AccountMenu = () => {
         variant="ghost"
         aria-label={t`Settings and session`}
         isPending={isPending}
-        className="hidden text-muted lg:inline-flex"
+        className="button--chrome"
       >
         <Settings aria-hidden strokeWidth={1.75} className="size-4.5" />
       </Button>

@@ -87,6 +87,12 @@
     line-height: var(--text-body--line-height);
   }
 
+  /* The icons of the top bar. */
+  .button--chrome,
+  .toggle-button--chrome {
+    color: var(--muted);
+  }
+
   /* A switch is neutral: its track takes the text color when on, never the accent. */
   .switch {
     --switch-control-bg: color-mix(in srgb, var(--foreground) 16%, transparent);
@@ -98,12 +104,19 @@
     background: var(--background);
   }
 
-  /* A finger needs 44 px, whatever the visual size of the control. */
+  /* A finger needs 44 px, whatever the visual size of the control: an invisible hit area grows
+     around a smaller button instead of making it bigger (the top bar stays compact). */
   @media (pointer: coarse) {
     .button,
     .toggle-button {
-      min-height: 2.75rem;
-      min-width: 2.75rem;
+      position: relative;
+    }
+
+    .button::after,
+    .toggle-button::after {
+      content: "";
+      position: absolute;
+      inset: min(0px, calc((100% - 2.75rem) / 2));
     }
   }
 }

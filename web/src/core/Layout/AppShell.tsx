@@ -1,4 +1,6 @@
 import { RealtimeProvider } from '@app/applications/Realtime/Ui/RealtimeProvider';
+import { displayPreferenceStore } from '@app/applications/Shared/Preference/Ui/displayPreferenceStore';
+import { useGlobalShortcuts } from '@app/core/Shortcut/useGlobalShortcuts';
 import { Outlet, useRouter } from '@tanstack/react-router';
 import { useEffect } from 'react';
 import { FloatingTabBar } from './AppShell/FloatingTabBar';
@@ -22,6 +24,10 @@ export const AppShell = () => {
       }),
     [router],
   );
+  useGlobalShortcuts({
+    'toggle-currency': displayPreferenceStore.toggleCurrency,
+    'toggle-hidden-amounts': displayPreferenceStore.toggleAmountsHidden,
+  });
 
   return (
     <RealtimeProvider>

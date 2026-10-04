@@ -35,6 +35,12 @@
     --wallet-hue-6: #d58bb5;
     --wallet-hue-7: #c9c06a;
     --wallet-hue-8: #9aa7b8;
+
+    /* The Solana mark: the official gradient, and the ink of its bars on the coin. Never themed,
+       never colored by the figure it stands next to. */
+    --solana-violet: #9945ff;
+    --solana-green: #14f195;
+    --solana-ink: #0b0f14;
   }
 
   :root,
