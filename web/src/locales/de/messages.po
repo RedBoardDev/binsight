@@ -15,6 +15,26 @@ msgstr "{seconds, plural, one {Zu viele fehlgeschlagene Versuche. Versuchen Sie 
 msgid "{symbol} has no price yet: it counts as zero."
 msgstr "{symbol} hat noch keinen Preis: Es zählt als null."
 
+#. Period of one month, in a row of short pills.
+#: src/applications/Shared/Scope/Domain/period.ts
+msgid "1M"
+msgstr "1 M"
+
+#. Period of one year, in a row of short pills.
+#: src/applications/Shared/Scope/Domain/period.ts
+msgid "1Y"
+msgstr "1 J"
+
+#. Period of three months, in a row of short pills.
+#: src/applications/Shared/Scope/Domain/period.ts
+msgid "3M"
+msgstr "3 M"
+
+#. Period of seven days, in a row of short pills.
+#: src/applications/Shared/Scope/Domain/period.ts
+msgid "7d"
+msgstr "7 T"
+
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "A movement of the position has no price."
 msgstr "Eine Bewegung der Position hat keinen Preis."
@@ -26,6 +46,11 @@ msgstr "Eine neue Version von binsight ist verfügbar."
 #: src/applications/Setting/Ui/SettingsPage/AboutSection.tsx
 msgid "About"
 msgstr "Über"
+
+#. The whole history, in a row of short period pills.
+#: src/applications/Shared/Scope/Domain/period.ts
+msgid "All"
+msgstr "Alle"
 
 #: src/applications/Shared/Motion/Ui/ReduceMotionSwitch.tsx
 msgid "Always on when your device asks for less motion."
@@ -237,6 +262,10 @@ msgstr "Passwort"
 #: src/applications/Realtime/Ui/streamStateLabels.ts
 msgid "Paused"
 msgstr "Pausiert"
+
+#: src/applications/Shared/Scope/Ui/PeriodPills.tsx
+msgid "Period"
+msgstr "Zeitraum"
 
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "plus"

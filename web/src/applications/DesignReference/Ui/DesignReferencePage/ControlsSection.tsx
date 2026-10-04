@@ -2,6 +2,7 @@ import { ReferenceSection } from '@app/applications/DesignReference/Ui/DesignRef
 import { ReduceMotionSwitch } from '@app/applications/Shared/Motion/Ui/ReduceMotionSwitch';
 import { CurrencyToggle } from '@app/applications/Shared/Preference/Ui/CurrencyToggle';
 import { HideAmountsToggle } from '@app/applications/Shared/Preference/Ui/HideAmountsToggle';
+import { PeriodPills } from '@app/applications/Shared/Scope/Ui/PeriodPills';
 import { ThemeSwitcher } from '@app/core/theme/ThemeSwitcher';
 import { Button, Tooltip } from '@heroui/react';
 import { Share2 } from 'lucide-react';
@@ -24,6 +25,7 @@ export const ControlsSection = () => (
       <CurrencyToggle />
       <HideAmountsToggle />
       <ThemeSwitcher />
+      <PeriodPills />
     </div>
     <div className="max-w-md">
       <ReduceMotionSwitch />

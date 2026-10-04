@@ -51,3 +51,9 @@ Object.defineProperty(window, 'EventSource', {
   writable: true,
   value: SilentEventSource,
 });
+
+// jsdom has no Web Animations API; react-aria's selection indicators (a gliding pill) ask an
+// element for its running animations. None run in jsdom.
+if (typeof Element.prototype.getAnimations !== 'function') {
+  Element.prototype.getAnimations = () => [];
+}
