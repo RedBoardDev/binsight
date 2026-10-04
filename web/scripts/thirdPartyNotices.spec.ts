@@ -7,6 +7,10 @@ describe('isAllowedLicense', () => {
     expect(isAllowedLicense('Apache-2.0')).toBe(true);
   });
 
+  it('accepts the font license of the self-hosted typefaces', () => {
+    expect(isAllowedLicense('OFL-1.1')).toBe(true);
+  });
+
   it('refuses copyleft and unknown licenses', () => {
     expect(isAllowedLicense('GPL-3.0-only')).toBe(false);
     expect(isAllowedLicense('AGPL-3.0-or-later')).toBe(false);

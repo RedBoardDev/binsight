@@ -10,7 +10,8 @@ import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 // Permissive licenses only (MPL-2.0 is file-level copyleft, compatible as long as its files are
-// not modified). Never GPL, AGPL or LGPL.
+// not modified). OFL-1.1 is for fonts only: they may be embedded and shipped with any software, as
+// long as they are not sold on their own. Never GPL, AGPL or LGPL.
 export const ALLOWED_LICENSES: ReadonlySet<string> = new Set([
   '0BSD',
   'Apache-2.0',
@@ -21,6 +22,7 @@ export const ALLOWED_LICENSES: ReadonlySet<string> = new Set([
   'ISC',
   'MIT',
   'MPL-2.0',
+  'OFL-1.1',
   'Unlicense',
   'Zlib',
 ]);

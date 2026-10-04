@@ -1,5 +1,6 @@
 /* The app's only stylesheet. HeroUI's styles bring Tailwind with them. */
 @import "@heroui/styles";
+@import "./typography.css";
 @import "./theme.css";
 
 html,
