@@ -6,6 +6,8 @@
     reason = "each test binary uses a different part of these shared helpers"
 )]
 
+pub(crate) mod figures;
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 

@@ -12,41 +12,9 @@ mod common;
 
 use axum::http::StatusCode;
 use common::TestApp;
-use serde_json::Value;
+use common::figures::{amount, scopes, units};
 
 const CURRENCIES: [&str; 2] = ["sol", "usd"];
-const PERIODS: [&str; 6] = ["today", "7d", "1m", "3m", "1y", "all"];
-
-/// A canonical decimal string as an integer of `decimals` decimals.
-fn units(text: &str, decimals: usize) -> i128 {
-    let (negative, digits) = text
-        .strip_prefix('-')
-        .map_or((false, text), |rest| (true, rest));
-    let (whole, fraction) = digits.split_once('.').unwrap_or((digits, ""));
-    let padded = format!("{fraction:0<decimals$}");
-    let value: i128 = format!("{whole}{padded}").parse().unwrap();
-    if negative { -value } else { value }
-}
-
-/// The amount of a figure, in its unit's smallest units.
-fn amount(figure: &Value) -> i128 {
-    let decimals = if figure["value"]["unit"] == "sol" {
-        9
-    } else {
-        6
-    };
-    units(figure["value"]["amount"].as_str().unwrap(), decimals)
-}
-
-/// Every scope query: all wallets, then each wallet.
-async fn scopes(app: &TestApp) -> Vec<String> {
-    let wallets = app.get_signed_in("/api/v1/wallets").await.json();
-    let mut scopes = vec!["all".to_owned()];
-    for item in wallets["items"].as_array().unwrap() {
-        scopes.push(item["wallet"]["address"].as_str().unwrap().to_owned());
-    }
-    scopes
-}
 
 #[tokio::test]
 async fn shows_the_same_today_in_the_overview_and_the_recent_closes() {
@@ -112,54 +80,6 @@ async fn adds_the_net_worth_parts_and_matches_the_open_positions() {
                 .sum();
             assert_eq!(rows, amount(&open["totals"]["value"]), "{query}");
         }
-    }
-}
-
-#[tokio::test]
-async fn ends_the_real_pnl_series_on_the_gain_of_the_overview() {
-    let app = TestApp::demo().await;
-    for period in PERIODS {
-        for currency in CURRENCIES {
-            let query = format!("period={period}&currency={currency}");
-            let overview = app
-                .get_signed_in(&format!("/api/v1/overview?{query}"))
-                .await
-                .json();
-            let series = app
-                .get_signed_in(&format!("/api/v1/stats/series?series=real_pnl&{query}"))
-                .await
-                .json();
-            let last = series["points"].as_array().unwrap().last().cloned();
-
-            assert_eq!(
-                series["header"]["value"], overview["gain"]["value"],
-                "{query}"
-            );
-            if let Some(last) = last {
-                assert_eq!(last["line"], overview["gain"]["value"], "{query}");
-                assert_eq!(
-                    last["line_share_of_net_worth"], overview["gain"]["pct"],
-                    "{query}"
-                );
-            }
-        }
-    }
-}
-
-#[tokio::test]
-async fn adds_the_closed_position_bars_up_to_the_series_total() {
-    let app = TestApp::demo().await;
-    for bucket in ["day", "week", "month"] {
-        let path = format!("/api/v1/stats/series?series=positions&period=3m&bucket={bucket}");
-        let series = app.get_signed_in(&path).await.json();
-        let bars: i128 = series["points"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|point| amount(&point["bar"]))
-            .sum();
-
-        assert_eq!(bars, amount(&series["header"]["value"]), "{bucket}");
     }
 }
 
