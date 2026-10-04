@@ -6,6 +6,7 @@
 
 mod closed;
 mod entries;
+mod events;
 mod instance;
 mod market;
 mod marks;
@@ -16,12 +17,15 @@ mod wallet;
 use std::collections::BTreeMap;
 
 use binsight_engine::portfolio::{InstanceStatus, SnapshotFacts};
+use binsight_ledger::facts::{PoolFacts, PositionEventFact};
 use binsight_ledger::report::period::{local_day, midnight};
+use binsight_solana::Address;
 use jiff::{SignedDuration, Timestamp, ToSpan};
 
 use crate::error::DemoError;
 use crate::scenario::{HISTORY_DAYS, WALLETS, WalletProfile};
 use crate::world::WorldSpec;
+use events::{Market, closed_events, open_events};
 use market::{
     Catalog, CatalogPool, PricePath, catalog, following_rates, random_walk, sol_usd_rates,
     token_logos,
@@ -81,10 +85,44 @@ pub(crate) fn generate(spec: &WorldSpec) -> Result<Generated, DemoError> {
         };
         wallet::generate_wallet(&context, profile, tail, &mut facts)?;
     }
+    let paths: BTreeMap<Address, PricePath> = catalog
+        .pools
+        .iter()
+        .filter_map(|pool| Some((pool.facts.address, paths.get(&pool.key)?.clone())))
+        .collect();
+    facts.events = position_events(spec.seed, &facts, &paths, timeline.anchor)?;
     Ok(Generated {
         facts,
         status: instance::instance_status(timeline.anchor),
     })
+}
+
+/// The movements of every position of `facts`, on the price paths of their pools.
+fn position_events(
+    seed: u64,
+    facts: &SnapshotFacts,
+    paths: &BTreeMap<Address, PricePath>,
+    now: Timestamp,
+) -> Result<Vec<PositionEventFact>, DemoError> {
+    let pools: BTreeMap<Address, &PoolFacts> = facts
+        .pools
+        .iter()
+        .map(|pool| (pool.address, pool))
+        .collect();
+    let market = |pool: Address| -> Result<Market<'_>, DemoError> {
+        Ok(Market {
+            pool: pools.get(&pool).copied().ok_or(DemoError::UnknownPool)?,
+            path: paths.get(&pool).ok_or(DemoError::UnknownPool)?,
+        })
+    };
+    let mut events = Vec::new();
+    for position in &facts.closed {
+        events.extend(closed_events(seed, position, market(position.pool)?)?);
+    }
+    for position in &facts.open {
+        events.extend(open_events(seed, position, market(position.pool)?, now)?);
+    }
+    Ok(events)
 }
 
 /// The instants of the world of `spec`.

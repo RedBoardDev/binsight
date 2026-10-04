@@ -19,6 +19,9 @@ use crate::random::{Stream, mixed};
 /// Seconds in an hour.
 const SECONDS_PER_HOUR: i64 = 3_600;
 
+/// Seconds in a minute.
+const SECONDS_PER_MINUTE: i64 = 60;
+
 /// The largest hourly move, in basis points of price.
 const HOURLY_MOVE_BPS: i64 = 150;
 
@@ -39,6 +42,12 @@ pub(crate) struct PricePath {
 }
 
 impl PricePath {
+    /// The bin a transaction at `instant` sees: the bin at the start of its minute. Candles are
+    /// drawn from the same minute bins, so every movement falls inside its candle.
+    pub(crate) fn bin_in_minute(&self, instant: Timestamp) -> i32 {
+        self.bin_at(minute_start(instant))
+    }
+
     /// The active bin at `instant`: the hourly bins interpolated, plus the minute's wobble.
     pub(crate) fn bin_at(&self, instant: Timestamp) -> i32 {
         let offset = instant.duration_since(self.first_hour).as_secs().max(0);
@@ -53,7 +62,7 @@ impl PricePath {
         let into_hour = offset % SECONDS_PER_HOUR;
         let moved =
             i64::from(next.saturating_sub(here)).saturating_mul(into_hour) / SECONDS_PER_HOUR;
-        let minute = u64::try_from(offset / 60).unwrap_or(0);
+        let minute = u64::try_from(offset / SECONDS_PER_MINUTE).unwrap_or(0);
         let wobble = self.noise_bins.saturating_mul(2).saturating_add(1);
         let noise = i64::try_from(
             mixed(self.noise_seed, minute)
@@ -65,6 +74,13 @@ impl PricePath {
         let bin = i64::from(here).saturating_add(moved).saturating_add(noise);
         i32::try_from(bin).unwrap_or(here)
     }
+}
+
+/// The start of the minute `instant` falls in.
+pub(crate) fn minute_start(instant: Timestamp) -> Timestamp {
+    let second = instant.as_second();
+    let start = second.saturating_sub(second.rem_euclid(SECONDS_PER_MINUTE));
+    Timestamp::from_second(start).unwrap_or(instant)
 }
 
 /// A random walk of `hours` hours from `first_hour` around the pool's reference bin.

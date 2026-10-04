@@ -10,5 +10,5 @@ mod rates;
 pub(crate) use bins::bin_price;
 pub(crate) use catalog::{Catalog, CatalogPool, catalog};
 pub(crate) use logos::token_logos;
-pub(crate) use price_path::{PricePath, following_rates, random_walk};
+pub(crate) use price_path::{PricePath, following_rates, minute_start, random_walk};
 pub(crate) use rates::sol_usd_rates;

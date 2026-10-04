@@ -27,6 +27,7 @@ pub use read_model::{
 };
 pub use scope::{ReadContext, Scope};
 pub use snapshot::{
-    ClosedRow, OpenRow, Snapshot, SnapshotError, SnapshotFacts, TokenLogoFacts, TrackedWallet,
+    ClosedRow, OpenRow, PositionRow, Snapshot, SnapshotError, SnapshotFacts, TokenLogoFacts,
+    TrackedWallet,
 };
 pub use wallet_label::{MAX_WALLET_LABEL_CHARS, WalletLabel, WalletLabelError};

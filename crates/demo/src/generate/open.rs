@@ -53,7 +53,7 @@ pub(crate) fn open_position(
     let mut stream = Stream::of(seed, &name);
     let age = stream.between(AGE_SECONDS.0, AGE_SECONDS.1);
     let opened_at = at(timeline.anchor.as_second().saturating_sub(age))?;
-    let active = path.bin_at(timeline.anchor);
+    let active = path.bin_in_minute(timeline.anchor);
     let width = stream.between(WIDTH_BINS.0, WIDTH_BINS.1);
     let (lower, upper) = range(
         &mut stream,

@@ -9,8 +9,7 @@ use std::collections::BTreeMap;
 
 use binsight_core::error::AmountError;
 use binsight_ledger::facts::{
-    ClosedPositionFacts, OpenPnlMark, OpenPositionFacts, PoolFacts, SolUsdRates, TokenFacts,
-    WalletEntry,
+    OpenPnlMark, PoolFacts, PositionEventFact, PositionId, SolUsdRates, TokenFacts, WalletEntry,
 };
 use binsight_ledger::report::closed::ClosedValuation;
 use binsight_ledger::report::open::OpenValuation;
@@ -18,29 +17,13 @@ use binsight_ledger::report::real_pnl::{WalletHistory, WalletHistoryFacts};
 use binsight_solana::Address;
 
 mod facts;
+mod rows;
 
 pub use facts::{SnapshotFacts, TokenLogoFacts, TrackedWallet};
+pub use rows::{ClosedRow, OpenRow, PositionRow};
 
 use super::scope::Scope;
 use super::views::WalletRef;
-
-/// A closed position and its valuation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClosedRow {
-    /// The facts.
-    pub facts: ClosedPositionFacts,
-    /// Its figures.
-    pub valuation: ClosedValuation,
-}
-
-/// An open position and its valuation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OpenRow {
-    /// The facts.
-    pub facts: OpenPositionFacts,
-    /// Its figures.
-    pub valuation: OpenValuation,
-}
 
 /// The facts handed over are inconsistent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -62,6 +45,7 @@ pub struct Snapshot {
     logos: BTreeMap<Address, TokenLogoFacts>,
     closed: Vec<ClosedRow>,
     open: Vec<OpenRow>,
+    events: BTreeMap<PositionId, Vec<PositionEventFact>>,
     entries: Vec<WalletEntry>,
     histories: BTreeMap<Address, WalletHistory>,
     rates: SolUsdRates,
@@ -139,6 +123,7 @@ impl Snapshot {
             logos,
             closed,
             open,
+            events: events_by_position(facts.events),
             entries: facts.entries,
             histories,
             rates: facts.rates,
@@ -202,6 +187,20 @@ impl Snapshot {
             .filter(move |row| scope.includes(row.facts.wallet))
     }
 
+    /// The position `id`, open or closed, if a tracked wallet holds or held it.
+    pub fn position(&self, id: PositionId) -> Option<PositionRow<'_>> {
+        let open = self.open.iter().find(|row| row.facts.id == id);
+        let closed = || self.closed.iter().find(|row| row.facts.id == id);
+        open.map(PositionRow::Open)
+            .or_else(|| closed().map(PositionRow::Closed))
+    }
+
+    /// The movements of the position `id`, oldest first (by instant, then within a
+    /// transaction).
+    pub fn events_of(&self, id: PositionId) -> &[PositionEventFact] {
+        self.events.get(&id).map_or(&[], Vec::as_slice)
+    }
+
     /// The wallet entries of `scope`.
     pub fn entries_in(&self, scope: Scope) -> impl Iterator<Item = &WalletEntry> {
         self.entries
@@ -222,6 +221,20 @@ impl Snapshot {
     pub fn rates(&self) -> &SolUsdRates {
         &self.rates
     }
+}
+
+/// The movements grouped by position, each group oldest first.
+fn events_by_position(
+    events: Vec<PositionEventFact>,
+) -> BTreeMap<PositionId, Vec<PositionEventFact>> {
+    let mut grouped: BTreeMap<PositionId, Vec<PositionEventFact>> = BTreeMap::new();
+    for event in events {
+        grouped.entry(event.position).or_default().push(event);
+    }
+    for group in grouped.values_mut() {
+        group.sort_by_key(|event| (event.at, event.kind));
+    }
+    grouped
 }
 
 /// Indexes the history of `wallet`.

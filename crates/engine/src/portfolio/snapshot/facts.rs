@@ -1,8 +1,8 @@
 //! What a source of figures hands over to build a snapshot.
 
 use binsight_ledger::facts::{
-    ClosedPositionFacts, OpenPnlMark, OpenPositionFacts, PoolFacts, SolUsdRates, TokenFacts,
-    WalletEntry, WalletFacts, WalletHoldings,
+    ClosedPositionFacts, OpenPnlMark, OpenPositionFacts, PoolFacts, PositionEventFact, SolUsdRates,
+    TokenFacts, WalletEntry, WalletFacts, WalletHoldings,
 };
 use binsight_solana::Address;
 
@@ -39,6 +39,8 @@ pub struct SnapshotFacts {
     pub closed: Vec<ClosedPositionFacts>,
     /// Every open position.
     pub open: Vec<OpenPositionFacts>,
+    /// The movements of every position, in any order.
+    pub events: Vec<PositionEventFact>,
     /// Every wallet entry outside positions.
     pub entries: Vec<WalletEntry>,
     /// Every open-PnL mark.
