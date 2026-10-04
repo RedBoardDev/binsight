@@ -32,6 +32,8 @@ pub struct SignaturesRequest {
     pub address: Address,
     /// List only signatures older than this one; `None` starts from the newest.
     pub before: Option<Signature>,
+    /// List only signatures newer than this one; `None` goes down to the address's first.
+    pub until: Option<Signature>,
 }
 
 /// One listed transaction signature.
@@ -77,6 +79,9 @@ impl RpcClient {
         );
         if let Some(before) = request.before {
             options.insert("before".to_owned(), before.to_string().into());
+        }
+        if let Some(until) = request.until {
+            options.insert("until".to_owned(), until.to_string().into());
         }
         let params = serde_json::json!([request.address.to_string(), options]);
         match self.call(METHOD, &params, &context).await? {
@@ -185,6 +190,39 @@ mod tests {
         let request = SignaturesRequest {
             address,
             before: Some(before),
+            until: None,
+        };
+
+        let page = scripted_client(transport.clone(), clock, None)
+            .signatures_for_address(request, context)
+            .await;
+
+        assert_eq!(page, Ok(Vec::new()));
+        transport.assert_no_unexpected_calls();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn lists_only_the_signatures_newer_than_the_given_one() {
+        let address = Address::from_bytes([4; 32]);
+        let until = Signature::from_bytes([6; 64]);
+        let transport = ScriptedTransport::new();
+        transport
+            .expect("getSignaturesForAddress")
+            .with_params(json!([
+                address.to_string(),
+                {"limit": 1000, "commitment": "finalized", "until": until.to_string()}
+            ]))
+            .respond(ScriptedReply::Result(json!([])));
+        let clock = Arc::new(FixedClock::new(Timestamp::UNIX_EPOCH));
+        let context = CallContext {
+            priority: Priority::Realtime,
+            purpose: Purpose::LiveCheck,
+            wallet: Some(address),
+        };
+        let request = SignaturesRequest {
+            address,
+            before: None,
+            until: Some(until),
         };
 
         let page = scripted_client(transport.clone(), clock, None)
@@ -211,6 +249,7 @@ mod tests {
         let request = SignaturesRequest {
             address,
             before: None,
+            until: None,
         };
 
         let page = scripted_client(transport.clone(), clock, None)

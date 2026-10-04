@@ -63,6 +63,7 @@ mod tests {
         let request = SignaturesRequest {
             address: Address::from_bytes([1; 32]),
             before: before.map(|seed| Signature::from_bytes([seed; 64])),
+            until: None,
         };
         let page: Vec<SignatureInfo> = seeds.iter().map(|seed| entry(*seed)).collect();
         ListedEnd::of(&request, &page)

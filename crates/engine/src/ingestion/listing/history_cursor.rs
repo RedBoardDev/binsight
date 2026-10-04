@@ -35,10 +35,12 @@ pub(super) fn next_history_request(
         WalletCursor::NotStarted => Some(SignaturesRequest {
             address: wallet,
             before: None,
+            until: None,
         }),
         WalletCursor::ListingHistory { before, .. } => Some(SignaturesRequest {
             address: wallet,
             before: Some(before),
+            until: None,
         }),
         WalletCursor::HistoryComplete { .. } => None,
     }
