@@ -3,9 +3,9 @@
 //! **Responsibility:** everything specific to the Meteora DLMM program: its identity, the events
 //! it emits ([`event::decode_events`]), what they did to positions
 //! ([`activity::position_activity`]), the kind of each of its instructions
-//! ([`instruction::classify`]), which tokens their amounts are ([`pool_tokens::PoolTokens`]), and
-//! the name and version under which their decoding is stored, and checked account snapshots
-//! ([`accounts`]). Later: the fixed-point maths of its bins.
+//! ([`instruction::classify`]), which tokens their amounts are ([`pool_tokens::PoolTokens`]),
+//! the name and version under which their decoding is stored, checked account snapshots
+//! ([`accounts`]), and the fixed-point maths of its bins ([`math`]).
 //!
 //! **May depend on:** `binsight-core`, `binsight-solana`.
 //! **Must not depend on:** `binsight-ledger`, `binsight-store`, `binsight-chain`,
@@ -26,6 +26,7 @@ pub mod activity;
 pub mod decoder_version;
 pub mod event;
 pub mod instruction;
+pub mod math;
 pub mod pool_tokens;
 pub mod program;
 

@@ -291,6 +291,7 @@ dependencies = [
  "binsight-core",
  "binsight-solana",
  "insta",
+ "proptest",
  "serde",
  "serde_json",
  "sha2 0.11.0",
