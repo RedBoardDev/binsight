@@ -96,6 +96,31 @@ async fn relays_the_status_changes_of_the_engine() {
 }
 
 #[tokio::test]
+async fn ends_the_stream_when_its_session_expires() {
+    let app = TestApp::new().await;
+    let cookie = app.session_cookie().await;
+    app.advance_clock(30 * 86_400 - 10);
+    let request = Request::get("/api/v1/events")
+        .header("cookie", cookie)
+        .body(Body::empty())
+        .unwrap();
+    let mut body = app
+        .router
+        .clone()
+        .oneshot(request)
+        .await
+        .unwrap()
+        .into_body();
+    next_message(&mut body).await.unwrap();
+    tokio::time::pause();
+
+    tokio::time::advance(Duration::from_secs(10)).await;
+    let after_expiry = next_message(&mut body).await;
+
+    assert_eq!(after_expiry, None);
+}
+
+#[tokio::test]
 async fn ends_the_stream_when_the_server_shuts_down() {
     let app = TestApp::new().await;
     let mut body = open_stream(&app).await.into_body();

@@ -23,6 +23,7 @@ pub use settings::{AuthSettings, SessionSecret};
 
 pub(crate) use client_address::RequestClient;
 pub(crate) use guard::require_session;
+pub(crate) use session::Session;
 
 use axum_extra::extract::cookie::Key;
 use tower_http::csrf::CsrfLayer;

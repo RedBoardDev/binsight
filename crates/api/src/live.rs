@@ -3,7 +3,8 @@
 //! A protected route: only a signed-in owner can listen. Each message is a named SSE event whose
 //! `data` is a JSON [`event::LiveEvent`]; the browser reconnects by itself after 5 seconds if the
 //! connection drops. Streams are never compressed or buffered by proxies, and end when the server
-//! shuts down. This module holds the handler; the sequence of events is built in `stream`.
+//! shuts down or when the session they were opened with expires (the browser then reconnects and
+//! is refused, so a signed-out tab stops listening). This module holds the handler; the sequence of events is built in `stream`.
 
 mod event;
 mod stream;
@@ -11,12 +12,13 @@ mod stream;
 use std::convert::Infallible;
 use std::time::Duration;
 
-use axum::extract::State;
+use axum::extract::{Extension, State};
 use axum::http::HeaderName;
 use axum::response::IntoResponse;
 use axum::response::sse::{Event, Sse};
 use futures_util::StreamExt;
 
+use crate::auth::Session;
 use crate::error::ErrorBody;
 use crate::state::AppState;
 pub(crate) use event::LiveEvent;
@@ -36,15 +38,26 @@ const RECONNECT_DELAY_MILLIS: u64 = 5_000;
         (status = 200,
             description = "A stream of Server-Sent Events. The `event:` name of each message \
                 equals the `type` of its JSON `data`. `engine_status` comes first, then a \
-                `heartbeat` every 15 seconds and the other events as they happen.",
+                `heartbeat` every 15 seconds and the other events as they happen. The stream \
+                ends when the session expires.",
             content_type = "text/event-stream",
             body = LiveEvent),
         (status = 401, description = "Not signed in (`unauthenticated`).", body = ErrorBody),
     ),
 )]
-pub(crate) async fn stream_events(State(state): State<AppState>) -> impl IntoResponse {
+pub(crate) async fn stream_events(
+    State(state): State<AppState>,
+    Extension(session): Extension<Session>,
+) -> impl IntoResponse {
+    let session_left = session
+        .expires_at
+        .duration_since(state.clock.now())
+        .try_into()
+        .unwrap_or(Duration::ZERO);
     let mut is_first = true;
-    let events = live_events(state.engine, state.clock, state.shutdown).map(move |event| {
+    let events = live_events(state.engine, state.clock, state.shutdown);
+    let events = events.take_until(tokio::time::sleep(session_left));
+    let events = events.map(move |event| {
         let message = to_sse_event(&event);
         let message = if is_first {
             message.retry(Duration::from_millis(RECONNECT_DELAY_MILLIS))

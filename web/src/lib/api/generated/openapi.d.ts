@@ -324,7 +324,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description A stream of Server-Sent Events. The `event:` name of each message equals the `type` of its JSON `data`. `engine_status` comes first, then a `heartbeat` every 15 seconds and the other events as they happen. */
+            /** @description A stream of Server-Sent Events. The `event:` name of each message equals the `type` of its JSON `data`. `engine_status` comes first, then a `heartbeat` every 15 seconds and the other events as they happen. The stream ends when the session expires. */
             200: {
                 headers: {
                     [name: string]: unknown;
