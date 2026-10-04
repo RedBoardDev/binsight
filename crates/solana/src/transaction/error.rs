@@ -122,6 +122,10 @@ pub enum TransactionReadError {
         /// The index of the missing top-level instruction.
         index: u8,
     },
+    /// More instructions are listed at one level than an [`super::InstructionPosition`] can
+    /// number (the runtime allows far fewer).
+    #[error("an instruction position is beyond {}", u16::MAX)]
+    InstructionPositionOverflow,
     /// The base58 data of an inner instruction is invalid.
     #[error("the data of an inner instruction is not base58")]
     InvalidInstructionData(#[source] bs58::decode::Error),
@@ -149,6 +153,14 @@ pub enum TransactionReadError {
         /// The program the meta names.
         program: Address,
     },
+    /// One side of the token balances lists the same account twice.
+    #[error("the {which} list account index {index} twice")]
+    DuplicateTokenBalance {
+        /// `preTokenBalances` or `postTokenBalances`.
+        which: &'static str,
+        /// The index of the account.
+        index: u8,
+    },
     /// The same token account reports two decimals or two programs for one mint.
     #[error("the token account {account} changes its decimals or program without changing mint")]
     InconsistentTokenBalance {
@@ -161,6 +173,9 @@ pub enum TransactionReadError {
         /// The block time, in seconds since the Unix epoch.
         seconds: i64,
     },
+    /// The signature part of the fee does not fit in a lamport amount.
+    #[error("the signature part of the fee overflows")]
+    SignatureFeeOverflow,
     /// The fee is smaller than the part of it that can be explained.
     #[error("the fee of {total} is smaller than its {part} part of {expected}")]
     FeeTooSmall {

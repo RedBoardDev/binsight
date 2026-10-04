@@ -100,7 +100,8 @@ fn static_accounts(transaction: &WireTransaction) -> Result<Vec<AccountKey>, Tra
         accounts: keys.len(),
     };
     let limits = WritableLimits::of(header, keys.len()).ok_or_else(invalid)?;
-    if transaction.signatures.len() < limits.signers {
+    // The runtime refuses a transaction whose signature count differs from its signer count.
+    if transaction.signatures.len() != limits.signers {
         return Err(invalid());
     }
     Ok(keys

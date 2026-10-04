@@ -62,8 +62,10 @@ pub(super) fn breakdown(
     let priority = match request {
         PriorityRequest::Exact(priority) => priority,
         PriorityRequest::PriceWithoutLimit => {
-            let signatures = signature_count(instructions, required_signatures);
-            let signature_fee = Lamports(LAMPORTS_PER_SIGNATURE.0.saturating_mul(signatures));
+            let signature_fee = signature_count(instructions, required_signatures)
+                .and_then(|signatures| LAMPORTS_PER_SIGNATURE.0.checked_mul(signatures))
+                .map(Lamports)
+                .ok_or(TransactionReadError::SignatureFeeOverflow)?;
             total
                 .try_sub(signature_fee)
                 .map_err(|_| fee_too_small("signature", total, signature_fee))?
@@ -133,9 +135,10 @@ fn compute_budget_request(instructions: &[InstructionNode]) -> PriorityRequest {
 }
 
 /// The signatures the fee is charged for: the transaction's, plus those its top-level
-/// instructions ask a signature-verification precompile to check (the first data byte).
-fn signature_count(instructions: &[InstructionNode], required_signatures: u8) -> u64 {
-    let precompile_signatures = instructions
+/// instructions ask a signature-verification precompile to check (the first data byte); `None`
+/// if the count overflows.
+fn signature_count(instructions: &[InstructionNode], required_signatures: u8) -> Option<u64> {
+    let mut precompile_signatures = instructions
         .iter()
         .filter(|instruction| {
             instruction.position.inner.is_none()
@@ -144,7 +147,7 @@ fn signature_count(instructions: &[InstructionNode], required_signatures: u8) ->
         })
         .filter_map(|instruction| instruction.data.as_bytes().first())
         .map(|&count| u64::from(count));
-    precompile_signatures.fold(u64::from(required_signatures), u64::saturating_add)
+    precompile_signatures.try_fold(u64::from(required_signatures), u64::checked_add)
 }
 
 #[cfg(test)]

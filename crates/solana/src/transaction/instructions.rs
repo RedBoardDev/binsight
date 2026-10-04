@@ -76,17 +76,28 @@ pub(super) fn in_execution_order(
         });
     }
     let mut nodes = Vec::new();
-    for (top, instruction) in (0_u16..).zip(top_level) {
+    for (top, instruction) in top_level.iter().enumerate() {
+        let top = position_number(top)?;
         nodes.push(top_level_node(top, instruction, accounts)?);
         let invoked = inner
             .iter()
             .filter(|group| u16::from(group.index) == top)
             .flat_map(|group| &group.instructions);
-        for (position, instruction) in (0_u16..).zip(invoked) {
-            nodes.push(inner_node(top, position, instruction, accounts)?);
+        for (position, instruction) in invoked.enumerate() {
+            nodes.push(inner_node(
+                top,
+                position_number(position)?,
+                instruction,
+                accounts,
+            )?);
         }
     }
     Ok(nodes)
+}
+
+/// The number of the instruction at `index` in its level.
+fn position_number(index: usize) -> Result<u16, TransactionReadError> {
+    u16::try_from(index).map_err(|_| TransactionReadError::InstructionPositionOverflow)
 }
 
 fn top_level_node(
@@ -221,6 +232,27 @@ mod tests {
                 index: 5,
                 accounts: 1
             }
+        ));
+    }
+
+    #[test]
+    fn refuses_more_inner_instructions_than_a_position_can_number() {
+        let too_many = usize::from(u16::MAX) + 2;
+        let group = RpcInnerInstructions {
+            index: 0,
+            instructions: (0..too_many)
+                .map(|_| RpcCompiledInstruction {
+                    program_id_index: 0,
+                    accounts: Vec::new(),
+                    data: String::new(),
+                    stack_height: Some(2),
+                })
+                .collect(),
+        };
+        let error = in_execution_order(&[compiled(0)], &[group], &[account(0)]).unwrap_err();
+        assert!(matches!(
+            error,
+            TransactionReadError::InstructionPositionOverflow
         ));
     }
 

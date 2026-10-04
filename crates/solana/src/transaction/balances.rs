@@ -96,10 +96,18 @@ pub(super) fn tokens(
 ) -> Result<Vec<TokenBalance>, TransactionReadError> {
     let mut sides: BTreeMap<u8, (Option<TokenSide>, Option<TokenSide>)> = BTreeMap::new();
     for balance in pre {
-        sides.entry(balance.account_index).or_default().0 = Some(token_side(accounts, balance)?);
+        let side = token_side(accounts, balance)?;
+        let entry = &mut sides.entry(balance.account_index).or_default().0;
+        if entry.replace(side).is_some() {
+            return Err(duplicate(balance, "preTokenBalances"));
+        }
     }
     for balance in post {
-        sides.entry(balance.account_index).or_default().1 = Some(token_side(accounts, balance)?);
+        let side = token_side(accounts, balance)?;
+        let entry = &mut sides.entry(balance.account_index).or_default().1;
+        if entry.replace(side).is_some() {
+            return Err(duplicate(balance, "postTokenBalances"));
+        }
     }
     let mut merged = Vec::new();
     for (index, pair) in sides {
@@ -107,6 +115,13 @@ pub(super) fn tokens(
         merged.extend(merge(account, pair)?);
     }
     Ok(merged)
+}
+
+fn duplicate(balance: &RpcTokenBalance, which: &'static str) -> TransactionReadError {
+    TransactionReadError::DuplicateTokenBalance {
+        which,
+        index: balance.account_index,
+    }
 }
 
 fn merge(
