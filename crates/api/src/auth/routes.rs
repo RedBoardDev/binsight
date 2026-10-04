@@ -18,8 +18,8 @@ use utoipa::ToSchema;
 use super::RequestClient;
 use super::session::{Session, with_session_cookie, without_session_cookie};
 use super::throttle::RetryAfter;
+use crate::app::AppState;
 use crate::error::{ApiError, ApiJson, ErrorBody, ErrorCode};
-use crate::state::AppState;
 
 /// A login attempt. Deliberately not `Debug`: it holds the password.
 #[derive(Deserialize, ToSchema)]

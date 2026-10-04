@@ -12,12 +12,13 @@ use utoipa::OpenApi;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
+use super::layers;
+use super::state::AppState;
+use super::web_app::serve_web_app;
 use crate::auth::{require_session, routes as auth};
 use crate::error::{ApiError, ErrorCode};
 use crate::openapi::ApiDoc;
-use crate::state::AppState;
-use crate::web_app::serve_web_app;
-use crate::{health, layers, live, openapi};
+use crate::{health, live, openapi};
 
 /// The complete application: every route, its fallbacks and the middleware stack.
 pub fn router(state: AppState) -> Router {

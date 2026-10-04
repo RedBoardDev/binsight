@@ -13,8 +13,8 @@ use binsight_core::clock::Clock;
 use binsight_engine::EngineHandle;
 use tokio_util::sync::CancellationToken;
 
+use super::web_app::WebAssets;
 use crate::auth::{AuthSettings, AuthState};
-use crate::web_app::WebAssets;
 
 /// Everything the API is built from.
 #[derive(Clone)]

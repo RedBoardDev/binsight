@@ -11,7 +11,7 @@ use binsight_engine::{ComponentHealth, EngineHealth};
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use crate::state::AppState;
+use crate::app::AppState;
 
 /// The overall verdict of a health check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]

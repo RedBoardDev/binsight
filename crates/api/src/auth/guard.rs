@@ -11,8 +11,8 @@ use axum::response::{IntoResponse, Response};
 use axum_extra::extract::SignedCookieJar;
 
 use super::session::read_session;
+use crate::app::AppState;
 use crate::error::{ApiError, ErrorCode};
-use crate::state::AppState;
 
 /// The middleware: lets the request through only with a valid session cookie.
 pub(crate) async fn require_session(

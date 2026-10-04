@@ -10,9 +10,9 @@ use axum::response::IntoResponse;
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
+use crate::app::DocumentedRoutes;
 use crate::auth::SESSION_COOKIE_NAME;
 use crate::error::{ErrorBody, ErrorCode, ErrorDetail};
-use crate::router::DocumentedRoutes;
 
 /// The version of the API contract. A compatible addition bumps the minor version; a breaking
 /// change gets a new `/api/v2` instead.
