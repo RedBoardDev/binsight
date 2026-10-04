@@ -17,6 +17,7 @@ use super::state::AppState;
 use super::web_app::serve_web_app;
 use crate::auth::{require_session, routes as auth};
 use crate::error::{ApiError, ErrorCode};
+use crate::history::{closed, pools};
 use crate::instance::{health, settings, sync, wallets};
 use crate::openapi::ApiDoc;
 use crate::overview::{open_positions, recent_closes, summary};
@@ -66,6 +67,8 @@ impl DocumentedRoutes {
             .routes(routes!(open_positions::list_open_positions))
             .routes(routes!(recent_closes::get_recent_closes))
             .routes(routes!(series::get_stats_series))
+            .routes(routes!(closed::list_closed_positions))
+            .routes(routes!(pools::list_pools))
             .routes(routes!(detail::get_position))
             .routes(routes!(events::list_position_events))
             .routes(routes!(candles::get_position_candles))

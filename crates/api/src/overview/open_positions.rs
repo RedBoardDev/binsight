@@ -10,7 +10,7 @@ use utoipa::ToSchema;
 
 use crate::app::AppState;
 use crate::contract::{
-    ApiQuery, CurrencyQuery, Figure, Freshness, OpenPositionRow, PercentFigure, ScopeQuery,
+    ApiQuery, CurrencyQuery, Figure, Freshness, OpenPositionRow, Order, PercentFigure, ScopeQuery,
 };
 use crate::error::{ApiError, ErrorBody};
 
@@ -48,16 +48,6 @@ pub(crate) enum SortKey {
     Age,
     /// Pair, alphabetically.
     Pair,
-}
-
-/// A sort direction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum Order {
-    /// Smallest first.
-    Asc,
-    /// Largest first.
-    Desc,
 }
 
 /// The open positions and their totals.
@@ -137,10 +127,7 @@ impl OpenSortQuery {
             SortKey::Age => OpenSort::Age,
             SortKey::Pair => OpenSort::Pair,
         };
-        let order = self.order.map(|order| match order {
-            Order::Asc => SortOrder::Ascending,
-            Order::Desc => SortOrder::Descending,
-        });
+        let order = self.order.map(SortOrder::from);
         (sort, order)
     }
 }

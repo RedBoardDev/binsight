@@ -4,7 +4,7 @@ use binsight_engine::portfolio::views;
 use binsight_ledger::facts::Strategy as LedgerStrategy;
 use binsight_ledger::report::closed::Outcome as LedgerOutcome;
 use jiff::Timestamp;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use super::figure::{Figure, PercentFigure};
@@ -12,7 +12,7 @@ use super::token::PoolRef;
 use super::wallet_ref::WalletRef;
 
 /// How a position spreads its liquidity over its bins.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Strategy {
     /// The same amount in every bin.
@@ -117,6 +117,16 @@ pub(crate) struct ClosedTotals {
     pub(crate) average_held_seconds: Option<i64>,
     /// The median holding time, in seconds; `null` for an empty set.
     pub(crate) median_held_seconds: Option<i64>,
+}
+
+impl From<Strategy> for LedgerStrategy {
+    fn from(strategy: Strategy) -> Self {
+        match strategy {
+            Strategy::Spot => Self::Spot,
+            Strategy::Curve => Self::Curve,
+            Strategy::BidAsk => Self::BidAsk,
+        }
+    }
 }
 
 impl From<LedgerStrategy> for Strategy {

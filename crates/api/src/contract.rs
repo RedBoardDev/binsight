@@ -25,7 +25,7 @@ pub(crate) use figure::{Figure, PercentFigure};
 pub(crate) use freshness::{Freshness, SyncState};
 pub(crate) use open_position::OpenPositionRow;
 pub(crate) use position::{ClosedPositionRow, ClosedTotals, Strategy};
-pub(crate) use query::{ApiQuery, Currency, CurrencyQuery, ScopeQuery};
+pub(crate) use query::{ApiQuery, Currency, CurrencyQuery, Order, ScopeQuery, comma_list};
 pub(crate) use token::{PoolRef, Price, TokenRef};
 pub(crate) use wallet_ref::WalletRef;
 pub(crate) use window::{PeriodQuery, Window};

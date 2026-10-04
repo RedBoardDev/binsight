@@ -7,7 +7,7 @@
       "name": "MIT",
       "identifier": "MIT"
     },
-    "version": "1.3.0"
+    "version": "1.4.0"
   },
   "paths": {
     "/api/v1/auth/login": {
@@ -293,6 +293,295 @@
           },
           "400": {
             "description": "A query parameter is invalid (`invalid_request`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The wallet is not tracked (`wallet_not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The engine does not serve figures yet (`data_not_ready`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/pools": {
+      "get": {
+        "tags": [
+          "history"
+        ],
+        "summary": "Lists the pools of the history.",
+        "operationId": "listPools",
+        "parameters": [
+          {
+            "name": "wallet",
+            "in": "query",
+            "description": "`all` (the default) or the address of a tracked wallet.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "description": "A symbol (by prefix), a pair (`BONK/SOL`), a token name, or a mint or pool address (by\nprefix, from 4 characters); 1 to 64 characters. Exact symbols come first.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "address",
+            "in": "query",
+            "description": "Comma-separated pool addresses, at most 20: names the pools a filter already holds. Not\nwith `search`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "How many pools at most (20 by default, 50 at most).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The pools.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PoolOptions"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A query parameter is invalid (`invalid_request`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The wallet is not tracked (`wallet_not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The engine does not serve figures yet (`data_not_ready`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/positions/closed": {
+      "get": {
+        "tags": [
+          "history"
+        ],
+        "summary": "Lists closed positions, a page at a time.",
+        "operationId": "listClosedPositions",
+        "parameters": [
+          {
+            "name": "wallet",
+            "in": "query",
+            "description": "`all` (the default) or the address of a tracked wallet.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "day",
+            "in": "query",
+            "description": "Only the positions closed on this local date (`YYYY-MM-DD`).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "description": "A symbol (by prefix), a pair (`BONK/SOL`), a token name, or a mint, pool, position address\nor position id (by prefix, from 4 characters); 1 to 64 characters.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "description": "Comma-separated outcomes: `win`, `loss`, `flat` (a PnL under 0.01 SOL either way, or an\nempty shell). Absent: every outcome.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "strategy",
+            "in": "query",
+            "description": "Comma-separated strategies: `spot`, `curve`, `bid_ask`. Absent: every strategy.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "pool",
+            "in": "query",
+            "description": "Comma-separated pool addresses, at most 20 (from `listPools`). Absent: every pool.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "What to sort by (`closed_at` by default).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "What closed positions are sorted by.",
+              "enum": [
+                "closed_at",
+                "held",
+                "invested",
+                "withdrawn",
+                "fees",
+                "pnl",
+                "pnl_pct",
+                "dpr"
+              ]
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "description": "The direction (`desc` by default).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "A sort direction.",
+              "enum": [
+                "asc",
+                "desc"
+              ]
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "The `next_cursor` of the previous page, with the same filters; absent for the first page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "How many positions at most (50 by default, 200 at most).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "currency",
+            "in": "query",
+            "description": "The currency of the figures (`sol` by default).",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Currency"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of closed positions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClosedPositionPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A query parameter is invalid (`invalid_request`), or the cursor belongs to another query (`invalid_cursor`: start again from the first page).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1533,6 +1822,57 @@
         ],
         "description": "A closed position: its row and its chart."
       },
+      "ClosedPositionPage": {
+        "type": "object",
+        "description": "A page of History.",
+        "required": [
+          "items",
+          "as_of",
+          "matched_count",
+          "total_count"
+        ],
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The instant the list is read at, fixed by its first page: later closes are left out."
+          },
+          "day_groups": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/DayGroup"
+            },
+            "description": "The summary of each local day the page touches, over the whole filtered list; a day cut\nby two pages comes twice with the same figures. `null` unless sorted by `closed_at`."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClosedPositionRow"
+            },
+            "description": "The positions, sorted as asked."
+          },
+          "matched_count": {
+            "type": "integer",
+            "description": "How many positions match the filters at that instant, over every page.",
+            "minimum": 0
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The cursor of the next page; `null` on the last one."
+          },
+          "total_count": {
+            "type": "integer",
+            "description": "How many positions of the wallet filter closed by that instant, whatever the other\nfilters (`matched_count / total_count` in the title).",
+            "minimum": 0
+          }
+        }
+      },
       "ClosedPositionRow": {
         "type": "object",
         "description": "One closed position. Its figures are exact on their own, even while a wallet imports.",
@@ -1804,6 +2144,53 @@
           "chain",
           "demo"
         ]
+      },
+      "DayGroup": {
+        "type": "object",
+        "description": "The summary of the filtered positions closed on one local day (shells left out).",
+        "required": [
+          "day",
+          "count",
+          "wins",
+          "losses",
+          "breakeven",
+          "win_rate",
+          "pnl"
+        ],
+        "properties": {
+          "breakeven": {
+            "type": "integer",
+            "description": "How many ended exactly even.",
+            "minimum": 0
+          },
+          "count": {
+            "type": "integer",
+            "description": "How many closed.",
+            "minimum": 0
+          },
+          "day": {
+            "type": "string",
+            "description": "The local date, `YYYY-MM-DD`."
+          },
+          "losses": {
+            "type": "integer",
+            "description": "How many lost.",
+            "minimum": 0
+          },
+          "pnl": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "The sum of their PnL."
+          },
+          "win_rate": {
+            "$ref": "#/components/schemas/PercentFigure",
+            "description": "`wins / (wins + losses)`."
+          },
+          "wins": {
+            "type": "integer",
+            "description": "How many gained.",
+            "minimum": 0
+          }
+        }
       },
       "DecimalString": {
         "type": "string",
@@ -2854,6 +3241,62 @@
           "fifo",
           "pool"
         ]
+      },
+      "PoolOption": {
+        "type": "object",
+        "description": "A pool of the history.",
+        "required": [
+          "pool",
+          "closed_count",
+          "open_count"
+        ],
+        "properties": {
+          "closed_count": {
+            "type": "integer",
+            "description": "How many of its positions closed: what History lists for this pool alone.",
+            "minimum": 0
+          },
+          "last_closed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When its latest position closed; `null` when none did."
+          },
+          "open_count": {
+            "type": "integer",
+            "description": "How many of its positions are open.",
+            "minimum": 0
+          },
+          "pool": {
+            "$ref": "#/components/schemas/PoolRef",
+            "description": "The pool (two pools of one pair differ by `bin_step`)."
+          }
+        }
+      },
+      "PoolOptions": {
+        "type": "object",
+        "description": "Pools of the history.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PoolOption"
+            },
+            "description": "The pools: exact symbol matches first, then the latest close first."
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Always `null`: the list is never paged."
+          }
+        }
       },
       "PoolRef": {
         "type": "object",
@@ -4342,6 +4785,10 @@
     {
       "name": "positions",
       "description": "Liquidity positions and their tokens."
+    },
+    {
+      "name": "history",
+      "description": "The closed positions and the pools of the history."
     },
     {
       "name": "stats",

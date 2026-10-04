@@ -17,6 +17,7 @@ mod app;
 pub mod auth;
 mod contract;
 mod error;
+mod history;
 mod instance;
 mod live;
 pub mod openapi;

@@ -123,6 +123,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/pools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Lists the pools of the history. */
+        get: operations["listPools"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/positions/closed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Lists closed positions, a page at a time. */
+        get: operations["listClosedPositions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/positions/open": {
         parameters: {
             query?: never;
@@ -436,6 +470,30 @@ export interface components {
             /** @description Its price chart. */
             chart: components["schemas"]["PositionChart"];
         };
+        /** @description A page of History. */
+        ClosedPositionPage: {
+            /**
+             * Format: date-time
+             * @description The instant the list is read at, fixed by its first page: later closes are left out.
+             */
+            as_of: string;
+            /**
+             * @description The summary of each local day the page touches, over the whole filtered list; a day cut
+             *     by two pages comes twice with the same figures. `null` unless sorted by `closed_at`.
+             */
+            day_groups?: components["schemas"]["DayGroup"][] | null;
+            /** @description The positions, sorted as asked. */
+            items: components["schemas"]["ClosedPositionRow"][];
+            /** @description How many positions match the filters at that instant, over every page. */
+            matched_count: number;
+            /** @description The cursor of the next page; `null` on the last one. */
+            next_cursor?: string | null;
+            /**
+             * @description How many positions of the wallet filter closed by that instant, whatever the other
+             *     filters (`matched_count / total_count` in the title).
+             */
+            total_count: number;
+        };
         /** @description One closed position. Its figures are exact on their own, even while a wallet imports. */
         ClosedPositionRow: {
             /** @description The position account (it can host several positions over time). */
@@ -564,6 +622,23 @@ export interface components {
          * @enum {string}
          */
         DataSource: "chain" | "demo";
+        /** @description The summary of the filtered positions closed on one local day (shells left out). */
+        DayGroup: {
+            /** @description How many ended exactly even. */
+            breakeven: number;
+            /** @description How many closed. */
+            count: number;
+            /** @description The local date, `YYYY-MM-DD`. */
+            day: string;
+            /** @description How many lost. */
+            losses: number;
+            /** @description The sum of their PnL. */
+            pnl: components["schemas"]["Figure"];
+            /** @description `wins / (wins + losses)`. */
+            win_rate: components["schemas"]["PercentFigure"];
+            /** @description How many gained. */
+            wins: number;
+        };
         /**
          * @description An exact decimal number written as text: no exponent, no `+`, no leading zero, no trailing
          *     zero after the point, never `-0`. For example `"61.541203117"`, `"-0.949"`, `"0"`.
@@ -951,6 +1026,27 @@ export interface components {
          * @enum {string}
          */
         PnlMethod: "fifo" | "pool";
+        /** @description A pool of the history. */
+        PoolOption: {
+            /** @description How many of its positions closed: what History lists for this pool alone. */
+            closed_count: number;
+            /**
+             * Format: date-time
+             * @description When its latest position closed; `null` when none did.
+             */
+            last_closed_at?: string | null;
+            /** @description How many of its positions are open. */
+            open_count: number;
+            /** @description The pool (two pools of one pair differ by `bin_step`). */
+            pool: components["schemas"]["PoolRef"];
+        };
+        /** @description Pools of the history. */
+        PoolOptions: {
+            /** @description The pools: exact symbol matches first, then the latest close first. */
+            items: components["schemas"]["PoolOption"][];
+            /** @description Always `null`: the list is never paged. */
+            next_cursor?: string | null;
+        };
         /** @description A DLMM pool. */
         PoolRef: {
             /** @description The pool address (base58). */
@@ -1705,6 +1801,162 @@ export interface operations {
                 };
             };
             /** @description A query parameter is invalid (`invalid_request`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not signed in (`unauthenticated`). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The wallet is not tracked (`wallet_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The engine does not serve figures yet (`data_not_ready`). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    listPools: {
+        parameters: {
+            query?: {
+                /** @description `all` (the default) or the address of a tracked wallet. */
+                wallet?: string;
+                /**
+                 * @description A symbol (by prefix), a pair (`BONK/SOL`), a token name, or a mint or pool address (by
+                 *     prefix, from 4 characters); 1 to 64 characters. Exact symbols come first.
+                 */
+                search?: string;
+                /**
+                 * @description Comma-separated pool addresses, at most 20: names the pools a filter already holds. Not
+                 *     with `search`.
+                 */
+                address?: string;
+                /** @description How many pools at most (20 by default, 50 at most). */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The pools. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PoolOptions"];
+                };
+            };
+            /** @description A query parameter is invalid (`invalid_request`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not signed in (`unauthenticated`). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The wallet is not tracked (`wallet_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The engine does not serve figures yet (`data_not_ready`). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    listClosedPositions: {
+        parameters: {
+            query?: {
+                /** @description `all` (the default) or the address of a tracked wallet. */
+                wallet?: string;
+                /** @description Only the positions closed on this local date (`YYYY-MM-DD`). */
+                day?: string;
+                /**
+                 * @description A symbol (by prefix), a pair (`BONK/SOL`), a token name, or a mint, pool, position address
+                 *     or position id (by prefix, from 4 characters); 1 to 64 characters.
+                 */
+                search?: string;
+                /**
+                 * @description Comma-separated outcomes: `win`, `loss`, `flat` (a PnL under 0.01 SOL either way, or an
+                 *     empty shell). Absent: every outcome.
+                 */
+                outcome?: string;
+                /** @description Comma-separated strategies: `spot`, `curve`, `bid_ask`. Absent: every strategy. */
+                strategy?: string;
+                /** @description Comma-separated pool addresses, at most 20 (from `listPools`). Absent: every pool. */
+                pool?: string;
+                /** @description What to sort by (`closed_at` by default). */
+                sort?: "closed_at" | "held" | "invested" | "withdrawn" | "fees" | "pnl" | "pnl_pct" | "dpr";
+                /** @description The direction (`desc` by default). */
+                order?: "asc" | "desc";
+                /** @description The `next_cursor` of the previous page, with the same filters; absent for the first page. */
+                cursor?: string;
+                /** @description How many positions at most (50 by default, 200 at most). */
+                limit?: number;
+                /** @description The currency of the figures (`sol` by default). */
+                currency?: components["schemas"]["Currency"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of closed positions. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClosedPositionPage"];
+                };
+            };
+            /** @description A query parameter is invalid (`invalid_request`), or the cursor belongs to another query (`invalid_cursor`: start again from the first page). */
             400: {
                 headers: {
                     [name: string]: unknown;

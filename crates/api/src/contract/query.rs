@@ -4,8 +4,10 @@
 use axum::extract::{FromRequestParts, Query};
 use axum::http::request::Parts;
 use binsight_engine::portfolio::Scope;
+use binsight_engine::portfolio::query::SortOrder;
 use binsight_ledger::report::valued;
 use serde::de::DeserializeOwned;
+use serde::de::value::StrDeserializer;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -94,4 +96,47 @@ impl ScopeQuery {
             }),
         }
     }
+}
+
+/// A sort direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Order {
+    /// Smallest first.
+    Asc,
+    /// Largest first.
+    Desc,
+}
+
+impl From<Order> for SortOrder {
+    fn from(order: Order) -> Self {
+        match order {
+            Order::Asc => Self::Ascending,
+            Order::Desc => Self::Descending,
+        }
+    }
+}
+
+/// Reads a list parameter written as comma-separated values (`outcome=win,loss`); an absent or
+/// empty parameter is an empty list. Each value is read like a single one.
+///
+/// Repeated keys are not used: the query extractor does not read them, and one key keeps URLs
+/// short.
+///
+/// # Errors
+///
+/// Returns the deserializer's error, naming the value, when one value is not a `T`.
+pub(crate) fn comma_list<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: DeserializeOwned,
+{
+    let text: Option<String> = Option::deserialize(deserializer)?;
+    text.as_deref()
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(|part| T::deserialize(StrDeserializer::<D::Error>::new(part)))
+        .collect()
 }

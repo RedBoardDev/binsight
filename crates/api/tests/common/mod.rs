@@ -34,6 +34,9 @@ pub(crate) const PASSWORD: &str = "correct horse battery staple";
 /// The instant every test application starts at.
 pub(crate) const START_SECONDS: i64 = 1_790_000_000;
 
+/// The time zone of the demo world of every test application.
+pub(crate) const TEST_TIMEZONE: &str = "Europe/Paris";
+
 /// The web app files of every test application.
 pub(crate) const INDEX_HTML: &str = "<!doctype html><title>binsight</title>";
 
@@ -151,7 +154,7 @@ impl TestApp {
         let data_source = match options.figures {
             Figures::Chain => DataSource::Chain,
             Figures::Demo => {
-                let spec = WorldSpec::new(start, jiff::tz::TimeZone::get("Europe/Paris").unwrap());
+                let spec = WorldSpec::new(start, jiff::tz::TimeZone::get(TEST_TIMEZONE).unwrap());
                 DataSource::Demo(Arc::new(DemoPortfolio::new(&spec, clock.clone()).unwrap()))
             }
         };
