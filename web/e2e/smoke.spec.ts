@@ -50,6 +50,10 @@ test('signs in, finds its way around the shell and signs out', async ({ page }, 
   await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Back to the overview' })).toBeVisible();
 
+  // The design reference exists in development only.
+  await page.goto('/design');
+  await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible();
+
   await page.goto('/settings');
   await page.getByRole('button', { name: 'Sign out' }).click();
   await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
