@@ -246,7 +246,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description Too many failed attempts (`too_many_attempts`); retry after the delay. */
+            /** @description Too many failed attempts from this client, or from all of them (`too_many_attempts`); retry after the delay. */
             429: {
                 headers: {
                     /** @description Seconds to wait before the next attempt. */

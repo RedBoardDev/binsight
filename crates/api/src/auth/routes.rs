@@ -15,6 +15,7 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use super::RequestClient;
 use super::session::{Session, with_session_cookie, without_session_cookie};
 use super::throttle::RetryAfter;
 use crate::error::{ApiError, ApiJson, ErrorBody, ErrorCode};
@@ -58,18 +59,19 @@ impl From<Session> for SessionInfo {
         (status = 400, description = "The body is not a valid login request.", body = ErrorBody),
         (status = 401, description = "The password is wrong (`invalid_credentials`).", body = ErrorBody),
         (status = 403, description = "A cross-site request (`forbidden_cross_origin`).", body = ErrorBody),
-        (status = 429, description = "Too many failed attempts (`too_many_attempts`); retry after the delay.",
+        (status = 429, description = "Too many failed attempts from this client, or from all of them (`too_many_attempts`); retry after the delay.",
             body = ErrorBody,
             headers(("retry-after" = u32, description = "Seconds to wait before the next attempt."))),
     ),
 )]
 pub(crate) async fn login(
     State(state): State<AppState>,
+    RequestClient(client): RequestClient,
     jar: SignedCookieJar,
     ApiJson(attempt): ApiJson<LoginRequest>,
 ) -> Response {
     let now = state.clock.now();
-    let throttled = match state.auth.throttle.begin_attempt(now) {
+    let throttled = match state.auth.throttle.begin_attempt(client, now) {
         Ok(throttled) => throttled,
         Err(RetryAfter(seconds)) => {
             let error = ApiError::new(

@@ -1,10 +1,12 @@
 //! Password authentication with a signed session cookie.
 //!
 //! One owner, one password from the configuration. A successful login sets a signed `HttpOnly`
-//! cookie; nothing is stored on the server. Failed logins slow down progressively. Protected
+//! cookie; nothing is stored on the server. Failed logins slow down progressively, per client
+//! address. Protected
 //! routes sit behind a guard, and every state-changing request from another site is refused (see
 //! `layers`). This module gathers the pieces and the state the handlers share.
 
+mod client_address;
 mod guard;
 mod password;
 mod public_url;
@@ -13,11 +15,13 @@ mod session;
 mod settings;
 mod throttle;
 
+pub use client_address::{ClientIpHeader, ClientIpHeaderError};
 pub use password::{OwnerPassword, PasswordError};
 pub use public_url::{PublicUrl, PublicUrlError};
 pub use session::SESSION_COOKIE_NAME;
 pub use settings::{AuthSettings, SessionSecret};
 
+pub(crate) use client_address::RequestClient;
 pub(crate) use guard::require_session;
 
 use axum_extra::extract::cookie::Key;
@@ -32,6 +36,7 @@ pub(crate) struct AuthState {
     cookie_key: Key,
     is_cookie_secure: bool,
     cross_site_protection: CsrfLayer,
+    client_ip_header: Option<ClientIpHeader>,
     throttle: LoginThrottle,
 }
 
@@ -46,6 +51,7 @@ impl AuthState {
             cookie_key: settings.cookie_key(),
             is_cookie_secure: settings.is_cookie_secure(),
             cross_site_protection,
+            client_ip_header: settings.client_ip_header.clone(),
             throttle: LoginThrottle::default(),
         }
     }

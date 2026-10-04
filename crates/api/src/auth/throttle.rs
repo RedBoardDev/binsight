@@ -1,90 +1,110 @@
 //! A progressive delay after failed logins, against password guessing.
 //!
-//! The first [`FREE_FAILURES`] failures cost nothing; after that each attempt must wait 1, 2, 4...
-//! seconds after the last failure, up to [`MAX_DELAY_SECS`]. A success clears the count, and so
-//! does an hour without any failure. The count is global rather than per address: there is one
-//! owner, and an address is easy to change and meaningless behind a proxy.
+//! Failures are counted per client address: the first [`PER_CLIENT`] failures of an address
+//! cost nothing, then each of its attempts must wait 1, 2, 4... seconds after its last failure,
+//! up to a minute. Someone guessing from one address therefore cannot lock the owner out from
+//! another. Failures from every address also count together against a much larger allowance,
+//! [`ALL_CLIENTS`], so guessing from many addresses at once is slowed down too. A success clears
+//! the count of its address, and an hour without any failure forgets them.
 //!
 //! Checking and counting are one step: an attempt that may go ahead is counted as a failure at
 //! once, under the same lock, and forgiven if the password turns out to be right. Otherwise
 //! attempts sent at the same moment would all pass the check before the first failure is
-//! counted. Time is always passed in, so the rules are tested without waiting. This module
-//! counts; it does not check passwords.
+//! counted. Addresses are forgotten after their quiet hour, and the backstop bounds how many
+//! failures an hour can bring, so the table stays small. Time is always passed in, so the rules
+//! are tested without waiting. This module counts; it does not check passwords.
 
+mod failure_history;
+
+use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use jiff::{SignedDuration, Timestamp};
+use jiff::Timestamp;
 
-/// Failures allowed before any delay.
-const FREE_FAILURES: u32 = 3;
+use super::client_address::ClientKey;
+use failure_history::{DelayPolicy, FailureHistory};
 
-/// The longest delay between two attempts.
-const MAX_DELAY_SECS: i64 = 60;
+/// The allowance of each client address.
+const PER_CLIENT: DelayPolicy = DelayPolicy {
+    free_failures: 3,
+    max_delay_secs: 60,
+};
 
-/// After this long without a failure, past failures are forgotten.
-const FORGET_AFTER_SECS: i64 = 3_600;
+/// The allowance of every client address together: a backstop against guessing from many
+/// addresses, generous enough that the owner rarely meets it.
+const ALL_CLIENTS: DelayPolicy = DelayPolicy {
+    free_failures: 30,
+    max_delay_secs: 60,
+};
 
 /// How long to wait before the next attempt, in whole seconds (at least 1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct RetryAfter(pub(crate) i64);
 
-/// The failed attempts that count.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-struct FailureHistory {
-    failures: u32,
-    last_failure: Option<Timestamp>,
+/// The failed logins, per client address and in total.
+#[derive(Debug, Default)]
+struct Failures {
+    per_client: HashMap<ClientKey, FailureHistory>,
+    all_clients: FailureHistory,
 }
 
-impl FailureHistory {
-    /// The history as it counts at `now`: empty once the failures are old enough.
-    fn as_of(self, now: Timestamp) -> Self {
-        let forget_after = SignedDuration::from_secs(FORGET_AFTER_SECS);
-        match self.last_failure {
-            Some(last) if now.duration_since(last) >= forget_after => Self::default(),
-            _ => self,
-        }
-    }
-
-    /// When the next attempt is allowed, if it has to wait at all.
-    fn next_attempt_at(self) -> Option<Timestamp> {
-        let last = self.last_failure?;
-        let paid_failures = self.failures.checked_sub(FREE_FAILURES)?;
-        let delay = 2_i64
-            .checked_pow(paid_failures)
-            .map_or(MAX_DELAY_SECS, |seconds| seconds.min(MAX_DELAY_SECS));
-        last.checked_add(SignedDuration::from_secs(delay)).ok()
+impl Failures {
+    /// Drops the failures that no longer count at `now`.
+    fn forget_old(&mut self, now: Timestamp) {
+        self.per_client
+            .retain(|_, history| !history.as_of(now).is_empty());
+        self.all_clients = self.all_clients.as_of(now);
     }
 }
 
 /// The shared count of failed logins.
 #[derive(Debug, Default)]
 pub(crate) struct LoginThrottle {
-    history: Mutex<FailureHistory>,
+    failures: Mutex<Failures>,
 }
 
 impl LoginThrottle {
-    /// Starts an attempt at `now`, or says how long it must wait.
+    /// Starts an attempt from `client` at `now`, or says how long it must wait.
     ///
     /// An attempt that may go ahead is already counted as a failure; call
     /// [`LoginAttempt::succeed`] if the password is right.
-    pub(crate) fn begin_attempt(&self, now: Timestamp) -> Result<LoginAttempt<'_>, RetryAfter> {
-        let mut history = self.lock();
-        let current = history.as_of(now);
-        if let Some(allowed_at) = current.next_attempt_at()
+    pub(crate) fn begin_attempt(
+        &self,
+        client: ClientKey,
+        now: Timestamp,
+    ) -> Result<LoginAttempt<'_>, RetryAfter> {
+        let mut failures = self.lock();
+        failures.forget_old(now);
+        let history = failures
+            .per_client
+            .get(&client)
+            .copied()
+            .unwrap_or_default();
+        let allowed_at = [
+            history.next_attempt_at(PER_CLIENT),
+            failures.all_clients.next_attempt_at(ALL_CLIENTS),
+        ]
+        .into_iter()
+        .flatten()
+        .max();
+        if let Some(allowed_at) = allowed_at
             && now < allowed_at
         {
             return Err(retry_after(allowed_at, now));
         }
-        *history = FailureHistory {
-            failures: current.failures.saturating_add(1),
-            last_failure: Some(now),
-        };
-        Ok(LoginAttempt { throttle: self })
+        failures
+            .per_client
+            .insert(client, history.with_failure(now));
+        failures.all_clients = failures.all_clients.with_failure(now);
+        Ok(LoginAttempt {
+            throttle: self,
+            client,
+        })
     }
 
-    /// The history; a poisoned lock still holds a valid count, so it is reused.
-    fn lock(&self) -> MutexGuard<'_, FailureHistory> {
-        self.history.lock().unwrap_or_else(PoisonError::into_inner)
+    /// The counts; a poisoned lock still holds valid counts, so they are reused.
+    fn lock(&self) -> MutexGuard<'_, Failures> {
+        self.failures.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -93,12 +113,16 @@ impl LoginThrottle {
 #[must_use = "an attempt stays counted as a failure unless `succeed` is called"]
 pub(crate) struct LoginAttempt<'throttle> {
     throttle: &'throttle LoginThrottle,
+    client: ClientKey,
 }
 
 impl LoginAttempt<'_> {
-    /// The password was right: clears the count.
+    /// The password was right: clears the count of the client and takes this attempt back from
+    /// the total.
     pub(crate) fn succeed(self) {
-        *self.throttle.lock() = FailureHistory::default();
+        let mut failures = self.throttle.lock();
+        failures.per_client.remove(&self.client);
+        failures.all_clients = failures.all_clients.without_one_failure();
     }
 }
 
@@ -113,76 +137,98 @@ fn retry_after(allowed_at: Timestamp, now: Timestamp) -> RetryAfter {
 
 #[cfg(test)]
 mod tests {
+    use std::net::{IpAddr, Ipv4Addr};
     use std::sync::{Arc, Barrier};
 
     use super::*;
+
+    const OWNER: ClientKey = ClientKey::Address(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)));
+    const GUESSER: ClientKey = ClientKey::Address(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 7)));
 
     fn at(seconds: i64) -> Timestamp {
         Timestamp::from_second(seconds).unwrap()
     }
 
-    fn fail(throttle: &LoginThrottle, times: u32, now: Timestamp) {
+    fn client(number: u8) -> ClientKey {
+        ClientKey::Address(IpAddr::V4(Ipv4Addr::new(203, 0, 113, number)))
+    }
+
+    fn fail(throttle: &LoginThrottle, client: ClientKey, times: u32, now: Timestamp) {
         for _ in 0..times {
-            drop(throttle.begin_attempt(now).unwrap());
+            drop(throttle.begin_attempt(client, now).unwrap());
         }
     }
 
-    fn check(throttle: &LoginThrottle, now: Timestamp) -> Result<(), RetryAfter> {
-        throttle.begin_attempt(now).map(LoginAttempt::succeed)
-    }
-
     #[test]
-    fn lets_the_first_three_failures_through_without_delay() {
+    fn delays_a_client_after_its_three_free_failures() {
         let throttle = LoginThrottle::default();
-        fail(&throttle, 3, at(100));
-        assert_eq!(throttle.begin_attempt(at(100)).unwrap_err(), RetryAfter(1));
-    }
+        fail(&throttle, GUESSER, 3, at(100));
 
-    #[test]
-    fn doubles_the_delay_after_each_further_failure_up_to_a_minute() {
-        let throttle = LoginThrottle::default();
-        fail(&throttle, 3, at(100));
-        fail(&throttle, 1, at(101));
-        fail(&throttle, 1, at(103));
-        assert_eq!(throttle.begin_attempt(at(103)).unwrap_err(), RetryAfter(4));
-        assert_eq!(throttle.begin_attempt(at(106)).unwrap_err(), RetryAfter(1));
-        assert!(throttle.begin_attempt(at(107)).is_ok());
-
-        for second in [115, 131, 163] {
-            fail(&throttle, 1, at(second));
-        }
-        assert_eq!(throttle.begin_attempt(at(163)).unwrap_err(), RetryAfter(60));
+        assert_eq!(
+            throttle.begin_attempt(GUESSER, at(100)).unwrap_err(),
+            RetryAfter(1)
+        );
+        assert!(throttle.begin_attempt(GUESSER, at(101)).is_ok());
     }
 
     #[test]
     fn rounds_a_partial_second_up() {
         let throttle = LoginThrottle::default();
-        fail(&throttle, 3, at(100));
-        fail(&throttle, 1, at(101));
+        fail(&throttle, GUESSER, 3, at(100));
+        fail(&throttle, GUESSER, 1, at(101));
         let half_second_later = Timestamp::new(101, 500_000_000).unwrap();
+
         assert_eq!(
-            throttle.begin_attempt(half_second_later).unwrap_err(),
+            throttle
+                .begin_attempt(GUESSER, half_second_later)
+                .unwrap_err(),
             RetryAfter(2)
         );
     }
 
     #[test]
-    fn forgets_failures_after_a_quiet_hour() {
+    fn never_delays_a_client_for_the_failures_of_another() {
         let throttle = LoginThrottle::default();
-        fail(&throttle, 3, at(100));
-        fail(&throttle, 1, at(101));
-        assert!(throttle.begin_attempt(at(102)).is_err());
-        fail(&throttle, 3, at(101 + 3_600));
-        assert_eq!(check(&throttle, at(101 + 3_600)), Err(RetryAfter(1)));
+        fail(&throttle, GUESSER, 3, at(100));
+        fail(&throttle, GUESSER, 1, at(101));
+
+        let attempt = throttle.begin_attempt(OWNER, at(101));
+
+        assert!(attempt.is_ok());
     }
 
     #[test]
-    fn clears_the_count_after_a_success() {
+    fn delays_every_client_once_all_of_them_failed_too_often() {
         let throttle = LoginThrottle::default();
-        fail(&throttle, 2, at(100));
-        throttle.begin_attempt(at(100)).unwrap().succeed();
-        fail(&throttle, 3, at(100));
-        assert!(throttle.begin_attempt(at(100)).is_err());
+        for number in 0..30 {
+            fail(&throttle, client(number), 1, at(100));
+        }
+
+        assert_eq!(
+            throttle.begin_attempt(OWNER, at(100)).unwrap_err(),
+            RetryAfter(1)
+        );
+    }
+
+    #[test]
+    fn clears_the_count_of_a_client_after_its_success() {
+        let throttle = LoginThrottle::default();
+        fail(&throttle, OWNER, 2, at(100));
+        throttle.begin_attempt(OWNER, at(100)).unwrap().succeed();
+
+        fail(&throttle, OWNER, 3, at(100));
+
+        assert!(throttle.begin_attempt(OWNER, at(100)).is_err());
+    }
+
+    #[test]
+    fn forgets_a_client_after_a_quiet_hour() {
+        let throttle = LoginThrottle::default();
+        fail(&throttle, GUESSER, 3, at(100));
+        fail(&throttle, OWNER, 1, at(100 + 3_600));
+
+        assert_eq!(throttle.lock().per_client.len(), 1);
+        assert!(throttle.begin_attempt(GUESSER, at(100 + 3_600)).is_ok());
     }
 
     #[test]
@@ -195,7 +241,7 @@ mod tests {
                 let start = Arc::clone(&start);
                 std::thread::spawn(move || {
                     start.wait();
-                    throttle.begin_attempt(at(100)).is_ok()
+                    throttle.begin_attempt(GUESSER, at(100)).is_ok()
                 })
             })
             .collect();

@@ -30,6 +30,10 @@ fn displayed_value(config: &Config, setting: Setting) -> String {
             .public_url
             .as_ref()
             .map_or_else(|| "(not set)".to_owned(), ToString::to_string),
+        Setting::ClientIpHeader => config
+            .client_ip_header
+            .as_ref()
+            .map_or_else(|| "(not set)".to_owned(), ToString::to_string),
         Setting::ConfigFile => config
             .config_file
             .as_ref()
@@ -70,6 +74,7 @@ mod tests {
              BINSIGHT_DATA_DIR=/home/owner/.local/share/binsight (from the default)\n\
              BINSIGHT_BIND=127.0.0.1:8080 (from the default)\n\
              BINSIGHT_PUBLIC_URL=(not set)\n\
+             BINSIGHT_CLIENT_IP_HEADER=(not set)\n\
              BINSIGHT_CONFIG_FILE=(none)\n\
              BINSIGHT_LOG=info (from the default)\n\
              BINSIGHT_LOG_FORMAT=pretty (from the default)"

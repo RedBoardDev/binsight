@@ -5,6 +5,7 @@
 //! total wait is the caller's job. This module does not build routes.
 
 use std::io;
+use std::net::SocketAddr;
 
 use axum::Router;
 use tokio::net::TcpListener;
@@ -20,7 +21,11 @@ pub async fn serve(
     router: Router,
     shutdown: CancellationToken,
 ) -> io::Result<()> {
-    axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown.cancelled_owned())
-        .await
+    // The connection's address identifies the client for the login throttle.
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown.cancelled_owned())
+    .await
 }

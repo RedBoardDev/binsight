@@ -77,6 +77,7 @@ async fn serve(config: Config) -> Result<(), Failure> {
             password: config.password,
             session_secret,
             public_url: config.public_url,
+            client_ip_header: config.client_ip_header,
         },
         clock,
         shutdown: shutdown.clone(),

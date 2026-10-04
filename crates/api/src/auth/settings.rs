@@ -11,6 +11,7 @@ use axum_extra::extract::cookie::Key;
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
+use super::client_address::ClientIpHeader;
 use super::password::OwnerPassword;
 use super::public_url::PublicUrl;
 
@@ -46,6 +47,8 @@ pub struct AuthSettings {
     pub session_secret: SessionSecret,
     /// The address the owner opens binsight at, if it differs from the listening address.
     pub public_url: Option<PublicUrl>,
+    /// The header a trusted reverse proxy writes the client's address into, if any.
+    pub client_ip_header: Option<ClientIpHeader>,
 }
 
 impl AuthSettings {
@@ -93,6 +96,7 @@ mod tests {
             password: OwnerPassword::parse(password).unwrap(),
             session_secret: SessionSecret::from_bytes([secret_byte; 32]),
             public_url: None,
+            client_ip_header: None,
         }
     }
 

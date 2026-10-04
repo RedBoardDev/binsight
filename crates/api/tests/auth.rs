@@ -157,6 +157,59 @@ async fn slows_down_after_three_failed_logins() {
     assert_eq!(after_waiting.status, StatusCode::OK);
 }
 
+#[tokio::test]
+async fn never_slows_down_the_owner_for_the_failures_of_another_address() {
+    let app = TestApp::new().await;
+    for _ in 0..4 {
+        app.login_from("wrong password!", "198.51.100.7:50000", &[])
+            .await;
+    }
+
+    let guesser = app.login_from(PASSWORD, "198.51.100.7:50001", &[]).await;
+    let owner = app.login_from(PASSWORD, "192.0.2.1:40000", &[]).await;
+
+    assert_eq!(guesser.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(owner.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn reads_the_client_address_from_the_configured_proxy_header() {
+    let app = TestApp::with(TestAppOptions {
+        client_ip_header: Some("X-Forwarded-For"),
+        ..TestAppOptions::default()
+    })
+    .await;
+    let proxy = "10.0.0.2:60000";
+    let guesser = [("x-forwarded-for", "198.51.100.7")];
+    for _ in 0..3 {
+        app.login_from("wrong password!", proxy, &guesser).await;
+    }
+
+    let blocked = app.login_from(PASSWORD, proxy, &guesser).await;
+    let owner = app
+        .login_from(PASSWORD, proxy, &[("x-forwarded-for", "192.0.2.1")])
+        .await;
+
+    assert_eq!(blocked.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(owner.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn ignores_the_proxy_header_unless_it_is_configured() {
+    let app = TestApp::new().await;
+    let peer = "198.51.100.7:50000";
+    for spoofed in ["192.0.2.1", "192.0.2.2", "192.0.2.3"] {
+        app.login_from("wrong password!", peer, &[("x-forwarded-for", spoofed)])
+            .await;
+    }
+
+    let response = app
+        .login_from(PASSWORD, peer, &[("x-forwarded-for", "192.0.2.4")])
+        .await;
+
+    assert_eq!(response.status, StatusCode::TOO_MANY_REQUESTS);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn lets_only_three_of_many_simultaneous_wrong_logins_through() {
     let app = std::sync::Arc::new(TestApp::new().await);

@@ -34,6 +34,18 @@ Out of scope:
 - an instance exposed to the Internet over plain HTTP without a TLS reverse proxy (not a supported setup);
 - vulnerabilities in third-party services, such as the RPC provider.
 
+## Sign-in protection
+
+- Failed sign-ins are slowed down per client address: after three failures, each attempt from that address waits 1, 2,
+  4… seconds, up to a minute; an hour without failures, or a successful sign-in, clears the count. Someone guessing
+  from one address does not lock you out from another.
+- Failures from all addresses together also count against a larger allowance (30 per hour before any delay), so
+  guessing from many addresses at once is slowed down as well. During such an attack, your own sign-in may have to
+  wait up to a minute too: that is the price of the backstop.
+- Behind a reverse proxy every request comes from the proxy's address. Set `BINSIGHT_CLIENT_IP_HEADER` to the header
+  your proxy writes the client's address into, and only then: a client that reaches binsight directly could put any
+  address in that header.
+
 ## Hardening your instance
 
 - Put the instance behind a reverse proxy with HTTPS before exposing it beyond your local network, or reach it through a

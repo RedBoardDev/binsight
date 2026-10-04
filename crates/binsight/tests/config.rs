@@ -47,6 +47,7 @@ fn starts_with_only_the_two_secrets_and_a_home_folder() {
     );
     assert_eq!(config.bind.to_string(), "127.0.0.1:8080");
     assert!(config.public_url.is_none());
+    assert!(config.client_ip_header.is_none());
     assert_eq!(config.origins[&Setting::Password], Source::Environment);
     assert_eq!(config.origins[&Setting::Bind], Source::Default);
     assert_eq!(loaded.warnings, Vec::new());
@@ -96,6 +97,23 @@ fn treats_an_empty_value_as_unset() {
 }
 
 #[test]
+fn reads_the_client_address_header_of_a_trusted_proxy() {
+    let loaded = validate(&sources(
+        &[
+            ("HOME", "/home/owner"),
+            ("BINSIGHT_PASSWORD", PASSWORD),
+            ("BINSIGHT_HELIUS_API_KEY", KEY),
+            ("BINSIGHT_CLIENT_IP_HEADER", "X-Real-IP"),
+        ],
+        None,
+    ))
+    .unwrap();
+
+    let header = loaded.config.client_ip_header.unwrap();
+    assert_eq!(header.to_string(), "x-real-ip");
+}
+
+#[test]
 fn reports_every_problem_at_once() {
     let error = validate(&sources(
         &[
@@ -103,19 +121,21 @@ fn reports_every_problem_at_once() {
             ("BINSIGHT_BIND", "localhost"),
             ("BINSIGHT_DATA_DIR", "relative/data"),
             ("BINSIGHT_PUBLIC_URL", "binsight.example.com"),
+            ("BINSIGHT_CLIENT_IP_HEADER", "X Forwarded For"),
         ],
         None,
     ))
     .unwrap_err();
 
-    insta::assert_snapshot!(error.to_string(), @r"
+    insta::assert_snapshot!(error.to_string(), @r#"
     the configuration is invalid:
       - BINSIGHT_PASSWORD: the password must be at least 12 characters long (set in the environment)
       - BINSIGHT_HELIUS_API_KEY: required; set it in the environment or in the configuration file
       - BINSIGHT_DATA_DIR: relative/data is not an absolute path (set in the environment)
       - BINSIGHT_BIND: invalid socket address syntax (set in the environment)
       - BINSIGHT_PUBLIC_URL: the public URL must start with http:// or https:// (set in the environment)
-    ");
+      - BINSIGHT_CLIENT_IP_HEADER: "X Forwarded For" is not a valid HTTP header name, such as X-Forwarded-For (set in the environment)
+    "#);
 }
 
 #[test]

@@ -69,7 +69,7 @@
             }
           },
           "429": {
-            "description": "Too many failed attempts (`too_many_attempts`); retry after the delay.",
+            "description": "Too many failed attempts from this client, or from all of them (`too_many_attempts`); retry after the delay.",
             "headers": {
               "retry-after": {
                 "schema": {

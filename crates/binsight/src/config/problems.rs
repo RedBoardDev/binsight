@@ -20,6 +20,8 @@ pub enum Setting {
     Bind,
     /// `BINSIGHT_PUBLIC_URL`: the address the owner opens binsight at, behind a proxy.
     PublicUrl,
+    /// `BINSIGHT_CLIENT_IP_HEADER`: the header a trusted proxy writes the client's address into.
+    ClientIpHeader,
     /// `BINSIGHT_CONFIG_FILE`: the configuration file (environment or command line only).
     ConfigFile,
     /// `BINSIGHT_LOG`: which log events are written.
@@ -30,12 +32,13 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting, in the order they are reported.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Password,
         Self::HeliusApiKey,
         Self::DataDir,
         Self::Bind,
         Self::PublicUrl,
+        Self::ClientIpHeader,
         Self::ConfigFile,
         Self::Log,
         Self::LogFormat,
@@ -49,6 +52,7 @@ impl Setting {
             Self::DataDir => "BINSIGHT_DATA_DIR",
             Self::Bind => "BINSIGHT_BIND",
             Self::PublicUrl => "BINSIGHT_PUBLIC_URL",
+            Self::ClientIpHeader => "BINSIGHT_CLIENT_IP_HEADER",
             Self::ConfigFile => "BINSIGHT_CONFIG_FILE",
             Self::Log => "BINSIGHT_LOG",
             Self::LogFormat => "BINSIGHT_LOG_FORMAT",

@@ -10,7 +10,7 @@ use std::fmt::Display;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
-use binsight_api::auth::{OwnerPassword, PublicUrl};
+use binsight_api::auth::{ClientIpHeader, OwnerPassword, PublicUrl};
 use binsight_chain::HeliusApiKey;
 
 use super::paths::{default_data_dir, expand_home};
@@ -37,6 +37,8 @@ pub struct Config {
     pub bind: SocketAddr,
     /// The address the owner opens binsight at, if it differs from `bind`.
     pub public_url: Option<PublicUrl>,
+    /// The header a trusted reverse proxy writes the client's address into, if any.
+    pub client_ip_header: Option<ClientIpHeader>,
     /// What is logged and how.
     pub log: LogSettings,
     /// The configuration file that was read, if any.
@@ -66,6 +68,7 @@ pub fn validate(sources: &ConfigSources) -> Result<LoadedConfig, ConfigError> {
     let data_dir = reader.data_dir();
     let bind = reader.with_default(Setting::Bind, DEFAULT_BIND, str::parse::<SocketAddr>);
     let public_url = reader.optional(Setting::PublicUrl, PublicUrl::parse);
+    let client_ip_header = reader.optional(Setting::ClientIpHeader, ClientIpHeader::parse);
     let log_filter = reader.with_default(Setting::Log, DEFAULT_LOG_FILTER, parse_filter);
     let log_format = reader.with_default(Setting::LogFormat, DEFAULT_LOG_FORMAT, LogFormat::parse);
     match (
@@ -90,6 +93,7 @@ pub fn validate(sources: &ConfigSources) -> Result<LoadedConfig, ConfigError> {
                 data_dir,
                 bind,
                 public_url,
+                client_ip_header,
                 log: LogSettings { filter, format },
                 config_file: sources.file.as_ref().map(|file| file.path.clone()),
                 origins: reader.origins,

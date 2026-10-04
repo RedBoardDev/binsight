@@ -6,12 +6,14 @@
     reason = "each test binary uses a different part of these shared helpers"
 )]
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Router;
 use axum::body::{Body, Bytes};
-use axum::http::{HeaderMap, Request, StatusCode};
-use binsight_api::auth::{AuthSettings, OwnerPassword, PublicUrl, SessionSecret};
+use axum::extract::ConnectInfo;
+use axum::http::{HeaderMap, HeaderName, Request, StatusCode};
+use binsight_api::auth::{AuthSettings, ClientIpHeader, OwnerPassword, PublicUrl, SessionSecret};
 use binsight_api::{AppState, AppStateParts, WebAsset, WebAssets, router};
 use binsight_core::clock::FixedClock;
 use binsight_engine::test_support::temporary_engine;
@@ -54,6 +56,7 @@ pub(crate) struct TestAppOptions {
     pub(crate) password: &'static str,
     pub(crate) secret_byte: u8,
     pub(crate) public_url: Option<&'static str>,
+    pub(crate) client_ip_header: Option<&'static str>,
 }
 
 impl Default for TestAppOptions {
@@ -62,6 +65,7 @@ impl Default for TestAppOptions {
             password: PASSWORD,
             secret_byte: 42,
             public_url: None,
+            client_ip_header: None,
         }
     }
 }
@@ -76,6 +80,16 @@ pub(crate) struct TestApp {
     pub(crate) handle: EngineHandle,
     engine: Option<Engine>,
     _database_folder: tempfile::TempDir,
+}
+
+/// `POST /api/v1/auth/login` with `password`, as a same-origin browser sends it.
+fn login_request(password: &str) -> Request<Body> {
+    let body = serde_json::json!({ "password": password }).to_string();
+    Request::post("/api/v1/auth/login")
+        .header("content-type", "application/json")
+        .header("sec-fetch-site", "same-origin")
+        .body(Body::from(body))
+        .unwrap()
 }
 
 /// A response, fully read.
@@ -116,6 +130,9 @@ impl TestApp {
                 password: OwnerPassword::parse(options.password).unwrap(),
                 session_secret: SessionSecret::from_bytes([options.secret_byte; 32]),
                 public_url: options.public_url.map(|url| PublicUrl::parse(url).unwrap()),
+                client_ip_header: options
+                    .client_ip_header
+                    .map(|header| ClientIpHeader::parse(header).unwrap()),
             },
             clock: clock.clone(),
             shutdown: shutdown.clone(),
@@ -148,12 +165,24 @@ impl TestApp {
 
     /// Sends `POST /api/v1/auth/login` with `password`, as a same-origin browser would.
     pub(crate) async fn login(&self, password: &str) -> TestResponse {
-        let body = serde_json::json!({ "password": password }).to_string();
-        let request = Request::post("/api/v1/auth/login")
-            .header("content-type", "application/json")
-            .header("sec-fetch-site", "same-origin")
-            .body(Body::from(body))
-            .unwrap();
+        self.send(login_request(password)).await
+    }
+
+    /// Like [`TestApp::login`], over a connection from `peer`, with the extra `headers`.
+    pub(crate) async fn login_from(
+        &self,
+        password: &str,
+        peer: &str,
+        headers: &[(&str, &str)],
+    ) -> TestResponse {
+        let mut request = login_request(password);
+        let address: SocketAddr = peer.parse().unwrap();
+        request.extensions_mut().insert(ConnectInfo(address));
+        for (name, value) in headers {
+            request
+                .headers_mut()
+                .insert(HeaderName::try_from(*name).unwrap(), value.parse().unwrap());
+        }
         self.send(request).await
     }
 

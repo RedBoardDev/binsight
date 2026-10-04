@@ -27,6 +27,7 @@ pub(crate) fn render_env_file(helius_api_key: &str, password: &str) -> String {
          # BINSIGHT_DATA_DIR=~/.local/share/binsight\n\
          # BINSIGHT_BIND={DEFAULT_BIND}\n\
          # BINSIGHT_PUBLIC_URL=https://binsight.example.com\n\
+         # BINSIGHT_CLIENT_IP_HEADER=X-Forwarded-For\n\
          # BINSIGHT_LOG={DEFAULT_LOG_FILTER}\n\
          # BINSIGHT_LOG_FORMAT={DEFAULT_LOG_FORMAT}\n"
     );

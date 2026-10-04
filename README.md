@@ -72,6 +72,7 @@ wins over the file). Invalid settings are all reported at once and the server do
 | `BINSIGHT_DATA_DIR` | no | `$XDG_DATA_HOME/binsight`, else `~/.local/share/binsight`; `/data` in the image | Where the database, its backups and the instance secrets live. |
 | `BINSIGHT_BIND` | no | `127.0.0.1:8080`; `0.0.0.0:8080` in the image | The address and port the server listens on. |
 | `BINSIGHT_PUBLIC_URL` | no | — | The address browsers use, such as `https://binsight.example.com` (no path). Set it behind a reverse proxy: it is trusted for cross-site checks, and `https` makes the session cookie `Secure`. |
+| `BINSIGHT_CLIENT_IP_HEADER` | no | — | Behind a reverse proxy, the header it writes the client's address into (`X-Forwarded-For`, `X-Real-IP`…), so failed sign-ins are counted per client instead of all coming from the proxy. Set it only if every request goes through that proxy: a client reaching binsight directly could write any address there. |
 | `BINSIGHT_LOG` | no | `info` | The log filter (`warn`, `debug`, `binsight_api=debug`…). |
 | `BINSIGHT_LOG_FORMAT` | no | `pretty` | `pretty` or `json`. |
 | `BINSIGHT_CONFIG_FILE` | no | `$XDG_CONFIG_HOME/binsight/binsight.env`, else `~/.config/binsight/binsight.env` | The configuration file (also `--config-file`). A missing file at the default path is fine. |
@@ -103,7 +104,8 @@ binsight.example.com {
 }
 ```
 
-Then set `BINSIGHT_PUBLIC_URL=https://binsight.example.com`.
+Then set `BINSIGHT_PUBLIC_URL=https://binsight.example.com`, and `BINSIGHT_CLIENT_IP_HEADER=X-Forwarded-For` (Caddy
+writes the client's address there) so that failed sign-ins are slowed down per client.
 
 With Docker Compose, the port is published on the loopback interface by default, which is what a reverse
 proxy on the same machine needs. To publish it on every interface instead (a proxy on another machine, a
