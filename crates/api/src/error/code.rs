@@ -24,7 +24,8 @@ pub(crate) enum ErrorCode {
     NotFound,
     /// The route exists but not for this HTTP method.
     MethodNotAllowed,
-    /// The server took too long to answer.
+    /// The server took too long to answer (`503`: the request itself arrived in time, so clients
+    /// and proxies must not treat it as a `408` they may replay on their own).
     RequestTimeout,
     /// The request body is larger than the server accepts.
     PayloadTooLarge,
@@ -43,7 +44,7 @@ impl ErrorCode {
             Self::ForbiddenCrossOrigin => StatusCode::FORBIDDEN,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
-            Self::RequestTimeout => StatusCode::REQUEST_TIMEOUT,
+            Self::RequestTimeout => StatusCode::SERVICE_UNAVAILABLE,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::TooManyAttempts => StatusCode::TOO_MANY_REQUESTS,
             Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
@@ -62,14 +63,12 @@ mod tests {
     }
 
     #[test]
-    fn maps_only_internal_failures_to_server_errors() {
-        for code in [
-            ErrorCode::NotFound,
-            ErrorCode::MethodNotAllowed,
-            ErrorCode::RequestTimeout,
-        ] {
+    fn maps_only_server_side_failures_to_server_errors() {
+        for code in [ErrorCode::NotFound, ErrorCode::MethodNotAllowed] {
             assert!(code.status().is_client_error(), "{code:?}");
         }
-        assert!(ErrorCode::Internal.status().is_server_error());
+        for code in [ErrorCode::RequestTimeout, ErrorCode::Internal] {
+            assert!(code.status().is_server_error(), "{code:?}");
+        }
     }
 }
