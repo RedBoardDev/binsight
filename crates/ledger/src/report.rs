@@ -2,14 +2,15 @@
 //!
 //! Each rule lives here once and is shared by every source of facts (the accounting of the chain,
 //! the demo world): time windows and buckets, the exactness of a figure and how it combines, the
-//! valuation of amounts in SOL and dollars, the totals of closed positions, the figures of open
-//! positions, the net worth, the real PnL and its bridge, and the series of the charts. This module
-//! computes; it never reads the clock or any I/O.
+//! valuation of amounts in SOL and dollars, the totals of closed positions and how History files
+//! them, the figures of open positions, the net worth, the real PnL and its bridge, and the series
+//! of the charts. This module computes; it never reads the clock or any I/O.
 
 pub mod bridge;
 pub mod closed;
 pub mod closed_totals;
 pub mod figure;
+pub mod history_outcome;
 pub mod net_worth;
 pub mod open;
 pub mod period;
