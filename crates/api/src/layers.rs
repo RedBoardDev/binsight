@@ -5,6 +5,8 @@
 //! file.
 
 mod security_headers;
+
+pub(crate) use security_headers::Transport;
 mod timeout;
 
 use std::any::Any;
@@ -12,7 +14,7 @@ use std::any::Any;
 use axum::Router;
 use axum::extract::{DefaultBodyLimit, Request};
 use axum::http::header;
-use axum::middleware::from_fn;
+use axum::middleware::{from_fn, from_fn_with_state};
 use axum::response::{IntoResponse, Response};
 use tower::ServiceBuilder;
 use tower_http::catch_panic::CatchPanicLayer;
@@ -31,8 +33,12 @@ const MAX_BODY_BYTES: usize = 64 * 1024;
 /// Wraps every route of `router` (and its fallbacks) in the middleware stack.
 ///
 /// `cross_site_protection` refuses state-changing requests sent by another site; it is configured
-/// with the trusted public URL, if any.
-pub(crate) fn apply(router: Router, cross_site_protection: CsrfLayer) -> Router {
+/// with the trusted public URL, if any. `transport` says whether browsers come over HTTPS.
+pub(crate) fn apply(
+    router: Router,
+    cross_site_protection: CsrfLayer,
+    transport: Transport,
+) -> Router {
     router.layer(
         ServiceBuilder::new()
             // Cookies and credentials never appear in logs.
@@ -52,7 +58,10 @@ pub(crate) fn apply(router: Router, cross_site_protection: CsrfLayer) -> Router 
             )
             // ...and is sent back in the response.
             .layer(PropagateRequestIdLayer::x_request_id())
-            .layer(from_fn(security_headers::add_security_headers))
+            .layer(from_fn_with_state(
+                transport,
+                security_headers::add_security_headers,
+            ))
             // Live event streams are never compressed (the default predicate excludes them).
             .layer(CompressionLayer::new())
             // Everything below may fail with an `ApiError`; its JSON body is written here.
@@ -113,6 +122,7 @@ mod tests {
         let router = apply(
             Router::new().route("/boom", get(panicking_handler)),
             CsrfLayer::new(),
+            Transport::Http,
         );
 
         let response = router

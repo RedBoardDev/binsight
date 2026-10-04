@@ -5,7 +5,7 @@
 mod common;
 
 use axum::http::StatusCode;
-use common::TestApp;
+use common::{TestApp, TestAppOptions};
 
 #[tokio::test]
 async fn reports_a_healthy_server_with_its_version() {
@@ -45,11 +45,38 @@ async fn tags_every_response_with_a_request_id_and_security_headers() {
     assert_eq!(response.header("x-content-type-options"), Some("nosniff"));
     assert_eq!(response.header("x-frame-options"), Some("DENY"));
     assert_eq!(response.header("referrer-policy"), Some("same-origin"));
+    assert_eq!(
+        response.header("cross-origin-opener-policy"),
+        Some("same-origin")
+    );
+    assert!(
+        response
+            .header("permissions-policy")
+            .unwrap()
+            .contains("camera=()")
+    );
+    assert_eq!(response.header("strict-transport-security"), None);
     assert!(
         response
             .header("content-security-policy")
             .unwrap()
             .starts_with("default-src 'self'")
+    );
+}
+
+#[tokio::test]
+async fn asks_browsers_for_https_only_behind_an_https_public_url() {
+    let app = TestApp::with(TestAppOptions {
+        public_url: Some("https://binsight.example.com"),
+        ..TestAppOptions::default()
+    })
+    .await;
+
+    let response = app.get("/api/v1/health").await;
+
+    assert_eq!(
+        response.header("strict-transport-security"),
+        Some("max-age=31536000")
     );
 }
 

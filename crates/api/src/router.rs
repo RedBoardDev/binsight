@@ -28,11 +28,12 @@ pub fn router(state: AppState) -> Router {
         .merge(routes.protected.route_layer(guard))
         .split_for_parts();
     let cross_site_protection = state.auth.cross_site_protection();
+    let transport = state.auth.transport();
     let application = routes
         .fallback(serve_web_app)
         .method_not_allowed_fallback(method_not_allowed)
         .with_state(state);
-    layers::apply(application, cross_site_protection)
+    layers::apply(application, cross_site_protection, transport)
 }
 
 /// Every API route with its documentation; the same value produces the router and the contract.

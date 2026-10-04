@@ -28,6 +28,7 @@ pub(crate) use session::Session;
 use axum_extra::extract::cookie::Key;
 use tower_http::csrf::CsrfLayer;
 
+use crate::layers::Transport;
 use throttle::LoginThrottle;
 
 /// What the authentication handlers share, built once from the [`AuthSettings`].
@@ -60,6 +61,15 @@ impl AuthState {
     /// The key that signs session cookies.
     pub(crate) fn cookie_key(&self) -> &Key {
         &self.cookie_key
+    }
+
+    /// How browsers reach binsight: over HTTPS only behind an `https` public URL.
+    pub(crate) fn transport(&self) -> Transport {
+        if self.is_cookie_secure {
+            Transport::Https
+        } else {
+            Transport::Http
+        }
     }
 
     /// The cross-site request protection, trusting the public URL if there is one.
