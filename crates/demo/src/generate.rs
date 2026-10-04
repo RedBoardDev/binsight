@@ -9,6 +9,7 @@ mod catalog;
 mod closed;
 mod entries;
 mod instance;
+mod logos;
 mod marks;
 mod open;
 mod price_path;
@@ -69,6 +70,7 @@ pub(crate) fn generate(spec: &WorldSpec) -> Result<Generated, DemoError> {
             .map(|pool| pool.facts.clone())
             .collect(),
         tokens: vec![catalog.unpriced_token.clone()],
+        logos: logos::token_logos(&catalog),
         rates,
         ..SnapshotFacts::default()
     };
