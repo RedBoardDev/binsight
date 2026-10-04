@@ -85,7 +85,7 @@ pub fn decode(
         program => match TokenProgram::of(program) {
             Some(program) => ProgramInstruction::Token {
                 program,
-                instruction: token::decode(data, accounts)?,
+                instruction: token::decode(program, data, accounts)?,
             },
             None => return Ok(None),
         },

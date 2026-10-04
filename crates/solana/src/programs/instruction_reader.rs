@@ -35,11 +35,31 @@ impl<'a> InstructionAccounts<'a> {
         self.accounts
             .get(position)
             .copied()
-            .ok_or(InstructionDecodeError::MissingAccount {
-                program: self.program,
-                instruction: self.instruction,
-                position,
-            })
+            .ok_or_else(|| self.missing(position))
+    }
+
+    /// The last `count` accounts, all after `position` (an instruction whose accounts end with a
+    /// list of variable length).
+    pub(super) fn last(
+        &self,
+        count: usize,
+        position: usize,
+    ) -> Result<Vec<Address>, InstructionDecodeError> {
+        let first_of_list = position.saturating_add(1);
+        match self.accounts.len().checked_sub(count) {
+            Some(start) if start >= first_of_list => {
+                Ok(self.accounts.iter().skip(start).copied().collect())
+            }
+            _ => Err(self.missing(first_of_list.saturating_add(count).saturating_sub(1))),
+        }
+    }
+
+    fn missing(&self, position: usize) -> InstructionDecodeError {
+        InstructionDecodeError::MissingAccount {
+            program: self.program,
+            instruction: self.instruction,
+            position,
+        }
     }
 }
 

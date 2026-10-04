@@ -1,16 +1,17 @@
 //! The SPL Token and Token-2022 instructions that move, create or destroy tokens.
 //!
 //! Both programs share the layout of their base instructions: a `u8` discriminator, then
-//! little-endian fields. Token-2022 adds extensions; of those, binsight decodes the transfer with
-//! an explicit fee (`TransferFeeExtension` → `TransferCheckedWithFee`). Like the programs, the
-//! decoder ignores bytes after the fields. Approvals, authorities and freezes are
-//! [`TokenInstruction::Other`]. Which of the two programs ran an instruction is in
-//! [`super::TokenProgram`].
+//! little-endian fields. Token-2022 adds extensions; of those, binsight decodes the transfer-fee
+//! extension, whose instructions move tokens ([`transfer_fee`]). SPL Token has no extension, so
+//! the same discriminator there is [`TokenInstruction::Other`]. Like the programs, the decoder
+//! ignores bytes after the fields. Approvals, authorities and freezes are `Other` too.
+
+mod transfer_fee;
 
 use binsight_core::units::{Decimals, RawTokenAmount};
 
-use super::InstructionDecodeError;
 use super::instruction_reader::{InstructionAccounts, InstructionFields};
+use super::{InstructionDecodeError, TokenProgram};
 use crate::Address;
 
 /// The name used in errors.
@@ -28,9 +29,6 @@ const INITIALIZE_ACCOUNT_2: u8 = 16;
 const SYNC_NATIVE: u8 = 17;
 const INITIALIZE_ACCOUNT_3: u8 = 18;
 const TRANSFER_FEE_EXTENSION: u8 = 26;
-
-/// The `TransferCheckedWithFee` instruction inside the transfer-fee extension.
-const TRANSFER_CHECKED_WITH_FEE: u8 = 1;
 
 /// A token program instruction.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,6 +52,34 @@ pub enum TokenInstruction {
         transfer: CheckedTransfer,
         /// The fee withheld in `destination`.
         fee: RawTokenAmount,
+    },
+    /// Token-2022: moves the transfer fees withheld in the mint into `destination`'s amount. The
+    /// data holds no amount: it is in the balances.
+    WithdrawWithheldTokensFromMint {
+        /// The mint.
+        mint: Address,
+        /// The account that receives.
+        destination: Address,
+        /// The withdraw authority.
+        authority: Address,
+    },
+    /// Token-2022: moves the transfer fees withheld in `sources` into `destination`'s amount. The
+    /// data holds no amount: it is in the balances.
+    WithdrawWithheldTokensFromAccounts {
+        /// The mint.
+        mint: Address,
+        /// The account that receives.
+        destination: Address,
+        /// The withdraw authority.
+        authority: Address,
+        /// The accounts the withheld fees come from.
+        sources: Vec<Address>,
+    },
+    /// Token-2022: another instruction of the transfer-fee extension (setting the fee, or
+    /// harvesting withheld fees into the mint), which changes no account's amount.
+    OtherTransferFee {
+        /// Its discriminator inside the extension.
+        instruction: u8,
     },
     /// Initializes a token account (any of the three variants).
     InitializeAccount {
@@ -124,14 +150,18 @@ pub struct CheckedTransfer {
     pub decimals: Decimals,
 }
 
-/// Decodes a token instruction from its data and accounts.
+/// Decodes an instruction of the token `program` from its data and accounts.
 pub(super) fn decode(
+    program: TokenProgram,
     data: &[u8],
-    accounts: &[Address],
+    account_list: &[Address],
 ) -> Result<TokenInstruction, InstructionDecodeError> {
     let mut fields = InstructionFields::new(data, PROGRAM);
     let discriminator = fields.u8("the instruction")?;
-    let accounts = InstructionAccounts::new(accounts, PROGRAM, instruction_name(discriminator));
+    if discriminator == TRANSFER_FEE_EXTENSION && program == TokenProgram::Token2022 {
+        return transfer_fee::decode(&mut fields, account_list);
+    }
+    let accounts = InstructionAccounts::new(account_list, PROGRAM, instruction_name(discriminator));
     let instruction = match discriminator {
         TRANSFER => TokenInstruction::Transfer {
             source: accounts.at(0)?,
@@ -142,7 +172,6 @@ pub(super) fn decode(
         TRANSFER_CHECKED => {
             TokenInstruction::TransferChecked(read_checked_transfer(&mut fields, &accounts)?)
         }
-        TRANSFER_FEE_EXTENSION => return decode_transfer_fee_extension(&mut fields, &accounts),
         INITIALIZE_ACCOUNT => TokenInstruction::InitializeAccount {
             account: accounts.at(0)?,
             mint: accounts.at(1)?,
@@ -178,22 +207,6 @@ pub(super) fn decode(
     Ok(instruction)
 }
 
-/// Decodes an instruction of the transfer-fee extension; only the transfer itself is booked.
-fn decode_transfer_fee_extension(
-    fields: &mut InstructionFields<'_>,
-    accounts: &InstructionAccounts<'_>,
-) -> Result<TokenInstruction, InstructionDecodeError> {
-    if fields.u8("the transfer-fee instruction")? != TRANSFER_CHECKED_WITH_FEE {
-        return Ok(TokenInstruction::Other {
-            discriminator: TRANSFER_FEE_EXTENSION,
-        });
-    }
-    Ok(TokenInstruction::TransferCheckedWithFee {
-        transfer: read_checked_transfer(fields, accounts)?,
-        fee: read_amount(fields, "the fee")?,
-    })
-}
-
 /// The accounts, amount and decimals shared by both checked transfers, in data order.
 fn read_checked_transfer(
     fields: &mut InstructionFields<'_>,
@@ -224,7 +237,6 @@ fn instruction_name(discriminator: u8) -> &'static str {
     match discriminator {
         TRANSFER => "Transfer",
         TRANSFER_CHECKED => "TransferChecked",
-        TRANSFER_FEE_EXTENSION => "TransferCheckedWithFee",
         INITIALIZE_ACCOUNT | INITIALIZE_ACCOUNT_2 | INITIALIZE_ACCOUNT_3 => "InitializeAccount",
         CLOSE_ACCOUNT => "CloseAccount",
         SYNC_NATIVE => "SyncNative",
@@ -243,24 +255,12 @@ mod tests {
     }
 
     #[test]
-    fn decodes_transfer_checked_with_fee_and_its_withheld_fee() {
-        let mut data = vec![TRANSFER_FEE_EXTENSION, TRANSFER_CHECKED_WITH_FEE];
-        data.extend(1_000_000_u64.to_le_bytes());
-        data.push(6);
-        data.extend(10_000_u64.to_le_bytes());
-        let accounts = [address(1), address(2), address(3), address(4)];
+    fn keeps_the_transfer_fee_discriminator_unread_under_spl_token() {
+        let data = [TRANSFER_FEE_EXTENSION, 1, 0, 0];
         assert_eq!(
-            decode(&data, &accounts),
-            Ok(TokenInstruction::TransferCheckedWithFee {
-                transfer: CheckedTransfer {
-                    source: address(1),
-                    mint: address(2),
-                    destination: address(3),
-                    authority: address(4),
-                    amount: RawTokenAmount(1_000_000),
-                    decimals: Decimals(6),
-                },
-                fee: RawTokenAmount(10_000),
+            decode(TokenProgram::Token, &data, &[]),
+            Ok(TokenInstruction::Other {
+                discriminator: TRANSFER_FEE_EXTENSION
             })
         );
     }
@@ -270,7 +270,7 @@ mod tests {
         let mut data = vec![INITIALIZE_ACCOUNT_3];
         data.extend([7; 32]);
         assert_eq!(
-            decode(&data, &[address(1), address(2)]),
+            decode(TokenProgram::Token, &data, &[address(1), address(2)]),
             Ok(TokenInstruction::InitializeAccount {
                 account: address(1),
                 mint: address(2),
@@ -284,7 +284,7 @@ mod tests {
         let data = [TRANSFER, 1, 2];
         let accounts = [address(1), address(2), address(3)];
         assert!(matches!(
-            decode(&data, &accounts),
+            decode(TokenProgram::Token, &data, &accounts),
             Err(InstructionDecodeError::Malformed { .. })
         ));
     }

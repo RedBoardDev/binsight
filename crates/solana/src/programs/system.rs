@@ -82,6 +82,9 @@ pub enum SystemInstruction {
         lamports: Lamports,
     },
     /// Another System instruction (nonce, or a `*WithSeed` variant binsight does not book).
+    ///
+    /// Some of them move lamports too: `WithdrawNonceAccount` (5) pays out of a nonce account.
+    /// The ledger books lamports from the balance changes, never from decoded transfers alone.
     Other {
         /// Its discriminator.
         discriminator: u32,
