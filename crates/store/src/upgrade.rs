@@ -172,6 +172,28 @@ mod tests {
         store.ping().await.unwrap();
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn creates_the_database_readable_by_its_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("binsight.db");
+
+        let (store, _report) = Store::open_and_upgrade(&path, options(&folder))
+            .await
+            .unwrap();
+        store.ping().await.unwrap();
+
+        for file in ["binsight.db", "binsight.db-wal"] {
+            let mode = std::fs::metadata(folder.path().join(file))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600, "{file}");
+        }
+    }
+
     #[tokio::test]
     async fn applies_nothing_the_second_time() {
         let folder = tempfile::tempdir().unwrap();

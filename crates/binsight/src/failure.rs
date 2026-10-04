@@ -109,9 +109,10 @@ impl From<StoreError> for Failure {
             StoreError::DatabaseNewerThanBinary { .. }
             | StoreError::MigrationChecksumMismatch { .. } => Self::IncompatibleDatabase(error),
             StoreError::Backup { .. } => Self::BackupFailed(error),
-            StoreError::NotFound { .. } | StoreError::Open { .. } | StoreError::Connection(_) => {
-                Self::DatabaseUnavailable(error)
-            }
+            StoreError::NotFound { .. }
+            | StoreError::Create { .. }
+            | StoreError::Open { .. }
+            | StoreError::Connection(_) => Self::DatabaseUnavailable(error),
             other => Self::Unexpected(anyhow::Error::new(other).context("the database failed")),
         }
     }

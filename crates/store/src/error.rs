@@ -14,6 +14,15 @@ pub enum StoreError {
         /// The path that was looked up.
         path: PathBuf,
     },
+    /// The database file could not be created.
+    #[error("could not create the database file {path}")]
+    Create {
+        /// The database file.
+        path: PathBuf,
+        /// What the file system reported.
+        #[source]
+        source: std::io::Error,
+    },
     /// The connection pools could not be created.
     #[error("could not prepare the database connections for {path}")]
     Open {

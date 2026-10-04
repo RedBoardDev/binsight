@@ -45,8 +45,14 @@ pub(crate) struct Database {
 
 impl Database {
     /// Prepares the pools for the database at `path`. Connections are opened lazily, on first
-    /// use; SQLite creates the file if it does not exist yet.
+    /// use. A missing file is created first, readable by its owner only: it holds the session
+    /// secret and the wallets, and SQLite would create it with the process umask (usually
+    /// readable by everyone). Its write-ahead log files take the same permissions.
     pub(crate) fn open(path: &Path) -> Result<Self, StoreError> {
+        create_private_file_if_missing(path).map_err(|source| StoreError::Create {
+            path: path.to_path_buf(),
+            source,
+        })?;
         Ok(Self {
             writer: build_pool(path, ConnectionRole::Writer)?,
             readers: build_pool(path, ConnectionRole::Reader)?,
@@ -129,6 +135,20 @@ fn configure_connection(connection: &Connection, role: ConnectionRole) -> rusqli
         connection.pragma_update(None, "query_only", "ON")?;
     }
     Ok(())
+}
+
+/// Creates an empty file at `path`, readable and writable by its owner only, unless a file is
+/// already there.
+fn create_private_file_if_missing(path: &Path) -> std::io::Result<()> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    match options.open(path) {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 #[cfg(test)]
