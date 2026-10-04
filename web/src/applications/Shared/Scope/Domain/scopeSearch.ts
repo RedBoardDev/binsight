@@ -1,10 +1,10 @@
 import { DEFAULT_PERIOD, periodSchema } from '@app/applications/Shared/Scope/Domain/period';
 import { ALL_WALLETS, walletScopeSchema } from '@app/applications/Shared/Scope/Domain/walletScope';
-import { z } from 'zod';
+import { z } from 'zod/mini';
 
 export const scopeSearchSchema = z.object({
-  wallet: walletScopeSchema.default(ALL_WALLETS).catch(ALL_WALLETS),
-  period: periodSchema.default(DEFAULT_PERIOD).catch(DEFAULT_PERIOD),
+  wallet: z.catch(z._default(walletScopeSchema, ALL_WALLETS), ALL_WALLETS),
+  period: z.catch(z._default(periodSchema, DEFAULT_PERIOD), DEFAULT_PERIOD),
 });
 
 export type ScopeSearch = z.infer<typeof scopeSearchSchema>;

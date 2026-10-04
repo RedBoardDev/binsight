@@ -1,6 +1,6 @@
 import type { MessageDescriptor } from '@lingui/core';
 import { msg } from '@lingui/core/macro';
-import { z } from 'zod';
+import { z } from 'zod/mini';
 
 export const PERIODS = ['7d', '1m', '3m', '1y', 'all'] as const;
 

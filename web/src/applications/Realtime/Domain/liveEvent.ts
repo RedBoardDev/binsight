@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/mini';
 
 const heartbeatSchema = z.object({
   type: z.literal('heartbeat'),
