@@ -17,7 +17,11 @@ mod wallets;
 mod window;
 
 pub use overview::{OverviewRequest, overview};
-pub use positions::{OpenPositionsRequest, OpenSort, SortOrder, open_positions};
+pub use positions::{
+    CandleRequest, EventPageRequest, IntervalChoice, MAX_CANDLES, MAX_EVENT_PAGE,
+    OpenPositionsRequest, OpenSort, PositionRequest, SortOrder, candle_request, open_positions,
+    position, position_events,
+};
 pub use recent_closes::recent_closes;
 pub use refs::token_logo;
 pub use series::{MAX_SERIES_BUCKETS, SeriesRequest, stats_series};

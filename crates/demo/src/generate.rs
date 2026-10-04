@@ -26,9 +26,9 @@ use crate::error::DemoError;
 use crate::scenario::{HISTORY_DAYS, WALLETS, WalletProfile};
 use crate::world::WorldSpec;
 use events::{Market, closed_events, open_events};
+pub(crate) use market::PricePath;
 use market::{
-    Catalog, CatalogPool, PricePath, catalog, following_rates, random_walk, sol_usd_rates,
-    token_logos,
+    Catalog, CatalogPool, catalog, following_rates, random_walk, sol_usd_rates, token_logos,
 };
 
 /// Seconds in an hour.
@@ -47,12 +47,16 @@ pub(crate) struct Timeline {
     pub(crate) first_hour: Timestamp,
 }
 
-/// The facts of a generated world and the state of its instance.
+/// The facts of a generated world, the state of its instance and the prices of its pools.
 pub(crate) struct Generated {
     /// The facts.
     pub(crate) facts: SnapshotFacts,
     /// The instance.
     pub(crate) status: InstanceStatus,
+    /// The price path of every pool, by pool address.
+    pub(crate) paths: BTreeMap<Address, PricePath>,
+    /// The pool the demo's market data source does not know.
+    pub(crate) unindexed_pool: Option<Address>,
 }
 
 /// Generates the world of `spec`.
@@ -94,6 +98,8 @@ pub(crate) fn generate(spec: &WorldSpec) -> Result<Generated, DemoError> {
     Ok(Generated {
         facts,
         status: instance::instance_status(timeline.anchor),
+        paths,
+        unindexed_pool: catalog.long_tail().last().map(|pool| pool.facts.address),
     })
 }
 

@@ -55,7 +55,12 @@ pub fn open_positions(
         .collect::<Result<BTreeMap<_, _>, ReadError>>()?;
     let mut items = rows
         .iter()
-        .map(|row| open_row(snapshot, row, &wallet_worth, request.currency, context))
+        .map(|row| {
+            let worth = wallet_worth
+                .get(&row.facts.wallet)
+                .ok_or(ReadError::MissingFact)?;
+            open_row(snapshot, row, worth, request.currency, context)
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let order = request
         .order
@@ -68,11 +73,11 @@ pub fn open_positions(
     })
 }
 
-/// The row of one open position.
-fn open_row(
+/// The row of one open position, whose wallet is worth `wallet_worth`.
+pub(super) fn open_row(
     snapshot: &Snapshot,
     row: &OpenRow,
-    wallet_worth: &BTreeMap<Address, Figure<Valued>>,
+    wallet_worth: &Figure<Valued>,
     currency: Currency,
     context: &ReadContext,
 ) -> Result<OpenPositionRow, ReadError> {
@@ -82,9 +87,6 @@ fn open_row(
     let lower = bin_price(pool, facts.lower_bin_id);
     let upper = bin_price(pool, facts.upper_bin_id);
     let held = context.now.duration_since(facts.opened_at).as_secs();
-    let worth = wallet_worth
-        .get(&facts.wallet)
-        .ok_or(ReadError::MissingFact)?;
     let (margin_down, margin_up) = margins(price, lower, upper, facts.pool);
     Ok(OpenPositionRow {
         id: facts.id,
@@ -114,7 +116,7 @@ fn open_row(
         pnl_pct: percent_of(&valuation.pnl, &valuation.invested, currency)?,
         dpr: daily_return(&valuation.pnl, &valuation.invested, held, currency)?,
         apr: annual_return(&valuation.pnl, &valuation.invested, held, currency)?,
-        share_of_net_worth: percent_of(&valuation.value, worth, currency)?,
+        share_of_net_worth: percent_of(&valuation.value, wallet_worth, currency)?,
     })
 }
 

@@ -12,6 +12,7 @@ const API_ERROR_MESSAGES: Record<ErrorCode, MessageDescriptor> = {
   not_found: msg`This item no longer exists.`,
   method_not_allowed: msg`The server refused this action. Reload the app and try again.`,
   wallet_not_found: msg`This wallet is no longer tracked.`,
+  position_not_found: msg`This position is no longer tracked.`,
   request_timeout: msg`The server took too long to answer. Try again.`,
   payload_too_large: msg`The request was too large for the server.`,
   too_many_attempts: msg`Too many attempts. Wait a moment and try again.`,

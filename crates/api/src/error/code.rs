@@ -26,6 +26,9 @@ pub(crate) enum ErrorCode {
     MethodNotAllowed,
     /// The request names a wallet that is not tracked.
     WalletNotFound,
+    /// The request names a position no tracked wallet holds or held (its wallet may have been
+    /// removed).
+    PositionNotFound,
     /// The server took too long to answer (`503`: the request itself arrived in time, so clients
     /// and proxies must not treat it as a `408` they may replay on their own).
     RequestTimeout,
@@ -47,7 +50,7 @@ impl ErrorCode {
             Self::InvalidRequest => StatusCode::BAD_REQUEST,
             Self::Unauthenticated | Self::InvalidCredentials => StatusCode::UNAUTHORIZED,
             Self::ForbiddenCrossOrigin => StatusCode::FORBIDDEN,
-            Self::NotFound | Self::WalletNotFound => StatusCode::NOT_FOUND,
+            Self::NotFound | Self::WalletNotFound | Self::PositionNotFound => StatusCode::NOT_FOUND,
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
             Self::RequestTimeout | Self::DataNotReady => StatusCode::SERVICE_UNAVAILABLE,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,

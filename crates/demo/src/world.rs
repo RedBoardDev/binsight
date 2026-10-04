@@ -1,13 +1,16 @@
 //! The demo world: the snapshot the queries read and the state of the demo instance.
 
+use std::collections::BTreeMap;
+
 use binsight_engine::portfolio::views::{InstanceSettings, TimezoneSource};
 use binsight_engine::portfolio::{InstanceStatus, Snapshot};
 use binsight_ledger::report::valued::Currency;
+use binsight_solana::Address;
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 
 use crate::error::DemoError;
-use crate::generate::generate;
+use crate::generate::{PricePath, generate};
 use crate::scenario::DEMO_SEED;
 
 /// What a demo world is generated from.
@@ -43,6 +46,10 @@ pub(crate) struct World {
     pub(crate) timezone: TimeZone,
     /// The settings of the demo instance.
     pub(crate) settings: InstanceSettings,
+    /// The price path of every pool, by pool address: the demo's market data.
+    pub(crate) paths: BTreeMap<Address, PricePath>,
+    /// The pool the demo's market data source does not know.
+    pub(crate) unindexed_pool: Option<Address>,
 }
 
 impl World {
@@ -59,6 +66,8 @@ impl World {
                 default_currency: Currency::Sol,
                 hide_amounts_by_default: false,
             },
+            paths: generated.paths,
+            unindexed_pool: generated.unindexed_pool,
         })
     }
 }

@@ -1,16 +1,20 @@
 //! The source of figures while the engine cannot serve any: every read answers "not ready".
 
+use binsight_ledger::facts::PositionId;
 use binsight_ledger::report::valued::Currency;
 use binsight_solana::Address;
 
 use super::answer::{Answer, answered};
-use super::query::{OpenPositionsRequest, OverviewRequest, SeriesRequest};
+use super::query::{
+    EventPageRequest, IntervalChoice, OpenPositionsRequest, OverviewRequest, PositionRequest,
+    SeriesRequest,
+};
 use super::read_error::ReadError;
 use super::read_model::{InstanceReads, PortfolioReads, PositionReads, StatsReads, WalletReads};
 use super::scope::Scope;
 use super::views::{
-    InstanceSettings, OpenPositionsView, OverviewView, RecentClosesView, SeriesView, SyncReport,
-    TokenLogoImage, WalletsView,
+    CandlesView, EventPage, InstanceSettings, OpenPositionsView, OverviewView, PositionDetailView,
+    RecentClosesView, SeriesView, SyncReport, TokenLogoImage, WalletsView,
 };
 
 /// A source that has no figures yet.
@@ -54,6 +58,22 @@ impl StatsReads for NotReadyPortfolio {
 }
 
 impl PositionReads for NotReadyPortfolio {
+    fn position(&self, _request: PositionRequest) -> Answer<'_, PositionDetailView> {
+        answered(Err(ReadError::NotReady))
+    }
+
+    fn position_events(&self, _request: EventPageRequest) -> Answer<'_, EventPage> {
+        answered(Err(ReadError::NotReady))
+    }
+
+    fn position_candles(
+        &self,
+        _id: PositionId,
+        _interval: IntervalChoice,
+    ) -> Answer<'_, CandlesView> {
+        answered(Err(ReadError::NotReady))
+    }
+
     fn token_logo(&self, _mint: Address) -> Answer<'_, TokenLogoImage> {
         answered(Err(ReadError::NotReady))
     }

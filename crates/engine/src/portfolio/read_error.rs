@@ -1,5 +1,6 @@
 //! Why a read of the portfolio failed.
 
+use binsight_ledger::facts::PositionId;
 use binsight_ledger::report::ReadRuleError;
 use binsight_ledger::report::period::WindowError;
 use binsight_solana::Address;
@@ -13,12 +14,26 @@ pub enum ReadError {
     /// The read names a wallet that is not tracked.
     #[error("the wallet {0} is not tracked")]
     WalletNotFound(Address),
+    /// The read names a position no tracked wallet holds or held.
+    #[error("the position {0} is not tracked")]
+    PositionNotFound(PositionId),
+    /// The read asks for a candle size that does not fit the position's chart.
+    #[error("this candle size does not fit the chart of the position")]
+    InvalidInterval,
     /// No token logo is stored for the mint.
     #[error("no logo is stored for the token {0}")]
     LogoNotFound(Address),
     /// The read asks for more buckets than a chart may have.
     #[error("the chart would have more than {0} buckets")]
     TooManyBuckets(usize),
+    /// A bin of a pool has no price (a bug of the source).
+    #[error("the bin {bin_id} of the pool {pool} has no price")]
+    BinOutOfRange {
+        /// The pool.
+        pool: Address,
+        /// The bin.
+        bin_id: i32,
+    },
     /// A position refers to a fact the snapshot does not hold (a bug of the source).
     #[error("the snapshot lacks a fact a position refers to")]
     MissingFact,

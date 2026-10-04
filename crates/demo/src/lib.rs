@@ -24,6 +24,7 @@
 )]
 
 mod addresses;
+mod candles;
 mod error;
 mod generate;
 mod portfolio;

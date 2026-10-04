@@ -3,18 +3,23 @@
 use std::sync::Arc;
 
 use binsight_core::clock::Clock;
-use binsight_engine::portfolio::query::{OpenPositionsRequest, OverviewRequest, SeriesRequest};
+use binsight_engine::portfolio::query::{
+    EventPageRequest, IntervalChoice, OpenPositionsRequest, OverviewRequest, PositionRequest,
+    SeriesRequest,
+};
 use binsight_engine::portfolio::views::{
-    InstanceSettings, OpenPositionsView, OverviewView, RecentClosesView, SeriesView, SyncReport,
-    TokenLogoImage, WalletsView,
+    CandlesView, EventPage, InstanceSettings, OpenPositionsView, OverviewView, PositionDetailView,
+    RecentClosesView, SeriesView, SyncReport, TokenLogoImage, WalletsView,
 };
 use binsight_engine::portfolio::{
     Answer, InstanceReads, PortfolioReads, PositionReads, ReadContext, Scope, StatsReads,
     WalletReads, answered, query,
 };
+use binsight_ledger::facts::PositionId;
 use binsight_ledger::report::valued::Currency;
 use binsight_solana::Address;
 
+use crate::candles::candles;
 use crate::error::DemoError;
 use crate::world::{World, WorldSpec};
 
@@ -119,6 +124,37 @@ impl StatsReads for DemoPortfolio {
 }
 
 impl PositionReads for DemoPortfolio {
+    fn position(&self, request: PositionRequest) -> Answer<'_, PositionDetailView> {
+        answered(query::position(
+            &self.world.snapshot,
+            request,
+            &self.context(),
+        ))
+    }
+
+    fn position_events(&self, request: EventPageRequest) -> Answer<'_, EventPage> {
+        answered(query::position_events(&self.world.snapshot, request))
+    }
+
+    fn position_candles(
+        &self,
+        id: PositionId,
+        interval: IntervalChoice,
+    ) -> Answer<'_, CandlesView> {
+        let world = &self.world;
+        let now = self.context().now;
+        answered(
+            query::candle_request(&world.snapshot, id, interval, now).and_then(|request| {
+                let address = request.pool.address;
+                let path = world
+                    .paths
+                    .get(&address)
+                    .filter(|_| world.unindexed_pool != Some(address));
+                candles(&request, path, now)
+            }),
+        )
+    }
+
     fn token_logo(&self, mint: Address) -> Answer<'_, TokenLogoImage> {
         answered(query::token_logo(&self.world.snapshot, mint))
     }

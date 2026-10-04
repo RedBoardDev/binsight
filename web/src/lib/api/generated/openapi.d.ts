@@ -460,7 +460,7 @@ export interface components {
          * @description Why a request failed. Stable: clients use it as their translation key.
          * @enum {string}
          */
-        ErrorCode: "invalid_request" | "unauthenticated" | "invalid_credentials" | "forbidden_cross_origin" | "not_found" | "method_not_allowed" | "wallet_not_found" | "request_timeout" | "payload_too_large" | "too_many_attempts" | "data_not_ready" | "internal";
+        ErrorCode: "invalid_request" | "unauthenticated" | "invalid_credentials" | "forbidden_cross_origin" | "not_found" | "method_not_allowed" | "wallet_not_found" | "position_not_found" | "request_timeout" | "payload_too_large" | "too_many_attempts" | "data_not_ready" | "internal";
         /** @description The content of an error body. */
         ErrorDetail: {
             /** @description The stable error code; clients translate it. */

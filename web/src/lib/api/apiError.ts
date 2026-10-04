@@ -12,6 +12,7 @@ const ERROR_CODES = {
   not_found: true,
   method_not_allowed: true,
   wallet_not_found: true,
+  position_not_found: true,
   request_timeout: true,
   payload_too_large: true,
   too_many_attempts: true,

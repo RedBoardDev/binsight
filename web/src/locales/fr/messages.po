@@ -232,6 +232,10 @@ msgid "This password is too long."
 msgstr "Ce mot de passe est trop long."
 
 #: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "This position is no longer tracked."
+msgstr "Cette position n’est plus suivie."
+
+#: src/applications/Shared/Ui/apiErrorMessages.ts
 msgid "This wallet is no longer tracked."
 msgstr "Ce wallet n’est plus suivi."
 

@@ -1356,6 +1356,7 @@
           "not_found",
           "method_not_allowed",
           "wallet_not_found",
+          "position_not_found",
           "request_timeout",
           "payload_too_large",
           "too_many_attempts",
