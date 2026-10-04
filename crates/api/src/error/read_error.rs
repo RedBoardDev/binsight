@@ -16,7 +16,17 @@ impl From<ReadError> for ApiError {
                 ErrorCode::WalletNotFound,
                 format!("the wallet {address} is not tracked"),
             ),
-            ReadError::Rule(_) | ReadError::Window(_) => Self::internal(error.to_string()),
+            ReadError::LogoNotFound(mint) => Self::new(
+                ErrorCode::NotFound,
+                format!("no logo is stored for the token {mint}"),
+            ),
+            ReadError::TooManyBuckets(limit) => Self::new(
+                ErrorCode::InvalidRequest,
+                format!("the window has more than {limit} buckets: choose a larger bucket"),
+            ),
+            ReadError::Rule(_) | ReadError::Window(_) | ReadError::MissingFact => {
+                Self::internal(error.to_string())
+            }
         }
     }
 }

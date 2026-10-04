@@ -9,51 +9,20 @@ use std::collections::BTreeMap;
 
 use binsight_core::error::AmountError;
 use binsight_ledger::facts::{
-    ClosedPositionFacts, OpenPnlMark, OpenPositionFacts, PoolFacts, SolUsdRates, WalletEntry,
-    WalletFacts, WalletHoldings,
+    ClosedPositionFacts, OpenPnlMark, OpenPositionFacts, PoolFacts, SolUsdRates, TokenFacts,
+    WalletEntry,
 };
 use binsight_ledger::report::closed::ClosedValuation;
 use binsight_ledger::report::open::OpenValuation;
 use binsight_ledger::report::real_pnl::{WalletHistory, WalletHistoryFacts};
 use binsight_solana::Address;
 
+mod facts;
+
+pub use facts::{SnapshotFacts, TokenLogoFacts, TrackedWallet};
+
 use super::scope::Scope;
-use super::views::{WalletColor, WalletRef, WalletSync};
-use super::wallet_label::WalletLabel;
-
-/// A tracked wallet: its facts, how the owner named it, what it holds and how it is synchronized.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TrackedWallet {
-    /// What the accounting knows about it.
-    pub facts: WalletFacts,
-    /// Its label.
-    pub label: WalletLabel,
-    /// Its color.
-    pub color: WalletColor,
-    /// What it holds outside positions.
-    pub holdings: WalletHoldings,
-    /// How far it is synchronized.
-    pub sync: WalletSync,
-}
-
-/// Everything a snapshot is built from.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SnapshotFacts {
-    /// The tracked wallets, in the order they were added.
-    pub wallets: Vec<TrackedWallet>,
-    /// Every pool a position of a tracked wallet used.
-    pub pools: Vec<PoolFacts>,
-    /// Every closed position.
-    pub closed: Vec<ClosedPositionFacts>,
-    /// Every open position.
-    pub open: Vec<OpenPositionFacts>,
-    /// Every wallet entry outside positions.
-    pub entries: Vec<WalletEntry>,
-    /// Every open-PnL mark.
-    pub marks: Vec<OpenPnlMark>,
-    /// The SOL/USD rates.
-    pub rates: SolUsdRates,
-}
+use super::views::WalletRef;
 
 /// A closed position and its valuation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,6 +58,8 @@ pub enum SnapshotError {
 pub struct Snapshot {
     wallets: Vec<TrackedWallet>,
     pools: BTreeMap<Address, PoolFacts>,
+    tokens: BTreeMap<Address, TokenFacts>,
+    logos: BTreeMap<Address, TokenLogoFacts>,
     closed: Vec<ClosedRow>,
     open: Vec<OpenRow>,
     entries: Vec<WalletEntry>,
@@ -150,9 +121,22 @@ impl Snapshot {
                 Ok((wallet.facts.address, history))
             })
             .collect::<Result<BTreeMap<_, _>, SnapshotError>>()?;
+        let tokens = pools
+            .values()
+            .flat_map(|pool| [pool.base.clone(), pool.quote.clone()])
+            .chain(facts.tokens)
+            .map(|token| (token.mint, token))
+            .collect();
+        let logos = facts
+            .logos
+            .into_iter()
+            .map(|logo| (logo.mint, logo))
+            .collect();
         Ok(Self {
             wallets: facts.wallets,
             pools,
+            tokens,
+            logos,
             closed,
             open,
             entries: facts.entries,
@@ -192,6 +176,16 @@ impl Snapshot {
     /// The pool at `address`, if a position used it.
     pub fn pool(&self, address: Address) -> Option<&PoolFacts> {
         self.pools.get(&address)
+    }
+
+    /// The token at `mint`, if it is known.
+    pub fn token(&self, mint: Address) -> Option<&TokenFacts> {
+        self.tokens.get(&mint)
+    }
+
+    /// The logo of the token at `mint`, if binsight stores one.
+    pub fn logo(&self, mint: Address) -> Option<&TokenLogoFacts> {
+        self.logos.get(&mint)
     }
 
     /// The closed positions of `scope`, latest close first.

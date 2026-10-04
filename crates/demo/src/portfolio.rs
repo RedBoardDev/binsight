@@ -3,11 +3,17 @@
 use std::sync::Arc;
 
 use binsight_core::clock::Clock;
-use binsight_engine::portfolio::views::{InstanceSettings, SyncReport, WalletsView};
+use binsight_engine::portfolio::query::{OpenPositionsRequest, OverviewRequest, SeriesRequest};
+use binsight_engine::portfolio::views::{
+    InstanceSettings, OpenPositionsView, OverviewView, RecentClosesView, SeriesView, SyncReport,
+    TokenLogoImage, WalletsView,
+};
 use binsight_engine::portfolio::{
-    Answer, InstanceReads, ReadContext, WalletReads, answered, query,
+    Answer, InstanceReads, PortfolioReads, PositionReads, ReadContext, Scope, StatsReads,
+    WalletReads, answered, query,
 };
 use binsight_ledger::report::valued::Currency;
+use binsight_solana::Address;
 
 use crate::error::DemoError;
 use crate::world::{World, WorldSpec};
@@ -70,6 +76,51 @@ impl WalletReads for DemoPortfolio {
             &self.context(),
             currency,
         ))
+    }
+}
+
+impl PortfolioReads for DemoPortfolio {
+    fn overview(&self, request: OverviewRequest) -> Answer<'_, OverviewView> {
+        let world = &self.world;
+        answered(query::overview(
+            &world.snapshot,
+            &world.status,
+            request,
+            &self.context(),
+        ))
+    }
+
+    fn open_positions(&self, request: OpenPositionsRequest) -> Answer<'_, OpenPositionsView> {
+        answered(query::open_positions(
+            &self.world.snapshot,
+            request,
+            &self.context(),
+        ))
+    }
+
+    fn recent_closes(&self, scope: Scope, currency: Currency) -> Answer<'_, RecentClosesView> {
+        answered(query::recent_closes(
+            &self.world.snapshot,
+            scope,
+            currency,
+            &self.context(),
+        ))
+    }
+}
+
+impl StatsReads for DemoPortfolio {
+    fn stats_series(&self, request: SeriesRequest) -> Answer<'_, SeriesView> {
+        answered(query::stats_series(
+            &self.world.snapshot,
+            request,
+            &self.context(),
+        ))
+    }
+}
+
+impl PositionReads for DemoPortfolio {
+    fn token_logo(&self, mint: Address) -> Answer<'_, TokenLogoImage> {
+        answered(query::token_logo(&self.world.snapshot, mint))
     }
 }
 

@@ -317,6 +317,7 @@ version = "0.1.0"
 dependencies = [
  "binsight-chain",
  "binsight-core",
+ "binsight-dlmm",
  "binsight-ledger",
  "binsight-solana",
  "binsight-store",

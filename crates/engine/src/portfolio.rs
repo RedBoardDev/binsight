@@ -22,7 +22,11 @@ pub use data_source::{DataSource, DataSourceKind};
 pub use instance_status::InstanceStatus;
 pub use not_ready::NotReadyPortfolio;
 pub use read_error::ReadError;
-pub use read_model::{InstanceReads, ReadModel, WalletReads};
+pub use read_model::{
+    InstanceReads, PortfolioReads, PositionReads, ReadModel, StatsReads, WalletReads,
+};
 pub use scope::{ReadContext, Scope};
-pub use snapshot::{ClosedRow, OpenRow, Snapshot, SnapshotError, SnapshotFacts, TrackedWallet};
+pub use snapshot::{
+    ClosedRow, OpenRow, Snapshot, SnapshotError, SnapshotFacts, TokenLogoFacts, TrackedWallet,
+};
 pub use wallet_label::{MAX_WALLET_LABEL_CHARS, WalletLabel, WalletLabelError};

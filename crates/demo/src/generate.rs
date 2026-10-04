@@ -68,6 +68,7 @@ pub(crate) fn generate(spec: &WorldSpec) -> Result<Generated, DemoError> {
             .iter()
             .map(|pool| pool.facts.clone())
             .collect(),
+        tokens: vec![catalog.unpriced_token.clone()],
         rates,
         ..SnapshotFacts::default()
     };

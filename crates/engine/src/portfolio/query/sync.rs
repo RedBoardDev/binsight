@@ -49,7 +49,10 @@ pub fn sync_report(
 }
 
 /// The credits of the UTC month of `now`, projected to its end at the pace of its elapsed days.
-fn credits(status: &InstanceStatus, now: Timestamp) -> Result<CreditsSummary, ReadError> {
+pub(super) fn credits(
+    status: &InstanceStatus,
+    now: Timestamp,
+) -> Result<CreditsSummary, ReadError> {
     let today = now.to_zoned(TimeZone::UTC).date();
     let days_in_month = u64::try_from(today.days_in_month()).unwrap_or(1);
     let elapsed_days = u64::try_from(today.day()).unwrap_or(1).max(1);

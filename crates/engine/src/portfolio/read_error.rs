@@ -13,6 +13,15 @@ pub enum ReadError {
     /// The read names a wallet that is not tracked.
     #[error("the wallet {0} is not tracked")]
     WalletNotFound(Address),
+    /// No token logo is stored for the mint.
+    #[error("no logo is stored for the token {0}")]
+    LogoNotFound(Address),
+    /// The read asks for more buckets than a chart may have.
+    #[error("the chart would have more than {0} buckets")]
+    TooManyBuckets(usize),
+    /// A position refers to a fact the snapshot does not hold (a bug of the source).
+    #[error("the snapshot lacks a fact a position refers to")]
+    MissingFact,
     /// A read rule overflowed.
     #[error("a read rule failed")]
     Rule(#[from] ReadRuleError),
