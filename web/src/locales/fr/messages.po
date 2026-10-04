@@ -15,6 +15,14 @@ msgstr "{seconds, plural, one {Trop de tentatives échouées. Réessayez dans # 
 msgid "A new version of binsight is available."
 msgstr "Une nouvelle version de binsight est disponible."
 
+#: src/applications/Setting/Ui/SettingsPage/AboutSection.tsx
+msgid "About"
+msgstr "À propos"
+
+#: src/applications/Shared/Motion/Ui/ReduceMotionSwitch.tsx
+msgid "Always on when your device asks for less motion."
+msgstr "Toujours activé lorsque votre appareil demande moins d’animations."
+
 #: src/core/RootErrorBoundary.tsx
 msgid "An unexpected error stopped the app. Reload the page to start again."
 msgstr "Une erreur inattendue a arrêté l’application. Rechargez la page pour recommencer."
@@ -24,8 +32,8 @@ msgid "Available"
 msgstr "Disponible"
 
 #: src/core/NotFoundScreen.tsx
-msgid "Back to the dashboard"
-msgstr "Retour au tableau de bord"
+msgid "Back to the overview"
+msgstr "Retour à l’aperçu"
 
 #: src/applications/Shared/Ui/apiErrorMessages.ts
 msgid "binsight cannot be reached. Check your connection and try again."
@@ -34,6 +42,10 @@ msgstr "binsight est injoignable. Vérifiez votre connexion et réessayez."
 #: src/core/RootErrorBoundary.tsx
 msgid "binsight stopped working"
 msgstr "binsight a cessé de fonctionner"
+
+#: src/core/Layout/AppShell/Brand.tsx
+msgid "binsight, overview"
+msgstr "binsight, aperçu"
 
 #: src/applications/Realtime/Ui/streamStateLabels.ts
 msgid "Connecting"
@@ -51,11 +63,6 @@ msgstr "La déconnexion a échoué."
 msgid "Dark theme"
 msgstr "Thème sombre"
 
-#: src/applications/Dashboard/Ui/DashboardPage.tsx
-#: src/core/Layout/AppShell/navItems.ts
-msgid "Dashboard"
-msgstr "Tableau de bord"
-
 #: src/applications/Health/Ui/HealthCard/HealthReport.tsx
 msgid "Database"
 msgstr "Base de données"
@@ -63,6 +70,10 @@ msgstr "Base de données"
 #: src/applications/Health/Ui/HealthCard/healthLabels.ts
 msgid "Degraded"
 msgstr "Dégradé"
+
+#: src/applications/Setting/Ui/SettingsPage.tsx
+msgid "Display"
+msgstr "Affichage"
 
 #: src/applications/Health/Ui/HealthCard/HealthReport.tsx
 msgid "Engine"
@@ -72,15 +83,26 @@ msgstr "Moteur"
 msgid "Enter the password."
 msgstr "Saisissez le mot de passe."
 
+#: src/applications/Health/Ui/HealthPage.tsx
+#: src/core/Layout/AppShell/navItems.ts
+msgid "Health"
+msgstr "Santé"
+
 #: src/applications/Health/Ui/HealthCard/healthLabels.ts
 msgid "Healthy"
 msgstr "Opérationnel"
+
+#: src/applications/ClosedPosition/Ui/HistoryPage.tsx
+#: src/core/Layout/AppShell/navItems.ts
+msgid "History"
+msgstr "Historique"
 
 #: src/applications/Auth/Ui/LoginForm/errorCopy.ts
 #: src/applications/Shared/Ui/apiErrorMessages.ts
 msgid "Incorrect password."
 msgstr "Mot de passe incorrect."
 
+#: src/applications/Setting/Ui/SettingsPage.tsx
 #: src/core/i18n/LocaleSwitcher.tsx
 msgid "Language"
 msgstr "Langue"
@@ -89,7 +111,7 @@ msgstr "Langue"
 msgid "Last heartbeat"
 msgstr "Dernier signal"
 
-#: src/core/Layout/AppShell/AboutFooter.tsx
+#: src/applications/Setting/Ui/SettingsPage/AboutSection.tsx
 msgid "Licenses"
 msgstr "Licences"
 
@@ -106,17 +128,35 @@ msgid "Live updates"
 msgstr "Mises à jour en direct"
 
 #: src/applications/Realtime/Ui/RealtimeStatusIndicator.tsx
-msgid "Live updates: {label}"
-msgstr "Mises à jour en direct : {label}"
+msgid "Live updates:"
+msgstr "Mises à jour en direct :"
 
-#: src/core/Layout/AppShell/DesktopSidebar.tsx
-#: src/core/Layout/AppShell/MobileTabBar.tsx
-msgid "Main navigation"
-msgstr "Navigation principale"
+#: src/core/Layout/AppShell/DesktopNav.tsx
+#: src/core/Layout/AppShell/FloatingTabBar.tsx
+msgid "Main"
+msgstr "Principale"
+
+#: src/core/Layout/AppShell/MoreSheet.tsx
+#: src/core/Layout/AppShell/navItems.ts
+msgid "More"
+msgstr "Plus"
+
+#: src/applications/Setting/Ui/SettingsPage/AboutSection.tsx
+msgid "Open-source licenses"
+msgstr "Licences open source"
+
+#: src/applications/Overview/Ui/OverviewPage.tsx
+#: src/core/Layout/AppShell/navItems.ts
+msgid "Overview"
+msgstr "Aperçu"
 
 #: src/core/NotFoundScreen.tsx
 msgid "Page not found"
 msgstr "Page introuvable"
+
+#: src/core/Layout/AppShell/MoreSheet.tsx
+msgid "Pages"
+msgstr "Pages"
 
 #: src/applications/Auth/Ui/LoginForm/PasswordField.tsx
 msgid "Password"
@@ -129,6 +169,10 @@ msgstr "En pause"
 #: src/applications/Realtime/Ui/streamStateLabels.ts
 msgid "Reconnecting"
 msgstr "Reconnexion"
+
+#: src/applications/Shared/Motion/Ui/ReduceMotionSwitch.tsx
+msgid "Reduce motion"
+msgstr "Réduire les animations"
 
 #: src/core/pwa/UpdatePrompt.tsx
 #: src/core/RootErrorBoundary.tsx
@@ -143,6 +187,24 @@ msgstr "En marche"
 msgid "Server"
 msgstr "Serveur"
 
+#: src/applications/Setting/Ui/SettingsPage.tsx
+#: src/core/Layout/AppShell/MoreSheet.tsx
+msgid "Session"
+msgstr "Session"
+
+#: src/applications/Setting/Ui/SettingsPage.tsx
+#: src/core/Layout/AppShell/navItems.ts
+msgid "Settings"
+msgstr "Réglages"
+
+#: src/core/Layout/AppShell/AccountMenu.tsx
+msgid "Settings and session"
+msgstr "Réglages et session"
+
+#: src/core/Layout/AppShell/FloatingTabBar.tsx
+msgid "Show the tabs"
+msgstr "Afficher les onglets"
+
 #: src/applications/Auth/Ui/LoginForm.tsx
 msgid "Sign in"
 msgstr "Se connecter"
@@ -152,8 +214,17 @@ msgid "Sign in with the password of this instance."
 msgstr "Connectez-vous avec le mot de passe de cette instance."
 
 #: src/applications/Auth/Ui/SignOutButton.tsx
+#: src/core/Layout/AppShell/navItems.ts
 msgid "Sign out"
 msgstr "Se déconnecter"
+
+#: src/applications/Setting/Ui/SettingsPage.tsx
+msgid "Sign out of this device"
+msgstr "Se déconnecter de cet appareil"
+
+#: src/core/Layout/AppShell/SkipLink.tsx
+msgid "Skip to content"
+msgstr "Aller au contenu"
 
 #: src/core/ShellErrorScreen.tsx
 msgid "Something went wrong"
@@ -163,9 +234,18 @@ msgstr "Une erreur est survenue"
 msgid "Something went wrong. Try again."
 msgstr "Une erreur s’est produite. Réessayez."
 
+#: src/applications/Setting/Ui/SettingsPage/AboutSection.tsx
+msgid "Source code"
+msgstr "Code source"
+
 #: src/applications/Health/Ui/HealthCard/healthLabels.ts
 msgid "Starting"
 msgstr "Démarrage"
+
+#: src/applications/Stats/Ui/StatsPage.tsx
+#: src/core/Layout/AppShell/navItems.ts
+msgid "Stats"
+msgstr "Stats"
 
 #: src/applications/Health/Ui/HealthCard/HealthReport.tsx
 msgid "Status"
@@ -207,6 +287,7 @@ msgstr "Le serveur a refusé cette action. Rechargez l’application et réessay
 msgid "The server took too long to answer. Try again."
 msgstr "Le serveur a mis trop de temps à répondre. Réessayez."
 
+#: src/applications/Setting/Ui/SettingsPage.tsx
 #: src/core/theme/ThemeSwitcher.tsx
 msgid "Theme"
 msgstr "Thème"
@@ -245,8 +326,14 @@ msgid "Unavailable"
 msgstr "Indisponible"
 
 #: src/applications/Health/Ui/HealthCard/HealthReport.tsx
+#: src/applications/Setting/Ui/SettingsPage/AboutSection.tsx
 msgid "Version"
 msgstr "Version"
+
+#: src/applications/Wallet/Ui/WalletsPage.tsx
+#: src/core/Layout/AppShell/navItems.ts
+msgid "Wallets"
+msgstr "Wallets"
 
 #: src/applications/Shared/Ui/apiErrorMessages.ts
 msgid "Your session has ended. Sign in again."

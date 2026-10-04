@@ -68,8 +68,8 @@ both. On a merge conflict in either file, take one side and regenerate; never me
 
 `just e2e` (from the repository root) builds the web app and the debug binary, then runs `e2e/smoke.spec.ts`
 with Playwright on a desktop and a mobile Chromium: Playwright starts the server itself with a temporary data
-folder and the password `e2e-password-not-a-secret`, signs in, checks the dashboard, the live status, the 404
-page and sign-out, and runs axe on each page (no serious or critical violation). Install the browser once with
+folder and the password `e2e-password-not-a-secret`, signs in, checks the shell (top bar on a desktop, floating
+tab bar on a phone), the live status, the health page, the 404 page and sign-out, and runs axe on each page (no serious or critical violation). Install the browser once with
 `pnpm exec playwright install chromium` (add `--with-deps` on a machine where you may install system
 libraries). Set `E2E_BASE_URL` to test a server that is already running.
 
@@ -84,7 +84,7 @@ checks and the build.
 
 After `vite build`, `scripts/thirdPartyNotices.ts` writes `dist/third-party-licenses.txt`: the license and
 notice texts of every production dependency, which the binary serves at `/third-party-licenses.txt` and the
-sidebar links to. It reads `pnpm licenses list --prod`, so anything the browser runs must be a
+Settings page links to. It reads `pnpm licenses list --prod`, so anything the browser runs must be a
 `dependency`, and tooling a `devDependency`. `pnpm licenses:check` runs the allowlist check alone.
 
 ## Adding a dependency

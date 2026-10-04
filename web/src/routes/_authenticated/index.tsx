@@ -1,4 +1,4 @@
-import { DashboardPage } from '@app/applications/Dashboard/Ui/DashboardPage';
+import { OverviewPage } from '@app/applications/Overview/Ui/OverviewPage';
 import { createFileRoute } from '@tanstack/react-router';
 
-export const Route = createFileRoute('/_authenticated/')({ component: DashboardPage });
+export const Route = createFileRoute('/_authenticated/')({ component: OverviewPage });

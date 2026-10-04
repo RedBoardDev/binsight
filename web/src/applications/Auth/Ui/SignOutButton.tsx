@@ -10,15 +10,9 @@ export const SignOutButton = () => {
   const { run, isPending } = useAsyncAction(signOut);
 
   return (
-    <Button
-      variant="ghost"
-      size="lg"
-      isIconOnly
-      aria-label={t`Sign out`}
-      isPending={isPending}
-      onPress={() => run()}
-    >
-      <LogOut aria-hidden />
+    <Button variant="ghost" isPending={isPending} onPress={() => run()}>
+      <LogOut aria-hidden strokeWidth={1.75} className="size-4" />
+      {t`Sign out`}
     </Button>
   );
 };

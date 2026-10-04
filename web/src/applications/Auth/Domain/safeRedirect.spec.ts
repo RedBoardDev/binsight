@@ -6,7 +6,7 @@ describe('safeRedirect', () => {
     expect(safeRedirect('/positions?wallet=main#open')).toBe('/positions?wallet=main#open');
   });
 
-  it('goes to the dashboard when there is no destination', () => {
+  it('goes to the overview when there is no destination', () => {
     expect(safeRedirect(undefined)).toBe('/');
     expect(safeRedirect('')).toBe('/');
   });

@@ -49,12 +49,15 @@ describe('RealtimeProvider', () => {
   it('shows the stream status and the time of the last heartbeat', async () => {
     stubApi({ 'GET /api/v1/auth/session': signedInSession });
     const openedStream = stubEventSource();
-    renderAppAt('/');
+    renderAppAt('/health');
     const stream = await openedStream();
 
-    expect(await screen.findByRole('status', { name: 'Live updates: Connecting' })).toBeVisible();
+    const liveStatus = (await screen.findAllByRole('status')).find((status) =>
+      status.textContent?.startsWith('Live updates:'),
+    );
+    expect(liveStatus).toHaveTextContent('Live updates: Connecting');
     act(() => stream.open());
-    expect(screen.getByRole('status', { name: 'Live updates: Live' })).toBeVisible();
+    expect(liveStatus).toHaveTextContent('Live updates: Live');
     expect(screen.getByText('Last heartbeat').nextSibling).toHaveTextContent('—');
 
     act(() => stream.send('heartbeat', { type: 'heartbeat', server_time: '2026-10-03T21:00:15Z' }));
@@ -66,7 +69,7 @@ describe('RealtimeProvider', () => {
     const getHealth = vi.fn(() => jsonResponse(200, HEALTHY));
     stubApi({ 'GET /api/v1/auth/session': signedInSession, 'GET /api/v1/health': getHealth });
     const openedStream = stubEventSource();
-    renderAppAt('/');
+    renderAppAt('/health');
     const stream = await openedStream();
     await screen.findByText('Healthy');
     const callsBefore = getHealth.mock.calls.length;
@@ -82,7 +85,7 @@ describe('RealtimeProvider', () => {
       'GET /api/v1/auth/session': () => (isSignedIn ? signedInSession() : signedOutSession()),
     });
     const openedStream = stubEventSource();
-    const { router } = renderAppAt('/');
+    const { router } = renderAppAt('/health');
     const stream = await openedStream();
 
     isSignedIn = false;

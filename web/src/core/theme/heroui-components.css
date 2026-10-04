@@ -10,6 +10,12 @@
     border-radius: var(--field-radius);
   }
 
+  /* The accent is for the one primary action of a screen: a secondary button speaks in the text
+     color. */
+  .button--secondary {
+    --button-fg: var(--foreground);
+  }
+
   /* Floating layers: the elevated tone, a soft shadow, no border, radius 12. */
   .popover,
   .dropdown__popover,
@@ -41,6 +47,55 @@
   .modal__backdrop {
     background: var(--backdrop);
     backdrop-filter: none;
+  }
+
+  /* A group of toggle buttons is a segmented control: an inset track, the selected segment raised
+     on the elevated tone. Never the accent: choosing a view is not a status. */
+  .toggle-button-group {
+    gap: 0.125rem;
+    padding: 0.125rem;
+    border-radius: var(--field-radius);
+    background: var(--inset);
+  }
+
+  .toggle-button-group .toggle-button {
+    --toggle-button-bg: transparent;
+    --toggle-button-bg-hover: var(--hover);
+    --toggle-button-bg-pressed: var(--hover);
+    --toggle-button-bg-selected: var(--segment);
+    --toggle-button-bg-selected-hover: var(--segment);
+    --toggle-button-bg-selected-pressed: var(--segment);
+    --toggle-button-fg-selected: var(--foreground);
+    border-radius: 0.5rem;
+    color: var(--muted);
+  }
+
+  .toggle-button-group .toggle-button[data-selected="true"] {
+    box-shadow: var(--thumb-shadow);
+  }
+
+  .toggle-button-group__separator {
+    display: none;
+  }
+
+  /* The looks the app gives HeroUI's buttons and links. An instance names one of these modifiers
+     and adds layout classes only. */
+
+  /* A link that reads as body text. */
+  .link--body {
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+  }
+
+  /* A switch is neutral: its track takes the text color when on, never the accent. */
+  .switch {
+    --switch-control-bg: color-mix(in srgb, var(--foreground) 16%, transparent);
+    --switch-control-bg-checked: var(--foreground);
+    --switch-control-bg-checked-hover: color-mix(in srgb, var(--foreground) 85%, transparent);
+  }
+
+  .switch[data-selected="true"] .switch__thumb {
+    background: var(--background);
   }
 
   /* A finger needs 44 px, whatever the visual size of the control. */

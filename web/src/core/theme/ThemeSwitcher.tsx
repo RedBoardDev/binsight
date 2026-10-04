@@ -6,9 +6,9 @@ import { useLingui } from '@lingui/react/macro';
 import { Monitor, Moon, Sun } from 'lucide-react';
 
 const THEME_OPTIONS = [
+  { preference: 'system', label: msg`System theme`, Icon: Monitor },
   { preference: 'light', label: msg`Light theme`, Icon: Sun },
   { preference: 'dark', label: msg`Dark theme`, Icon: Moon },
-  { preference: 'system', label: msg`System theme`, Icon: Monitor },
 ] as const;
 
 export const ThemeSwitcher = () => {
@@ -20,7 +20,6 @@ export const ThemeSwitcher = () => {
       aria-label={t`Theme`}
       selectionMode="single"
       disallowEmptySelection
-      size="lg"
       selectedKeys={[preference]}
       onSelectionChange={(keys) => {
         const [selected] = keys;
@@ -29,10 +28,9 @@ export const ThemeSwitcher = () => {
         }
       }}
     >
-      {THEME_OPTIONS.map(({ preference: option, label, Icon }, index) => (
+      {THEME_OPTIONS.map(({ preference: option, label, Icon }) => (
         <ToggleButton key={option} id={option} isIconOnly aria-label={i18n._(label)}>
-          {index > 0 && <ToggleButtonGroup.Separator />}
-          <Icon aria-hidden />
+          <Icon aria-hidden strokeWidth={1.75} className="size-4" />
         </ToggleButton>
       ))}
     </ToggleButtonGroup>

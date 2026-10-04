@@ -12,7 +12,7 @@ export const NotFoundScreen = () => {
       description={t`This address does not match any page of binsight.`}
       action={
         <Link to="/" className={buttonVariants({ size: 'lg' })}>
-          {t`Back to the dashboard`}
+          {t`Back to the overview`}
         </Link>
       }
     />

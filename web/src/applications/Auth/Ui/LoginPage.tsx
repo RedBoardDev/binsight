@@ -10,7 +10,7 @@ export const LoginPage = ({ destination }: LoginPageProps) => {
   const { t } = useLingui();
 
   return (
-    <main className="grid h-full place-items-center overflow-y-auto p-4">
+    <main className="grid min-h-dvh place-items-center p-4">
       <Card className="w-full max-w-sm">
         <Card.Header>
           <h1 className="text-accent text-page-title">binsight</h1>

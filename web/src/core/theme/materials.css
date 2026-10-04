@@ -1,0 +1,28 @@
+/*
+ * The two glass materials (Apple's): thin glass for the bar that sits on the page, thick glass for
+ * what floats above it. Never one glass on top of another. A system that asks for less
+ * transparency gets opaque surfaces instead.
+ */
+@utility glass-thin {
+  background: color-mix(in srgb, var(--background) 80%, transparent);
+  backdrop-filter: blur(20px) saturate(1.5);
+
+  @media (prefers-reduced-transparency: reduce) {
+    background: var(--background);
+    backdrop-filter: none;
+  }
+}
+
+@utility glass-thick {
+  background: var(--glass-thick);
+  backdrop-filter: blur(24px) saturate(1.8);
+  box-shadow:
+    var(--glass-highlight),
+    0 0 0 0.5px var(--glass-edge),
+    var(--glass-shadow);
+
+  @media (prefers-reduced-transparency: reduce) {
+    background: var(--overlay);
+    backdrop-filter: none;
+  }
+}

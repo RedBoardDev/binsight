@@ -15,6 +15,14 @@ msgstr "{seconds, plural, one {Too many failed attempts. Try again in # second.}
 msgid "A new version of binsight is available."
 msgstr "A new version of binsight is available."
 
+#: src/applications/Setting/Ui/SettingsPage/AboutSection.tsx
+msgid "About"
+msgstr "About"
+
+#: src/applications/Shared/Motion/Ui/ReduceMotionSwitch.tsx
+msgid "Always on when your device asks for less motion."
+msgstr "Always on when your device asks for less motion."
+
 #: src/core/RootErrorBoundary.tsx
 msgid "An unexpected error stopped the app. Reload the page to start again."
 msgstr "An unexpected error stopped the app. Reload the page to start again."
@@ -24,8 +32,8 @@ msgid "Available"
 msgstr "Available"
 
 #: src/core/NotFoundScreen.tsx
-msgid "Back to the dashboard"
-msgstr "Back to the dashboard"
+msgid "Back to the overview"
+msgstr "Back to the overview"
 
 #: src/applications/Shared/Ui/apiErrorMessages.ts
 msgid "binsight cannot be reached. Check your connection and try again."
@@ -34,6 +42,10 @@ msgstr "binsight cannot be reached. Check your connection and try again."
 #: src/core/RootErrorBoundary.tsx
 msgid "binsight stopped working"
 msgstr "binsight stopped working"
+
+#: src/core/Layout/AppShell/Brand.tsx
+msgid "binsight, overview"
+msgstr "binsight, overview"
 
 #: src/applications/Realtime/Ui/streamStateLabels.ts
 msgid "Connecting"
@@ -51,11 +63,6 @@ msgstr "Could not sign out."
 msgid "Dark theme"
 msgstr "Dark theme"
 
-#: src/applications/Dashboard/Ui/DashboardPage.tsx
-#: src/core/Layout/AppShell/navItems.ts
-msgid "Dashboard"
-msgstr "Dashboard"
-
 #: src/applications/Health/Ui/HealthCard/HealthReport.tsx
 msgid "Database"
 msgstr "Database"
@@ -63,6 +70,10 @@ msgstr "Database"
 #: src/applications/Health/Ui/HealthCard/healthLabels.ts
 msgid "Degraded"
 msgstr "Degraded"
+
+#: src/applications/Setting/Ui/SettingsPage.tsx
+msgid "Display"
+msgstr "Display"
 
 #: src/applications/Health/Ui/HealthCard/HealthReport.tsx
 msgid "Engine"
@@ -72,15 +83,26 @@ msgstr "Engine"
 msgid "Enter the password."
 msgstr "Enter the password."
 
+#: src/applications/Health/Ui/HealthPage.tsx
+#: src/core/Layout/AppShell/navItems.ts
+msgid "Health"
+msgstr "Health"
+
 #: src/applications/Health/Ui/HealthCard/healthLabels.ts
 msgid "Healthy"
 msgstr "Healthy"
+
+#: src/applications/ClosedPosition/Ui/HistoryPage.tsx
+#: src/core/Layout/AppShell/navItems.ts
+msgid "History"
+msgstr "History"
 
 #: src/applications/Auth/Ui/LoginForm/errorCopy.ts
 #: src/applications/Shared/Ui/apiErrorMessages.ts
 msgid "Incorrect password."
 msgstr "Incorrect password."
 
+#: src/applications/Setting/Ui/SettingsPage.tsx
 #: src/core/i18n/LocaleSwitcher.tsx
 msgid "Language"
 msgstr "Language"
@@ -89,7 +111,7 @@ msgstr "Language"
 msgid "Last heartbeat"
 msgstr "Last heartbeat"
 
-#: src/core/Layout/AppShell/AboutFooter.tsx
+#: src/applications/Setting/Ui/SettingsPage/AboutSection.tsx
 msgid "Licenses"
 msgstr "Licenses"
 
@@ -106,17 +128,35 @@ msgid "Live updates"
 msgstr "Live updates"
 
 #: src/applications/Realtime/Ui/RealtimeStatusIndicator.tsx
-msgid "Live updates: {label}"
-msgstr "Live updates: {label}"
+msgid "Live updates:"
+msgstr "Live updates:"
 
-#: src/core/Layout/AppShell/DesktopSidebar.tsx
-#: src/core/Layout/AppShell/MobileTabBar.tsx
-msgid "Main navigation"
-msgstr "Main navigation"
+#: src/core/Layout/AppShell/DesktopNav.tsx
+#: src/core/Layout/AppShell/FloatingTabBar.tsx
+msgid "Main"
+msgstr "Main"
+
+#: src/core/Layout/AppShell/MoreSheet.tsx
+#: src/core/Layout/AppShell/navItems.ts
+msgid "More"
+msgstr "More"
+
+#: src/applications/Setting/Ui/SettingsPage/AboutSection.tsx
+msgid "Open-source licenses"
+msgstr "Open-source licenses"
+
+#: src/applications/Overview/Ui/OverviewPage.tsx
+#: src/core/Layout/AppShell/navItems.ts
+msgid "Overview"
+msgstr "Overview"
 
 #: src/core/NotFoundScreen.tsx
 msgid "Page not found"
 msgstr "Page not found"
+
+#: src/core/Layout/AppShell/MoreSheet.tsx
+msgid "Pages"
+msgstr "Pages"
 
 #: src/applications/Auth/Ui/LoginForm/PasswordField.tsx
 msgid "Password"
@@ -129,6 +169,10 @@ msgstr "Paused"
 #: src/applications/Realtime/Ui/streamStateLabels.ts
 msgid "Reconnecting"
 msgstr "Reconnecting"
+
+#: src/applications/Shared/Motion/Ui/ReduceMotionSwitch.tsx
+msgid "Reduce motion"
+msgstr "Reduce motion"
 
 #: src/core/pwa/UpdatePrompt.tsx
 #: src/core/RootErrorBoundary.tsx
@@ -143,6 +187,24 @@ msgstr "Running"
 msgid "Server"
 msgstr "Server"
 
+#: src/applications/Setting/Ui/SettingsPage.tsx
+#: src/core/Layout/AppShell/MoreSheet.tsx
+msgid "Session"
+msgstr "Session"
+
+#: src/applications/Setting/Ui/SettingsPage.tsx
+#: src/core/Layout/AppShell/navItems.ts
+msgid "Settings"
+msgstr "Settings"
+
+#: src/core/Layout/AppShell/AccountMenu.tsx
+msgid "Settings and session"
+msgstr "Settings and session"
+
+#: src/core/Layout/AppShell/FloatingTabBar.tsx
+msgid "Show the tabs"
+msgstr "Show the tabs"
+
 #: src/applications/Auth/Ui/LoginForm.tsx
 msgid "Sign in"
 msgstr "Sign in"
@@ -152,8 +214,17 @@ msgid "Sign in with the password of this instance."
 msgstr "Sign in with the password of this instance."
 
 #: src/applications/Auth/Ui/SignOutButton.tsx
+#: src/core/Layout/AppShell/navItems.ts
 msgid "Sign out"
 msgstr "Sign out"
+
+#: src/applications/Setting/Ui/SettingsPage.tsx
+msgid "Sign out of this device"
+msgstr "Sign out of this device"
+
+#: src/core/Layout/AppShell/SkipLink.tsx
+msgid "Skip to content"
+msgstr "Skip to content"
 
 #: src/core/ShellErrorScreen.tsx
 msgid "Something went wrong"
@@ -163,9 +234,18 @@ msgstr "Something went wrong"
 msgid "Something went wrong. Try again."
 msgstr "Something went wrong. Try again."
 
+#: src/applications/Setting/Ui/SettingsPage/AboutSection.tsx
+msgid "Source code"
+msgstr "Source code"
+
 #: src/applications/Health/Ui/HealthCard/healthLabels.ts
 msgid "Starting"
 msgstr "Starting"
+
+#: src/applications/Stats/Ui/StatsPage.tsx
+#: src/core/Layout/AppShell/navItems.ts
+msgid "Stats"
+msgstr "Stats"
 
 #: src/applications/Health/Ui/HealthCard/HealthReport.tsx
 msgid "Status"
@@ -207,6 +287,7 @@ msgstr "The server refused this action. Reload the app and try again."
 msgid "The server took too long to answer. Try again."
 msgstr "The server took too long to answer. Try again."
 
+#: src/applications/Setting/Ui/SettingsPage.tsx
 #: src/core/theme/ThemeSwitcher.tsx
 msgid "Theme"
 msgstr "Theme"
@@ -245,8 +326,14 @@ msgid "Unavailable"
 msgstr "Unavailable"
 
 #: src/applications/Health/Ui/HealthCard/HealthReport.tsx
+#: src/applications/Setting/Ui/SettingsPage/AboutSection.tsx
 msgid "Version"
 msgstr "Version"
+
+#: src/applications/Wallet/Ui/WalletsPage.tsx
+#: src/core/Layout/AppShell/navItems.ts
+msgid "Wallets"
+msgstr "Wallets"
 
 #: src/applications/Shared/Ui/apiErrorMessages.ts
 msgid "Your session has ended. Sign in again."

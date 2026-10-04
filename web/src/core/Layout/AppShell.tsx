@@ -1,23 +1,42 @@
 import { RealtimeProvider } from '@app/applications/Realtime/Ui/RealtimeProvider';
-import { Outlet } from '@tanstack/react-router';
-import { AppHeader } from './AppShell/AppHeader';
-import { DesktopSidebar } from './AppShell/DesktopSidebar';
-import { MobileTabBar } from './AppShell/MobileTabBar';
+import { Outlet, useRouter } from '@tanstack/react-router';
+import { useEffect } from 'react';
+import { FloatingTabBar } from './AppShell/FloatingTabBar';
+import { PageColumn } from './AppShell/PageColumn';
+import { MAIN_CONTENT_ID, SkipLink } from './AppShell/SkipLink';
+import { TopBar } from './AppShell/TopBar';
 
-// The sidebar shows from `md:` (width >= 48rem) and the tab bar hides from `md:` too: one
-// breakpoint for both, so no width shows both menus or neither. Never pair `md:` with a hand-written
-// `max-width: 768px`: at exactly 768px both would hide.
-export const AppShell = () => (
-  <RealtimeProvider>
-    <div className="flex h-full">
-      <DesktopSidebar />
-      <div className="flex min-w-0 flex-1 flex-col">
-        <AppHeader />
-        <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
+// The document itself scrolls, under a translucent top bar; on a phone, the floating tab bar sits
+// above the page and the page leaves room for it at its bottom. Only the content has a view
+// transition name: a page change cross-fades it while the bars stay still (motion.css).
+export const AppShell = () => {
+  const router = useRouter();
+  // A screen reader is told nothing when only the content changes: the focus moves to the new
+  // page's title, which it then reads. preventScroll leaves the scroll to its restoration.
+  useEffect(
+    () =>
+      router.subscribe('onResolved', ({ pathChanged }) => {
+        if (pathChanged) {
+          document.querySelector<HTMLElement>('main h1')?.focus({ preventScroll: true });
+        }
+      }),
+    [router],
+  );
+
+  return (
+    <RealtimeProvider>
+      <SkipLink />
+      <TopBar />
+      <main
+        id={MAIN_CONTENT_ID}
+        tabIndex={-1}
+        className="pt-6 pb-(--tab-bar-clearance) outline-none [view-transition-name:page] lg:pt-10 lg:pb-24"
+      >
+        <PageColumn>
           <Outlet />
-        </main>
-        <MobileTabBar />
-      </div>
-    </div>
-  </RealtimeProvider>
-);
+        </PageColumn>
+      </main>
+      <FloatingTabBar />
+    </RealtimeProvider>
+  );
+};

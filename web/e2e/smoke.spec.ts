@@ -11,7 +11,7 @@ const signIn = async (page: Page, password: string): Promise<void> => {
   await page.getByRole('button', { name: 'Sign in' }).click();
 };
 
-test('signs in, shows the dashboard and signs out', async ({ page }, testInfo) => {
+test('signs in, finds its way around the shell and signs out', async ({ page }, testInfo) => {
   const consoleProblems = watchConsole(page);
 
   await page.goto('/');
@@ -23,26 +23,34 @@ test('signs in, shows the dashboard and signs out', async ({ page }, testInfo) =
   await expect(page.getByText('Incorrect password.')).toBeVisible();
 
   await signIn(page, E2E_PASSWORD);
-  await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
-  await expect(page.getByText('Healthy')).toBeVisible();
-  await expect(page.getByText(/^\d+\.\d+\.\d+/)).toBeVisible();
-  await expect(page.getByRole('status', { name: 'Live updates: Live' })).toBeVisible({
-    timeout: LIVE_WITHIN_MS,
-  });
+  await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'Live updates:' })).toHaveText(
+    'Live updates: Live',
+    {
+      timeout: LIVE_WITHIN_MS,
+    },
+  );
   await expectNoA11yViolations(page);
 
-  // includeHidden: the menu hidden at this width is display:none, which getByRole skips.
-  const menus = page.getByRole('navigation', { name: 'Main navigation', includeHidden: true });
-  const [sidebar, tabBar] = [menus.first(), menus.last()];
-  await expect(menus).toHaveCount(2);
+  // includeHidden: the navigation of the other size is display:none, which getByRole skips.
+  const navigations = page.getByRole('navigation', { name: 'Main', includeHidden: true });
+  const [topBar, tabBar] = [navigations.first(), navigations.last()];
+  await expect(navigations).toHaveCount(2);
   const isMobile = testInfo.project.name === 'mobile';
-  await expect(isMobile ? tabBar : sidebar).toBeVisible();
-  await expect(isMobile ? sidebar : tabBar).toBeHidden();
+  await expect(isMobile ? tabBar : topBar).toBeVisible();
+  await expect(isMobile ? topBar : tabBar).toBeHidden();
+
+  await page.goto('/health');
+  await expect(page.getByRole('heading', { name: 'Health' })).toBeVisible();
+  await expect(page.getByText('Healthy')).toBeVisible();
+  await expect(page.getByText(/^\d+\.\d+\.\d+/)).toBeVisible();
+  await expectNoA11yViolations(page);
 
   await page.goto('/does-not-exist');
   await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Back to the dashboard' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Back to the overview' })).toBeVisible();
 
+  await page.goto('/settings');
   await page.getByRole('button', { name: 'Sign out' }).click();
   await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
   await page.goto('/');

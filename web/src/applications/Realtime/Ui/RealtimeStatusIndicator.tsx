@@ -1,25 +1,25 @@
 import {
-  STREAM_STATE_COLORS,
   STREAM_STATE_LABELS,
+  STREAM_STATE_TONES,
 } from '@app/applications/Realtime/Ui/streamStateLabels';
 import { useRealtimeStatus } from '@app/applications/Realtime/Ui/useRealtimeStatus';
-import { Chip } from '@heroui/react';
 import { useLingui } from '@lingui/react/macro';
 
+// A live region announces a change of its text, never a change of its aria-label: the state must
+// stay text, even where only the dot shows.
 export const RealtimeStatusIndicator = () => {
   const { i18n, t } = useLingui();
   const { state } = useRealtimeStatus();
-  const label = i18n._(STREAM_STATE_LABELS[state]);
+  const tone = STREAM_STATE_TONES[state];
 
   return (
-    <Chip
+    <span
       role="status"
-      aria-label={t`Live updates: ${label}`}
-      color={STREAM_STATE_COLORS[state]}
-      variant="soft"
-      size="sm"
+      className={`inline-flex h-9 items-center gap-2 px-2 font-medium text-meta ${tone.word}`}
     >
-      {label}
-    </Chip>
+      <span aria-hidden className={`size-2 rounded-full ${tone.dot}`} />
+      <span className="sr-only">{`${t`Live updates:`} `}</span>
+      <span className="sr-only lg:not-sr-only">{i18n._(STREAM_STATE_LABELS[state])}</span>
+    </span>
   );
 };

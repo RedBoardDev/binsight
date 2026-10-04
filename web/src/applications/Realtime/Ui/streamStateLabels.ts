@@ -9,9 +9,14 @@ export const STREAM_STATE_LABELS: Record<StreamState, MessageDescriptor> = {
   paused: msg`Paused`,
 };
 
-export const STREAM_STATE_COLORS = {
-  connecting: 'warning',
-  open: 'success',
-  reconnecting: 'warning',
-  paused: 'default',
-} as const satisfies Record<StreamState, string>;
+interface StreamStateTone {
+  readonly dot: string;
+  readonly word: string;
+}
+
+export const STREAM_STATE_TONES: Record<StreamState, StreamStateTone> = {
+  connecting: { dot: 'bg-warning', word: 'text-warning' },
+  open: { dot: 'bg-gain', word: 'text-muted' },
+  reconnecting: { dot: 'bg-warning', word: 'text-warning' },
+  paused: { dot: 'bg-faint', word: 'text-faint' },
+};

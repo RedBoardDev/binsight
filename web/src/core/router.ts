@@ -16,6 +16,7 @@ const buildRouter = ({ queryClient, history }: AppRouterOptions) =>
     context: { queryClient },
     ...(history === undefined ? {} : { history }),
     defaultPreload: 'intent',
+    scrollRestoration: true,
     // A change of search params alone (a filter, an open drawer) is not a new page: no cross-fade.
     defaultViewTransition: {
       types: ({ pathChanged }) =>

@@ -15,7 +15,7 @@ describe('SignOutButton', () => {
       },
     });
     const user = userEvent.setup();
-    const { router } = renderAppAt('/');
+    const { router } = renderAppAt('/settings');
 
     await user.click(await screen.findByRole('button', { name: 'Sign out' }));
 
@@ -26,11 +26,11 @@ describe('SignOutButton', () => {
   it('stays signed in and says so when the server cannot sign out', async () => {
     stubApi({ 'GET /api/v1/auth/session': signedInSession });
     const user = userEvent.setup();
-    const { router } = renderAppAt('/');
+    const { router } = renderAppAt('/settings');
 
     await user.click(await screen.findByRole('button', { name: 'Sign out' }));
 
     expect(await screen.findByText('Could not sign out.')).toBeInTheDocument();
-    expect(router.state.location.pathname).toBe('/');
+    expect(router.state.location.pathname).toBe('/settings');
   });
 });

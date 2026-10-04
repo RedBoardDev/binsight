@@ -82,6 +82,8 @@
 
   /* The press feedback: on pointer-down, never on release. */
   --press-scale: 0.97;
+  /* The tab bar lens swells under the finger, like a loupe. */
+  --lens-press-scale: 1.06;
 }
 
 /*
@@ -98,6 +100,7 @@
   --duration-theme: 0ms;
   --duration-figure: 0ms;
   --press-scale: 1;
+  --lens-press-scale: 1;
 }
 
 /*
