@@ -7,7 +7,7 @@
       "name": "MIT",
       "identifier": "MIT"
     },
-    "version": "1.1.0"
+    "version": "1.2.0"
   },
   "paths": {
     "/api/v1/auth/login": {
@@ -235,6 +235,316 @@
         }
       }
     },
+    "/api/v1/overview": {
+      "get": {
+        "tags": [
+          "portfolio"
+        ],
+        "summary": "Reads the overview of every wallet, or of one.",
+        "operationId": "getOverview",
+        "parameters": [
+          {
+            "name": "wallet",
+            "in": "query",
+            "description": "`all` (the default) or the address of a tracked wallet.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "period",
+            "in": "query",
+            "description": "`today`, `7d`, `1m` (the default), `3m`, `1y` or `all`.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "A period ending now: the last N local dates (today included), from local midnight in the\ninstance's time zone.",
+              "enum": [
+                "today",
+                "7d",
+                "1m",
+                "3m",
+                "1y",
+                "all"
+              ]
+            }
+          },
+          {
+            "name": "currency",
+            "in": "query",
+            "description": "The currency of the figures (`sol` by default).",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Currency"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The overview.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Overview"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A query parameter is invalid (`invalid_request`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The wallet is not tracked (`wallet_not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The engine does not serve figures yet (`data_not_ready`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/positions/open": {
+      "get": {
+        "tags": [
+          "positions"
+        ],
+        "summary": "Lists the open positions, sorted, with their totals.",
+        "operationId": "listOpenPositions",
+        "parameters": [
+          {
+            "name": "wallet",
+            "in": "query",
+            "description": "`all` (the default) or the address of a tracked wallet.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "What to sort by (`range` by default: out of range first, longest out first, then the\nin-range ones closest to an edge).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "What open positions are sorted by.",
+              "enum": [
+                "range",
+                "value",
+                "pnl",
+                "fees",
+                "unclaimed",
+                "dpr",
+                "age",
+                "pair"
+              ]
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "description": "The direction (`asc` for `range` and `pair`, `desc` otherwise, by default).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "A sort direction.",
+              "enum": [
+                "asc",
+                "desc"
+              ]
+            }
+          },
+          {
+            "name": "currency",
+            "in": "query",
+            "description": "The currency of the figures (`sol` by default).",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Currency"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The open positions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenPositions"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A query parameter is invalid (`invalid_request`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The wallet is not tracked (`wallet_not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The engine does not serve figures yet (`data_not_ready`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/positions/recent-closes": {
+      "get": {
+        "tags": [
+          "portfolio"
+        ],
+        "summary": "Lists the positions closed today and yesterday.",
+        "operationId": "getRecentCloses",
+        "parameters": [
+          {
+            "name": "wallet",
+            "in": "query",
+            "description": "`all` (the default) or the address of a tracked wallet.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "currency",
+            "in": "query",
+            "description": "The currency of the figures (`sol` by default).",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Currency"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Today's and yesterday's closes.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecentCloses"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A query parameter is invalid (`invalid_request`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The wallet is not tracked (`wallet_not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The engine does not serve figures yet (`data_not_ready`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
     "/api/v1/settings": {
       "get": {
         "tags": [
@@ -281,6 +591,128 @@
         ]
       }
     },
+    "/api/v1/stats/series": {
+      "get": {
+        "tags": [
+          "stats"
+        ],
+        "summary": "Reads a chart series.",
+        "operationId": "getStatsSeries",
+        "parameters": [
+          {
+            "name": "wallet",
+            "in": "query",
+            "description": "`all` (the default) or the address of a tracked wallet.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "period",
+            "in": "query",
+            "description": "`today`, `7d`, `1m` (the default), `3m`, `1y` or `all`.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "A period ending now: the last N local dates (today included), from local midnight in the\ninstance's time zone.",
+              "enum": [
+                "today",
+                "7d",
+                "1m",
+                "3m",
+                "1y",
+                "all"
+              ]
+            }
+          },
+          {
+            "name": "series",
+            "in": "query",
+            "description": "Which series (`real_pnl` by default).",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Series"
+            }
+          },
+          {
+            "name": "bucket",
+            "in": "query",
+            "description": "The size of the buckets (`day` by default); a window may have at most 1000 of them.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Bucket"
+            }
+          },
+          {
+            "name": "currency",
+            "in": "query",
+            "description": "The currency of the figures (`sol` by default).",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Currency"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The series.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatsSeries"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A query parameter is invalid, or the window has more than 1000 buckets (`invalid_request`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The wallet is not tracked (`wallet_not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The engine does not serve figures yet (`data_not_ready`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
     "/api/v1/sync": {
       "get": {
         "tags": [
@@ -301,6 +733,79 @@
           },
           "401": {
             "description": "Not signed in (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The engine does not serve figures yet (`data_not_ready`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/tokens/{mint}/logo": {
+      "get": {
+        "tags": [
+          "positions"
+        ],
+        "summary": "Serves a token's logo.",
+        "operationId": "getTokenLogo",
+        "parameters": [
+          {
+            "name": "mint",
+            "in": "path",
+            "description": "The token's mint (base58).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The logo: a PNG, JPEG, WebP or GIF image, as its `content-type` says.",
+            "content": {
+              "image/png": {}
+            }
+          },
+          "400": {
+            "description": "The mint is not a valid address (`invalid_request`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No logo is stored for this token (`not_found`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -397,6 +902,89 @@
   },
   "components": {
     "schemas": {
+      "BinBar": {
+        "type": "object",
+        "description": "One bar of a bin chart.",
+        "required": [
+          "bin_id",
+          "base",
+          "quote",
+          "height"
+        ],
+        "properties": {
+          "base": {
+            "$ref": "#/components/schemas/DecimalString",
+            "description": "Its base token, in whole tokens."
+          },
+          "bin_id": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Its (first) bin."
+          },
+          "height": {
+            "$ref": "#/components/schemas/DecimalString",
+            "description": "Its height: its value as a share of the largest bar, from `0` to `1`."
+          },
+          "price": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Price",
+                "description": "The price of that bin."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "quote": {
+            "$ref": "#/components/schemas/DecimalString",
+            "description": "Its quote token, in whole tokens."
+          }
+        }
+      },
+      "BinChart": {
+        "type": "object",
+        "description": "A position's liquidity bin by bin (at most 70 bars; bins are grouped beyond).",
+        "required": [
+          "active_bin_id",
+          "lower_bin_id",
+          "upper_bin_id",
+          "bars"
+        ],
+        "properties": {
+          "active_bin_id": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The pool's active bin."
+          },
+          "bars": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BinBar"
+            },
+            "description": "One bar per bin (or group of bins), lowest first."
+          },
+          "lower_bin_id": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The lowest bin of the range."
+          },
+          "upper_bin_id": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The highest bin of the range."
+          }
+        }
+      },
+      "Bucket": {
+        "type": "string",
+        "description": "The size of the buckets.",
+        "enum": [
+          "day",
+          "week",
+          "month"
+        ]
+      },
       "ChainTip": {
         "type": "object",
         "description": "The last slot the instance saw.",
@@ -420,12 +1008,253 @@
           }
         }
       },
+      "ClosedDay": {
+        "type": "object",
+        "description": "The positions closed on one local day.",
+        "required": [
+          "day",
+          "window",
+          "totals",
+          "items",
+          "remaining_count"
+        ],
+        "properties": {
+          "day": {
+            "type": "string",
+            "description": "The local date, `YYYY-MM-DD`."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClosedPositionRow"
+            },
+            "description": "The latest of them, at most 20."
+          },
+          "remaining_count": {
+            "type": "integer",
+            "description": "How many more closed that day (History shows them).",
+            "minimum": 0
+          },
+          "totals": {
+            "$ref": "#/components/schemas/ClosedTotals",
+            "description": "The totals of every position closed that day (today's equal the overview's `today`)."
+          },
+          "window": {
+            "$ref": "#/components/schemas/Window",
+            "description": "Its window."
+          }
+        }
+      },
+      "ClosedPositionRow": {
+        "type": "object",
+        "description": "One closed position. Its figures are exact on their own, even while a wallet imports.",
+        "required": [
+          "id",
+          "address",
+          "wallet",
+          "pool",
+          "strategy",
+          "opened_at",
+          "closed_at",
+          "held_seconds",
+          "invested",
+          "withdrawn",
+          "fees",
+          "fees_pct",
+          "pnl",
+          "pnl_pct",
+          "lp_pnl",
+          "method",
+          "outcome",
+          "dpr",
+          "is_shell"
+        ],
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "The position account (it can host several positions over time)."
+          },
+          "closed_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it closed."
+          },
+          "dpr": {
+            "$ref": "#/components/schemas/PercentFigure",
+            "description": "Its PnL per day held (holdings under an hour count as an hour), in percent."
+          },
+          "fees": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "The fees it claimed."
+          },
+          "fees_pct": {
+            "$ref": "#/components/schemas/PercentFigure",
+            "description": "The fees as a percentage of what it invested."
+          },
+          "held_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How long it was held, in seconds."
+          },
+          "id": {
+            "type": "string",
+            "description": "Its stable id, `<address>-<opening signature>`; permanent links use it."
+          },
+          "invested": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "What it invested."
+          },
+          "is_shell": {
+            "type": "boolean",
+            "description": "Whether nothing ever moved: an empty shell, left out of totals."
+          },
+          "lp_pnl": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "Its liquidity PnL: withdrawn + fees − invested."
+          },
+          "market_pnl": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Figure",
+                "description": "Its FIFO market PnL, when measured that way."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "method": {
+            "$ref": "#/components/schemas/PnlMethod",
+            "description": "How its PnL was measured."
+          },
+          "opened_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it opened."
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/Outcome",
+            "description": "How it ended."
+          },
+          "pnl": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "Its PnL."
+          },
+          "pnl_pct": {
+            "$ref": "#/components/schemas/PercentFigure",
+            "description": "Its PnL as a percentage of what it invested."
+          },
+          "pool": {
+            "$ref": "#/components/schemas/PoolRef",
+            "description": "Its pool."
+          },
+          "strategy": {
+            "$ref": "#/components/schemas/Strategy",
+            "description": "How its liquidity was spread."
+          },
+          "wallet": {
+            "$ref": "#/components/schemas/WalletRef",
+            "description": "The wallet that owned it."
+          },
+          "withdrawn": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "What it withdrew."
+          }
+        }
+      },
+      "ClosedTotals": {
+        "type": "object",
+        "description": "The totals of a set of closed positions (empty shells left out).",
+        "required": [
+          "count",
+          "wins",
+          "losses",
+          "breakeven",
+          "win_rate",
+          "pnl",
+          "pnl_pct",
+          "fees",
+          "invested",
+          "withdrawn"
+        ],
+        "properties": {
+          "average_held_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The mean holding time, in seconds; `null` for an empty set."
+          },
+          "breakeven": {
+            "type": "integer",
+            "description": "How many ended even.",
+            "minimum": 0
+          },
+          "count": {
+            "type": "integer",
+            "description": "How many.",
+            "minimum": 0
+          },
+          "fees": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "The sum of their fees."
+          },
+          "invested": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "The sum invested."
+          },
+          "losses": {
+            "type": "integer",
+            "description": "How many lost.",
+            "minimum": 0
+          },
+          "median_held_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The median holding time, in seconds; `null` for an empty set."
+          },
+          "pnl": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "The sum of their PnL."
+          },
+          "pnl_pct": {
+            "$ref": "#/components/schemas/PercentFigure",
+            "description": "`Σ PnL / Σ invested`."
+          },
+          "win_rate": {
+            "$ref": "#/components/schemas/PercentFigure",
+            "description": "`wins / (wins + losses)`, breakeven left out."
+          },
+          "wins": {
+            "type": "integer",
+            "description": "How many gained.",
+            "minimum": 0
+          },
+          "withdrawn": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "The sum withdrawn."
+          }
+        }
+      },
       "ComponentStatus": {
         "type": "string",
         "description": "Whether one component answers.",
         "enum": [
           "ok",
           "unavailable"
+        ]
+      },
+      "Composition": {
+        "type": "string",
+        "description": "What a position holds.",
+        "enum": [
+          "mixed",
+          "all_base",
+          "all_quote"
         ]
       },
       "CreditsSummary": {
@@ -661,6 +1490,57 @@
         ],
         "description": "An amount and how far it can be trusted. `value` is present unless the figure is\n`unavailable`; `reasons` say why a figure is not `complete`."
       },
+      "Freshness": {
+        "type": "object",
+        "description": "How fresh a screen's figures are. Freshness never changes a figure's exactness: a lagging\nwallet's figures stay exact, only older.",
+        "required": [
+          "as_of",
+          "state"
+        ],
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the figures were read."
+          },
+          "lag_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The largest lag of those wallets, in seconds, when known.",
+            "minimum": 0
+          },
+          "state": {
+            "$ref": "#/components/schemas/SyncState",
+            "description": "The worst sync state of the wallets they cover."
+          }
+        }
+      },
+      "Gain": {
+        "type": "object",
+        "description": "The real PnL gained over a period.",
+        "required": [
+          "window",
+          "value",
+          "pct"
+        ],
+        "properties": {
+          "pct": {
+            "$ref": "#/components/schemas/PercentFigure",
+            "description": "The gain as a percentage of the net worth at the start; `unavailable` for `all`."
+          },
+          "value": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "Real PnL now − real PnL at the start (the real PnL series ends on it)."
+          },
+          "window": {
+            "$ref": "#/components/schemas/Window",
+            "description": "The period's window."
+          }
+        }
+      },
       "Health": {
         "type": "object",
         "description": "The health report.",
@@ -721,6 +1601,24 @@
           "progress": {
             "$ref": "#/components/schemas/DecimalString",
             "description": "How far it is, in percent."
+          }
+        }
+      },
+      "ImportingWallet": {
+        "type": "object",
+        "description": "A wallet importing its history.",
+        "required": [
+          "wallet",
+          "progress"
+        ],
+        "properties": {
+          "progress": {
+            "$ref": "#/components/schemas/DecimalString",
+            "description": "How far the import is, in percent."
+          },
+          "wallet": {
+            "$ref": "#/components/schemas/WalletRef",
+            "description": "The wallet."
           }
         }
       },
@@ -840,6 +1738,441 @@
           "usdt"
         ]
       },
+      "NetWorth": {
+        "type": "object",
+        "description": "The net worth in its parts.",
+        "required": [
+          "total",
+          "idle",
+          "lp",
+          "unclaimed_fees",
+          "recoverable_rent",
+          "unpriced"
+        ],
+        "properties": {
+          "idle": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "Free SOL and priced tokens."
+          },
+          "lp": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "The liquidity in open positions."
+          },
+          "recoverable_rent": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "The rent closing accounts would give back."
+          },
+          "total": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "idle + lp + unclaimed fees + recoverable rent."
+          },
+          "unclaimed_fees": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "The fees the open positions could claim."
+          },
+          "unpriced": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UnpricedHolding"
+            },
+            "description": "The tokens held without a price, left out of the total (which is then `partial`)."
+          }
+        }
+      },
+      "OpenMethod": {
+        "type": "string",
+        "description": "How an open position's PnL is measured: at its bins.",
+        "enum": [
+          "pool"
+        ]
+      },
+      "OpenPositionRow": {
+        "type": "object",
+        "description": "One open position.",
+        "required": [
+          "id",
+          "address",
+          "wallet",
+          "pool",
+          "strategy",
+          "opened_at",
+          "range",
+          "bins",
+          "value",
+          "invested",
+          "withdrawn",
+          "net_invested",
+          "claimed_fees",
+          "unclaimed_fees",
+          "fees",
+          "pnl",
+          "pnl_pct",
+          "dpr",
+          "share_of_net_worth",
+          "method"
+        ],
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "The position account."
+          },
+          "apr": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PercentFigure",
+                "description": "Its PnL per year open, in percent; `null` before a full day."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "bins": {
+            "$ref": "#/components/schemas/BinChart",
+            "description": "Its liquidity, bin by bin."
+          },
+          "claimed_fees": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "The fees it claimed."
+          },
+          "dpr": {
+            "$ref": "#/components/schemas/PercentFigure",
+            "description": "Its PnL per day open (under an hour counts as an hour), in percent."
+          },
+          "fees": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "claimed + unclaimed fees."
+          },
+          "id": {
+            "type": "string",
+            "description": "Its stable id, `<address>-<opening signature>`."
+          },
+          "invested": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "What it invested."
+          },
+          "lower": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Price",
+                "description": "The price of the lowest bin of the range."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "method": {
+            "$ref": "#/components/schemas/OpenMethod",
+            "description": "Always `pool`: an open position is marked at its bins."
+          },
+          "net_invested": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "invested − withdrawn."
+          },
+          "opened_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it opened (clients compute its age)."
+          },
+          "pnl": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "withdrawn + claimed fees + value + unclaimed fees − invested."
+          },
+          "pnl_pct": {
+            "$ref": "#/components/schemas/PercentFigure",
+            "description": "Its PnL as a percentage of what it invested."
+          },
+          "pool": {
+            "$ref": "#/components/schemas/PoolRef",
+            "description": "Its pool."
+          },
+          "price": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Price",
+                "description": "The current price (the active bin); `null` when the pool's quote cannot be valued."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "range": {
+            "$ref": "#/components/schemas/RangeInfo",
+            "description": "Where the price stands against the range."
+          },
+          "share_of_net_worth": {
+            "$ref": "#/components/schemas/PercentFigure",
+            "description": "Its value as a share of its wallet's net worth."
+          },
+          "strategy": {
+            "$ref": "#/components/schemas/Strategy",
+            "description": "How its liquidity is spread."
+          },
+          "unclaimed_fees": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "The fees it could claim."
+          },
+          "upper": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Price",
+                "description": "The price of the highest bin of the range."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "value": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "The value of its liquidity."
+          },
+          "wallet": {
+            "$ref": "#/components/schemas/WalletRef",
+            "description": "The wallet that owns it."
+          },
+          "withdrawn": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "What it withdrew."
+          }
+        }
+      },
+      "OpenPositions": {
+        "type": "object",
+        "description": "The open positions and their totals.",
+        "required": [
+          "items",
+          "freshness",
+          "totals"
+        ],
+        "properties": {
+          "freshness": {
+            "$ref": "#/components/schemas/Freshness",
+            "description": "How fresh the figures are."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpenPositionRow"
+            },
+            "description": "The positions, sorted as asked."
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Always `null`: the list is never paged."
+          },
+          "totals": {
+            "$ref": "#/components/schemas/OpenTotals",
+            "description": "The totals (`value` equals the net worth's `lp`, `unclaimed_fees` its unclaimed fees)."
+          }
+        }
+      },
+      "OpenSummary": {
+        "type": "object",
+        "description": "The open positions together.",
+        "required": [
+          "count",
+          "out_of_range_count",
+          "pnl",
+          "pnl_pct",
+          "unclaimed_fees",
+          "unclaimed_position_count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "description": "How many.",
+            "minimum": 0
+          },
+          "out_of_range_count": {
+            "type": "integer",
+            "description": "How many are out of range.",
+            "minimum": 0
+          },
+          "pnl": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "Their open PnL."
+          },
+          "pnl_pct": {
+            "$ref": "#/components/schemas/PercentFigure",
+            "description": "Their PnL as a percentage of their net investment."
+          },
+          "unclaimed_fees": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "The fees they could claim (the same as the net worth's part)."
+          },
+          "unclaimed_position_count": {
+            "type": "integer",
+            "description": "How many have fees to claim.",
+            "minimum": 0
+          }
+        }
+      },
+      "OpenTotals": {
+        "type": "object",
+        "description": "The totals of the open positions.",
+        "required": [
+          "count",
+          "out_of_range_count",
+          "value",
+          "invested",
+          "withdrawn",
+          "net_invested",
+          "claimed_fees",
+          "unclaimed_fees",
+          "fees",
+          "pnl",
+          "pnl_pct"
+        ],
+        "properties": {
+          "claimed_fees": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "The fees they claimed."
+          },
+          "count": {
+            "type": "integer",
+            "description": "How many.",
+            "minimum": 0
+          },
+          "fees": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "claimed + unclaimed fees."
+          },
+          "invested": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "What they invested."
+          },
+          "net_invested": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "invested − withdrawn."
+          },
+          "out_of_range_count": {
+            "type": "integer",
+            "description": "How many are out of range.",
+            "minimum": 0
+          },
+          "pnl": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "Their open PnL."
+          },
+          "pnl_pct": {
+            "$ref": "#/components/schemas/PercentFigure",
+            "description": "Their PnL as a percentage of their net investment."
+          },
+          "unclaimed_fees": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "The fees they could claim."
+          },
+          "value": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "Their value."
+          },
+          "withdrawn": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "What they withdrew."
+          }
+        }
+      },
+      "Outcome": {
+        "type": "string",
+        "description": "How a closed position ended, read on the sign of its PnL in the pool's quote token.",
+        "enum": [
+          "win",
+          "loss",
+          "breakeven"
+        ]
+      },
+      "Overview": {
+        "type": "object",
+        "description": "Everything the overview shows.",
+        "required": [
+          "freshness",
+          "sync",
+          "today",
+          "net_worth",
+          "open",
+          "gain",
+          "watch"
+        ],
+        "properties": {
+          "freshness": {
+            "$ref": "#/components/schemas/Freshness",
+            "description": "How fresh its figures are."
+          },
+          "gain": {
+            "$ref": "#/components/schemas/Gain",
+            "description": "The real PnL gained over the period."
+          },
+          "net_worth": {
+            "$ref": "#/components/schemas/NetWorth",
+            "description": "The net worth now: `total` is the sum of the four parts."
+          },
+          "open": {
+            "$ref": "#/components/schemas/OpenSummary",
+            "description": "The open positions together."
+          },
+          "sync": {
+            "$ref": "#/components/schemas/OverviewSync",
+            "description": "Which wallets lag behind the chain or import their history."
+          },
+          "today": {
+            "$ref": "#/components/schemas/Today",
+            "description": "The positions closed since local midnight: the same totals as today's recent closes and\nHistory for today."
+          },
+          "wallet": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WalletRef",
+                "description": "The wallet it is about; `null` for every wallet."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "watch": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WatchItem"
+            },
+            "description": "What deserves attention, most urgent first."
+          }
+        }
+      },
+      "OverviewSync": {
+        "type": "object",
+        "description": "The synchronization of the wallets the overview covers.",
+        "required": [
+          "state",
+          "lagging",
+          "importing"
+        ],
+        "properties": {
+          "importing": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportingWallet"
+            },
+            "description": "The wallets importing their history."
+          },
+          "lagging": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WalletRef"
+            },
+            "description": "The wallets behind the chain."
+          },
+          "state": {
+            "$ref": "#/components/schemas/SyncState",
+            "description": "The worst state."
+          }
+        }
+      },
       "PercentFigure": {
         "oneOf": [
           {
@@ -943,6 +2276,143 @@
           }
         ],
         "description": "A percentage (`\"2.56\"` is 2.56 %) and how far it can be trusted, shaped like [`Figure`]."
+      },
+      "PnlMethod": {
+        "type": "string",
+        "description": "How a position's PnL was measured.",
+        "enum": [
+          "fifo",
+          "pool"
+        ]
+      },
+      "PoolRef": {
+        "type": "object",
+        "description": "A DLMM pool.",
+        "required": [
+          "address",
+          "bin_step",
+          "base",
+          "quote"
+        ],
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "The pool address (base58)."
+          },
+          "base": {
+            "$ref": "#/components/schemas/TokenRef",
+            "description": "The token whose price moves."
+          },
+          "bin_step": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Its bin step, in basis points.",
+            "minimum": 0
+          },
+          "quote": {
+            "$ref": "#/components/schemas/TokenRef",
+            "description": "The token prices are expressed in."
+          },
+          "quote_kind": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/QuoteKind",
+                "description": "What the quote token is; `null` when binsight cannot value it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "Price": {
+        "type": "object",
+        "description": "A unit price: quote tokens per base token, with at most twelve significant digits.",
+        "required": [
+          "amount",
+          "quote"
+        ],
+        "properties": {
+          "amount": {
+            "$ref": "#/components/schemas/DecimalString",
+            "description": "The price."
+          },
+          "quote": {
+            "$ref": "#/components/schemas/PriceQuote",
+            "description": "The token it is expressed in."
+          }
+        }
+      },
+      "PriceQuote": {
+        "type": "string",
+        "description": "The token a price is expressed in.",
+        "enum": [
+          "sol",
+          "usdc",
+          "usdt"
+        ]
+      },
+      "QuoteKind": {
+        "type": "string",
+        "description": "What a pool's quote token is.",
+        "enum": [
+          "sol",
+          "stable"
+        ]
+      },
+      "RangeInfo": {
+        "type": "object",
+        "description": "Where the price stands against a range.",
+        "required": [
+          "status",
+          "margin_down",
+          "margin_up",
+          "composition"
+        ],
+        "properties": {
+          "composition": {
+            "$ref": "#/components/schemas/Composition",
+            "description": "What the position holds (above the range: only quote; below: only base)."
+          },
+          "margin_down": {
+            "$ref": "#/components/schemas/PercentFigure",
+            "description": "How far the price can fall to the bottom of the range, in percent (negative outside)."
+          },
+          "margin_up": {
+            "$ref": "#/components/schemas/PercentFigure",
+            "description": "How far the price can rise to the top of the range, in percent (negative outside)."
+          },
+          "since": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Since when it is on that side; `null` when it never moved since the opening."
+          },
+          "status": {
+            "$ref": "#/components/schemas/RangeStatus",
+            "description": "Inside, above or below."
+          }
+        }
+      },
+      "RangeSide": {
+        "type": "string",
+        "description": "Where the price is against a range.",
+        "enum": [
+          "above",
+          "below"
+        ]
+      },
+      "RangeStatus": {
+        "type": "string",
+        "description": "Where the price stands against a range.",
+        "enum": [
+          "in_range",
+          "above",
+          "below"
+        ]
       },
       "Reason": {
         "oneOf": [
@@ -1110,6 +2580,135 @@
         ],
         "description": "One reason a figure is partial, estimated or unavailable, tagged by `code`."
       },
+      "RecentCloses": {
+        "type": "object",
+        "description": "The positions closed today and yesterday (empty shells left out).",
+        "required": [
+          "days"
+        ],
+        "properties": {
+          "days": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClosedDay"
+            },
+            "description": "Today, then yesterday (always both, possibly empty)."
+          },
+          "last_close": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ClosedPositionRow",
+                "description": "The latest close of all when nothing closed today or yesterday, otherwise `null`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "Series": {
+        "type": "string",
+        "description": "Which series.",
+        "enum": [
+          "net_worth",
+          "real_pnl",
+          "positions"
+        ]
+      },
+      "SeriesHeader": {
+        "type": "object",
+        "description": "The headline figures of a series.",
+        "required": [
+          "value"
+        ],
+        "properties": {
+          "change": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Figure",
+                "description": "For the net worth: its change over the window; otherwise `null`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "net_deposits": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Figure",
+                "description": "For the net worth: the capital put in over the window, net; otherwise `null`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "value": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "The net worth now, the gain (equal to the overview's), or the PnL of the positions\nclosed in the window."
+          }
+        }
+      },
+      "SeriesPoint": {
+        "type": "object",
+        "description": "One point of a series.",
+        "required": [
+          "start",
+          "end",
+          "line"
+        ],
+        "properties": {
+          "bar": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Figure",
+                "description": "The change over the bucket."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "bar_share_of_net_worth": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PercentFigure",
+                "description": "The bar as a percentage of the net worth at the start of the bucket."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "end": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The end of its bucket (now for the last one)."
+          },
+          "line": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "The change since the start of the window (the net worth itself for `net_worth`)."
+          },
+          "line_share_of_net_worth": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PercentFigure",
+                "description": "The line as a percentage of the net worth at the start of the window (the last point's\nequals the gain percentage)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "start": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The start of its bucket."
+          }
+        }
+      },
       "SessionInfo": {
         "type": "object",
         "description": "The current session.",
@@ -1128,6 +2727,51 @@
             "description": "When the session ends (RFC 3339, UTC); the owner must then sign in again."
           }
         }
+      },
+      "StatsSeries": {
+        "type": "object",
+        "description": "A series over a window.",
+        "required": [
+          "window",
+          "series",
+          "bucket",
+          "header",
+          "points"
+        ],
+        "properties": {
+          "bucket": {
+            "$ref": "#/components/schemas/Bucket",
+            "description": "The size of its buckets."
+          },
+          "header": {
+            "$ref": "#/components/schemas/SeriesHeader",
+            "description": "The headline figures."
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SeriesPoint"
+            },
+            "description": "One point per bucket; the first and the last are cut at the window's bounds."
+          },
+          "series": {
+            "$ref": "#/components/schemas/Series",
+            "description": "Which series."
+          },
+          "window": {
+            "$ref": "#/components/schemas/Window",
+            "description": "The window."
+          }
+        }
+      },
+      "Strategy": {
+        "type": "string",
+        "description": "How a position spreads its liquidity over its bins.",
+        "enum": [
+          "spot",
+          "curve",
+          "bid_ask"
+        ]
       },
       "SyncReport": {
         "type": "object",
@@ -1203,6 +2847,141 @@
           "default",
           "owner"
         ]
+      },
+      "Today": {
+        "type": "object",
+        "description": "The positions closed since local midnight.",
+        "required": [
+          "window",
+          "totals"
+        ],
+        "properties": {
+          "totals": {
+            "$ref": "#/components/schemas/ClosedTotals",
+            "description": "Their totals; `pnl_pct` is `Σ PnL / Σ invested` of today's closes."
+          },
+          "window": {
+            "$ref": "#/components/schemas/Window",
+            "description": "Today's window."
+          }
+        }
+      },
+      "TokenLogo": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "The SOL coin: clients draw it themselves.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "sol"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "An image served by binsight, same-origin and versioned (cache it forever).",
+            "required": [
+              "url",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "image"
+                ]
+              },
+              "url": {
+                "type": "string",
+                "description": "The image path, such as `/api/v1/tokens/<mint>/logo?v=<fingerprint>`."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "No logo: clients draw a monogram.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "none"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "How a client draws a token's logo. Logos are always served by binsight itself, never by a\nthird party."
+      },
+      "TokenRef": {
+        "type": "object",
+        "description": "A token: its mint, its metadata when known, its decimals and how to draw its logo.",
+        "required": [
+          "mint",
+          "decimals",
+          "logo"
+        ],
+        "properties": {
+          "decimals": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The decimals of the mint, read on-chain.",
+            "minimum": 0
+          },
+          "logo": {
+            "$ref": "#/components/schemas/TokenLogo",
+            "description": "How to draw its logo."
+          },
+          "mint": {
+            "type": "string",
+            "description": "The mint (base58)."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The full name; `null` when unknown."
+          },
+          "symbol": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The ticker; `null` when unknown (clients show the short mint)."
+          }
+        }
+      },
+      "UnpricedHolding": {
+        "type": "object",
+        "description": "A token held without a price, left out of the net worth.",
+        "required": [
+          "wallet",
+          "token",
+          "amount"
+        ],
+        "properties": {
+          "amount": {
+            "$ref": "#/components/schemas/DecimalString",
+            "description": "How much, in whole tokens."
+          },
+          "token": {
+            "$ref": "#/components/schemas/TokenRef",
+            "description": "The token."
+          },
+          "wallet": {
+            "$ref": "#/components/schemas/WalletRef",
+            "description": "Who holds it."
+          }
+        }
       },
       "WalletColor": {
         "type": "string",
@@ -1430,6 +3209,226 @@
             "description": "The total real PnL."
           }
         }
+      },
+      "WatchItem": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "A position is out of its range.",
+            "required": [
+              "position",
+              "pool",
+              "wallet",
+              "side",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "out_of_range"
+                ]
+              },
+              "pool": {
+                "$ref": "#/components/schemas/PoolRef",
+                "description": "Its pool."
+              },
+              "position": {
+                "type": "string",
+                "description": "The position id."
+              },
+              "side": {
+                "$ref": "#/components/schemas/RangeSide",
+                "description": "Whether the price is above or below the range."
+              },
+              "since": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time",
+                "description": "Since when, when known."
+              },
+              "wallet": {
+                "$ref": "#/components/schemas/WalletRef",
+                "description": "Its wallet."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A wallet holds a token without a price.",
+            "required": [
+              "wallet",
+              "token",
+              "amount",
+              "kind"
+            ],
+            "properties": {
+              "amount": {
+                "$ref": "#/components/schemas/DecimalString",
+                "description": "How much, in whole tokens."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "unpriced_token"
+                ]
+              },
+              "token": {
+                "$ref": "#/components/schemas/TokenRef",
+                "description": "The token."
+              },
+              "wallet": {
+                "$ref": "#/components/schemas/WalletRef",
+                "description": "The wallet."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A wallet is importing its history.",
+            "required": [
+              "wallet",
+              "progress",
+              "kind"
+            ],
+            "properties": {
+              "eta_seconds": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "How long it should still take, in seconds, when known.",
+                "minimum": 0
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "importing"
+                ]
+              },
+              "progress": {
+                "$ref": "#/components/schemas/DecimalString",
+                "description": "How far it is, in percent."
+              },
+              "wallet": {
+                "$ref": "#/components/schemas/WalletRef",
+                "description": "The wallet."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A wallet is behind the chain.",
+            "required": [
+              "wallet",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "lagging"
+                ]
+              },
+              "lag_seconds": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "By how many seconds, when known.",
+                "minimum": 0
+              },
+              "wallet": {
+                "$ref": "#/components/schemas/WalletRef",
+                "description": "The wallet."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The month will spend more credits than its budget.",
+            "required": [
+              "projected",
+              "budget",
+              "kind"
+            ],
+            "properties": {
+              "budget": {
+                "type": "integer",
+                "format": "int64",
+                "description": "The budget.",
+                "minimum": 0
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "credits_over_budget"
+                ]
+              },
+              "projected": {
+                "type": "integer",
+                "format": "int64",
+                "description": "The credits the month will have spent.",
+                "minimum": 0
+              }
+            }
+          }
+        ],
+        "description": "Something that deserves the owner's attention, tagged by `kind`."
+      },
+      "Window": {
+        "type": "object",
+        "description": "The span of time figures cover: from `start` (included) to `end` (excluded).",
+        "required": [
+          "period",
+          "start",
+          "end",
+          "timezone"
+        ],
+        "properties": {
+          "day": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The local date (`YYYY-MM-DD`) when `period` is `day`, otherwise `null`."
+          },
+          "end": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The instant right after the window: now, or the next local midnight for a past day."
+          },
+          "period": {
+            "$ref": "#/components/schemas/WindowPeriod",
+            "description": "The period asked for, or `day` for one local date."
+          },
+          "start": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The first instant (RFC 3339, UTC)."
+          },
+          "timezone": {
+            "type": "string",
+            "description": "The IANA time zone its days are cut in."
+          }
+        }
+      },
+      "WindowPeriod": {
+        "type": "string",
+        "description": "What a window covers: one of the periods, or one local date.",
+        "enum": [
+          "today",
+          "7d",
+          "1m",
+          "3m",
+          "1y",
+          "all",
+          "day"
+        ]
       }
     },
     "securitySchemes": {
@@ -1460,6 +3459,18 @@
     {
       "name": "settings",
       "description": "The settings every client of the instance shares."
+    },
+    {
+      "name": "portfolio",
+      "description": "The overview of the portfolio."
+    },
+    {
+      "name": "positions",
+      "description": "Liquidity positions and their tokens."
+    },
+    {
+      "name": "stats",
+      "description": "Statistics and chart series."
     }
   ]
 }

@@ -20,5 +20,8 @@ mod error;
 mod instance;
 mod live;
 pub mod openapi;
+mod overview;
+mod positions;
+mod stats;
 
 pub use app::{AppState, AppStateParts, INDEX_FILE, WebAsset, WebAssets, router, serve};

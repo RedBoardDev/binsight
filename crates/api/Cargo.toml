@@ -17,6 +17,7 @@ axum-extra.workspace = true
 binsight-core.workspace = true
 binsight-engine.workspace = true
 binsight-ledger.workspace = true
+binsight-solana.workspace = true
 cookie.workspace = true
 futures-util.workspace = true
 hmac.workspace = true

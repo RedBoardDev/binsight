@@ -8,12 +8,20 @@
 
 mod decimal;
 mod figure;
+mod freshness;
 mod money;
+mod position;
 mod query;
 mod reason;
+mod token;
 mod wallet_ref;
+mod window;
 
 pub(crate) use decimal::DecimalString;
 pub(crate) use figure::{Figure, PercentFigure};
-pub(crate) use query::{ApiQuery, Currency, CurrencyQuery};
+pub(crate) use freshness::{Freshness, SyncState};
+pub(crate) use position::{ClosedPositionRow, ClosedTotals, Strategy};
+pub(crate) use query::{ApiQuery, Currency, CurrencyQuery, ScopeQuery};
+pub(crate) use token::{PoolRef, Price, TokenRef};
 pub(crate) use wallet_ref::WalletRef;
+pub(crate) use window::{PeriodQuery, Window};

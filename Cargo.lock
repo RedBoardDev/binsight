@@ -234,6 +234,7 @@ dependencies = [
  "binsight-demo",
  "binsight-engine",
  "binsight-ledger",
+ "binsight-solana",
  "cookie",
  "futures-util",
  "hmac 0.13.0",

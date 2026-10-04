@@ -1,0 +1,302 @@
+---
+source: crates/api/tests/overview.rs
+expression: response.json()
+---
+{
+  "freshness": {
+    "as_of": "2026-09-21T14:13:20Z",
+    "lag_seconds": 180,
+    "state": "lagging"
+  },
+  "gain": {
+    "pct": {
+      "exactness": "partial",
+      "reasons": [
+        {
+          "code": "unpriced_token",
+          "mint": "8rUqG6J957Az39QPCfzb18bKLiK5r28wFTkNqwpDFbU7",
+          "wallet": "H8dBDBULv1kPgqs3Pfc8gvkS3aqcqNmRCPkXhSZXQe4X"
+        }
+      ],
+      "value": "0.086801"
+    },
+    "value": {
+      "exactness": "partial",
+      "reasons": [
+        {
+          "code": "unpriced_token",
+          "mint": "8rUqG6J957Az39QPCfzb18bKLiK5r28wFTkNqwpDFbU7",
+          "wallet": "H8dBDBULv1kPgqs3Pfc8gvkS3aqcqNmRCPkXhSZXQe4X"
+        }
+      ],
+      "value": {
+        "amount": "0.330189236",
+        "unit": "sol"
+      }
+    },
+    "window": {
+      "day": null,
+      "end": "2026-09-21T14:13:20Z",
+      "period": "7d",
+      "start": "2026-09-14T22:00:00Z",
+      "timezone": "Europe/Paris"
+    }
+  },
+  "net_worth": {
+    "idle": {
+      "exactness": "partial",
+      "reasons": [
+        {
+          "code": "unpriced_token",
+          "mint": "8rUqG6J957Az39QPCfzb18bKLiK5r28wFTkNqwpDFbU7",
+          "wallet": "H8dBDBULv1kPgqs3Pfc8gvkS3aqcqNmRCPkXhSZXQe4X"
+        }
+      ],
+      "value": {
+        "amount": "339.821384597",
+        "unit": "sol"
+      }
+    },
+    "lp": {
+      "exactness": "complete",
+      "value": {
+        "amount": "40.024047113",
+        "unit": "sol"
+      }
+    },
+    "recoverable_rent": {
+      "exactness": "complete",
+      "value": {
+        "amount": "0.47760216",
+        "unit": "sol"
+      }
+    },
+    "total": {
+      "exactness": "partial",
+      "reasons": [
+        {
+          "code": "unpriced_token",
+          "mint": "8rUqG6J957Az39QPCfzb18bKLiK5r28wFTkNqwpDFbU7",
+          "wallet": "H8dBDBULv1kPgqs3Pfc8gvkS3aqcqNmRCPkXhSZXQe4X"
+        }
+      ],
+      "value": {
+        "amount": "380.729394274",
+        "unit": "sol"
+      }
+    },
+    "unclaimed_fees": {
+      "exactness": "complete",
+      "value": {
+        "amount": "0.406360404",
+        "unit": "sol"
+      }
+    },
+    "unpriced": [
+      {
+        "amount": "1240000",
+        "token": {
+          "decimals": 6,
+          "logo": {
+            "kind": "none"
+          },
+          "mint": "8rUqG6J957Az39QPCfzb18bKLiK5r28wFTkNqwpDFbU7",
+          "name": null,
+          "symbol": "GRIFT"
+        },
+        "wallet": {
+          "address": "H8dBDBULv1kPgqs3Pfc8gvkS3aqcqNmRCPkXhSZXQe4X",
+          "color": "wallet_2",
+          "label": "Degen"
+        }
+      }
+    ]
+  },
+  "open": {
+    "count": 8,
+    "out_of_range_count": 2,
+    "pnl": {
+      "exactness": "complete",
+      "value": {
+        "amount": "-0.184274245",
+        "unit": "sol"
+      }
+    },
+    "pnl_pct": {
+      "exactness": "complete",
+      "value": "-0.452434"
+    },
+    "unclaimed_fees": {
+      "exactness": "complete",
+      "value": {
+        "amount": "0.406360404",
+        "unit": "sol"
+      }
+    },
+    "unclaimed_position_count": 8
+  },
+  "sync": {
+    "importing": [],
+    "lagging": [
+      {
+        "address": "H8dBDBULv1kPgqs3Pfc8gvkS3aqcqNmRCPkXhSZXQe4X",
+        "color": "wallet_2",
+        "label": "Degen"
+      }
+    ],
+    "state": "lagging"
+  },
+  "today": {
+    "totals": {
+      "average_held_seconds": 194926,
+      "breakeven": 1,
+      "count": 8,
+      "fees": {
+        "exactness": "complete",
+        "value": {
+          "amount": "0.34041795",
+          "unit": "sol"
+        }
+      },
+      "invested": {
+        "exactness": "complete",
+        "value": {
+          "amount": "32.331255594",
+          "unit": "sol"
+        }
+      },
+      "losses": 3,
+      "median_held_seconds": 192729,
+      "pnl": {
+        "exactness": "complete",
+        "value": {
+          "amount": "0.2907573",
+          "unit": "sol"
+        }
+      },
+      "pnl_pct": {
+        "exactness": "complete",
+        "value": "0.899307"
+      },
+      "win_rate": {
+        "exactness": "complete",
+        "value": "57.142857"
+      },
+      "wins": 4,
+      "withdrawn": {
+        "exactness": "complete",
+        "value": {
+          "amount": "32.303262117",
+          "unit": "sol"
+        }
+      }
+    },
+    "window": {
+      "day": null,
+      "end": "2026-09-21T14:13:20Z",
+      "period": "today",
+      "start": "2026-09-20T22:00:00Z",
+      "timezone": "Europe/Paris"
+    }
+  },
+  "wallet": null,
+  "watch": [
+    {
+      "kind": "out_of_range",
+      "pool": {
+        "address": "8NbvemuMfiYqJhnPskEsyt5sDEYS225mkpGZwKJt7nKq",
+        "base": {
+          "decimals": 6,
+          "logo": {
+            "kind": "image",
+            "url": "/api/v1/tokens/9RLEg1Jg9Gh264XYEdXxfidq6Fi9AhUKUN4B2343viDH/logo?v=67d3cb442442"
+          },
+          "mint": "9RLEg1Jg9Gh264XYEdXxfidq6Fi9AhUKUN4B2343viDH",
+          "name": "dogwifhat",
+          "symbol": "WIF"
+        },
+        "bin_step": 80,
+        "quote": {
+          "decimals": 9,
+          "logo": {
+            "kind": "sol"
+          },
+          "mint": "3fpJjugexTVxzpW6USwSaGAp3e7omJfR1EzUTihSjkJn",
+          "name": "Solana",
+          "symbol": "SOL"
+        },
+        "quote_kind": "sol"
+      },
+      "position": "9TahvfpHUMjYJdhZTfPtPSAPKtpCS7gbLo2fNvSNnN1q-4A8SJPLB2fZkDvSDqHNtmPknjZTCoiVn9uYQN3d9XFpfs6oo8Zaaqo6WVGzjq13KtYWf4CrXDuEmYczMQCzPufTB",
+      "side": "above",
+      "since": "2026-09-21T10:23:49Z",
+      "wallet": {
+        "address": "H8dBDBULv1kPgqs3Pfc8gvkS3aqcqNmRCPkXhSZXQe4X",
+        "color": "wallet_2",
+        "label": "Degen"
+      }
+    },
+    {
+      "kind": "out_of_range",
+      "pool": {
+        "address": "EyiR4YaN6iJhA3TyWUdskQ8Couam5mDsCvNAuiG3HG5a",
+        "base": {
+          "decimals": 9,
+          "logo": {
+            "kind": "sol"
+          },
+          "mint": "3fpJjugexTVxzpW6USwSaGAp3e7omJfR1EzUTihSjkJn",
+          "name": "Solana",
+          "symbol": "SOL"
+        },
+        "bin_step": 10,
+        "quote": {
+          "decimals": 6,
+          "logo": {
+            "kind": "image",
+            "url": "/api/v1/tokens/AZBnGQBPoffbY8RxdkdVzgWgbTMSTf3U7txSpue98jaY/logo?v=d6335e704a44"
+          },
+          "mint": "AZBnGQBPoffbY8RxdkdVzgWgbTMSTf3U7txSpue98jaY",
+          "name": "USD Coin",
+          "symbol": "USDC"
+        },
+        "quote_kind": "stable"
+      },
+      "position": "HR6sZquit47PXZvhNvXpaKAq5GEvhxodSFpx9CYcPVd4-4VtkZarEzfzqpKvYdZnxbVEdR5ieaDAQZBvQmq4qLFsDNQtoKBifLaLCayjdQH4FAJsnyncHqiThCxJBuxjmRV9C",
+      "side": "below",
+      "since": "2026-09-21T10:53:45Z",
+      "wallet": {
+        "address": "7oz2w2VzUmffCuwBwTmuC1evos4EkG4goAyHiYXGVowM",
+        "color": "wallet_3",
+        "label": "Cold"
+      }
+    },
+    {
+      "amount": "1240000",
+      "kind": "unpriced_token",
+      "token": {
+        "decimals": 6,
+        "logo": {
+          "kind": "none"
+        },
+        "mint": "8rUqG6J957Az39QPCfzb18bKLiK5r28wFTkNqwpDFbU7",
+        "name": null,
+        "symbol": "GRIFT"
+      },
+      "wallet": {
+        "address": "H8dBDBULv1kPgqs3Pfc8gvkS3aqcqNmRCPkXhSZXQe4X",
+        "color": "wallet_2",
+        "label": "Degen"
+      }
+    },
+    {
+      "kind": "lagging",
+      "lag_seconds": 180,
+      "wallet": {
+        "address": "H8dBDBULv1kPgqs3Pfc8gvkS3aqcqNmRCPkXhSZXQe4X",
+        "color": "wallet_2",
+        "label": "Degen"
+      }
+    }
+  ]
+}

@@ -10,22 +10,8 @@ use utoipa::ToSchema;
 
 use super::health::EngineStatus;
 use crate::app::AppState;
-use crate::contract::{DecimalString, WalletRef};
+use crate::contract::{DecimalString, SyncState, WalletRef};
 use crate::error::{ApiError, ErrorBody};
-
-/// How a wallet (or the instance) keeps up with the chain, from the best to the worst.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum SyncState {
-    /// Up to date.
-    Live,
-    /// Its history is being imported.
-    Importing,
-    /// Behind the chain, catching up.
-    Lagging,
-    /// Failing; the owner should look.
-    Error,
-}
 
 /// The synchronization of one wallet.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
@@ -106,17 +92,6 @@ pub(crate) struct SyncReport {
     pub(crate) credits: CreditsSummary,
     /// Each wallet, in the order of the wallet list.
     pub(crate) wallets: Vec<WalletSyncLine>,
-}
-
-impl From<views::SyncState> for SyncState {
-    fn from(state: views::SyncState) -> Self {
-        match state {
-            views::SyncState::Live => Self::Live,
-            views::SyncState::Importing => Self::Importing,
-            views::SyncState::Lagging => Self::Lagging,
-            views::SyncState::Error => Self::Error,
-        }
-    }
 }
 
 impl From<&views::WalletSync> for WalletSync {

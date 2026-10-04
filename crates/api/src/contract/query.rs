@@ -3,6 +3,7 @@
 
 use axum::extract::{FromRequestParts, Query};
 use axum::http::request::Parts;
+use binsight_engine::portfolio::Scope;
 use binsight_ledger::report::valued;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -65,5 +66,32 @@ impl CurrencyQuery {
     /// The requested currency, `sol` by default.
     pub(crate) fn currency(self) -> valued::Currency {
         self.currency.unwrap_or_default().into()
+    }
+}
+
+/// The wallets a read covers: `all` (the default) or one tracked wallet's address.
+#[derive(Debug, Clone, Default, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct ScopeQuery {
+    /// `all` (the default) or the address of a tracked wallet.
+    pub(crate) wallet: Option<String>,
+}
+
+impl ScopeQuery {
+    /// The scope asked for.
+    ///
+    /// # Errors
+    ///
+    /// Returns `400 invalid_request` when the wallet is neither `all` nor a valid address.
+    pub(crate) fn scope(&self) -> Result<Scope, ApiError> {
+        match self.wallet.as_deref() {
+            None | Some("all") => Ok(Scope::All),
+            Some(text) => text.parse().map(Scope::Wallet).map_err(|_| {
+                ApiError::new(
+                    ErrorCode::InvalidRequest,
+                    "wallet: expected `all` or a base58 wallet address",
+                )
+            }),
+        }
     }
 }

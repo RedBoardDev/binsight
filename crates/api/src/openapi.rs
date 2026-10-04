@@ -16,7 +16,7 @@ use crate::error::{ErrorBody, ErrorCode, ErrorDetail};
 
 /// The version of the API contract. A compatible addition bumps the minor version; a breaking
 /// change gets a new `/api/v2` instead.
-pub const API_CONTRACT_VERSION: &str = "1.1.0";
+pub const API_CONTRACT_VERSION: &str = "1.2.0";
 
 /// The parts of the contract that are not routes: metadata and shared schemas.
 #[derive(OpenApi)]
@@ -38,6 +38,9 @@ pub const API_CONTRACT_VERSION: &str = "1.1.0";
         (name = "live", description = "Events pushed to the clients as they happen."),
         (name = "wallets", description = "The tracked wallets and their figures."),
         (name = "settings", description = "The settings every client of the instance shares."),
+        (name = "portfolio", description = "The overview of the portfolio."),
+        (name = "positions", description = "Liquidity positions and their tokens."),
+        (name = "stats", description = "Statistics and chart series."),
     ),
 )]
 pub(crate) struct ApiDoc;
