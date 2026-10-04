@@ -1,0 +1,15 @@
+---
+source: crates/dlmm/tests/corpus.rs
+expression: rendering(&tx)
+---
+InstructionPosition { top: 1, inner: Some(4) } dlmm.swap {"lb_pair":"HRYEjwdo3bZ1TpXKWKcezqiwSV2Ywuh4LxMa2PzoCnG6","from":"8L2y55D11k63CAftvW7uMM2mBhtMxLoLnivG9uY2bt8j","start_bin_id":10543,"end_bin_id":10543,"amount_in":"12270761","amount_out":"101028549","swap_for_y":true}
+InstructionPosition { top: 1, inner: Some(5) } dlmm.swap2 {"lb_pair":"HRYEjwdo3bZ1TpXKWKcezqiwSV2Ywuh4LxMa2PzoCnG6","from":"8L2y55D11k63CAftvW7uMM2mBhtMxLoLnivG9uY2bt8j","start_bin_id":10543,"end_bin_id":10543,"amount_in":"12270761","amount_out":"101028549","swap_for_y":true}
+Ok(
+    TxActivity {
+        lifecycle: [],
+        movements: [],
+        reward_claims: [],
+        pool_swaps: [],
+        has_unknown_program_activity: false,
+    },
+)

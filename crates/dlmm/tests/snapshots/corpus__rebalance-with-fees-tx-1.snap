@@ -1,0 +1,76 @@
+---
+source: crates/dlmm/tests/corpus.rs
+expression: rendering(&tx)
+---
+InstructionPosition { top: 5, inner: Some(2) } dlmm.composition_fee {"from":"DXTaXQrDocFZBfSEkcgnNCpUuj8xeb6VqyZ4ZzPe518V","bin_id":-427,"token_x_fee_amount":"0","token_y_fee_amount":"1021"}
+InstructionPosition { top: 5, inner: Some(3) } dlmm.rebalancing {"lb_pair":"JEFj1mYvGg9rmvREUFLS43mXx4dfR1SkUMoEhVGt6UHK","position":"BbVaCZDvkNNALEKUcoWgHdvBMv5Zvj9bYhh5HU2Vv3Dt","owner":"DXTaXQrDocFZBfSEkcgnNCpUuj8xeb6VqyZ4ZzPe518V","active_bin_id":-427,"x_withdrawn_amount":"1810254944","x_added_amount":"1879912569","y_withdrawn_amount":"514681472","y_added_amount":"515219265","x_fee_amount":"69660673","y_fee_amount":"538820","rewards":["0","0"]}
+Ok(
+    TxActivity {
+        lifecycle: [],
+        movements: [
+            PositionMovement {
+                at: InstructionPosition {
+                    top: 5,
+                    inner: Some(
+                        3,
+                    ),
+                },
+                position: Address(BbVaCZDvkNNALEKUcoWgHdvBMv5Zvj9bYhh5HU2Vv3Dt),
+                pool: Address(JEFj1mYvGg9rmvREUFLS43mXx4dfR1SkUMoEhVGt6UHK),
+                kind: RebalanceWithdrawal,
+                x: RawTokenAmount(
+                    1810254944,
+                ),
+                y: RawTokenAmount(
+                    514681472,
+                ),
+                price_bin: Some(
+                    -427,
+                ),
+            },
+            PositionMovement {
+                at: InstructionPosition {
+                    top: 5,
+                    inner: Some(
+                        3,
+                    ),
+                },
+                position: Address(BbVaCZDvkNNALEKUcoWgHdvBMv5Zvj9bYhh5HU2Vv3Dt),
+                pool: Address(JEFj1mYvGg9rmvREUFLS43mXx4dfR1SkUMoEhVGt6UHK),
+                kind: RebalanceDeposit,
+                x: RawTokenAmount(
+                    1879912569,
+                ),
+                y: RawTokenAmount(
+                    515219265,
+                ),
+                price_bin: Some(
+                    -427,
+                ),
+            },
+            PositionMovement {
+                at: InstructionPosition {
+                    top: 5,
+                    inner: Some(
+                        3,
+                    ),
+                },
+                position: Address(BbVaCZDvkNNALEKUcoWgHdvBMv5Zvj9bYhh5HU2Vv3Dt),
+                pool: Address(JEFj1mYvGg9rmvREUFLS43mXx4dfR1SkUMoEhVGt6UHK),
+                kind: FeeClaim,
+                x: RawTokenAmount(
+                    69660673,
+                ),
+                y: RawTokenAmount(
+                    538820,
+                ),
+                price_bin: Some(
+                    -427,
+                ),
+            },
+        ],
+        reward_claims: [],
+        pool_swaps: [],
+        has_unknown_program_activity: false,
+    },
+)

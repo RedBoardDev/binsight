@@ -126,6 +126,12 @@ web-check: web-lint web-typecheck web-test web-i18n-check web-openapi-check web-
 rust-fmt:
     cargo fmt --all
 
+# The lock refuses a changed output under the same DECODER_VERSION; review the snapshot diff.
+[doc('Record the DLMM decoder output on every fixture (after a version bump or a new fixture).')]
+[group('rust')]
+rust-decoder-lock:
+    BINSIGHT_UPDATE_DECODER_LOCK=1 INSTA_UPDATE=always cargo nextest run --locked -p binsight-dlmm -E 'binary(corpus)'
+
 # Check the Rust formatting without changing any file.
 [group('rust')]
 rust-fmt-check:

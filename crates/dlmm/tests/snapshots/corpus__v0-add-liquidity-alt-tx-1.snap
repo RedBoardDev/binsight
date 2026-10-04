@@ -1,0 +1,58 @@
+---
+source: crates/dlmm/tests/corpus.rs
+expression: rendering(&tx)
+---
+InstructionPosition { top: 2, inner: Some(4) } dlmm.claim_fee {"lb_pair":"AnXXjcrQ6BWN4vEPgvewKLdv5DZSm8vtwYWWQxnYdUxF","position":"DNLCNuMRUZS65oa4XnGt2JEG1A187Kffnn72zREmgbNa","owner":"DnJM1Gd9A1XRjvdQGsUdU1t6jMR1Xosm6MiNX4iD9gRW","fee_x":"298632811","fee_y":"3334825"}
+InstructionPosition { top: 2, inner: Some(5) } dlmm.claim_fee2 {"lb_pair":"AnXXjcrQ6BWN4vEPgvewKLdv5DZSm8vtwYWWQxnYdUxF","position":"DNLCNuMRUZS65oa4XnGt2JEG1A187Kffnn72zREmgbNa","owner":"DnJM1Gd9A1XRjvdQGsUdU1t6jMR1Xosm6MiNX4iD9gRW","fee_x":"298632811","fee_y":"3334825","active_bin_id":-478}
+InstructionPosition { top: 3, inner: Some(2) } dlmm.composition_fee {"from":"DnJM1Gd9A1XRjvdQGsUdU1t6jMR1Xosm6MiNX4iD9gRW","bin_id":-478,"token_x_fee_amount":"0","token_y_fee_amount":"129"}
+InstructionPosition { top: 3, inner: Some(5) } dlmm.add_liquidity {"lb_pair":"AnXXjcrQ6BWN4vEPgvewKLdv5DZSm8vtwYWWQxnYdUxF","from":"DnJM1Gd9A1XRjvdQGsUdU1t6jMR1Xosm6MiNX4iD9gRW","position":"DNLCNuMRUZS65oa4XnGt2JEG1A187Kffnn72zREmgbNa","amount_x":"271994766","amount_y":"3068052","active_bin_id":-478}
+Ok(
+    TxActivity {
+        lifecycle: [],
+        movements: [
+            PositionMovement {
+                at: InstructionPosition {
+                    top: 2,
+                    inner: Some(
+                        5,
+                    ),
+                },
+                position: Address(DNLCNuMRUZS65oa4XnGt2JEG1A187Kffnn72zREmgbNa),
+                pool: Address(AnXXjcrQ6BWN4vEPgvewKLdv5DZSm8vtwYWWQxnYdUxF),
+                kind: FeeClaim,
+                x: RawTokenAmount(
+                    298632811,
+                ),
+                y: RawTokenAmount(
+                    3334825,
+                ),
+                price_bin: Some(
+                    -478,
+                ),
+            },
+            PositionMovement {
+                at: InstructionPosition {
+                    top: 3,
+                    inner: Some(
+                        5,
+                    ),
+                },
+                position: Address(DNLCNuMRUZS65oa4XnGt2JEG1A187Kffnn72zREmgbNa),
+                pool: Address(AnXXjcrQ6BWN4vEPgvewKLdv5DZSm8vtwYWWQxnYdUxF),
+                kind: Deposit,
+                x: RawTokenAmount(
+                    271994766,
+                ),
+                y: RawTokenAmount(
+                    3068052,
+                ),
+                price_bin: Some(
+                    -478,
+                ),
+            },
+        ],
+        reward_claims: [],
+        pool_swaps: [],
+        has_unknown_program_activity: false,
+    },
+)

@@ -1,0 +1,69 @@
+---
+source: crates/dlmm/tests/corpus.rs
+expression: rendering(&tx)
+---
+InstructionPosition { top: 5, inner: Some(2) } dlmm.remove_liquidity {"lb_pair":"FJrBQtXFT57xLSyiVrhqg6fKz52ghqtV7Fjg1utG9v9","from":"5TUvWjeid81ivRQTWSQ6ibfst4x6XGinMWW3J4EkGoug","position":"2yVmeEM1xUEr575N8pkCTmBrgBVq3yLRcKLNdHzH3VJY","amount_x":"0","amount_y":"2100280970","active_bin_id":-509}
+InstructionPosition { top: 6, inner: Some(2) } dlmm.claim_fee {"lb_pair":"FJrBQtXFT57xLSyiVrhqg6fKz52ghqtV7Fjg1utG9v9","position":"2yVmeEM1xUEr575N8pkCTmBrgBVq3yLRcKLNdHzH3VJY","owner":"5TUvWjeid81ivRQTWSQ6ibfst4x6XGinMWW3J4EkGoug","fee_x":"203206129","fee_y":"1086825"}
+InstructionPosition { top: 6, inner: Some(3) } dlmm.claim_fee2 {"lb_pair":"FJrBQtXFT57xLSyiVrhqg6fKz52ghqtV7Fjg1utG9v9","position":"2yVmeEM1xUEr575N8pkCTmBrgBVq3yLRcKLNdHzH3VJY","owner":"5TUvWjeid81ivRQTWSQ6ibfst4x6XGinMWW3J4EkGoug","fee_x":"203206129","fee_y":"1086825","active_bin_id":-509}
+InstructionPosition { top: 7, inner: Some(0) } dlmm.position_close {"position":"2yVmeEM1xUEr575N8pkCTmBrgBVq3yLRcKLNdHzH3VJY","owner":"5TUvWjeid81ivRQTWSQ6ibfst4x6XGinMWW3J4EkGoug"}
+Ok(
+    TxActivity {
+        lifecycle: [
+            Closed {
+                at: InstructionPosition {
+                    top: 7,
+                    inner: Some(
+                        0,
+                    ),
+                },
+                position: Address(2yVmeEM1xUEr575N8pkCTmBrgBVq3yLRcKLNdHzH3VJY),
+                owner: Address(5TUvWjeid81ivRQTWSQ6ibfst4x6XGinMWW3J4EkGoug),
+            },
+        ],
+        movements: [
+            PositionMovement {
+                at: InstructionPosition {
+                    top: 5,
+                    inner: Some(
+                        2,
+                    ),
+                },
+                position: Address(2yVmeEM1xUEr575N8pkCTmBrgBVq3yLRcKLNdHzH3VJY),
+                pool: Address(FJrBQtXFT57xLSyiVrhqg6fKz52ghqtV7Fjg1utG9v9),
+                kind: Withdrawal,
+                x: RawTokenAmount(
+                    0,
+                ),
+                y: RawTokenAmount(
+                    2100280970,
+                ),
+                price_bin: Some(
+                    -509,
+                ),
+            },
+            PositionMovement {
+                at: InstructionPosition {
+                    top: 6,
+                    inner: Some(
+                        3,
+                    ),
+                },
+                position: Address(2yVmeEM1xUEr575N8pkCTmBrgBVq3yLRcKLNdHzH3VJY),
+                pool: Address(FJrBQtXFT57xLSyiVrhqg6fKz52ghqtV7Fjg1utG9v9),
+                kind: FeeClaim,
+                x: RawTokenAmount(
+                    203206129,
+                ),
+                y: RawTokenAmount(
+                    1086825,
+                ),
+                price_bin: Some(
+                    -509,
+                ),
+            },
+        ],
+        reward_claims: [],
+        pool_swaps: [],
+        has_unknown_program_activity: false,
+    },
+)
