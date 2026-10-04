@@ -97,9 +97,17 @@ msgstr "binsight a cessé de fonctionner"
 msgid "binsight, overview"
 msgstr "binsight, aperçu"
 
+#: src/applications/Shared/Ui/ConfirmDialog.tsx
+msgid "Cancel"
+msgstr "Annuler"
+
 #: src/applications/Shared/Control/Ui/ViewToggle.tsx
 msgid "Cards"
 msgstr "Cartes"
+
+#: src/applications/Shared/Layout/Ui/ResponsiveDrawer.tsx
+msgid "Close"
+msgstr "Fermer"
 
 #: src/applications/Realtime/Ui/streamStateLabels.ts
 msgid "Connecting"
