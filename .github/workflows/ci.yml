@@ -304,6 +304,9 @@ jobs:
             web/test-results
           retention-days: 7
 
+  # Builds the image for both architectures on every push and tag, and publishes nothing.
+  # Publishing is off until the first release. To turn it on, add a job that `needs` every check
+  # job above (and `docker`), is the only one granted `packages: write`, and pushes the image.
   docker:
     name: Docker image (${{ matrix.arch }})
     strategy:
@@ -317,27 +320,12 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
-    permissions:
-      contents: read
-      packages: write
-    env:
-      IMAGE: ghcr.io/redboarddev/binsight
-      # Images are published from main and version tags only; every other push just builds.
-      IS_PUBLISH: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - name: Log in to GHCR
-        if: env.IS_PUBLISH == 'true'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build, and push by digest when publishing
-        id: build
+      - name: Build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -346,94 +334,27 @@ jobs:
           no-cache: ${{ startsWith(github.ref, 'refs/tags/') }}
           cache-from: ${{ !startsWith(github.ref, 'refs/tags/') && format('type=gha,scope=docker-{0}', matrix.arch) || '' }} # zizmor: ignore[cache-poisoning]
           cache-to: ${{ !startsWith(github.ref, 'refs/tags/') && format('type=gha,mode=max,scope=docker-{0}', matrix.arch) || '' }}
-          outputs: ${{ env.IS_PUBLISH == 'true' && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE) || 'type=cacheonly' }}
-          provenance: ${{ env.IS_PUBLISH == 'true' && 'mode=max' || 'false' }}
-          sbom: ${{ env.IS_PUBLISH == 'true' }}
-      - name: Record the digest
-        if: env.IS_PUBLISH == 'true'
-        env:
-          DIGEST: ${{ steps.build.outputs.digest }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/digests"
-          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
-      - name: Upload the digest
-        if: env.IS_PUBLISH == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: digest-${{ matrix.arch }}
-          path: ${{ runner.temp }}/digests/*
-          retention-days: 1
-          if-no-files-found: error
-
-  docker-manifest:
-    name: Docker multi-arch manifest
-    needs: docker
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      packages: write
-    env:
-      IMAGE: ghcr.io/redboarddev/binsight
-    steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: digest-*
-          path: ${{ runner.temp }}/digests
-          merge-multiple: true
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Pick the tags
-        id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        with:
-          images: ${{ env.IMAGE }}
-          # main: edge and sha-<short>. v1.2.3: 1.2.3, 1.2 and latest.
-          tags: |
-            type=edge,branch=main
-            type=sha,prefix=sha-,enable={{is_default_branch}}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-      - name: Create the multi-arch manifest
-        working-directory: ${{ runner.temp }}/digests
-        run: |
-          # shellcheck disable=SC2046
-          docker buildx imagetools create \
-            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf "$IMAGE@sha256:%s " *)
-      - name: Inspect the image
-        env:
-          VERSION: ${{ steps.meta.outputs.version }}
-        run: docker buildx imagetools inspect "$IMAGE:$VERSION"
+          outputs: type=cacheonly
+          provenance: false
 
   ci-ok:
     name: ci-ok
     # Add a job to this workflow and forget it in `needs` here, and it becomes advisory:
     # a red run would still look green.
     if: always()
-    needs: [commits, workflows, fmt, clippy, test, deny, layering, web, e2e, docker, docker-manifest]
+    needs: [commits, workflows, fmt, clippy, test, deny, layering, web, e2e, docker]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Verify every job
         env:
           RESULTS: ${{ toJSON(needs) }}
-          IS_PUBLISH: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
         run: |
           # GitHub reports a skipped job as passing to branch protection, so here every job must
-          # succeed: skipped, failed and cancelled all fail the verdict. One documented exception:
-          # docker-manifest only runs when an image is published.
+          # succeed: skipped, failed and cancelled all fail the verdict.
           failed=0
           while read -r job result; do
             echo "$job: $result"
-            if [ "$job" = docker-manifest ] && [ "$IS_PUBLISH" != true ] && [ "$result" = skipped ]; then
-              continue
-            fi
             if [ "$result" != success ]; then
               echo "::error::$job did not pass ($result)"
               failed=1
