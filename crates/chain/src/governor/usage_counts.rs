@@ -11,15 +11,16 @@ use binsight_core::credits::{CallOutcome, Credits, Priority, Purpose};
 use binsight_solana::Address;
 use jiff::civil::Date;
 
-use crate::rpc::{CallContext, RpcMethod};
+use super::cost_table::BilledMethod;
+use crate::rpc::CallContext;
 
 /// The credits spent by a group of identical requests on one day.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CreditUsage {
     /// The UTC day the requests were sent.
     pub day: Date,
-    /// The method called.
-    pub method: RpcMethod,
+    /// What was billed: the method called, or the stream.
+    pub method: BilledMethod,
     /// The class of the calls.
     pub priority: Priority,
     /// The work they belonged to.
@@ -37,7 +38,7 @@ pub struct CreditUsage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct UsageKey {
     day: Date,
-    method: RpcMethod,
+    method: BilledMethod,
     priority: Priority,
     purpose: Purpose,
     wallet: Option<Address>,
@@ -51,14 +52,14 @@ pub(super) struct UsageCounts {
 }
 
 impl UsageCounts {
-    /// Counts one request of `method` sent on `day` for `context`, which ended with `outcome`.
+    /// Counts `calls` of `method` sent on `day` for `context`, which ended with `outcome`.
     pub(super) fn count(
         &mut self,
         day: Date,
-        method: RpcMethod,
+        method: BilledMethod,
         context: &CallContext,
         outcome: CallOutcome,
-        cost: Credits,
+        (calls, cost): (u64, Credits),
     ) {
         let key = UsageKey {
             day,
@@ -68,7 +69,7 @@ impl UsageCounts {
             wallet: context.wallet,
             outcome,
         };
-        self.add(key, 1, cost);
+        self.add(key, calls, cost);
     }
 
     /// Takes every count gathered so far.
@@ -113,6 +114,7 @@ impl UsageCounts {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rpc::RpcMethod;
 
     fn context() -> CallContext {
         CallContext {
@@ -127,13 +129,8 @@ mod tests {
     }
 
     fn count(counts: &mut UsageCounts, outcome: CallOutcome) {
-        counts.count(
-            day(),
-            RpcMethod::GetTransaction,
-            &context(),
-            outcome,
-            Credits(1),
-        );
+        let method = BilledMethod::Rpc(RpcMethod::GetTransaction);
+        counts.count(day(), method, &context(), outcome, (1, Credits(1)));
     }
 
     #[test]

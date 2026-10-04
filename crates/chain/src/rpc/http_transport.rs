@@ -1,13 +1,11 @@
 //! The real transport: JSON-RPC over HTTPS with `reqwest` and `rustls`.
 //!
-//! TLS uses the `ring` provider and the Mozilla root certificates compiled into the binary, so it
-//! needs no system certificate bundle and no OpenSSL. The HTTP library puts the request URL, and
-//! so the API key, in its error messages: every error is stripped of its URL before it leaves this
-//! module. Redirects are never followed: a followed POST turns into a GET whose answer cannot be
+//! TLS uses the configuration shared with the stream (`ring`, embedded Mozilla roots). The HTTP
+//! library puts the request URL, and so the API key, in its error messages: every error is
+//! stripped of its URL before it leaves this module. Redirects are never followed: a followed POST turns into a GET whose answer cannot be
 //! read, while the redirect status itself tells what happened. The transport sends and receives;
 //! deadlines and retries belong to the client.
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use reqwest::header::{CONTENT_TYPE, RETRY_AFTER};
@@ -15,6 +13,7 @@ use reqwest::header::{CONTENT_TYPE, RETRY_AFTER};
 use crate::endpoint::RpcEndpoint;
 use crate::error::TransportError;
 use crate::rpc::transport::{HttpReply, RpcTransport, SendFuture};
+use crate::tls;
 
 /// How long opening a connection (TCP and TLS) may take.
 const CONNECT_TIMEOUT_SECS: u64 = 5;
@@ -41,7 +40,11 @@ impl HttpTransport {
     /// built.
     pub fn new(endpoint: RpcEndpoint) -> Result<Self, TransportError> {
         let client = reqwest::Client::builder()
-            .tls_backend_preconfigured(tls_config()?)
+            .tls_backend_preconfigured(tls::client_config().map_err(|error| {
+                TransportError::Connect {
+                    detail: error.to_string(),
+                }
+            })?)
             .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
             .pool_idle_timeout(Duration::from_secs(IDLE_CONNECTION_TIMEOUT_SECS))
             .user_agent(USER_AGENT)
@@ -82,22 +85,6 @@ impl RpcTransport for HttpTransport {
     fn send(&self, body: Vec<u8>) -> SendFuture<'_> {
         Box::pin(self.post(body))
     }
-}
-
-/// TLS 1.2 and 1.3 with the `ring` provider and the embedded Mozilla roots.
-fn tls_config() -> Result<rustls::ClientConfig, TransportError> {
-    let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let roots = rustls::RootCertStore {
-        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-    };
-    let config = rustls::ClientConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()
-        .map_err(|error| TransportError::Connect {
-            detail: error.to_string(),
-        })?
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-    Ok(config)
 }
 
 /// Converts a `reqwest` error, dropping the URL (and so the key) from it. The causes are kept:

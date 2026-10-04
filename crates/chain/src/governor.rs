@@ -19,6 +19,8 @@ mod waiting_lanes;
 
 pub use billing_cycle::{BillingCycleDay, InvalidCycleDay};
 pub use budget_guard::CreditStanding;
+pub use cost_table::BilledMethod;
+pub(crate) use cost_table::STREAM_DATA_UNIT_BYTES;
 pub use credit_meter::CreditMeter;
 pub use usage_counts::CreditUsage;
 
@@ -26,7 +28,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use binsight_core::clock::Clock;
-use binsight_core::credits::{CallOutcome, Credits, Priority};
+use binsight_core::credits::{CallOutcome, Credits, Priority, Purpose};
 use jiff::{SignedDuration, Timestamp};
 
 use crate::error::BudgetRefusal;
@@ -100,13 +102,18 @@ impl Governor {
         &self.meter
     }
 
+    /// The current instant, on the clock the credits are dated by.
+    pub(crate) fn now(&self) -> Timestamp {
+        self.clock.now()
+    }
+
     /// Books the request's cost, then waits for a slot in its priority's lane to send it.
     pub(crate) async fn admit(
         &self,
         method: RpcMethod,
         priority: Priority,
     ) -> Result<(), BudgetRefusal> {
-        let cost = cost(method);
+        let cost = cost(BilledMethod::Rpc(method));
         self.meter.reserve(cost, priority)?;
         if let Err(full) = self.limiter.acquire(priority).await {
             self.meter.release(cost);
@@ -141,7 +148,39 @@ impl Governor {
     pub(crate) fn credits_exhausted(&self) {
         self.meter.provider_refused();
     }
+
+    /// Books the opening of a stream connection, a live request, if the budget admits it.
+    pub(crate) fn admit_stream_open(&self) -> Result<(), BudgetRefusal> {
+        self.meter
+            .reserve(cost(BilledMethod::StreamOpen), Priority::Realtime)
+    }
+
+    /// Counts a stream connection attempt with how it ended.
+    pub(crate) fn record_stream_open(&self, outcome: CallOutcome) {
+        let method = BilledMethod::StreamOpen;
+        self.meter
+            .record(method, &STREAM_CONTEXT, outcome, cost(method));
+    }
+
+    /// Charges `units` started units of streamed data.
+    pub(crate) fn charge_stream_data(&self, units: u64) {
+        let method = BilledMethod::StreamData;
+        let credits = Credits(cost(method).0.saturating_mul(units));
+        self.meter.charge(method, &STREAM_CONTEXT, units, credits);
+    }
+
+    /// The hard limit that stops even live requests now, if one is reached.
+    pub(crate) fn hard_refusal(&self) -> Option<BudgetRefusal> {
+        self.meter.hard_refusal()
+    }
 }
+
+/// What the stream's credits are filed under: live work, for no wallet in particular.
+const STREAM_CONTEXT: CallContext = CallContext {
+    priority: Priority::Realtime,
+    purpose: Purpose::LiveStream,
+    wallet: None,
+};
 
 /// A request on its way; dropping it unsettled counts it as cancelled.
 #[derive(Debug)]
@@ -163,10 +202,10 @@ impl SentRequest<'_> {
             return;
         }
         self.is_counted = true;
-        let cost = cost(self.method);
+        let method = BilledMethod::Rpc(self.method);
         self.governor
             .meter
-            .record(self.method, &self.context, outcome, cost);
+            .record(method, &self.context, outcome, cost(method));
     }
 }
 

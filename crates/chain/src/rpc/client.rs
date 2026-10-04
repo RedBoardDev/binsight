@@ -58,6 +58,11 @@ impl RpcClient {
         self.inner.governor.meter()
     }
 
+    /// The governor, which the stream shares to budget and count its own credits.
+    pub(crate) fn governor(&self) -> &Governor {
+        &self.inner.governor
+    }
+
     /// Calls `method` with `params`, retrying transient failures as the policy allows.
     pub(crate) async fn call(
         &self,

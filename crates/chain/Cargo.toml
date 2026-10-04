@@ -12,13 +12,14 @@ publish.workspace = true
 workspace = true
 
 [features]
-# A scripted transport for the tests of the crates above the chain client: they script the
-# provider's answers instead of reaching the network.
+# A scripted transport and stream for the tests of the crates above the chain client: they
+# script the provider's answers instead of reaching the network.
 test-support = []
 
 [dependencies]
 binsight-core.workspace = true
 binsight-solana.workspace = true
+futures-util = { workspace = true, features = ["sink"] }
 jiff.workspace = true
 reqwest.workspace = true
 rustls.workspace = true
@@ -26,7 +27,9 @@ secrecy.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 thiserror.workspace = true
-tokio = { workspace = true, features = ["sync", "time"] }
+tokio = { workspace = true, features = ["macros", "net", "sync", "time"] }
+tokio-rustls.workspace = true
+tokio-tungstenite.workspace = true
 tracing.workspace = true
 webpki-roots.workspace = true
 

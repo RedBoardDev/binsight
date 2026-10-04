@@ -1,11 +1,14 @@
 //! Test doubles for the crates above the chain client, behind the `test-support` feature.
 //!
-//! A test scripts what the provider answers instead of reaching the network; everything else
-//! (deadlines, retries, pacing, metering, parsing) runs for real. Compiled only for tests and with
-//! the feature, which only dev-dependencies enable.
+//! A test scripts what the provider answers, over JSON-RPC and over the stream, instead of
+//! reaching the network; everything else (deadlines, retries, pacing, metering, parsing, the
+//! stream's supervision) runs for real. Compiled only for tests and with the feature, which only
+//! dev-dependencies enable.
 
+mod scripted_stream;
 mod scripted_transport;
 
+pub use scripted_stream::ScriptedConnector;
 pub use scripted_transport::{ExpectationBuilder, RecordedCall, ScriptedReply, ScriptedTransport};
 
 use std::sync::Arc;

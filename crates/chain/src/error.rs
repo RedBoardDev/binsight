@@ -1,8 +1,9 @@
 //! The errors of the chain client.
 //!
 //! [`RpcError`] says why a call failed in terms the caller can act on (try later, fix the key,
-//! park the transaction); the retry policy reads it too. No error ever holds the API key or a URL
-//! that contains it. This module only describes failures; it does not log or retry.
+//! park the transaction); the retry policy reads it too. [`StreamError`] says why the WebSocket
+//! stream broke. No error ever holds the API key or a URL that contains it. This module only
+//! describes failures; it does not log or retry.
 
 use std::time::Duration;
 
@@ -24,6 +25,25 @@ pub enum TransportError {
     #[error("the request to the RPC provider failed: {detail}")]
     Request {
         /// What failed, without the URL.
+        detail: String,
+    },
+}
+
+/// The WebSocket stream could not be opened or broke.
+///
+/// The detail comes from the WebSocket library with the API key removed.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum StreamError {
+    /// The connection could not be opened (TCP, TLS or the WebSocket handshake).
+    #[error("could not open the stream: {detail}")]
+    Connect {
+        /// What failed, without the key.
+        detail: String,
+    },
+    /// An open connection failed.
+    #[error("the stream connection failed: {detail}")]
+    Connection {
+        /// What failed, without the key.
         detail: String,
     },
 }

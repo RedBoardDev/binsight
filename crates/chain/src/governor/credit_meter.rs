@@ -16,10 +16,11 @@ use jiff::civil::Date;
 
 use super::billing_cycle::BillingCycleDay;
 use super::budget_guard::{BudgetGuard, CreditStanding};
+use super::cost_table::BilledMethod;
 use super::daily_budget::{BudgetLimits, Spend, Spending};
 use super::usage_counts::{CreditUsage, UsageCounts};
 use crate::error::BudgetRefusal;
-use crate::rpc::{CallContext, RpcMethod};
+use crate::rpc::CallContext;
 
 /// Counts the credits spent and guards the budget.
 pub struct CreditMeter {
@@ -116,7 +117,7 @@ impl CreditMeter {
     /// Counts one request that was sent, with how it ended.
     pub(crate) fn record(
         &self,
-        method: RpcMethod,
+        method: BilledMethod,
         context: &CallContext,
         outcome: CallOutcome,
         cost: Credits,
@@ -126,7 +127,33 @@ impl CreditMeter {
         if outcome == CallOutcome::Ok {
             state.guard.provider_served();
         }
-        state.counts.count(day, method, context, outcome, cost);
+        state.counts.count(day, method, context, outcome, (1, cost));
+    }
+
+    /// Counts `units` of `method` the provider delivered without being asked, such as streamed
+    /// data, and adds their cost to the spending: they were spent whatever the budget says.
+    pub(crate) fn charge(
+        &self,
+        method: BilledMethod,
+        context: &CallContext,
+        units: u64,
+        cost: Credits,
+    ) {
+        let now = self.clock.now();
+        let mut state = self.lock();
+        state.guard.add(cost, now);
+        state.counts.count(
+            utc_day(now),
+            method,
+            context,
+            CallOutcome::Ok,
+            (units, cost),
+        );
+    }
+
+    /// The refusal every request would meet now, if a hard limit is reached.
+    pub(crate) fn hard_refusal(&self) -> Option<BudgetRefusal> {
+        self.lock().guard.hard_refusal(self.clock.now())
     }
 
     fn lock(&self) -> MutexGuard<'_, MeterState> {
@@ -151,6 +178,7 @@ mod tests {
     use binsight_solana::Address;
 
     use super::*;
+    use crate::rpc::RpcMethod;
 
     /// 2026-09-21 at 14:13 UTC.
     const SEPTEMBER_21_AFTERNOON: i64 = 1_790_000_000;
@@ -221,12 +249,8 @@ mod tests {
         let refused = meter.reserve(Credits(1), Priority::Realtime);
         clock.advance(SignedDuration::from_hours(1)).unwrap();
         let probe = meter.reserve(Credits(1), Priority::Realtime);
-        meter.record(
-            RpcMethod::GetTransaction,
-            &context(),
-            CallOutcome::Ok,
-            Credits(1),
-        );
+        let method = BilledMethod::Rpc(RpcMethod::GetTransaction);
+        meter.record(method, &context(), CallOutcome::Ok, Credits(1));
 
         assert!(matches!(
             refused,
