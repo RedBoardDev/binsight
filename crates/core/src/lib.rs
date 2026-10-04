@@ -1,8 +1,8 @@
 //! # binsight-core
 //!
 //! **Responsibility:** the shared vocabulary of binsight, with no I/O: integer money units, exact
-//! decimal strings, the exactness status of a figure, an injectable clock and the vocabulary of the
-//! RPC credit budget.
+//! decimal strings, signed money and the SOL/USD rate, exact percentages and prices, the exactness
+//! status of a figure, an injectable clock and the vocabulary of the RPC credit budget.
 //!
 //! **May depend on:** no other binsight crate.
 //! **Must not depend on:** any other binsight crate, nor any I/O, async or serialization crate.
@@ -22,4 +22,8 @@ pub mod credits;
 pub mod decimal;
 pub mod error;
 pub mod exactness;
+pub mod money;
+pub mod price;
+pub mod ratio;
+mod rounding;
 pub mod units;
