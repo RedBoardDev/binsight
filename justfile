@@ -203,10 +203,28 @@ rust-dev-env:
     test -f .dev/binsight.env || printf 'BINSIGHT_PASSWORD=dev-password-change-me\nBINSIGHT_HELIUS_API_KEY=dev-placeholder-key\nBINSIGHT_DATA_DIR=%s/.dev/data\n' "$PWD" > .dev/binsight.env
     chmod 600 .dev/binsight.env
 
-# Run the server with the development config.
+# The key is read from the .env of the main checkout (the parent of the git common folder, so a
+# worktree finds it too), as BINSIGHT_HELIUS_API_KEY or HELIUS_API_KEY, and is never printed: a
+# shebang recipe is not echoed. The environment wins over .dev/binsight.env, and over the default
+# daily credit limit that protects the monthly quota.
+[doc('Run the server with the development config, a real Helius key from .env, and a daily credit limit.')]
 [group('rust')]
-rust-run *ARGS:
-    BINSIGHT_CONFIG_FILE=.dev/binsight.env cargo run -p binsight -- run {{ ARGS }}
+rust-run *ARGS: rust-dev-env
+    #!/usr/bin/env bash
+    set -euo pipefail
+    env_file="$(git rev-parse --path-format=absolute --git-common-dir)/../.env"
+    if [ -z "${BINSIGHT_HELIUS_API_KEY:-}" ] && [ -f "$env_file" ]; then
+        key="$(sed -n -e 's/^BINSIGHT_HELIUS_API_KEY=//p' -e 's/^HELIUS_API_KEY=//p' "$env_file" | head -n 1)"
+        key="${key%\"}"; key="${key#\"}"; key="${key%\'}"; key="${key#\'}"
+        if [ -n "$key" ]; then export BINSIGHT_HELIUS_API_KEY="$key"; fi
+    fi
+    export BINSIGHT_DAILY_CREDIT_LIMIT="${BINSIGHT_DAILY_CREDIT_LIMIT:-5000}"
+    BINSIGHT_CONFIG_FILE=.dev/binsight.env exec cargo run -p binsight -- run {{ ARGS }}
+
+# Run an administrative command against the development data folder (no key needed).
+[group('rust')]
+rust-admin *ARGS: rust-dev-env
+    BINSIGHT_CONFIG_FILE=.dev/binsight.env cargo run --quiet -p binsight -- admin {{ ARGS }}
 
 # Build the release binary from scratch, so it embeds the current web build.
 [group('rust')]
