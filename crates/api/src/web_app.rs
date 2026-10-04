@@ -4,8 +4,8 @@
 //! in memory. The rules:
 //! - `/api/...` paths that match no route get a JSON 404, never the web app;
 //! - only `GET` and `HEAD` are served;
-//! - a known file is served with its content type and an `ETag` (a matching `If-None-Match` gets
-//!   `304`); files under `assets/` have content-hashed names and are cached for a year, every
+//! - a known file is served with its content type and a weak `ETag` (a matching `If-None-Match`
+//!   gets `304`); weak, because compression sends different bytes for the same content; files under `assets/` have content-hashed names and are cached for a year, every
 //!   other file (`index.html`, the service worker, the manifest) is revalidated on each use;
 //! - an unknown path without an extension is a page of the app: it gets `index.html`, and the
 //!   app's router takes over; an unknown path with an extension is a missing file: `404`.
@@ -147,22 +147,23 @@ fn file_response(
     response
 }
 
-/// Whether the request's `If-None-Match` names `etag` (or `*`).
+/// Whether the request's `If-None-Match` names `etag` (or `*`), compared weakly as HTTP
+/// requires for `If-None-Match`: `W/"x"` and `"x"` name the same content.
 fn is_client_copy_current(request_headers: &HeaderMap, etag: &str) -> bool {
+    let opaque = |tag: &str| tag.trim().trim_start_matches("W/").to_owned();
+    let ours = opaque(etag);
     request_headers
-        .get(header::IF_NONE_MATCH)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|tags| {
-            tags.split(',').any(|tag| {
-                let tag = tag.trim();
-                tag == "*" || tag == etag
-            })
-        })
+        .get_all(header::IF_NONE_MATCH)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|tags| tags.split(','))
+        .any(|tag| tag.trim() == "*" || opaque(tag) == ours)
 }
 
-/// A strong `ETag`: the content hash in hexadecimal, quoted.
+/// A weak `ETag`: the content hash in hexadecimal, quoted. The compression layer sends gzip, br
+/// or plain bytes under the same tag, which only a weak tag allows.
 fn etag_of(asset: &WebAsset) -> String {
-    let mut etag = String::from("\"");
+    let mut etag = String::from("W/\"");
     for byte in asset.sha256 {
         // Writing to a String cannot fail.
         let _ = write!(etag, "{byte:02x}");

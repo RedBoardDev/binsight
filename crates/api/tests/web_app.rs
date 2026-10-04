@@ -9,7 +9,7 @@ use axum::http::{Request, StatusCode};
 use common::{INDEX_HTML, TestApp};
 
 /// The `ETag` of the fake `index.html` (its hash is 32 bytes of 1).
-const INDEX_ETAG: &str = "\"0101010101010101010101010101010101010101010101010101010101010101\"";
+const INDEX_ETAG: &str = "W/\"0101010101010101010101010101010101010101010101010101010101010101\"";
 
 #[tokio::test]
 async fn serves_the_index_page_at_the_root() {
@@ -96,6 +96,20 @@ async fn answers_304_when_the_client_copy_is_current() {
     assert_eq!(response.status, StatusCode::NOT_MODIFIED);
     assert!(response.body.is_empty());
     assert_eq!(response.header("etag"), Some(INDEX_ETAG));
+}
+
+#[tokio::test]
+async fn compares_the_client_tag_weakly() {
+    let app = TestApp::new().await;
+    let strong = INDEX_ETAG.trim_start_matches("W/");
+    let request = Request::get("/")
+        .header("if-none-match", format!("\"other\", {strong}"))
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.send(request).await;
+
+    assert_eq!(response.status, StatusCode::NOT_MODIFIED);
 }
 
 #[tokio::test]
