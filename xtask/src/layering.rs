@@ -176,7 +176,7 @@ mod tests {
             messages(&packages),
             [
                 "binsight-core is a pure crate and must not depend on tokio \
-              (pure crates may only use: thiserror, serde, serde_json, bs58, borsh, jiff, sha2)"
+              (pure crates may only use: thiserror, serde, serde_json, bs58, base64, borsh, jiff, sha2)"
             ]
         );
     }

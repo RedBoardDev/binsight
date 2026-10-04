@@ -179,6 +179,7 @@ pub(crate) const PURE_EXTERNAL_ALLOWLIST: &[&str] = &[
     "serde",
     "serde_json",
     "bs58",
+    "base64",
     "borsh",
     "jiff",
     "sha2",
