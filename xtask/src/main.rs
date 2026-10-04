@@ -7,6 +7,7 @@
 //! **May depend on:** no binsight crate; nobody depends on it.
 //! (Checked in CI by `cargo xtask layering`.)
 
+mod git;
 mod layering;
 mod metadata;
 mod rules;

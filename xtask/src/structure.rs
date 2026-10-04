@@ -20,6 +20,7 @@ use self::limits::{
     ALLOWLIST_PATH, FileRole, MAX_LINES, MAX_SOURCE_FILES_PER_FOLDER, REVIEW_LINES, classify,
 };
 use self::tracked_files::TrackedFile;
+use crate::git;
 
 /// The outcome of the structure check.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -34,7 +35,7 @@ pub(crate) struct Report {
 
 /// Reads the repository and its allowlist, then applies the limits.
 pub(crate) fn check_repository() -> anyhow::Result<Report> {
-    let root = tracked_files::repository_root()?;
+    let root = git::repository_root()?;
     let allowlist_text = std::fs::read_to_string(root.join(ALLOWLIST_PATH))
         .with_context(|| format!("could not read {ALLOWLIST_PATH}"))?;
     let allowlist =

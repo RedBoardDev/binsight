@@ -5,7 +5,7 @@
 //! data; it does not apply any limit.
 
 use std::io::ErrorKind;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 use anyhow::{Context, bail};
@@ -19,22 +19,6 @@ pub(crate) struct TrackedFile {
     pub(crate) path: String,
     /// The number of lines in the file.
     pub(crate) lines: usize,
-}
-
-/// The root of the git repository the command runs in.
-pub(crate) fn repository_root() -> anyhow::Result<PathBuf> {
-    let output = Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .output()
-        .context("could not run `git rev-parse`")?;
-    if !output.status.success() {
-        bail!(
-            "could not find the repository root: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    let root = String::from_utf8(output.stdout).context("git printed a non UTF-8 path")?;
-    Ok(PathBuf::from(root.trim_end()))
 }
 
 /// Every file git knows about (committed or new, minus ignored ones) that the limits apply to.
