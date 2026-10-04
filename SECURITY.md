@@ -12,7 +12,7 @@ Please **do not open a public issue** for a security problem.
 Report it privately through GitHub instead: open the
 [Security tab of the repository](https://github.com/RedBoardDev/binsight/security/advisories/new) and choose
 **Report a vulnerability**. Include what you found, how to reproduce it and the version you tested (`binsight --version`
-or the image tag). Never include a real password or Helius API key.
+or the commit you built). Never include a real password or Helius API key.
 
 What to expect:
 
@@ -25,7 +25,7 @@ What to expect:
 In scope:
 
 - the `binsight` binary and its HTTP API;
-- the official container image;
+- the container image built from the repository's `Dockerfile`;
 - the web app it serves.
 
 Out of scope:
@@ -45,6 +45,14 @@ Out of scope:
 - Behind a reverse proxy every request comes from the proxy's address. Set `BINSIGHT_CLIENT_IP_HEADER` to the header
   your proxy writes the client's address into, and only then: a client that reaches binsight directly could put any
   address in that header.
+
+## Sessions
+
+- A session lasts 30 days. Signing out deletes the session cookie from that browser; the server keeps no session
+  list, so a cookie copied before then stays valid until it expires. An open live-update stream ends when its
+  session expires.
+- To sign every device out, stop binsight, run `binsight admin rotate-sessions`, and start it again. Changing the
+  password signs everyone out too.
 
 ## Hardening your instance
 
