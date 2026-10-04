@@ -1,0 +1,13 @@
+# Captured by `cargo xtask fixture capture` (finalized commitment). Each JSON file is the
+# node's `result`, byte for byte; do not edit them by hand.
+
+name = "claim-fee2-two-ranges"
+why = "An automation claims the fees of one position over two bin ranges in one transaction: each claim_fee2 call emits both claim forms, counted once per call."
+perspective = "HAWK3BVnwptKRFYfVoVGhBc2TYxpyG9jmAbkHeW9tyKE"
+oracles = ["R-02"]
+captured_at = "2026-10-04"
+
+[[transaction]]
+file = "tx-1.json"
+signature = "4mRbfguVsYfNSSVZkqSg3n4CcC9hwL3f7MtNai65dRxp6MButDPPDqxR8Tft9Z8GtBsKDKAgu27JKJhw2Ch1XPcN"
+slot = 453348020

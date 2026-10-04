@@ -1,0 +1,13 @@
+# Captured by `cargo xtask fixture capture` (finalized commitment). Each JSON file is the
+# node's `result`, byte for byte; do not edit them by hand.
+
+name = "close-if-empty-not-empty"
+why = "A bot removes part of a position, claims its fees, and calls close_position_if_empty, which succeeds without closing the position still holding liquidity."
+perspective = "CZ7Uu8qkPKVMNHXCFRnzDPj8ZWPvwGYNHQhSTG2LteMr"
+oracles = ["X-8"]
+captured_at = "2026-10-04"
+
+[[transaction]]
+file = "tx-1.json"
+signature = "55r4eNXp8QF3PYRmNWtn9ScD5RXmZ9mUCBvjJCKrb5iBUskFxne81U3XbUNyhTwksUBuqfhJqqkmCHJTQ9fY9F8B"
+slot = 453342370

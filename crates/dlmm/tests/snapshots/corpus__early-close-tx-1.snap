@@ -1,0 +1,68 @@
+---
+source: crates/dlmm/tests/corpus.rs
+expression: rendering(&tx)
+---
+InstructionPosition { top: 3, inner: Some(2) } dlmm.remove_liquidity {"lb_pair":"DR26Cff6PrjzhyoHzV59Wjgxg7NuW4JSnHbdz6RE8Bho","from":"BtG3c1xex3gZmktqJJQpKxoiz6atSxJs6rWBZGtDvuAQ","position":"GhgwXhWptW856SvXSjqVHfL3Hf8tndepCpDEGALTN4Uh","amount_x":"0","amount_y":"804642927","active_bin_id":-1831}
+InstructionPosition { top: 4, inner: Some(2) } dlmm.claim_fee {"lb_pair":"DR26Cff6PrjzhyoHzV59Wjgxg7NuW4JSnHbdz6RE8Bho","position":"GhgwXhWptW856SvXSjqVHfL3Hf8tndepCpDEGALTN4Uh","owner":"BtG3c1xex3gZmktqJJQpKxoiz6atSxJs6rWBZGtDvuAQ","fee_x":"17532198246","fee_y":"3524425"}
+InstructionPosition { top: 5, inner: Some(0) } dlmm.position_close {"position":"GhgwXhWptW856SvXSjqVHfL3Hf8tndepCpDEGALTN4Uh","owner":"BtG3c1xex3gZmktqJJQpKxoiz6atSxJs6rWBZGtDvuAQ"}
+Ok(
+    TxActivity {
+        lifecycle: [
+            Closed {
+                at: InstructionPosition {
+                    top: 5,
+                    inner: Some(
+                        0,
+                    ),
+                },
+                position: Address(GhgwXhWptW856SvXSjqVHfL3Hf8tndepCpDEGALTN4Uh),
+                owner: Address(BtG3c1xex3gZmktqJJQpKxoiz6atSxJs6rWBZGtDvuAQ),
+            },
+        ],
+        movements: [
+            PositionMovement {
+                at: InstructionPosition {
+                    top: 3,
+                    inner: Some(
+                        2,
+                    ),
+                },
+                position: Address(GhgwXhWptW856SvXSjqVHfL3Hf8tndepCpDEGALTN4Uh),
+                pool: Address(DR26Cff6PrjzhyoHzV59Wjgxg7NuW4JSnHbdz6RE8Bho),
+                kind: Withdrawal,
+                x: RawTokenAmount(
+                    0,
+                ),
+                y: RawTokenAmount(
+                    804642927,
+                ),
+                price_bin: Some(
+                    -1831,
+                ),
+            },
+            PositionMovement {
+                at: InstructionPosition {
+                    top: 4,
+                    inner: Some(
+                        2,
+                    ),
+                },
+                position: Address(GhgwXhWptW856SvXSjqVHfL3Hf8tndepCpDEGALTN4Uh),
+                pool: Address(DR26Cff6PrjzhyoHzV59Wjgxg7NuW4JSnHbdz6RE8Bho),
+                kind: FeeClaim,
+                x: RawTokenAmount(
+                    17532198246,
+                ),
+                y: RawTokenAmount(
+                    3524425,
+                ),
+                price_bin: Some(
+                    -1831,
+                ),
+            },
+        ],
+        reward_claims: [],
+        pool_swaps: [],
+        has_unknown_program_activity: false,
+    },
+)

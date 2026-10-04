@@ -1,0 +1,13 @@
+# Captured by `cargo xtask fixture capture` (finalized commitment). Each JSON file is the
+# node's `result`, byte for byte; do not edit them by hand.
+
+name = "rebalance-and-claim-fee2"
+why = "An automation claims the fees of a position (nothing to claim), withdraws it all with a rebalance that harvests nothing, then closes it, in one transaction."
+perspective = "HAWK3BVnwptKRFYfVoVGhBc2TYxpyG9jmAbkHeW9tyKE"
+oracles = ["R-06", "X-8"]
+captured_at = "2026-10-04"
+
+[[transaction]]
+file = "tx-1.json"
+signature = "dy2dMYAhjGKHnHkKgdwrKFVHmUyMWZ78ihYrGaMhb1yaYGs2Wx7xjmfPNESQxHLv9hi9D77heH3gpdbTA2cUhrC"
+slot = 453348026

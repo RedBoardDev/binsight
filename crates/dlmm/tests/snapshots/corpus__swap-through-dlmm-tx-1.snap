@@ -1,0 +1,38 @@
+---
+source: crates/dlmm/tests/corpus.rs
+expression: rendering(&tx)
+---
+InstructionPosition { top: 1, inner: Some(15) } dlmm.swap {"lb_pair":"yHutxf9hq2NoH3ukYbb9uoDRP2Np7ughhXcrjkym3FX","from":"eLLnsiBsWvERB34kgiJ4wPhdRzqM17gMG4cHouMqaHz","start_bin_id":-504,"end_bin_id":-504,"amount_in":"2179121930","amount_out":"14030749","swap_for_y":true}
+InstructionPosition { top: 1, inner: Some(18) } dlmm.swap2 {"lb_pair":"yHutxf9hq2NoH3ukYbb9uoDRP2Np7ughhXcrjkym3FX","from":"eLLnsiBsWvERB34kgiJ4wPhdRzqM17gMG4cHouMqaHz","start_bin_id":-504,"end_bin_id":-504,"amount_in":"2179121930","amount_out":"14030749","swap_for_y":true}
+Ok(
+    TxActivity {
+        lifecycle: [],
+        movements: [],
+        reward_claims: [],
+        pool_swaps: [
+            PoolSwap {
+                at: InstructionPosition {
+                    top: 1,
+                    inner: Some(
+                        18,
+                    ),
+                },
+                pool: Address(yHutxf9hq2NoH3ukYbb9uoDRP2Np7ughhXcrjkym3FX),
+                swap: Swapped {
+                    lb_pair: Address(yHutxf9hq2NoH3ukYbb9uoDRP2Np7ughhXcrjkym3FX),
+                    from: Address(eLLnsiBsWvERB34kgiJ4wPhdRzqM17gMG4cHouMqaHz),
+                    start_bin_id: -504,
+                    end_bin_id: -504,
+                    amount_in: RawTokenAmount(
+                        2179121930,
+                    ),
+                    amount_out: RawTokenAmount(
+                        14030749,
+                    ),
+                    swap_for_y: true,
+                },
+            },
+        ],
+        has_unknown_program_activity: false,
+    },
+)

@@ -1,0 +1,56 @@
+---
+source: crates/dlmm/tests/corpus.rs
+expression: rendering(&tx)
+---
+InstructionPosition { top: 4, inner: Some(0) } dlmm.claim_fee {"lb_pair":"HwbQ8PCzxgFTyE8yL1WFet1P3XpzphuCa4QAZR4xbte","position":"HQAeZAXua1eVswJcFZEP7Hp8TE6pZJVvMt4sEmiAuVGp","owner":"9HCZ4a6BHPZdsG1M1EGB9B7Pvk8Uyw4Y9UZa3wtw7zNs","fee_x":"0","fee_y":"0"}
+InstructionPosition { top: 4, inner: Some(1) } dlmm.claim_fee2 {"lb_pair":"HwbQ8PCzxgFTyE8yL1WFet1P3XpzphuCa4QAZR4xbte","position":"HQAeZAXua1eVswJcFZEP7Hp8TE6pZJVvMt4sEmiAuVGp","owner":"9HCZ4a6BHPZdsG1M1EGB9B7Pvk8Uyw4Y9UZa3wtw7zNs","fee_x":"0","fee_y":"0","active_bin_id":-237}
+InstructionPosition { top: 7, inner: Some(1) } dlmm.claim_reward {"lb_pair":"HwbQ8PCzxgFTyE8yL1WFet1P3XpzphuCa4QAZR4xbte","position":"HQAeZAXua1eVswJcFZEP7Hp8TE6pZJVvMt4sEmiAuVGp","owner":"9HCZ4a6BHPZdsG1M1EGB9B7Pvk8Uyw4Y9UZa3wtw7zNs","reward_index":0,"total_reward":"29529988"}
+InstructionPosition { top: 7, inner: Some(2) } dlmm.claim_reward2 {"lb_pair":"HwbQ8PCzxgFTyE8yL1WFet1P3XpzphuCa4QAZR4xbte","position":"HQAeZAXua1eVswJcFZEP7Hp8TE6pZJVvMt4sEmiAuVGp","owner":"9HCZ4a6BHPZdsG1M1EGB9B7Pvk8Uyw4Y9UZa3wtw7zNs","reward_index":0,"total_reward":"29529988","active_bin_id":-237}
+Ok(
+    TxActivity {
+        lifecycle: [],
+        movements: [
+            PositionMovement {
+                at: InstructionPosition {
+                    top: 4,
+                    inner: Some(
+                        1,
+                    ),
+                },
+                position: Address(HQAeZAXua1eVswJcFZEP7Hp8TE6pZJVvMt4sEmiAuVGp),
+                pool: Address(HwbQ8PCzxgFTyE8yL1WFet1P3XpzphuCa4QAZR4xbte),
+                kind: FeeClaim,
+                x: RawTokenAmount(
+                    0,
+                ),
+                y: RawTokenAmount(
+                    0,
+                ),
+                price_bin: Some(
+                    -237,
+                ),
+            },
+        ],
+        reward_claims: [
+            RewardClaim {
+                at: InstructionPosition {
+                    top: 7,
+                    inner: Some(
+                        2,
+                    ),
+                },
+                position: Address(HQAeZAXua1eVswJcFZEP7Hp8TE6pZJVvMt4sEmiAuVGp),
+                pool: Address(HwbQ8PCzxgFTyE8yL1WFet1P3XpzphuCa4QAZR4xbte),
+                reward_index: 0,
+                mint: Some(
+                    Address(StepAscQoEioFxxWGnh2sLBDFp9d8rvKz2Yp39iDpyT),
+                ),
+                amount: RawTokenAmount(
+                    29529988,
+                ),
+            },
+        ],
+        pool_swaps: [],
+        has_unknown_program_activity: false,
+    },
+)

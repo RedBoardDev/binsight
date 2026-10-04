@@ -1,0 +1,57 @@
+---
+source: crates/dlmm/tests/corpus.rs
+expression: rendering(&tx)
+---
+InstructionPosition { top: 6, inner: Some(2) } dlmm.remove_liquidity {"lb_pair":"B8whnH5cSuvK9m9SR6UmkHyakD79ZirJwB79dJX1yUz8","from":"CZ7Uu8qkPKVMNHXCFRnzDPj8ZWPvwGYNHQhSTG2LteMr","position":"AP7W6cQNrqwhY2GhFphijSd3c2nKoCqckvRmDBPfH8Sw","amount_x":"0","amount_y":"364307895","active_bin_id":-383}
+InstructionPosition { top: 7, inner: Some(0) } dlmm.claim_fee {"lb_pair":"B8whnH5cSuvK9m9SR6UmkHyakD79ZirJwB79dJX1yUz8","position":"AP7W6cQNrqwhY2GhFphijSd3c2nKoCqckvRmDBPfH8Sw","owner":"CZ7Uu8qkPKVMNHXCFRnzDPj8ZWPvwGYNHQhSTG2LteMr","fee_x":"0","fee_y":"0"}
+InstructionPosition { top: 7, inner: Some(1) } dlmm.claim_fee2 {"lb_pair":"B8whnH5cSuvK9m9SR6UmkHyakD79ZirJwB79dJX1yUz8","position":"AP7W6cQNrqwhY2GhFphijSd3c2nKoCqckvRmDBPfH8Sw","owner":"CZ7Uu8qkPKVMNHXCFRnzDPj8ZWPvwGYNHQhSTG2LteMr","fee_x":"0","fee_y":"0","active_bin_id":-383}
+Ok(
+    TxActivity {
+        lifecycle: [],
+        movements: [
+            PositionMovement {
+                at: InstructionPosition {
+                    top: 6,
+                    inner: Some(
+                        2,
+                    ),
+                },
+                position: Address(AP7W6cQNrqwhY2GhFphijSd3c2nKoCqckvRmDBPfH8Sw),
+                pool: Address(B8whnH5cSuvK9m9SR6UmkHyakD79ZirJwB79dJX1yUz8),
+                kind: Withdrawal,
+                x: RawTokenAmount(
+                    0,
+                ),
+                y: RawTokenAmount(
+                    364307895,
+                ),
+                price_bin: Some(
+                    -383,
+                ),
+            },
+            PositionMovement {
+                at: InstructionPosition {
+                    top: 7,
+                    inner: Some(
+                        1,
+                    ),
+                },
+                position: Address(AP7W6cQNrqwhY2GhFphijSd3c2nKoCqckvRmDBPfH8Sw),
+                pool: Address(B8whnH5cSuvK9m9SR6UmkHyakD79ZirJwB79dJX1yUz8),
+                kind: FeeClaim,
+                x: RawTokenAmount(
+                    0,
+                ),
+                y: RawTokenAmount(
+                    0,
+                ),
+                price_bin: Some(
+                    -383,
+                ),
+            },
+        ],
+        reward_claims: [],
+        pool_swaps: [],
+        has_unknown_program_activity: false,
+    },
+)

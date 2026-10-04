@@ -1,0 +1,13 @@
+# Captured by `cargo xtask fixture capture` (finalized commitment). Each JSON file is the
+# node's `result`, byte for byte; do not edit them by hand.
+
+name = "limit-order"
+why = "An automation cancels a limit order, closes its account, and places a new one, in one transaction."
+perspective = "HAWK3BVnwptKRFYfVoVGhBc2TYxpyG9jmAbkHeW9tyKE"
+oracles = ["R-23"]
+captured_at = "2026-10-04"
+
+[[transaction]]
+file = "tx-1.json"
+signature = "5HxKQKDJCC78xtJ9adhebsUETFDT5HgdMKPgJMgvNz34dBBrt1vSooZxc3HquadjSqCPhmA91yTSnjoK18CeHWsn"
+slot = 446126797

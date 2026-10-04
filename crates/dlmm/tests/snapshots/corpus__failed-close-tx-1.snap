@@ -1,0 +1,17 @@
+---
+source: crates/dlmm/tests/corpus.rs
+expression: rendering(&tx)
+---
+InstructionPosition { top: 2, inner: Some(2) } dlmm.claim_fee {"lb_pair":"3mm16Bre8ew8HsEkRzX5RPXhLMsejwxkfk2MdmdjDVDM","position":"5razqa4E7LqAuVac7yfBokAALAMpEtzuS3C4Zsk7giZ8","owner":"farmnFYoJbjJdMrYxE5DM78qtWDhaNfgHDiYxYYxFtj","fee_x":"116191","fee_y":"7954"}
+InstructionPosition { top: 2, inner: Some(3) } dlmm.claim_fee2 {"lb_pair":"3mm16Bre8ew8HsEkRzX5RPXhLMsejwxkfk2MdmdjDVDM","position":"5razqa4E7LqAuVac7yfBokAALAMpEtzuS3C4Zsk7giZ8","owner":"farmnFYoJbjJdMrYxE5DM78qtWDhaNfgHDiYxYYxFtj","fee_x":"116191","fee_y":"7954","active_bin_id":-130}
+InstructionPosition { top: 3, inner: Some(2) } dlmm.remove_liquidity {"lb_pair":"3mm16Bre8ew8HsEkRzX5RPXhLMsejwxkfk2MdmdjDVDM","from":"farmnFYoJbjJdMrYxE5DM78qtWDhaNfgHDiYxYYxFtj","position":"5razqa4E7LqAuVac7yfBokAALAMpEtzuS3C4Zsk7giZ8","amount_x":"0","amount_y":"399999964","active_bin_id":-130}
+InstructionPosition { top: 4, inner: Some(0) } dlmm.position_close {"position":"5razqa4E7LqAuVac7yfBokAALAMpEtzuS3C4Zsk7giZ8","owner":"farmnFYoJbjJdMrYxE5DM78qtWDhaNfgHDiYxYYxFtj"}
+Ok(
+    TxActivity {
+        lifecycle: [],
+        movements: [],
+        reward_claims: [],
+        pool_swaps: [],
+        has_unknown_program_activity: false,
+    },
+)

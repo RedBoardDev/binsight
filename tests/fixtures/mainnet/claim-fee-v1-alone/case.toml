@@ -1,0 +1,13 @@
+# Captured by `cargo xtask fixture capture` (finalized commitment). Each JSON file is the
+# node's `result`, byte for byte; do not edit them by hand.
+
+name = "claim-fee-v1-alone"
+why = "Before the program emitted ClaimFee2, a claim_fee2 call emitted only the first-form ClaimFee and ClaimReward: the claims carry no bin, and no event of their pool has one."
+perspective = "GKELxnW2LL2aHXe61pCoCFyko2UjZKKwRgHg8kCyGNzv"
+oracles = ["D-6", "R-01", "X-5"]
+captured_at = "2026-10-04"
+
+[[transaction]]
+file = "tx-1.json"
+signature = "2MJGswpntGwJerndSYeEg8Sgj5DNPpZyFoUHgeGagnNp45jNtXZZ7Zwyf1LehVPUwFagxCAtYQNUsr2e4TikhwuQ"
+slot = 349999971

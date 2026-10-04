@@ -1,0 +1,13 @@
+# Captured by `cargo xtask fixture capture` (finalized commitment). Each JSON file is the
+# node's `result`, byte for byte; do not edit them by hand.
+
+name = "failed-close"
+why = "A bot claims, removes and closes a position, then a later instruction fails: the close emitted PositionClose, yet nothing happened."
+perspective = "farmnFYoJbjJdMrYxE5DM78qtWDhaNfgHDiYxYYxFtj"
+oracles = ["R-07", "R-08", "L-11"]
+captured_at = "2026-10-04"
+
+[[transaction]]
+file = "tx-1.json"
+signature = "Quph9EdSMDv4L3fBreGZ7Y5iZYYUJEvr8maMAaywJhbjNoFizd4astS7JapWZNq53UwShYqBCLBxCyA51FHxL12"
+slot = 453352599

@@ -1,0 +1,13 @@
+# Captured by `cargo xtask fixture capture` (finalized commitment). Each JSON file is the
+# node's `result`, byte for byte; do not edit them by hand.
+
+name = "early-close"
+why = "A close from the first weeks of the program (January 2024): its RemoveLiquidity, ClaimFee and PositionClose are already event calls."
+perspective = "BtG3c1xex3gZmktqJJQpKxoiz6atSxJs6rWBZGtDvuAQ"
+oracles = ["X-8"]
+captured_at = "2026-10-04"
+
+[[transaction]]
+file = "tx-1.json"
+signature = "5dXRdZkbu2AvZ5KQoGzsA4aHTCeK8w7RpHPydtvWoDND1g8TDEQ5LgVTccBwksJS6goSCF8HcENkTd9Hooiw3rUv"
+slot = 244999966

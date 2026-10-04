@@ -1,0 +1,13 @@
+# Captured by `cargo xtask fixture capture` (finalized commitment). Each JSON file is the
+# node's `result`, byte for byte; do not edit them by hand.
+
+name = "claim-reward"
+why = "A bot claims the fees and the farming reward of a position with claim_fee2 and claim_reward2; each call emits both forms of its event."
+perspective = "9HCZ4a6BHPZdsG1M1EGB9B7Pvk8Uyw4Y9UZa3wtw7zNs"
+oracles = ["X-11"]
+captured_at = "2026-10-04"
+
+[[transaction]]
+file = "tx-1.json"
+signature = "424qYMYFGxc7sPDV2ysuPNSyVVw6DX3wyFHCZhUCgzReiCEgL4nKRgqSqcYprpz3Rv94SXhnDw4yWfdGN88Aixb1"
+slot = 449018390

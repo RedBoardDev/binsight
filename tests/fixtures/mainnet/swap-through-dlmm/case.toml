@@ -1,0 +1,13 @@
+# Captured by `cargo xtask fixture capture` (finalized commitment). Each JSON file is the
+# node's `result`, byte for byte; do not edit them by hand.
+
+name = "swap-through-dlmm"
+why = "A bot's swap routed through a DLMM pool: the swap2 call emits the swap as Swap and as Swap2Evt, one swap."
+perspective = "eLLnsiBsWvERB34kgiJ4wPhdRzqM17gMG4cHouMqaHz"
+oracles = ["R-22"]
+captured_at = "2026-10-04"
+
+[[transaction]]
+file = "tx-1.json"
+signature = "3cP2WeVVy1GMCDssUhkxpsyf4cgox6ziVQ1YFLzfW9s7AwD9FjuDBegKG6pV7pud6V5iZsQtcxREtWr9p86PQN8c"
+slot = 453347996

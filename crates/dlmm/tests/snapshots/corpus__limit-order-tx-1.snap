@@ -1,0 +1,16 @@
+---
+source: crates/dlmm/tests/corpus.rs
+expression: rendering(&tx)
+---
+InstructionPosition { top: 2, inner: Some(3) } dlmm.cancel_limit_order {"lb_pair":"zxTpi4BtaWX3mgdAPoezkMD1hxx8CdeCfrqXMWvSCLX","from":"E9a8A6fxaFbvzy3EhYkq4cPJyW7JbaCbHwigXuetfMtL","limit_order":"BqvL3vELq6hiVNALf8aHo6HcdWwZSfg8LLNMtPZoM186","amount_x":"2064979638","amount_y":"0","active_id":-2923}
+InstructionPosition { top: 3, inner: Some(2) } dlmm.close_limit_order {"lb_pair":"zxTpi4BtaWX3mgdAPoezkMD1hxx8CdeCfrqXMWvSCLX","owner":"E9a8A6fxaFbvzy3EhYkq4cPJyW7JbaCbHwigXuetfMtL","limit_order":"BqvL3vELq6hiVNALf8aHo6HcdWwZSfg8LLNMtPZoM186"}
+InstructionPosition { top: 4, inner: Some(4) } dlmm.place_limit_order {"lb_pair":"zxTpi4BtaWX3mgdAPoezkMD1hxx8CdeCfrqXMWvSCLX","sender":"E9a8A6fxaFbvzy3EhYkq4cPJyW7JbaCbHwigXuetfMtL","owner":"E9a8A6fxaFbvzy3EhYkq4cPJyW7JbaCbHwigXuetfMtL","limit_order":"16Wt8sUsx5Mqou4h6NneUP736fJ9h4KC7c1o2uUJnMW","active_id":-2923,"is_ask_side":true,"total_amount":"970089652"}
+Ok(
+    TxActivity {
+        lifecycle: [],
+        movements: [],
+        reward_claims: [],
+        pool_swaps: [],
+        has_unknown_program_activity: false,
+    },
+)

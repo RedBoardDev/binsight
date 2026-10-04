@@ -3,10 +3,18 @@
 version = 1
 
 [outputs]
+"claim-fee-v1-alone-tx-1" = "155bb133e7fc3fd96898425dd843280d00dc6ac487ec2ece53a216ba0a16da80"
+"claim-fee2-two-ranges-tx-1" = "251df2e41f53ff4a6ba3402936dc8a6b1f42638ef4e8a2db56467732cce17966"
 "claim-fee2-with-claim-fee-tx-1" = "3c5fbc3c4d6484be595a048a8ee3006b2c8414e52c2307fdc21b6883c258bf5f"
+"claim-reward-tx-1" = "60992f70a31bccfae3a21cbc494e8d3091a33f0c3d3bb133456827d845d3082a"
+"close-if-empty-not-empty-tx-1" = "66fe052019cc36a4c8512d25fc5106df67ce43c253c0230c3f63148bf1de74c4"
+"early-close-tx-1" = "f823a9bc270b6826a81cfba366148c00794ea298baf5253b15e527aeb8ea1b92"
+"failed-close-tx-1" = "95ef1aa46e8a7cd12a1ebbb000693a0e8be9d91441f7914dcafa46b95b4d389e"
 "failed-swap-through-dlmm-tx-1" = "54f699d86b9a305e8033ea8951c6daf99bdb08ba8239852908b292a22e56cbf4"
 "legacy-sol-transfer-tx-1" = "7592b52c636f8d5c1a341202f810468218fd7b749121b8d988f5978918b22b6b"
+"limit-order-tx-1" = "7054e89c4fe1be967ecd37f1bc4fde4bd24399ff8a2b1f82dba65ee7b758531a"
 "pre-2022-serum-order-tx-1" = "7592b52c636f8d5c1a341202f810468218fd7b749121b8d988f5978918b22b6b"
+"rebalance-and-claim-fee2-tx-1" = "f878efe8e36c8d858e9f500d7b2b3c706a72625ac475be259ed289ae2fd8e153"
 "rebalance-with-fees-tx-1" = "c19f7b8b8a370aa0b54bfe744820cb4c58d5c23247e4f1b71f90b79c3df2fae6"
 "scenario-add-liquidity" = "be1b13446d32a3a88a34b4682f0aabda2448d307a4c632fdb8ade387042a3919"
 "scenario-claim-alone-without-bin" = "333e7d24135700dbe5f7c0ace81de9f18452f112b15dacef67058155d3a086e3"
@@ -34,6 +42,7 @@ version = 1
 "scenario-swap-second-form-only" = "2b9f6ca98a0f57224233c27b9886f718853880117432cfe1d5db0227389d3564"
 "scenario-unknown-event" = "34004960e7b89a427422bf1416c53e7bc8973ff6614ebcef7d11e3d63e766e4b"
 "scenario-zero-deposit" = "88bae9c261d454a1937e1e81928b34fff8b2a9884ec01976e3d68a39e876ae4a"
+"swap-through-dlmm-tx-1" = "dbc2d15f89e99eca083d90434486486e6c3866e4446cd59d19cd3514b2b35b76"
 "token2022-transfer-fee-tx-1" = "76321b88149f38436e572fb0310e94d3291250edc2be39cab0a3a8b0135ac513"
 "v0-add-liquidity-alt-tx-1" = "a4bd266436f493ae5159b20a6ed1708bcb754cebba6974110d270abd6de1c05f"
 "v1-rebalance-liquidity-tx-1" = "29670332e787a74c2a7fa365d35c5f47e12ded8d6cc87b98e48b5b5dc2ead497"

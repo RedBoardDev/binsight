@@ -1,0 +1,52 @@
+---
+source: crates/dlmm/tests/corpus.rs
+expression: rendering(&tx)
+---
+InstructionPosition { top: 1, inner: Some(2) } dlmm.claim_fee {"lb_pair":"4wM3eJMduZBFytW6VqV5DC2CaSovRrM2RJG8bJkroqLD","position":"Hw4mVQFW9KvXqQjwC3tQ67AHSHXKYSRj8LPRXWPbitHQ","owner":"GKELxnW2LL2aHXe61pCoCFyko2UjZKKwRgHg8kCyGNzv","fee_x":"53922","fee_y":"625"}
+InstructionPosition { top: 2, inner: Some(1) } dlmm.claim_reward {"lb_pair":"4wM3eJMduZBFytW6VqV5DC2CaSovRrM2RJG8bJkroqLD","position":"Hw4mVQFW9KvXqQjwC3tQ67AHSHXKYSRj8LPRXWPbitHQ","owner":"GKELxnW2LL2aHXe61pCoCFyko2UjZKKwRgHg8kCyGNzv","reward_index":0,"total_reward":"133562321"}
+Ok(
+    TxActivity {
+        lifecycle: [],
+        movements: [
+            PositionMovement {
+                at: InstructionPosition {
+                    top: 1,
+                    inner: Some(
+                        2,
+                    ),
+                },
+                position: Address(Hw4mVQFW9KvXqQjwC3tQ67AHSHXKYSRj8LPRXWPbitHQ),
+                pool: Address(4wM3eJMduZBFytW6VqV5DC2CaSovRrM2RJG8bJkroqLD),
+                kind: FeeClaim,
+                x: RawTokenAmount(
+                    53922,
+                ),
+                y: RawTokenAmount(
+                    625,
+                ),
+                price_bin: None,
+            },
+        ],
+        reward_claims: [
+            RewardClaim {
+                at: InstructionPosition {
+                    top: 2,
+                    inner: Some(
+                        1,
+                    ),
+                },
+                position: Address(Hw4mVQFW9KvXqQjwC3tQ67AHSHXKYSRj8LPRXWPbitHQ),
+                pool: Address(4wM3eJMduZBFytW6VqV5DC2CaSovRrM2RJG8bJkroqLD),
+                reward_index: 0,
+                mint: Some(
+                    Address(AuQaustGiaqxRvj2gtCdrd22PBzTn8kM3kEPEkZCtuDw),
+                ),
+                amount: RawTokenAmount(
+                    133562321,
+                ),
+            },
+        ],
+        pool_swaps: [],
+        has_unknown_program_activity: false,
+    },
+)
