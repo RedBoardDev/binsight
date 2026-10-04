@@ -1,11 +1,13 @@
 # binsight with Docker Compose: one service, one volume.
-# Put BINSIGHT_PASSWORD and BINSIGHT_HELIUS_API_KEY in a .env file next to this one, then run
-# `docker compose up -d` and open http://localhost:8080.
+# From a clone of the repository, put BINSIGHT_PASSWORD and BINSIGHT_HELIUS_API_KEY in a .env file
+# next to this one, then run `docker compose up -d --build` and open http://localhost:8080.
 name: binsight-app
 
 services:
   binsight:
-    image: ${BINSIGHT_IMAGE:-ghcr.io/redboarddev/binsight:edge}
+    # Built from this folder; set BINSIGHT_IMAGE to run an image built or pulled elsewhere.
+    build: .
+    image: ${BINSIGHT_IMAGE:-binsight:local}
     restart: unless-stopped
     ports:
       - "${BINSIGHT_PORT:-8080}:8080"

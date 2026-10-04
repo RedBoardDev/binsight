@@ -8,8 +8,8 @@ Self-hostable portfolio tracker for Meteora DLMM liquidity positions, with exact
 ## Status
 
 **Early development — not usable yet.** The foundation is in place (server, database, sign-in, live updates,
-installable web app); tracking positions is not. There is no release yet: the instructions below run the
-latest build of `main`.
+installable web app); tracking positions is not. There is no release yet, and no published image or binary:
+the instructions below build the latest `main` from source.
 
 ## What it is
 
@@ -30,25 +30,32 @@ plan for about ten wallets.
 
 ## Quick start with Docker Compose
 
-You need Docker with Compose, and a Helius API key (the free plan is enough).
+You need Git, Docker with Compose, and a Helius API key (the free plan is enough). Compose builds the image
+from the repository, for the architecture of your machine.
 
 ```sh
-mkdir binsight && cd binsight
-curl -fsSLO https://raw.githubusercontent.com/RedBoardDev/binsight/main/docker-compose.yml
+git clone https://github.com/RedBoardDev/binsight.git
+cd binsight
 cat > .env <<'ENV'
-BINSIGHT_PASSWORD=choose-a-long-password
-BINSIGHT_HELIUS_API_KEY=your-helius-api-key
+BINSIGHT_PASSWORD='choose-a-long-password'
+BINSIGHT_HELIUS_API_KEY='your-helius-api-key'
 ENV
 chmod 600 .env
-docker compose up -d
+docker compose up -d --build
 ```
 
 Open <http://localhost:8080> and sign in with your password. The data lives in the `data` volume of the
 `binsight-app` Compose project.
 
-The image is `ghcr.io/redboarddev/binsight`, built for `linux/amd64` and `linux/arm64`. `edge` follows
-`main`; releases will be tagged `X.Y.Z`, `X.Y` and `latest`. Set `BINSIGHT_IMAGE` in `.env` to pin another
-tag, and `BINSIGHT_PORT` to publish another port than 8080.
+Keep the single quotes around the values: Compose reads them literally, while it would replace a `$` in an
+unquoted or double-quoted value. Set `BINSIGHT_PORT` in `.env` to publish another port than 8080.
+
+You can also build the image yourself and run it under another name:
+
+```sh
+docker build -t binsight .
+BINSIGHT_IMAGE=binsight docker compose up -d
+```
 
 ## Configuration
 
@@ -98,8 +105,10 @@ interface only (`BINSIGHT_PORT=127.0.0.1:8080`): Docker's published ports bypass
 
 ## Updating and backups
 
+From the clone:
+
 ```sh
-docker compose pull && docker compose up -d
+git pull && docker compose up -d --build
 ```
 
 Before applying a database migration, binsight backs the database up automatically into `backups/` in its
@@ -116,7 +125,7 @@ just setup   # git hooks and web dependencies
 just build   # the web app, then target/release/binsight, which embeds it
 ```
 
-Or build the image: `docker build -t binsight:local .`
+Or build the image: `docker build -t binsight .`
 
 ## Contributing, security and license
 
