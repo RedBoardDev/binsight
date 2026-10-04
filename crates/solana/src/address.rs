@@ -1,10 +1,13 @@
 //! Solana account addresses (public keys), written in base58.
 //!
-//! An [`Address`] is 32 raw bytes. This module parses and prints the base58 form; it does not
-//! check whether the address is on the ed25519 curve or whether an account exists there.
+//! An [`Address`] is 32 raw bytes. This module parses and prints the base58 form, which is also
+//! how an address is written in JSON; it does not check whether the address is on the ed25519
+//! curve or whether an account exists there.
 
 use std::fmt;
 use std::str::FromStr;
+
+use serde::{Serialize, Serializer};
 
 use crate::base58;
 use crate::error::{ParseError, ValueKind};
@@ -52,6 +55,13 @@ impl fmt::Debug for Address {
     }
 }
 
+impl Serialize for Address {
+    /// Writes the address as its base58 text.
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
@@ -63,6 +73,17 @@ mod tests {
         let address: Address = "11111111111111111111111111111111".parse().unwrap();
         assert_eq!(address.as_bytes(), &[0; 32]);
         assert_eq!(address.to_string(), "11111111111111111111111111111111");
+    }
+
+    #[test]
+    fn writes_json_as_a_base58_string() {
+        let address: Address = "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"
+            .parse()
+            .unwrap();
+        assert_eq!(
+            serde_json::to_string(&address).unwrap(),
+            "\"LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo\""
+        );
     }
 
     #[test]
