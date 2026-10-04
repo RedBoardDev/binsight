@@ -147,3 +147,22 @@ proptest! {
         prop_assert_ne!(shown.exactness(), Exactness::Unavailable);
     }
 }
+
+#[test]
+fn keeps_the_real_pnl_complete_when_only_a_position_lacks_a_bin_price() {
+    let mut world = wallet_world(7);
+    world.wallet.added_at = jiff::Timestamp::UNIX_EPOCH;
+    for position in &mut world.closed {
+        position.unpriced_movements = 1;
+    }
+    let valued = value(&world);
+    let wallets = [&valued.history];
+    let timeline = PnlTimeline::new(&wallets, &world.rates);
+    let live = timeline.live(&valued.net_worth.total, world.now).unwrap();
+    let window = Window::of_period(Period::OneMonth, world.now, &TimeZone::UTC, None).unwrap();
+
+    let (gain, _) = timeline.gain(&window, &live, Currency::Sol).unwrap();
+
+    assert_eq!(gain.exactness(), Exactness::Complete);
+    assert_eq!(valued.closed[0].pnl.exactness(), Exactness::Partial);
+}

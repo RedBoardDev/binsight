@@ -51,6 +51,10 @@ impl WalletHistory {
             .iter()
             .map(|(position, valuation)| (position.closed_at, valuation.pnl.clone()))
             .collect();
+        // A movement without a bin price only blurs how much of the wallet's gain a position
+        // made: the wallet's own balance changes stay exact. So the real PnL keeps the value of
+        // such a position but not its partial status; the positions' own figures keep it.
+        let realized_pnl = closed_pnl.iter().map(|(at, pnl)| (*at, wallet_level(pnl)));
         let valued_entries = |is_capital: bool| {
             facts
                 .entries
@@ -64,7 +68,7 @@ impl WalletHistory {
         };
         let mut marks = facts.marks.to_vec();
         marks.sort_by_key(|mark| mark.at);
-        let realized = RunningSum::new(closed_pnl.iter().cloned().chain(valued_entries(false)?))?;
+        let realized = RunningSum::new(realized_pnl.chain(valued_entries(false)?))?;
         let capital = RunningSum::new(valued_entries(true)?)?;
         let first_activity = [
             realized.first_instant(),
@@ -207,6 +211,21 @@ impl WalletHistory {
             until: self.wallet.added_at,
         };
         figure.degraded(Exactness::Estimated, Reasons::from([reason]))
+    }
+}
+
+/// A position's PnL as part of its wallet's real PnL: partial only for reasons that reach the
+/// wallet itself (an unpriced movement does not).
+fn wallet_level(pnl: &Figure<Valued>) -> Figure<Valued> {
+    match pnl {
+        Figure::Partial { value, reasons }
+            if reasons
+                .iter()
+                .all(|reason| matches!(reason, Reason::UnpricedLeg { .. })) =>
+        {
+            Figure::Complete(*value)
+        }
+        other => other.clone(),
     }
 }
 
