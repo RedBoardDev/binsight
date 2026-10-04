@@ -282,6 +282,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "binsight-demo"
+version = "0.1.0"
+dependencies = [
+ "binsight-core",
+ "binsight-dlmm",
+ "binsight-engine",
+ "binsight-ledger",
+ "binsight-solana",
+ "jiff",
+ "proptest",
+ "sha2 0.11.0",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "binsight-dlmm"
 version = "0.1.0"
 dependencies = [
