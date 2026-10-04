@@ -12,7 +12,10 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+binsight-core.workspace = true
 binsight-solana.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
+proptest.workspace = true
 sha2.workspace = true

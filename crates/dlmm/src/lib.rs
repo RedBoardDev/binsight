@@ -1,8 +1,8 @@
 //! # binsight-dlmm
 //!
 //! **Responsibility:** everything specific to the Meteora DLMM program: its identifier and event
-//! tag now, and later its account layouts, its Event-CPI decoding and the fixed-point maths of its
-//! bins.
+//! tag, the fixed-point maths of its bins, and later its account layouts and its Event-CPI
+//! decoding.
 //!
 //! **May depend on:** `binsight-core`, `binsight-solana`.
 //! **Must not depend on:** `binsight-ledger`, `binsight-store`, `binsight-chain`,
@@ -18,4 +18,5 @@
     clippy::arithmetic_side_effects
 )]
 
+pub mod math;
 pub mod program;
