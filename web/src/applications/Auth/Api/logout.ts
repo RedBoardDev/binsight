@@ -21,9 +21,10 @@ export const logout = async (): Promise<LogoutResult> => {
   try {
     return await sendLogout();
   } catch (error) {
-    if (error instanceof TypeError) {
-      return { status: 'error', formError: { kind: 'network' } };
-    }
-    throw error;
+    // fetch rejects with a TypeError when the server cannot be reached; anything else is a bug
+    // the owner can only retry, so it is reported like an unknown API error.
+    return error instanceof TypeError
+      ? { status: 'error', formError: { kind: 'network' } }
+      : { status: 'error', formError: { kind: 'api', code: null } };
   }
 };

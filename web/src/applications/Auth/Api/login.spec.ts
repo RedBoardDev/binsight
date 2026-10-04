@@ -50,6 +50,15 @@ describe('login', () => {
     });
   });
 
+  it('reports an unexpected failure without throwing', async () => {
+    vi.stubGlobal('fetch', () => Promise.reject(new Error('unexpected')));
+
+    expect(await login({ password: 'any' })).toEqual({
+      status: 'error',
+      formError: { kind: 'api', code: null },
+    });
+  });
+
   it('reports any other answer by its error code', async () => {
     stubApi({ 'POST /api/v1/auth/login': () => errorResponse(403, 'forbidden_cross_origin') });
 
