@@ -1,6 +1,7 @@
 //! `POST /api/v1/auth/login`, `POST /api/v1/auth/logout` and `GET /api/v1/auth/session`.
 //!
-//! Login checks the throttle first, then the password, and answers with the session cookie.
+//! Login starts a throttled attempt first, then checks the password, and answers with the session
+//! cookie.
 //! Logout is public and idempotent: it always deletes the cookie. Reading the session is a
 //! protected route, so it only runs behind the session guard. This module holds the handlers and
 //! their wire types.
@@ -68,19 +69,21 @@ pub(crate) async fn login(
     ApiJson(attempt): ApiJson<LoginRequest>,
 ) -> Response {
     let now = state.clock.now();
-    if let Err(RetryAfter(seconds)) = state.auth.throttle.check(now) {
-        let error = ApiError::new(
-            ErrorCode::TooManyAttempts,
-            "too many failed attempts; wait before trying again",
-        );
-        return ([(header::RETRY_AFTER, seconds.to_string())], error).into_response();
-    }
+    let throttled = match state.auth.throttle.begin_attempt(now) {
+        Ok(throttled) => throttled,
+        Err(RetryAfter(seconds)) => {
+            let error = ApiError::new(
+                ErrorCode::TooManyAttempts,
+                "too many failed attempts; wait before trying again",
+            );
+            return ([(header::RETRY_AFTER, seconds.to_string())], error).into_response();
+        }
+    };
     if !state.auth.password.matches(&attempt.password) {
-        state.auth.throttle.record_failure(now);
         return ApiError::new(ErrorCode::InvalidCredentials, "the password is incorrect")
             .into_response();
     }
-    state.auth.throttle.record_success();
+    throttled.succeed();
     let Some(session) = Session::start(now) else {
         return ApiError::internal("the clock is out of the representable range").into_response();
     };

@@ -157,6 +157,32 @@ async fn slows_down_after_three_failed_logins() {
     assert_eq!(after_waiting.status, StatusCode::OK);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn lets_only_three_of_many_simultaneous_wrong_logins_through() {
+    let app = std::sync::Arc::new(TestApp::new().await);
+    let logins: Vec<_> = (0..24)
+        .map(|_| {
+            let app = std::sync::Arc::clone(&app);
+            tokio::spawn(async move { app.login("wrong password!").await.status })
+        })
+        .collect();
+
+    let mut statuses = Vec::new();
+    for login in logins {
+        statuses.push(login.await.unwrap());
+    }
+
+    let refused = statuses
+        .iter()
+        .filter(|status| **status == StatusCode::UNAUTHORIZED)
+        .count();
+    let throttled = statuses
+        .iter()
+        .filter(|status| **status == StatusCode::TOO_MANY_REQUESTS)
+        .count();
+    assert_eq!((refused, throttled), (3, 21));
+}
+
 #[tokio::test]
 async fn signs_out_by_deleting_the_cookie() {
     let app = TestApp::new().await;
