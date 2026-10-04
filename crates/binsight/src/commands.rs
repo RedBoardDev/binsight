@@ -11,6 +11,9 @@ mod run;
 use crate::cli::{Cli, Command};
 use crate::failure::Failure;
 
+/// The version of this binary.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Runs the command of `cli`.
 ///
 /// # Errors

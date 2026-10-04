@@ -41,6 +41,11 @@ pub struct BackupOptions {
     pub keep: usize,
 }
 
+impl BackupOptions {
+    /// How many backups binsight keeps.
+    pub const DEFAULT_KEEP: usize = 3;
+}
+
 /// Copies the database behind `connection` to `destination` and returns the path written.
 ///
 /// The copy goes to `<destination>.partial` first, created empty with owner-only permissions so

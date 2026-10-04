@@ -14,7 +14,7 @@ use binsight_core::clock::Clock;
 use binsight_engine::SystemClock;
 use binsight_store::{BackupOptions, ProjectionStatus, Store};
 
-use super::block_on;
+use super::{VERSION, block_on};
 use crate::cli::AdminCommand;
 use crate::config::{self, Config};
 use crate::data_dir::{LockedDataDir, backups_path, database_path};
@@ -22,9 +22,6 @@ use crate::failure::Failure;
 use crate::instance_secrets::rotate_session_secret;
 use crate::output::print_line;
 use effective_config::describe;
-
-/// How many backups `admin backup` leaves in the folder before the next rotation.
-const BACKUPS_KEPT: usize = 3;
 
 /// Runs one maintenance task.
 pub(super) fn execute(config_file: Option<&Path>, command: &AdminCommand) -> Result<(), Failure> {
@@ -50,11 +47,9 @@ async fn back_up(config: &Config) -> Result<(), Failure> {
     let store = Store::open_existing(&database_path(&config.data_dir)).await?;
     let backups = BackupOptions {
         folder: backups_path(&config.data_dir),
-        keep: BACKUPS_KEPT,
+        keep: BackupOptions::DEFAULT_KEEP,
     };
-    let path = store
-        .back_up(&backups, env!("CARGO_PKG_VERSION"), SystemClock.now())
-        .await?;
+    let path = store.back_up(&backups, VERSION, SystemClock.now()).await?;
     print_line(&format!("Backup written to {}", path.display()));
     Ok(())
 }

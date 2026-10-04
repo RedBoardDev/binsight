@@ -27,4 +27,4 @@ mod web_app;
 pub use router::router;
 pub use server::serve;
 pub use state::{AppState, AppStateParts};
-pub use web_app::{WebAsset, WebAssets};
+pub use web_app::{INDEX_FILE, WebAsset, WebAssets};

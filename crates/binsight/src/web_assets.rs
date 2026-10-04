@@ -5,11 +5,8 @@
 //! recompiling Rust. When the binary was built without the web app, `index.html` is a small
 //! placeholder page that says so. This module only provides files; serving them is the API's job.
 
-use binsight_api::{WebAsset, WebAssets};
+use binsight_api::{INDEX_FILE, WebAsset, WebAssets};
 use rust_embed::{EmbeddedFile, RustEmbed};
-
-/// The page served for every path of the app.
-const INDEX_FILE: &str = "index.html";
 
 /// The web build.
 #[derive(RustEmbed)]

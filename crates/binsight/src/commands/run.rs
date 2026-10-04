@@ -19,6 +19,7 @@ use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+use super::VERSION;
 use crate::config::{self, Config};
 use crate::data_dir::LockedDataDir;
 use crate::failure::Failure;
@@ -29,12 +30,6 @@ use crate::web_assets::EmbeddedWebApp;
 
 /// The longest graceful shutdown before the remaining work is dropped.
 const SHUTDOWN_DEADLINE_SECS: u64 = 10;
-
-/// How many backups are kept.
-const BACKUPS_KEPT: usize = 3;
-
-/// The version of this binary.
-const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Validates the configuration, starts logging and runs the server until it stops.
 pub(super) fn execute(config_file: Option<&Path>) -> Result<(), Failure> {
@@ -97,7 +92,7 @@ async fn open_store(data_dir: &LockedDataDir, clock: &dyn Clock) -> Result<Store
         now: clock.now(),
         backups: BackupOptions {
             folder: data_dir.backups_path(),
-            keep: BACKUPS_KEPT,
+            keep: BackupOptions::DEFAULT_KEEP,
         },
     };
     let (store, report) = Store::open_and_upgrade(&data_dir.database_path(), options).await?;

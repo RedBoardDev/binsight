@@ -20,8 +20,8 @@ use axum::response::{IntoResponse, Response};
 use crate::error::{ApiError, ErrorCode};
 use crate::state::AppState;
 
-/// The page served for every path of the app.
-const INDEX_FILE: &str = "index.html";
+/// The page served for every path of the app, as a [`WebAssets`] source names it.
+pub const INDEX_FILE: &str = "index.html";
 
 /// Where the build puts its content-hashed files.
 const HASHED_FILES_FOLDER: &str = "assets/";
