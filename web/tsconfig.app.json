@@ -11,5 +11,5 @@
     "tsBuildInfoFile": "./node_modules/.tmp/app.tsbuildinfo"
   },
   "include": ["src", "test"],
-  "exclude": ["src/sw", "test/**/*.spec.ts", "test/architecture"]
+  "exclude": ["src/sw", "test/**/*.spec.ts", "test/architecture", "test/designRules"]
 }

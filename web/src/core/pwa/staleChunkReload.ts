@@ -5,7 +5,7 @@ const MIN_RELOAD_INTERVAL_MS = 10_000;
 // gone. One reload fetches the new version. A second failure within the interval means the
 // reload did not help: let the error reach the error screen instead of reloading in a loop.
 export const shouldReloadForStaleChunk = (lastReloadAt: string | null, now: number): boolean => {
-  const last = lastReloadAt === null ? Number.NaN : Number(lastReloadAt);
+  const last = lastReloadAt === null ? Number.NaN : Number.parseInt(lastReloadAt, 10);
   return Number.isNaN(last) || now - last >= MIN_RELOAD_INTERVAL_MS;
 };
 

@@ -48,7 +48,9 @@ Vite plugin and by `pnpm typecheck` and `pnpm test` (`tsr generate`); it is igno
 2. `pnpm typecheck`: TypeScript in strict mode.
 3. `pnpm test`: Vitest. Pure code (`Domain/`, `lib/`, the service worker, `core/` modules without React) runs
    under Node; components and hooks run under jsdom. `test/architecture.spec.ts` checks the module rules of
-   `web.md` over `src/`: its failure message names the rule and the fix.
+   `web.md` over `src/`: its failure message names the rule and the fix. `test/designRules.spec.ts` does the
+   same for the design rules: colors only in `core/theme/midnight.css`, named text sizes only, no `dark:`
+   variant, `onPress` rather than `onClick`, no float parsing of amounts, no JavaScript motion library.
 4. `pnpm i18n:check`: the message catalogs match the code and every message is translated.
 5. `pnpm openapi:check`: the typed API client matches `openapi/v1.json`.
 6. `pnpm build`: the production build in `dist/`. It fails on a missing translation, and on a production
