@@ -122,7 +122,7 @@ pub fn read_env_file(path: &Path) -> Result<ConfigFile, Vec<ConfigProblem>> {
 #[cfg(unix)]
 fn is_readable_by_others(path: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::metadata(path).is_ok_and(|metadata| metadata.permissions().mode() & 0o077 != 0)
+    std::fs::metadata(path).is_ok_and(|metadata| metadata.permissions().mode() & 0o044 != 0)
 }
 
 #[cfg(not(unix))]
@@ -188,6 +188,12 @@ mod tests {
         std::fs::write(&path, "BINSIGHT_BIND=127.0.0.1:9000\n").unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
         assert!(!read_env_file(&path).unwrap().is_readable_by_others);
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o620)).unwrap();
+        assert!(!read_env_file(&path).unwrap().is_readable_by_others);
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+        assert!(read_env_file(&path).unwrap().is_readable_by_others);
 
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
         assert!(read_env_file(&path).unwrap().is_readable_by_others);
