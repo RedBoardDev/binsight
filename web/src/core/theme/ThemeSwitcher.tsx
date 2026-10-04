@@ -4,6 +4,7 @@ import { ToggleButton, ToggleButtonGroup } from '@heroui/react';
 import { msg } from '@lingui/core/macro';
 import { useLingui } from '@lingui/react/macro';
 import { Monitor, Moon, Sun } from 'lucide-react';
+import { SelectionIndicator } from 'react-aria-components';
 
 const THEME_OPTIONS = [
   { preference: 'system', label: msg`System theme`, Icon: Monitor },
@@ -30,6 +31,7 @@ export const ThemeSwitcher = () => {
     >
       {THEME_OPTIONS.map(({ preference: option, label, Icon }) => (
         <ToggleButton key={option} id={option} isIconOnly aria-label={i18n._(label)}>
+          <SelectionIndicator className="segment-indicator" />
           <Icon aria-hidden strokeWidth={1.75} className="size-4" />
         </ToggleButton>
       ))}

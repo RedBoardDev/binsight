@@ -49,8 +49,9 @@
     backdrop-filter: none;
   }
 
-  /* A group of toggle buttons is a segmented control: an inset track, the selected segment raised
-     on the elevated tone. Never the accent: choosing a view is not a status. */
+  /* A group of toggle buttons is a segmented control: an inset track, the chosen segment raised
+     on the elevated tone and gliding from one to the next (react-aria's selection indicator).
+     Never the accent: choosing a view is not a status. */
   .toggle-button-group {
     gap: 0.125rem;
     padding: 0.125rem;
@@ -62,20 +63,61 @@
     --toggle-button-bg: transparent;
     --toggle-button-bg-hover: var(--hover);
     --toggle-button-bg-pressed: var(--hover);
-    --toggle-button-bg-selected: var(--segment);
-    --toggle-button-bg-selected-hover: var(--segment);
-    --toggle-button-bg-selected-pressed: var(--segment);
+    --toggle-button-bg-selected: transparent;
+    --toggle-button-bg-selected-hover: transparent;
+    --toggle-button-bg-selected-pressed: transparent;
     --toggle-button-fg-selected: var(--foreground);
     border-radius: 0.5rem;
     color: var(--muted);
   }
 
-  .toggle-button-group .toggle-button[data-selected="true"] {
+  .segment-indicator {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: 0.5rem;
+    background: var(--segment);
     box-shadow: var(--thumb-shadow);
+    transition:
+      translate var(--duration-spring-default) var(--ease-settle),
+      width var(--duration-spring-default) var(--ease-settle);
   }
 
   .toggle-button-group__separator {
     display: none;
+  }
+
+  /* Segmented tabs: the same raised thumb over the same track. */
+  .segmented-tabs .tabs__list-container {
+    border-radius: var(--field-radius);
+    background: var(--inset);
+  }
+
+  .segmented-tabs .tabs__list {
+    padding: 0.125rem;
+  }
+
+  .segmented-tabs .tabs__tab {
+    width: auto;
+    height: 1.75rem;
+    padding-inline: 0.875rem;
+    white-space: nowrap;
+    border-radius: 0.5rem;
+    font-size: var(--text-meta);
+    line-height: var(--text-meta--line-height);
+  }
+
+  @media (pointer: coarse) {
+    .segmented-tabs .tabs__tab {
+      height: 2.75rem;
+    }
+  }
+
+  .segmented-tabs .tabs__indicator {
+    border-radius: 0.5rem;
+    box-shadow: var(--thumb-shadow);
+    transition-duration: var(--duration-spring-default);
+    transition-timing-function: var(--ease-settle);
   }
 
   /* Text pills: words in a row, the chosen one on an inset pill that glides (SelectionIndicator)
@@ -97,10 +139,6 @@
     font-size: var(--text-small);
     line-height: var(--text-small--line-height);
     font-weight: 500;
-  }
-
-  .text-pills .toggle-button[data-selected="true"] {
-    box-shadow: none;
   }
 
   .text-pills__indicator {
@@ -136,6 +174,15 @@
 
   .button--quiet[data-hovered="true"] {
     color: var(--foreground);
+  }
+
+  /* A filter written as text: "Strategy  Spot ▾". */
+  .button--filter {
+    gap: 0.375rem;
+    padding-inline: 0.5rem;
+    font-size: var(--text-small);
+    line-height: var(--text-small--line-height);
+    font-weight: 500;
   }
 
   /* A switch is neutral: its track takes the text color when on, never the accent. */

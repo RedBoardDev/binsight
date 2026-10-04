@@ -4,6 +4,7 @@ import { useDisplayPreferences } from '@app/applications/Shared/Preference/Ui/us
 import { SolanaMark } from '@app/applications/Shared/Unit/Ui/SolanaMark';
 import { ToggleButton, ToggleButtonGroup } from '@heroui/react';
 import { useLingui } from '@lingui/react/macro';
+import { SelectionIndicator } from 'react-aria-components';
 
 export const CurrencyToggle = () => {
   const { t } = useLingui();
@@ -24,6 +25,7 @@ export const CurrencyToggle = () => {
       }}
     >
       <ToggleButton id="sol" isIconOnly aria-label={t`Amounts in SOL`} className="h-7 w-9">
+        <SelectionIndicator className="segment-indicator" />
         <SolanaMark size="column-header" />
       </ToggleButton>
       <ToggleButton
@@ -32,7 +34,7 @@ export const CurrencyToggle = () => {
         aria-label={t`Amounts in dollars`}
         className="h-7 w-9 font-semibold text-meta"
       >
-        $
+        <SelectionIndicator className="segment-indicator" />$
       </ToggleButton>
     </ToggleButtonGroup>
   );

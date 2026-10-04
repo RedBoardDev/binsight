@@ -52,6 +52,7 @@ msgid "About"
 msgstr "About"
 
 #. The whole history, in a row of short period pills.
+#: src/applications/Shared/Control/Ui/MultiSelectMenu.tsx
 #: src/applications/Shared/Scope/Domain/period.ts
 msgid "All"
 msgstr "All"
@@ -95,6 +96,10 @@ msgstr "binsight stopped working"
 #: src/core/Layout/AppShell/Brand.tsx
 msgid "binsight, overview"
 msgstr "binsight, overview"
+
+#: src/applications/Shared/Control/Ui/ViewToggle.tsx
+msgid "Cards"
+msgstr "Cards"
 
 #: src/applications/Realtime/Ui/streamStateLabels.ts
 msgid "Connecting"
@@ -384,6 +389,10 @@ msgstr "Stopping"
 msgid "System theme"
 msgstr "System theme"
 
+#: src/applications/Shared/Control/Ui/ViewToggle.tsx
+msgid "Table"
+msgstr "Table"
+
 #: src/applications/Shared/Ui/apiErrorMessages.ts
 msgid "The request was not valid. Reload the app and try again."
 msgstr "The request was not valid. Reload the app and try again."
@@ -454,6 +463,10 @@ msgstr "Unavailable"
 #: src/applications/Setting/Ui/SettingsPage/AboutSection.tsx
 msgid "Version"
 msgstr "Version"
+
+#: src/applications/Shared/Control/Ui/ViewToggle.tsx
+msgid "View"
+msgstr "View"
 
 #: src/applications/Wallet/Ui/WalletsPage.tsx
 #: src/core/Layout/AppShell/navItems.ts

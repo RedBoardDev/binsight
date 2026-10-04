@@ -1,3 +1,4 @@
+import { FilterSpecimens } from '@app/applications/DesignReference/Ui/DesignReferencePage/FilterSpecimens';
 import { ReferenceSection } from '@app/applications/DesignReference/Ui/DesignReferencePage/ReferenceSection';
 import { ReduceMotionSwitch } from '@app/applications/Shared/Motion/Ui/ReduceMotionSwitch';
 import { CurrencyToggle } from '@app/applications/Shared/Preference/Ui/CurrencyToggle';
@@ -27,6 +28,7 @@ export const ControlsSection = () => (
       <ThemeSwitcher />
       <PeriodPills />
     </div>
+    <FilterSpecimens />
     <div className="max-w-md">
       <ReduceMotionSwitch />
     </div>
