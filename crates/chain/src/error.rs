@@ -6,6 +6,9 @@
 
 use std::time::Duration;
 
+use binsight_core::credits::Credits;
+use jiff::Timestamp;
+
 /// The transport could not exchange a request with the provider.
 ///
 /// The detail comes from the HTTP library with the URL removed, so it never contains the key.
@@ -22,6 +25,19 @@ pub enum TransportError {
     Request {
         /// What failed, without the URL.
         detail: String,
+    },
+}
+
+/// The governor refused to send a request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum BudgetRefusal {
+    /// The configured hard daily limit is spent; nothing is sent until the next UTC day.
+    #[error("the daily credit limit of {limit} is reached; requests resume at {resets_at}")]
+    DailyHardLimitReached {
+        /// The limit.
+        limit: Credits,
+        /// When the next UTC day starts.
+        resets_at: Timestamp,
     },
 }
 
@@ -89,6 +105,9 @@ pub enum RpcError {
         /// The node's message, shortened.
         message: String,
     },
+    /// The governor did not send the request.
+    #[error(transparent)]
+    Budget(#[from] BudgetRefusal),
     /// The answer could not be read as the expected result.
     #[error("the answer to {method} could not be read: {detail}")]
     UnexpectedResponse {

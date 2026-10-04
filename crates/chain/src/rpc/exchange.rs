@@ -2,8 +2,10 @@
 //!
 //! The provider speaks on two levels: the HTTP status (429 for "too fast" or "quota used up",
 //! 401/403 for the key or the plan, 5xx for its own failures) and, inside a 200, the JSON-RPC
-//! result or error code. This module turns both into a result or an [`RpcError`], purely; it
-//! does not retry or count anything.
+//! result or error code. This module turns both into a result or an [`RpcError`], and names the
+//! outcome the credit meter files the request under. It is pure: it does not retry or count.
+
+use binsight_core::credits::CallOutcome;
 
 use crate::error::{RpcError, TransportError};
 use crate::rpc::envelope::{RpcAnswer, RpcResult, parse_answer};
@@ -34,13 +36,28 @@ pub(crate) enum Exchange {
 }
 
 impl Exchange {
-    /// The result the exchange carries, or why it failed.
-    pub(crate) fn into_result(self, method: RpcMethod) -> Result<RpcResult, RpcError> {
+    /// How the request ended for the meter, and the result it carries or why it failed.
+    pub(crate) fn settle(self, method: RpcMethod) -> (CallOutcome, Result<RpcResult, RpcError>) {
         match self {
-            Self::TimedOut => Err(RpcError::Timeout),
-            Self::Failed(error) => Err(RpcError::Transport(error)),
-            Self::Replied(reply) => read_reply(&reply, method),
+            Self::TimedOut => (CallOutcome::Timeout, Err(RpcError::Timeout)),
+            Self::Failed(error) => (CallOutcome::NetworkError, Err(RpcError::Transport(error))),
+            Self::Replied(reply) => {
+                let result = read_reply(&reply, method);
+                (reply_outcome(reply.status, &result), result)
+            }
         }
+    }
+}
+
+/// The meter's outcome of an answered request: a 200 that is not JSON-RPC counts as a broken
+/// HTTP answer.
+fn reply_outcome(status: u16, result: &Result<RpcResult, RpcError>) -> CallOutcome {
+    match (status, result) {
+        (429, _) => CallOutcome::RateLimited,
+        (200, Ok(_)) => CallOutcome::Ok,
+        (200, Err(RpcError::UnexpectedResponse { .. })) => CallOutcome::HttpError,
+        (200, Err(_)) => CallOutcome::RpcError,
+        _ => CallOutcome::HttpError,
     }
 }
 
@@ -125,7 +142,30 @@ mod tests {
     }
 
     fn read(exchange: Exchange) -> Result<RpcResult, RpcError> {
-        exchange.into_result(RpcMethod::GetTransaction)
+        exchange.settle(RpcMethod::GetTransaction).1
+    }
+
+    fn outcome(exchange: Exchange) -> CallOutcome {
+        exchange.settle(RpcMethod::GetTransaction).0
+    }
+
+    #[test]
+    fn names_the_outcome_the_meter_files_each_request_under() {
+        assert_eq!(outcome(reply(200, r#"{"result":null}"#)), CallOutcome::Ok);
+        assert_eq!(outcome(rpc_error(-32602, "bad")), CallOutcome::RpcError);
+        assert_eq!(outcome(reply(429, "slow down")), CallOutcome::RateLimited);
+        assert_eq!(outcome(reply(503, "down")), CallOutcome::HttpError);
+        assert_eq!(outcome(reply(200, "<html>")), CallOutcome::HttpError);
+        let no_result = r#"{"jsonrpc":"2.0","id":1}"#;
+        assert_eq!(outcome(reply(200, no_result)), CallOutcome::HttpError);
+        assert_eq!(outcome(Exchange::TimedOut), CallOutcome::Timeout);
+        let refused = TransportError::Connect {
+            detail: String::new(),
+        };
+        assert_eq!(
+            outcome(Exchange::Failed(refused)),
+            CallOutcome::NetworkError
+        );
     }
 
     #[test]

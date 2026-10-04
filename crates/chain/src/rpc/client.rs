@@ -1,19 +1,22 @@
-//! The JSON-RPC client: one call, with its deadline and its retries.
+//! The JSON-RPC client: one call, with its budget, pacing, deadline and retries.
 //!
 //! [`RpcClient`] is a cheap handle (clones share everything). Each call gets a request id, then
-//! loops: send through the transport under the method's deadline, read the exchange, and either
-//! return or wait as the retry policy says. There is exactly one retry policy, here; the
-//! transport never retries on its own. The typed methods live in their own modules and build on
-//! [`RpcClient::call`].
+//! loops: the governor admits the attempt (credits, then a rate slot), the transport sends it
+//! under the method's deadline, the meter counts it with its outcome, and the call either returns
+//! or waits as the retry policy says. Every attempt is admitted and counted, so retries are never
+//! invisible. There is exactly one retry policy, here; the transport never retries on its own.
+//! The typed methods live in their own modules and build on [`RpcClient::call`].
 
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use binsight_core::clock::Clock;
 use serde_json::Value;
 use tracing::debug;
 
 use crate::error::RpcError;
+use crate::governor::{CreditMeter, Governor, GovernorSettings};
 use crate::rpc::call::CallContext;
 use crate::rpc::envelope::{RpcResult, request_body};
 use crate::rpc::exchange::Exchange;
@@ -29,18 +32,30 @@ pub struct RpcClient {
 
 struct ClientInner {
     transport: Arc<dyn RpcTransport>,
+    governor: Governor,
     next_request_id: AtomicU64,
 }
 
 impl RpcClient {
-    /// A client sending through `transport`. Nothing is sent until the first call.
-    pub fn new(transport: Arc<dyn RpcTransport>) -> Self {
+    /// A client sending through `transport`, paced and capped by `governor`; `clock` dates the
+    /// credit counts. Nothing is sent until the first call.
+    pub fn new(
+        transport: Arc<dyn RpcTransport>,
+        governor: GovernorSettings,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
         Self {
             inner: Arc::new(ClientInner {
                 transport,
+                governor: Governor::new(governor, clock),
                 next_request_id: AtomicU64::new(1),
             }),
         }
+    }
+
+    /// The credit meter, to restore today's spending at startup and to persist the counts.
+    pub fn credit_meter(&self) -> &CreditMeter {
+        self.inner.governor.meter()
     }
 
     /// Calls `method` with `params`, retrying transient failures as the policy allows.
@@ -55,14 +70,18 @@ impl RpcClient {
         let mut attempt: u32 = 0;
         loop {
             attempt = attempt.saturating_add(1);
-            let error = match self
-                .exchange(method, body.clone())
-                .await
-                .into_result(method)
-            {
+            let governor = &self.inner.governor;
+            governor.admit(method).await?;
+            let sent = governor.send(method, *context);
+            let (outcome, result) = self.exchange(method, body.clone()).await.settle(method);
+            sent.settle(outcome);
+            let error = match result {
                 Ok(result) => return Ok(result),
                 Err(error) => error,
             };
+            if let RpcError::RateLimited { retry_after } = error {
+                governor.cool_down(retry_after);
+            }
             match decide(&error, attempt, context.priority, request_id) {
                 Retry::Never => return Err(error),
                 Retry::After(delay) => {
@@ -100,15 +119,16 @@ impl fmt::Debug for RpcClient {
 mod tests {
     use std::time::Duration;
 
-    use binsight_core::credits::{Priority, Purpose};
-    use binsight_solana::transaction::TxVersion;
-    use binsight_solana::{Address, Signature};
-    use serde_json::json;
+    use binsight_core::clock::FixedClock;
+    use binsight_core::credits::{CallOutcome, Credits, Priority, Purpose};
+    use binsight_solana::Signature;
+    use jiff::Timestamp;
     use tokio::time::Instant;
 
     use super::*;
-    use crate::rpc::{SignaturesRequest, TransactionLookup};
-    use crate::test_support::{ScriptedReply, ScriptedTransport};
+    use crate::error::BudgetRefusal;
+    use crate::rpc::TransactionLookup;
+    use crate::test_support::{ScriptedReply, ScriptedTransport, scripted_client};
 
     fn context(priority: Priority) -> CallContext {
         CallContext {
@@ -119,7 +139,14 @@ mod tests {
     }
 
     fn client(transport: &Arc<ScriptedTransport>) -> RpcClient {
-        RpcClient::new(transport.clone())
+        client_with_limit(transport, None)
+    }
+
+    fn client_with_limit(transport: &Arc<ScriptedTransport>, limit: Option<u64>) -> RpcClient {
+        let clock = Arc::new(FixedClock::new(
+            Timestamp::from_second(1_790_000_000).unwrap(),
+        ));
+        scripted_client(transport.clone(), clock, limit.map(Credits))
     }
 
     #[tokio::test(start_paused = true)]
@@ -204,69 +231,61 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn parks_a_transaction_too_new_to_read_without_retrying() {
+    async fn counts_each_attempt_with_its_outcome() {
         let transport = ScriptedTransport::new();
         transport
             .expect("getTransaction")
-            .respond(ScriptedReply::RpcError {
-                code: -32015,
-                message: "Transaction version (2) is not supported".to_owned(),
+            .respond(ScriptedReply::Http {
+                status: 429,
+                retry_after: None,
+                body: "slow down".to_owned(),
             });
-
-        let outcome = client(&transport)
-            .transaction(Signature::from_bytes([1; 64]), context(Priority::Realtime))
-            .await;
-
-        assert_eq!(outcome, Err(RpcError::UnsupportedTransactionVersion));
-        assert_eq!(transport.calls().len(), 1);
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn asks_for_a_finalized_base64_transaction_up_to_version_1() {
-        let signature = Signature::from_bytes([2; 64]);
-        let transport = ScriptedTransport::new();
         transport
             .expect("getTransaction")
-            .with_params(json!([
-                signature.to_string(),
-                {"encoding": "base64", "commitment": "finalized", "maxSupportedTransactionVersion": 1}
-            ]))
-            .respond(ScriptedReply::Result(json!({"slot": 9, "version": 1, "meta": {"err": null}})));
+            .respond(ScriptedReply::Null);
+        let client = client(&transport);
 
-        let outcome = client(&transport)
-            .transaction(signature, context(Priority::History))
+        client
+            .transaction(Signature::from_bytes([1; 64]), context(Priority::History))
             .await
             .unwrap();
 
-        let TransactionLookup::Found(transaction) = outcome else {
-            panic!("not found");
-        };
-        assert_eq!(transaction.version, TxVersion::V1);
-        transport.assert_no_unexpected_calls();
+        let mut outcomes: Vec<(CallOutcome, u64, Credits)> = client
+            .credit_meter()
+            .drain()
+            .into_iter()
+            .map(|usage| (usage.outcome, usage.calls, usage.credits))
+            .collect();
+        outcomes.sort();
+        assert_eq!(
+            outcomes,
+            vec![
+                (CallOutcome::Ok, 1, Credits(1)),
+                (CallOutcome::RateLimited, 1, Credits(1))
+            ]
+        );
+        assert_eq!(client.credit_meter().spent_today(), Credits(2));
     }
 
     #[tokio::test(start_paused = true)]
-    async fn lists_the_page_older_than_the_given_signature() {
-        let address = Address::from_bytes([4; 32]);
-        let before = Signature::from_bytes([5; 64]);
+    async fn sends_nothing_once_the_daily_hard_limit_is_reached() {
         let transport = ScriptedTransport::new();
         transport
-            .expect("getSignaturesForAddress")
-            .with_params(json!([
-                address.to_string(),
-                {"limit": 1000, "commitment": "finalized", "before": before.to_string()}
-            ]))
-            .respond(ScriptedReply::Result(json!([])));
-        let request = SignaturesRequest {
-            address,
-            before: Some(before),
-        };
+            .expect("getTransaction")
+            .respond(ScriptedReply::Null);
+        let client = client_with_limit(&transport, Some(1));
+        let fetch =
+            || client.transaction(Signature::from_bytes([1; 64]), context(Priority::Realtime));
 
-        let page = client(&transport)
-            .signatures_for_address(request, context(Priority::CatchUp))
-            .await;
+        assert_eq!(fetch().await, Ok(TransactionLookup::NotFound));
+        let refused = fetch().await;
 
-        assert_eq!(page, Ok(Vec::new()));
-        transport.assert_no_unexpected_calls();
+        assert!(matches!(
+            refused,
+            Err(RpcError::Budget(
+                BudgetRefusal::DailyHardLimitReached { .. }
+            ))
+        ));
+        assert_eq!(transport.calls().len(), 1);
     }
 }

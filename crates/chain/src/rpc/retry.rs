@@ -73,7 +73,8 @@ fn is_transient(error: &RpcError) -> bool {
         | RpcError::UnexpectedStatus { .. }
         | RpcError::UnsupportedTransactionVersion
         | RpcError::InvalidRequest { .. }
-        | RpcError::UnexpectedResponse { .. } => false,
+        | RpcError::UnexpectedResponse { .. }
+        | RpcError::Budget(_) => false,
     }
 }
 

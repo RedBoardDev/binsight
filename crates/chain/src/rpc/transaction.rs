@@ -149,7 +149,27 @@ fn unreadable(detail: &str) -> RpcError {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use binsight_core::clock::FixedClock;
+    use binsight_core::credits::{Priority, Purpose};
+    use serde_json::json;
+
     use super::*;
+    use crate::test_support::{ScriptedReply, ScriptedTransport, scripted_client};
+
+    fn fetch_context() -> CallContext {
+        CallContext {
+            priority: Priority::History,
+            purpose: Purpose::TransactionFetch,
+            wallet: None,
+        }
+    }
+
+    fn client(transport: &Arc<ScriptedTransport>) -> RpcClient {
+        let clock = Arc::new(FixedClock::new(Timestamp::UNIX_EPOCH));
+        scripted_client(transport.clone(), clock, None)
+    }
 
     fn read(json: &str) -> Result<RawTransaction, RpcError> {
         let raw = RawValue::from_string(json.to_owned()).unwrap();
@@ -159,7 +179,7 @@ mod tests {
     #[test]
     fn keeps_the_result_byte_for_byte_and_reads_its_filing_fields() {
         let json = r#"{"blockTime":1790000000,"meta":{"err":null,"fee":5000},"slot":312,
-                       "transaction":["AQID","base64"],"version":0}"#;
+                       "transaction":["AQID","base64"],"transactionIndex":17,"version":0}"#;
 
         let transaction = read(json).unwrap();
 
@@ -194,5 +214,47 @@ mod tests {
             read(r#"{"slot":1,"version":2}"#),
             Err(RpcError::UnexpectedResponse { .. })
         ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn asks_for_a_finalized_base64_transaction_up_to_version_1() {
+        let signature = Signature::from_bytes([2; 64]);
+        let transport = ScriptedTransport::new();
+        transport
+            .expect("getTransaction")
+            .with_params(json!([
+                signature.to_string(),
+                {"encoding": "base64", "commitment": "finalized", "maxSupportedTransactionVersion": 1}
+            ]))
+            .respond(ScriptedReply::Result(json!({"slot": 9, "version": 1, "meta": {"err": null}})));
+
+        let outcome = client(&transport)
+            .transaction(signature, fetch_context())
+            .await
+            .unwrap();
+
+        let TransactionLookup::Found(transaction) = outcome else {
+            panic!("not found");
+        };
+        assert_eq!(transaction.version, TxVersion::V1);
+        transport.assert_no_unexpected_calls();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn parks_a_transaction_too_new_to_read_without_retrying() {
+        let transport = ScriptedTransport::new();
+        transport
+            .expect("getTransaction")
+            .respond(ScriptedReply::RpcError {
+                code: -32015,
+                message: "Transaction version (2) is not supported".to_owned(),
+            });
+
+        let outcome = client(&transport)
+            .transaction(Signature::from_bytes([1; 64]), fetch_context())
+            .await;
+
+        assert_eq!(outcome, Err(RpcError::UnsupportedTransactionVersion));
+        assert_eq!(transport.calls().len(), 1);
     }
 }

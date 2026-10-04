@@ -1,12 +1,28 @@
-//! An injectable source of the current time.
+//! An injectable source of the current time, and the UTC calendar day of an instant.
 //!
 //! Code that needs "now" receives a [`Clock`] instead of reading the system time, so tests can
 //! fix and move time precisely. This module defines the trait and a manual clock for tests; the
 //! real wall clock is implemented once, in the engine, and is the only place allowed to read it.
+//! Days are UTC days, the ones the RPC provider counts its credits in.
 
 use std::sync::{Mutex, PoisonError};
 
+use jiff::civil::Date;
+use jiff::tz::TimeZone;
 use jiff::{SignedDuration, Timestamp};
+
+/// The UTC calendar day `instant` falls on.
+pub fn utc_day(instant: Timestamp) -> Date {
+    instant.to_zoned(TimeZone::UTC).date()
+}
+
+/// The first instant of the UTC day after `day`, or the end of time after the last day there is.
+pub fn start_of_next_utc_day(day: Date) -> Timestamp {
+    day.tomorrow()
+        .ok()
+        .and_then(|tomorrow| tomorrow.to_zoned(TimeZone::UTC).ok())
+        .map_or(Timestamp::MAX, |midnight| midnight.timestamp())
+}
 
 /// A source of the current time.
 pub trait Clock: Send + Sync {
@@ -86,6 +102,19 @@ mod tests {
         let clock = FixedClock::new(Timestamp::MAX);
         assert!(clock.advance(SignedDuration::from_secs(1)).is_err());
         assert_eq!(clock.now(), Timestamp::MAX);
+    }
+
+    #[test]
+    fn names_the_utc_day_of_an_instant_and_when_the_next_one_starts() {
+        let late_evening = Timestamp::from_second(1_790_035_199).unwrap();
+
+        let day = utc_day(late_evening);
+
+        assert_eq!(day.to_string(), "2026-09-21");
+        assert_eq!(
+            start_of_next_utc_day(day).to_string(),
+            "2026-09-22T00:00:00Z"
+        );
     }
 
     #[test]

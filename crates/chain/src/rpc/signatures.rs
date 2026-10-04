@@ -120,7 +120,14 @@ fn unreadable(detail: &str) -> RpcError {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use binsight_core::clock::FixedClock;
+    use binsight_core::credits::{Priority, Purpose};
+    use serde_json::json;
+
     use super::*;
+    use crate::test_support::{ScriptedReply, ScriptedTransport, scripted_client};
 
     #[test]
     fn reads_a_successful_and_a_failed_entry() {
@@ -155,5 +162,62 @@ mod tests {
     fn refuses_a_page_with_an_invalid_signature() {
         let error = parse_page(r#"[{"signature":"not-base58","slot":1}]"#).unwrap_err();
         assert!(matches!(error, RpcError::UnexpectedResponse { .. }));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn lists_the_page_older_than_the_given_signature() {
+        let address = Address::from_bytes([4; 32]);
+        let before = Signature::from_bytes([5; 64]);
+        let transport = ScriptedTransport::new();
+        transport
+            .expect("getSignaturesForAddress")
+            .with_params(json!([
+                address.to_string(),
+                {"limit": 1000, "commitment": "finalized", "before": before.to_string()}
+            ]))
+            .respond(ScriptedReply::Result(json!([])));
+        let clock = Arc::new(FixedClock::new(Timestamp::UNIX_EPOCH));
+        let context = CallContext {
+            priority: Priority::CatchUp,
+            purpose: Purpose::HistoryListing,
+            wallet: Some(address),
+        };
+        let request = SignaturesRequest {
+            address,
+            before: Some(before),
+        };
+
+        let page = scripted_client(transport.clone(), clock, None)
+            .signatures_for_address(request, context)
+            .await;
+
+        assert_eq!(page, Ok(Vec::new()));
+        transport.assert_no_unexpected_calls();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn refuses_a_null_page_instead_of_reading_it_as_the_end() {
+        let address = Address::from_bytes([4; 32]);
+        let transport = ScriptedTransport::new();
+        transport
+            .expect("getSignaturesForAddress")
+            .respond(ScriptedReply::Null);
+        let clock = Arc::new(FixedClock::new(Timestamp::UNIX_EPOCH));
+        let context = CallContext {
+            priority: Priority::CatchUp,
+            purpose: Purpose::HistoryListing,
+            wallet: Some(address),
+        };
+        let request = SignaturesRequest {
+            address,
+            before: None,
+        };
+
+        let page = scripted_client(transport.clone(), clock, None)
+            .signatures_for_address(request, context)
+            .await;
+
+        assert!(matches!(page, Err(RpcError::UnexpectedResponse { .. })));
+        assert_eq!(transport.calls().len(), 1);
     }
 }
