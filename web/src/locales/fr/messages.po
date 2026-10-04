@@ -167,6 +167,10 @@ msgstr "Historique en cours d’import : {progress} fait."
 msgid "Incorrect password."
 msgstr "Mot de passe incorrect."
 
+#: src/applications/Shared/Time/Ui/RelativeTime.tsx
+msgid "just now"
+msgstr "à l’instant"
+
 #: src/applications/Setting/Ui/SettingsPage.tsx
 #: src/core/i18n/LocaleSwitcher.tsx
 msgid "Language"

@@ -1,4 +1,4 @@
-import { useDateFormatters } from '@app/applications/Shared/Ui/useDateFormatters';
+import { useDateFormatters } from '@app/applications/Shared/Time/Ui/useDateFormatters';
 import { AppProviders } from '@app/core/AppProviders';
 import { messages as frenchMessages } from '@app/locales/fr/messages.po';
 import { i18n } from '@lingui/core';

@@ -1,6 +1,6 @@
 import { STREAM_STATE_LABELS } from '@app/applications/Realtime/Ui/streamStateLabels';
 import { useRealtimeStatus } from '@app/applications/Realtime/Ui/useRealtimeStatus';
-import { useDateFormatters } from '@app/applications/Shared/Ui/useDateFormatters';
+import { useDateFormatters } from '@app/applications/Shared/Time/Ui/useDateFormatters';
 import { Card } from '@heroui/react';
 import { useLingui } from '@lingui/react/macro';
 

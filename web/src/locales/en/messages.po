@@ -167,6 +167,10 @@ msgstr "History still importing: {progress} done."
 msgid "Incorrect password."
 msgstr "Incorrect password."
 
+#: src/applications/Shared/Time/Ui/RelativeTime.tsx
+msgid "just now"
+msgstr "just now"
+
 #: src/applications/Setting/Ui/SettingsPage.tsx
 #: src/core/i18n/LocaleSwitcher.tsx
 msgid "Language"

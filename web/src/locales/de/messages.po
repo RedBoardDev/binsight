@@ -167,6 +167,10 @@ msgstr "Verlauf wird noch importiert: {progress} erledigt."
 msgid "Incorrect password."
 msgstr "Falsches Passwort."
 
+#: src/applications/Shared/Time/Ui/RelativeTime.tsx
+msgid "just now"
+msgstr "gerade eben"
+
 #: src/applications/Setting/Ui/SettingsPage.tsx
 #: src/core/i18n/LocaleSwitcher.tsx
 msgid "Language"

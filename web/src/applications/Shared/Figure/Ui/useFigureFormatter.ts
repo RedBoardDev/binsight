@@ -17,8 +17,7 @@ import type {
   FormattedNumber,
 } from '@app/applications/Shared/Figure/Domain/formattedNumber';
 import { useDisplayPreferences } from '@app/applications/Shared/Preference/Ui/useDisplayPreferences';
-import { isSupportedLocale, toLanguageTag } from '@app/core/i18n/locales';
-import { useLingui } from '@lingui/react/macro';
+import { useLanguageTag } from '@app/core/i18n/useLanguageTag';
 import { useMemo } from 'react';
 
 interface FigureFormatter {
@@ -39,9 +38,8 @@ interface FigureFormatter {
 }
 
 export const useFigureFormatter = (): FigureFormatter => {
-  const { i18n } = useLingui();
+  const languageTag = useLanguageTag();
   const { areAmountsHidden } = useDisplayPreferences();
-  const languageTag = isSupportedLocale(i18n.locale) ? toLanguageTag(i18n.locale) : i18n.locale;
 
   return useMemo(
     () => ({
