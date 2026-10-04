@@ -50,24 +50,12 @@ openapi: rust-openapi web-openapi
 # Check that the contract matches the Rust code and the web client matches the contract.
 openapi-check: rust-openapi-check web-openapi-check
 
-# A debug build reads web/dist from disk, so a new web build needs no Rust rebuild.
+# A debug build reads web/dist from disk, so a new web build needs no Rust rebuild. Each test
+# starts its own server from target/debug/binsight on a temporary data folder.
 [doc('End-to-end smoke test (Playwright + axe) against the real server.')]
 e2e: web-build
     cargo build --locked -p binsight
     {{ web }} e2e
-
-# The server Playwright starts: a temporary data folder, a fixed test password, no network.
-[private]
-e2e-server:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    data="$(mktemp -d)"
-    trap 'rm -rf "$data"' EXIT
-    BINSIGHT_DATA_DIR="$data" \
-    BINSIGHT_PASSWORD="${E2E_PASSWORD:-e2e-password-not-a-secret}" \
-    BINSIGHT_HELIUS_API_KEY="e2e-placeholder-key" \
-    BINSIGHT_BIND="127.0.0.1:18181" \
-    target/debug/binsight run
 
 # --- Web ------------------------------------------------------------------
 

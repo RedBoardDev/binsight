@@ -288,10 +288,7 @@ jobs:
       - name: Install Chromium and its system libraries
         working-directory: web
         run: pnpm exec playwright install --with-deps chromium
-      - uses: taiki-e/install-action@861a07ce7084f55488e375df125cdc99bba60eb7 # v2.87.23
-        with:
-          tool: just@1.58.0
-      # Playwright starts the server itself (`just e2e-server`).
+      # Each test starts its own server from target/debug/binsight (web/e2e/fixtures.ts).
       - name: Smoke test
         working-directory: web
         run: pnpm e2e

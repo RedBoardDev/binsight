@@ -1,8 +1,9 @@
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
+import { E2E_PASSWORD } from './binsightServer';
 import { expectNoA11yViolations } from './expectNoA11yViolations';
+import { test } from './fixtures';
 import { watchConsole } from './watchConsole';
 
-const PASSWORD = process.env.E2E_PASSWORD ?? 'e2e-password-not-a-secret';
 const LIVE_WITHIN_MS = 10_000;
 
 const signIn = async (page: Page, password: string): Promise<void> => {
@@ -21,7 +22,7 @@ test('signs in, shows the dashboard and signs out', async ({ page }, testInfo) =
   await signIn(page, 'not the password');
   await expect(page.getByText('Incorrect password.')).toBeVisible();
 
-  await signIn(page, PASSWORD);
+  await signIn(page, E2E_PASSWORD);
   await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
   await expect(page.getByText('Healthy')).toBeVisible();
   await expect(page.getByText(/^\d+\.\d+\.\d+/)).toBeVisible();
