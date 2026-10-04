@@ -18,10 +18,11 @@ React + TypeScript (strict) + Vite, served as a same-origin SPA by the Rust bina
 - `src/applications/<Entity>/{Api,Domain,Ui}`: one folder per entity, PascalCase singular, exactly three layers.
   - `Domain/`: pure TypeScript (zod and Lingui `msg` allowed). No React, no I/O, no HeroUI, no TanStack.
   - `Api/`: data access: `get<X>.ts` (fetcher), `<x>Query.ts` (query options), `use<X>.api.ts` (query hook with
-    `meta.entities`), `<verb><X>.ts` (write returning a tagged union).
+    `meta.entities`), `<verb><X>.ts` (write returning a tagged union), `<x>Guards.ts` (route guards for
+    `beforeLoad`).
   - `Ui/`: components and effect hooks. The public component sits at the root of `Ui/`.
 - Imports flow `Ui → Api → Domain`. Between modules, only through `Shared/` or a module's public face
-  (`Ui/*.tsx` at the root, `Api/use*.api.ts` at the root).
+  (`Ui/*.tsx` at the root, `Api/use*.api.ts` at the root). Route files may also import `Api/<x>Guards.ts`.
 - When a file grows, its private parts move into a **twin folder** with the same name (`Ui/LoginForm.tsx` +
   `Ui/LoginForm/`). Relative imports only into the own twin; everything else uses `@app/…`.
 - Forbidden: barrels, `index.ts(x)` (outside routes), `types.ts`, `utils.ts`, `helpers.ts`, and folders named `types/`,

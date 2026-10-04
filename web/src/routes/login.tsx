@@ -1,4 +1,4 @@
-import { leaveLoginWhenSignedIn } from '@app/applications/Auth/Api/useSession.api';
+import { leaveLoginWhenSignedIn } from '@app/applications/Auth/Api/sessionGuards';
 import { LoginPage } from '@app/applications/Auth/Ui/LoginPage';
 import { createFileRoute } from '@tanstack/react-router';
 import { z } from 'zod';

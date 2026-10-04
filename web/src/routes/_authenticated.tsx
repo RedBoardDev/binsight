@@ -1,4 +1,4 @@
-import { requireSession } from '@app/applications/Auth/Api/useSession.api';
+import { requireSession } from '@app/applications/Auth/Api/sessionGuards';
 import { AppShell } from '@app/core/Layout/AppShell';
 import { createFileRoute } from '@tanstack/react-router';
 

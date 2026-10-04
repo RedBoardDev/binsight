@@ -4,6 +4,7 @@ export type Layer = (typeof LAYERS)[number];
 
 const PASCAL_CASE = /^[A-Z][A-Za-z0-9]*$/;
 const PUBLIC_QUERY_HOOK = /^use[A-Z][A-Za-z0-9]*\.api$/;
+const ROUTE_GUARDS = /^[a-z][A-Za-z0-9]*Guards$/;
 
 export const isLayer = (segment: string): segment is Layer =>
   (LAYERS as readonly string[]).includes(segment);
@@ -33,6 +34,11 @@ export const isPublicFace = (path: string): boolean => {
     return false;
   }
   return layer === 'Ui' || (layer === 'Api' && PUBLIC_QUERY_HOOK.test(name));
+};
+
+export const isRouteGuards = (path: string): boolean => {
+  const [, , layer, name, ...deeper] = withoutCodeExtension(path).split('/');
+  return layer === 'Api' && name !== undefined && deeper.length === 0 && ROUTE_GUARDS.test(name);
 };
 
 export const twinOwnerOf = (path: string, knownFiles: ReadonlySet<string>): string | null => {

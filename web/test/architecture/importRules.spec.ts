@@ -19,12 +19,16 @@ describe('findImportViolations', () => {
       ['applications/Auth/Domain/loginForm.ts', 'zod'],
       ['applications/Auth/Domain/loginForm.ts', '@lingui/core/macro'],
       ['applications/Auth/Api/login.ts', '@app/applications/Auth/Domain/loginForm'],
-      ['applications/Auth/Ui/LoginPage.tsx', '@app/applications/Auth/Api/useSession.api'],
+      [
+        'applications/Realtime/Ui/RealtimeProvider.tsx',
+        '@app/applications/Auth/Api/useSessionCheck.api',
+      ],
       ['applications/Auth/Ui/LoginForm.tsx', './LoginForm/PasswordField'],
       ['applications/Auth/Ui/LoginForm/PasswordField.tsx', '@app/applications/Shared/Ui/toast'],
       ['applications/Dashboard/Ui/DashboardPage.tsx', '@app/applications/Health/Ui/HealthCard'],
       ['applications/Dashboard/Ui/DashboardPage.tsx', '@app/applications/Health/Api/useHealth.api'],
       ['routes/login.tsx', '@app/applications/Auth/Ui/LoginPage'],
+      ['routes/login.tsx', '@app/applications/Auth/Api/sessionGuards'],
       ['lib/api/client.ts', 'openapi-fetch'],
       ['sw/sw.ts', './navigationDenylist'],
       ['core/i18n/LocaleSwitcher.spec.tsx', '@test/renderWithProviders'],
@@ -72,6 +76,9 @@ describe('findImportViolations', () => {
       'public-face-only',
     ]);
     expect(rulesBrokenBy('routes/login.tsx', '@app/applications/Auth/Api/login')).toEqual([
+      'public-face-only',
+    ]);
+    expect(rulesBrokenBy(page, '@app/applications/Auth/Api/sessionGuards')).toEqual([
       'public-face-only',
     ]);
   });

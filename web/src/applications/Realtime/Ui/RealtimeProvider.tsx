@@ -1,4 +1,4 @@
-import { useSessionCheck } from '@app/applications/Auth/Api/useSession.api';
+import { useSessionCheck } from '@app/applications/Auth/Api/useSessionCheck.api';
 import { LIVE_EVENT_TYPES, parseLiveEvent } from '@app/applications/Realtime/Domain/liveEvent';
 import { type RealtimeEffect, toEffects } from '@app/applications/Realtime/Domain/realtimeEffects';
 import { reconnectDelay } from '@app/applications/Realtime/Domain/reconnectDelay';

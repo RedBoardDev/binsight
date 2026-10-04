@@ -2,6 +2,7 @@ import { type ImportTarget, isOneOfPackages, resolveImport } from './importTarge
 import {
   fileStem,
   isPublicFace,
+  isRouteGuards,
   layerOf,
   moduleOf,
   twinOwnerOf,
@@ -83,9 +84,12 @@ const publicFaceOnly: ImportRule = ({ importer, target }) => {
   if (targetModule === null || targetModule === 'Shared' || targetModule === moduleOf(importer)) {
     return null;
   }
+  if (importer.startsWith('routes/') && isRouteGuards(target.path)) {
+    return null;
+  }
   return isPublicFace(target.path)
     ? null
-    : `another module is reached only through Shared/ or its public face (Ui/<Component>.tsx or Api/use<X>.api.ts at the layer root).`;
+    : `another module is reached only through Shared/ or its public face (Ui/<Component>.tsx or Api/use<X>.api.ts at the layer root; routes also reach Api/<x>Guards.ts).`;
 };
 
 const relativeImportIntoTwin: ImportRule = ({ importer, specifier, target }) => {
