@@ -13,8 +13,9 @@ const ID_SEPARATOR: char = '-';
 ///
 /// The address alone is ambiguous, because a position account can be closed and created again at
 /// the same address; the creating signature alone is ambiguous too, because one transaction can
-/// open several positions. Together they never change and never collide. Written as
-/// `<address>-<signature>`, both in base58.
+/// open several positions. Together they identify supported lifetimes. Two creations of the
+/// same address within one transaction cannot be distinguished and lifetime replay refuses
+/// that collision explicitly. Written as `<address>-<signature>`, both in base58.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PositionId {
     /// The position account.

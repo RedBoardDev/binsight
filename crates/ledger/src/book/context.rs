@@ -19,7 +19,9 @@ pub struct WalletContext {
     pub wallet: Address,
     /// The other wallets this instance tracks.
     pub tracked_wallets: BTreeSet<Address>,
-    /// The position accounts the wallet owns or owned, as their `PositionCreate` events say.
+    /// The known position accounts this wallet owns during this transaction.
+    /// The caller replays ownership first: an address closed and recreated for another owner
+    /// must not remain here merely because this wallet owned its previous life.
     pub positions: BTreeSet<Address>,
     /// Bridge programs whose movement across the wallet boundary is external capital.
     /// The caller supplies its verified, versioned registry; an empty registry makes no guess.
