@@ -1,8 +1,9 @@
 //! The Compute Budget program: the compute-unit limit and price of a legacy or version 0
 //! transaction.
 //!
-//! The data is Borsh: a `u8` discriminator, then little-endian fields. The runtime refuses extra
-//! bytes, so the decoder does too. A version 1 transaction carries these values in its header
+//! The data is Borsh: a `u8` discriminator, then little-endian fields. The runtime uses unchecked
+//! Borsh decoding, which reads the required fields and ignores trailing bytes. A version 1
+//! transaction carries these values in its header
 //! instead and the runtime ignores these instructions there. This module only decodes.
 
 use binsight_core::units::Lamports;
@@ -81,7 +82,6 @@ pub(super) fn decode(data: &[u8]) -> Result<ComputeBudgetInstruction, Instructio
         }
         discriminator => return Ok(ComputeBudgetInstruction::Other { discriminator }),
     };
-    fields.finish("a compute budget instruction")?;
     Ok(instruction)
 }
 
@@ -116,8 +116,16 @@ mod tests {
     }
 
     #[test]
-    fn refuses_extra_bytes_like_the_runtime() {
-        let data = [SET_COMPUTE_UNIT_LIMIT, 1, 0, 0, 0, 0];
-        assert!(decode(&data).is_err());
+    fn ignores_trailing_bytes_like_the_runtime() {
+        let data = [SET_COMPUTE_UNIT_LIMIT, 1, 0, 0, 0, 9, 8, 7, 6];
+        assert_eq!(
+            decode(&data),
+            Ok(ComputeBudgetInstruction::SetComputeUnitLimit { units: 1 })
+        );
+    }
+
+    #[test]
+    fn refuses_a_truncated_required_field() {
+        assert!(decode(&[SET_COMPUTE_UNIT_LIMIT, 1, 0, 0]).is_err());
     }
 }

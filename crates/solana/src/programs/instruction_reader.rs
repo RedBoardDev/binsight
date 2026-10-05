@@ -115,12 +115,6 @@ impl<'a> InstructionFields<'a> {
         self.checked(result).map(|_| ())
     }
 
-    /// Refuses data left after the fields, for programs that refuse it too.
-    pub(super) fn finish(&self, what: &'static str) -> Result<(), InstructionDecodeError> {
-        let result = self.reader.finish(what);
-        self.checked(result)
-    }
-
     fn checked<T>(&self, result: Result<T, MalformedBytes>) -> Result<T, InstructionDecodeError> {
         result.map_err(|source| InstructionDecodeError::Malformed {
             program: self.program,
