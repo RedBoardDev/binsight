@@ -16,19 +16,23 @@ use super::signatures::{ListedSignature, SignaturesRepo};
 use crate::database::codec::{flag_to_sql, timestamp_to_sql, unsigned_to_sql};
 use crate::error::StoreError;
 
+mod rank_shift;
+
 const INSERT_SIGNATURE: &str = "
     INSERT INTO wallet_signature (wallet, signature, slot, slot_order, block_time, is_failed,
                                   listed_at)
     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
     ON CONFLICT (wallet, signature) DO NOTHING";
 const RANK_SIGNATURE: &str = "
-    UPDATE wallet_signature SET slot_order = ?3, block_time = coalesce(block_time, ?4)
+    UPDATE wallet_signature SET slot_order = ?3, block_time = coalesce(?4, block_time),
+                                slot = ?5, is_failed = ?6
     WHERE wallet = ?1 AND signature = ?2 AND slot_order IS NULL";
 const INSERT_FETCH_TASK: &str = "
     INSERT INTO tx_fetch (signature, state, priority, slot, attempts, next_attempt_at,
                           last_error, updated_at)
     VALUES (?1, 'pending', ?2, ?3, 0, ?4, NULL, ?4)
-    ON CONFLICT (signature) DO NOTHING";
+    ON CONFLICT (signature) DO UPDATE SET slot = excluded.slot
+    WHERE tx_fetch.slot != excluded.slot";
 const UPDATE_CURSOR: &str = "
     UPDATE wallet_cursor
     SET top_signature = ?2, top_slot = ?3, history_before = ?4, history_state = ?5
@@ -54,10 +58,16 @@ pub struct ListingPage {
     pub listed_at: Timestamp,
 }
 
+#[cfg(test)]
+#[path = "listing_page/order_tests.rs"]
+mod order_tests;
+
 impl SignaturesRepo {
     /// Writes a listed page, its fetch tasks and the cursor move, all or nothing. A signature
     /// already recorded without its rank (seen first by the live stream) gets the page's rank
-    /// and block time. Returns how many of the page's
+    /// and block time. A newly ranked signature inserts its wallet-local ordinal, shifting
+    /// older ordinals in that slot. These ordinals are not canonical block indices.
+    /// Returns how many of the page's
     /// signatures were new for the wallet.
     ///
     /// # Errors
@@ -100,12 +110,27 @@ fn write_page(connection: &Connection, page: &ListingPage) -> Result<u64, StoreE
         )?;
         if inserted == 1 {
             new_signatures = new_signatures.saturating_add(1);
+        }
+        let newly_ranked = if inserted == 1 {
+            slot_order.is_some()
         } else if slot_order.is_some() {
-            let block_time = listed.block_time.map(timestamp_to_sql);
+            rank_shift::check_listed_slot(connection, &wallet, listed)?;
             connection.execute(
                 RANK_SIGNATURE,
-                params![wallet, signature, slot_order, block_time],
-            )?;
+                params![
+                    wallet,
+                    signature,
+                    slot_order,
+                    listed.block_time.map(timestamp_to_sql),
+                    slot,
+                    flag_to_sql(listed.is_failed)
+                ],
+            )? == 1
+        } else {
+            false
+        };
+        if newly_ranked {
+            rank_shift::reserve_rank(connection, &wallet, listed)?;
         }
         connection.execute(
             INSERT_FETCH_TASK,

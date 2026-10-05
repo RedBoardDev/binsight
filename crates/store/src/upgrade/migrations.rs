@@ -38,6 +38,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "live_credit_purposes",
         sql: include_str!("../../migrations/0004_live_credit_purposes.sql"),
     },
+    Migration {
+        version: 5,
+        name: "wallet_signature_order",
+        sql: include_str!("../../migrations/0005_wallet_signature_order.sql"),
+    },
 ];
 
 #[cfg(test)]

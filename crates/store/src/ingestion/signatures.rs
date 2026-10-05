@@ -25,8 +25,8 @@ pub struct ListedSignature {
     /// The slot it landed in.
     pub slot: u64,
     /// Its rank among the wallet's signatures of the same slot, as listed (0 = the newest), or
-    /// `None` until a listing ranks it. A fetched transaction carries its exact index in its
-    /// block; this rank only orders the ones not fetched yet.
+    /// `None` until a listing ranks it. This is a wallet-local fallback ordinal, not the exact
+    /// block transaction index, which may remain absent even after fetching.
     pub slot_order: Option<u32>,
     /// When its block was produced, if the node said so.
     pub block_time: Option<Timestamp>,
