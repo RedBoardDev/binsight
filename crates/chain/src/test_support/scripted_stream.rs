@@ -8,20 +8,33 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
 
 use binsight_solana::{Address, Signature};
 use serde_json::{Value, json};
-use tokio::sync::mpsc;
+use tokio::sync::{Notify, mpsc};
 
 use crate::error::StreamError;
 use crate::stream::{
     ConnectFuture, WsConnection, WsConnector, WsMessage, WsReceiveFuture, WsSendFuture,
 };
 
+/// Which client write the scripted connection never completes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamWrite {
+    /// A subscribe request.
+    Subscribe,
+    /// An unsubscribe request.
+    Unsubscribe,
+    /// A keep-alive ping.
+    Ping,
+}
+
 /// A connector that plays a scripted stream.
 #[derive(Debug, Default)]
 pub struct ScriptedConnector {
     script: Arc<Mutex<StreamScript>>,
+    connected: Arc<Notify>,
 }
 
 #[derive(Debug, Default)]
@@ -30,6 +43,10 @@ struct StreamScript {
     subscription_refusal: Option<(i64, String)>,
     is_deaf_to_pings: bool,
     opened: u32,
+    is_connect_blocked: bool,
+    blocked_write: Option<StreamWrite>,
+    delayed_write: Option<(StreamWrite, Duration)>,
+    are_acks_withheld: bool,
     /// The server side of the open connection: what it sends to the client.
     to_client: Option<mpsc::UnboundedSender<WsMessage>>,
     /// The subscription id of each subscribed wallet on the open connection.
@@ -41,6 +58,24 @@ impl ScriptedConnector {
     /// A connector whose connections open, confirm every subscription and answer every ping.
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
+    }
+
+    /// Leaves connection opening pending until the client cancels it.
+    pub fn block_connections(&self) {
+        self.lock().is_connect_blocked = true;
+    }
+
+    /// Waits for the first open connection without advancing time or polling.
+    pub async fn wait_until_connected(&self) {
+        loop {
+            let notified = self.connected.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.connections_opened() > 0 {
+                return;
+            }
+            notified.await;
+        }
     }
 
     /// Fails the next connection attempt with `detail`.
@@ -61,6 +96,21 @@ impl ScriptedConnector {
     /// Stops answering pings, like a half-open connection.
     pub fn ignore_pings(&self) {
         self.lock().is_deaf_to_pings = true;
+    }
+
+    /// Leaves writes of this kind pending, like a saturated TCP socket.
+    pub fn block_writes(&self, kind: StreamWrite) {
+        self.lock().blocked_write = Some(kind);
+    }
+
+    /// Delays each matching write on the injected Tokio clock.
+    pub fn delay_writes(&self, kind: StreamWrite, delay: Duration) {
+        self.lock().delayed_write = Some((kind, delay));
+    }
+
+    /// Stops acknowledging subscriptions while still answering pings.
+    pub fn withhold_subscription_acks(&self) {
+        self.lock().are_acks_withheld = true;
     }
 
     /// How many connections were opened.
@@ -146,6 +196,7 @@ impl StreamScript {
         };
         let id = request.get("id").cloned().unwrap_or(Value::Null);
         let answer = match request.get("method").and_then(Value::as_str) {
+            Some("logsSubscribe") if self.are_acks_withheld => return,
             Some("logsSubscribe") => self.answer_subscription(&request, &id),
             Some("logsUnsubscribe") => json!({ "jsonrpc": "2.0", "id": id, "result": true }),
             _ => return,
@@ -174,7 +225,15 @@ impl StreamScript {
 impl WsConnector for ScriptedConnector {
     fn connect(&self) -> ConnectFuture<'_> {
         let script = self.script.clone();
+        let connected = self.connected.clone();
         Box::pin(async move {
+            let is_blocked = script
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .is_connect_blocked;
+            if is_blocked {
+                return std::future::pending().await;
+            }
             let mut state = script.lock().unwrap_or_else(PoisonError::into_inner);
             if let Some(detail) = state.refused_connections.pop_front() {
                 return Err(StreamError::Connect { detail });
@@ -184,6 +243,7 @@ impl WsConnector for ScriptedConnector {
             state.to_client = Some(to_client);
             state.subscriptions.clear();
             drop(state);
+            connected.notify_waiters();
             let connection: Box<dyn WsConnection> = Box::new(ScriptedConnection {
                 script: script.clone(),
                 from_server,
@@ -201,19 +261,45 @@ struct ScriptedConnection {
 
 impl WsConnection for ScriptedConnection {
     fn send(&mut self, message: WsMessage) -> WsSendFuture<'_> {
-        let mut script = self.script.lock().unwrap_or_else(PoisonError::into_inner);
-        match message {
-            WsMessage::Text(text) => script.answer(&text),
-            WsMessage::Ping(payload) if !script.is_deaf_to_pings => {
-                script.deliver(WsMessage::Pong(payload));
-            }
-            WsMessage::Close => {
-                script.to_client = None;
-                script.subscriptions.clear();
-            }
-            WsMessage::Ping(_) | WsMessage::Pong(_) | WsMessage::Binary(_) => {}
+        let script = self.script.lock().unwrap_or_else(PoisonError::into_inner);
+        let kind = match &message {
+            WsMessage::Ping(_) => Some(StreamWrite::Ping),
+            WsMessage::Text(text) => serde_json::from_str::<Value>(text)
+                .ok()
+                .and_then(
+                    |request| match request.get("method").and_then(Value::as_str) {
+                        Some("logsSubscribe") => Some(StreamWrite::Subscribe),
+                        Some("logsUnsubscribe") => Some(StreamWrite::Unsubscribe),
+                        _ => None,
+                    },
+                ),
+            _ => None,
+        };
+        if kind.is_some() && kind == script.blocked_write {
+            return Box::pin(std::future::pending());
         }
-        Box::pin(std::future::ready(Ok(())))
+        let delay = script
+            .delayed_write
+            .filter(|(delayed, _)| Some(*delayed) == kind);
+        drop(script);
+        Box::pin(async move {
+            if let Some((_, delay)) = delay {
+                tokio::time::sleep(delay).await;
+            }
+            let mut script = self.script.lock().unwrap_or_else(PoisonError::into_inner);
+            match message {
+                WsMessage::Text(text) => script.answer(&text),
+                WsMessage::Ping(payload) if !script.is_deaf_to_pings => {
+                    script.deliver(WsMessage::Pong(payload));
+                }
+                WsMessage::Close => {
+                    script.to_client = None;
+                    script.subscriptions.clear();
+                }
+                WsMessage::Ping(_) | WsMessage::Pong(_) | WsMessage::Binary(_) => {}
+            }
+            Ok(())
+        })
     }
 
     fn receive(&mut self) -> WsReceiveFuture<'_> {

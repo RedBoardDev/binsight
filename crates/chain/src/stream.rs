@@ -26,7 +26,9 @@ mod supervisor;
 mod tungstenite_connector;
 mod ws_connection;
 
-pub use stream_events::{Activity, DisconnectReason, StreamEvent};
+pub use stream_events::{
+    Activity, DisconnectReason, StreamEvent, StreamSnapshot, SubscriptionStatus,
+};
 pub use tungstenite_connector::TungsteniteConnector;
 pub use ws_connection::{
     ConnectFuture, WsConnection, WsConnector, WsMessage, WsReceiveFuture, WsSendFuture,
@@ -88,10 +90,10 @@ impl WalletStream {
         let (commands, command_receiver) = mpsc::unbounded_channel();
         let (events, event_receiver) = mpsc::channel(EVENT_CAPACITY);
         let supervision = Supervision {
-            rpc,
+            rpc: rpc.clone(),
             subscriptions: subscriptions::Subscriptions::default(),
             recent: recent_signatures::RecentSignatures::default(),
-            outbox: EventOutbox::new(events),
+            outbox: EventOutbox::new(events, rpc),
             commands: command_receiver,
         };
         let stream = Self {

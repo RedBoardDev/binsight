@@ -1,8 +1,8 @@
 //! The governor: what every request goes through before and after it is sent.
 //!
-//! Before: the credit meter books its cost against the budget, which may refuse it or defer its
-//! class, then the rate limiter waits for a slot in the lane of its priority (a full lane defers
-//! it too, and gives the credits back). After: the meter counts it with its outcome, or as
+//! Before: the rate limiter waits for a slot in the lane of its priority, then the credit
+//! meter atomically admits the cost at the instant of sending. Waiting requests spend nothing.
+//! After: the meter counts it on that sending day with its outcome, or as
 //! cancelled if the caller dropped it before the answer (at shutdown). The client calls the
 //! governor on every attempt, retries included, so each one is paced and counted. This module
 //! assembles the parts; each one lives in its own module.
@@ -16,6 +16,9 @@ mod day_pace;
 mod rate_limiter;
 mod usage_counts;
 mod waiting_lanes;
+
+#[cfg(test)]
+mod sending_tests;
 
 pub use billing_cycle::{BillingCycleDay, InvalidCycleDay};
 pub use budget_guard::CreditStanding;
@@ -35,6 +38,8 @@ use crate::error::BudgetRefusal;
 use crate::plan::HeliusPlan;
 use crate::rpc::{CallContext, RpcMethod};
 use cost_table::cost;
+use credit_meter::CreditAdmission;
+pub(crate) use credit_meter::CreditBooking;
 use rate_limiter::RateLimiter;
 
 /// The pause after a 429 that did not say how long to wait.
@@ -107,33 +112,42 @@ impl Governor {
         self.clock.now()
     }
 
-    /// Books the request's cost, then waits for a slot in its priority's lane to send it.
+    /// Waits for the priority lane, then admits and dates the request without another await.
     pub(crate) async fn admit(
         &self,
         method: RpcMethod,
-        priority: Priority,
-    ) -> Result<(), BudgetRefusal> {
-        let cost = cost(BilledMethod::Rpc(method));
-        self.meter.reserve(cost, priority)?;
-        if let Err(full) = self.limiter.acquire(priority).await {
-            self.meter.release(cost);
-            let wait = SignedDuration::try_from(full.wait).unwrap_or(SignedDuration::MAX);
-            let until = self.clock.now().checked_add(wait).unwrap_or(Timestamp::MAX);
-            return Err(BudgetRefusal::Deferred { until });
+        context: CallContext,
+    ) -> Result<SentRequest<'_>, BudgetRefusal> {
+        loop {
+            self.wait_for_lane(context.priority).await?;
+            let mut headroom = self.meter.headroom_changes();
+            match self
+                .meter
+                .book(cost(BilledMethod::Rpc(method)), context.priority)?
+            {
+                CreditAdmission::Booked(booking) => {
+                    return Ok(SentRequest {
+                        governor: self,
+                        method,
+                        context,
+                        booking,
+                        is_counted: false,
+                    });
+                }
+                CreditAdmission::WaitingForStreamData => {
+                    // The meter owns the sender; it outlives this borrowed receiver.
+                    let _ = headroom.changed().await;
+                }
+            }
         }
-        Ok(())
     }
 
-    /// Marks a request as sent: it is counted with the outcome given to
-    /// [`SentRequest::settle`], or as cancelled if it is dropped before that, since the provider
-    /// may bill a request whose answer nobody waited for.
-    pub(crate) fn send(&self, method: RpcMethod, context: CallContext) -> SentRequest<'_> {
-        SentRequest {
-            governor: self,
-            method,
-            context,
-            is_counted: false,
-        }
+    async fn wait_for_lane(&self, priority: Priority) -> Result<(), BudgetRefusal> {
+        self.limiter.acquire(priority).await.map_err(|full| {
+            let wait = SignedDuration::try_from(full.wait).unwrap_or(SignedDuration::MAX);
+            let until = self.clock.now().checked_add(wait).unwrap_or(Timestamp::MAX);
+            BudgetRefusal::Deferred { until }
+        })
     }
 
     /// Holds every request back after the provider said "too many requests", the ones already
@@ -150,28 +164,34 @@ impl Governor {
     }
 
     /// Books the opening of a stream connection, a live request, if the budget admits it.
-    pub(crate) fn admit_stream_open(&self) -> Result<(), BudgetRefusal> {
-        self.meter
-            .reserve(cost(BilledMethod::StreamOpen), Priority::Realtime)
+    pub(crate) fn admit_stream_open(&self) -> Result<CreditBooking, BudgetRefusal> {
+        self.meter.book_stream_open(
+            cost(BilledMethod::StreamOpen),
+            cost(BilledMethod::StreamData),
+        )
+    }
+
+    /// Releases first-unit headroom after the connection ends; no data was billed for it.
+    pub(crate) fn stream_ended(&self) {
+        self.meter.release_stream_headroom();
     }
 
     /// Counts a stream connection attempt with how it ended.
-    pub(crate) fn record_stream_open(&self, outcome: CallOutcome) {
+    pub(crate) fn record_stream_open(&self, booking: &CreditBooking, outcome: CallOutcome) {
         let method = BilledMethod::StreamOpen;
-        self.meter
-            .record(method, &STREAM_CONTEXT, outcome, cost(method));
+        self.meter.record(booking, method, &STREAM_CONTEXT, outcome);
     }
 
     /// Charges `units` started units of streamed data.
-    pub(crate) fn charge_stream_data(&self, units: u64) {
+    pub(crate) fn charge_stream_data(&self, units: u64) -> Result<(), BudgetRefusal> {
         let method = BilledMethod::StreamData;
         let credits = Credits(cost(method).0.saturating_mul(units));
-        self.meter.charge(method, &STREAM_CONTEXT, units, credits);
+        self.meter.charge(method, &STREAM_CONTEXT, units, credits)
     }
 
-    /// The hard limit that stops even live requests now, if one is reached.
-    pub(crate) fn hard_refusal(&self) -> Option<BudgetRefusal> {
-        self.meter.hard_refusal()
+    /// A hard limit or insufficient room for another streamed-data unit.
+    pub(crate) fn stream_refusal(&self) -> Option<BudgetRefusal> {
+        self.meter.stream_refusal(cost(BilledMethod::StreamData))
     }
 }
 
@@ -188,6 +208,7 @@ pub(crate) struct SentRequest<'governor> {
     governor: &'governor Governor,
     method: RpcMethod,
     context: CallContext,
+    booking: CreditBooking,
     is_counted: bool,
 }
 
@@ -205,7 +226,7 @@ impl SentRequest<'_> {
         let method = BilledMethod::Rpc(self.method);
         self.governor
             .meter
-            .record(method, &self.context, outcome, cost(method));
+            .record(&self.booking, method, &self.context, outcome);
     }
 }
 
@@ -246,22 +267,29 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn counts_a_settled_request_once_with_its_outcome() {
+    #[tokio::test(start_paused = true)]
+    async fn counts_a_settled_request_once_with_its_outcome() {
         let governor = governor();
 
         governor
-            .send(RpcMethod::GetTransaction, context())
+            .admit(RpcMethod::GetTransaction, context())
+            .await
+            .unwrap()
             .settle(CallOutcome::Timeout);
 
         assert_eq!(counted(&governor), vec![(CallOutcome::Timeout, 1)]);
     }
 
-    #[test]
-    fn counts_a_request_dropped_before_its_answer_as_cancelled() {
+    #[tokio::test(start_paused = true)]
+    async fn counts_a_request_dropped_before_its_answer_as_cancelled() {
         let governor = governor();
 
-        drop(governor.send(RpcMethod::GetTransaction, context()));
+        drop(
+            governor
+                .admit(RpcMethod::GetTransaction, context())
+                .await
+                .unwrap(),
+        );
 
         assert_eq!(counted(&governor), vec![(CallOutcome::Cancelled, 1)]);
     }

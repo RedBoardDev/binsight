@@ -3,7 +3,7 @@
 //! The wait starts at one second and doubles after each connection that failed or did not last,
 //! up to thirty seconds, with a quarter of jitter either way so many instances do not reconnect
 //! in step. A connection that stayed healthy for a minute resets it. The jitter comes from the
-//! attempt count rather than a random generator, so tests are deterministic. This module is
+//! instance seed and attempt count, so injected seeds keep tests deterministic. This module is
 //! pure.
 
 use std::time::Duration;
@@ -24,9 +24,17 @@ pub(crate) const HEALTHY_CONNECTION: Duration = Duration::from_mins(1);
 #[derive(Debug, Default)]
 pub(crate) struct ReconnectBackoff {
     failures_in_a_row: u32,
+    seed: u64,
 }
 
 impl ReconnectBackoff {
+    pub(crate) fn new(seed: u64) -> Self {
+        Self {
+            failures_in_a_row: 0,
+            seed,
+        }
+    }
+
     /// The wait after a connection that lasted `lasted` (zero if it never opened).
     pub(crate) fn after(&mut self, lasted: Duration) -> Duration {
         if lasted >= HEALTHY_CONNECTION {
@@ -42,9 +50,14 @@ impl ReconnectBackoff {
             });
         let spread = wait.saturating_mul(JITTER_PERCENT) / 100;
         let width = spread.saturating_mul(2).saturating_add(1);
-        let seed = u64::from(self.failures_in_a_row).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let seed =
+            self.seed ^ u64::from(self.failures_in_a_row).wrapping_mul(0x9E37_79B9_7F4A_7C15);
         let offset = (seed ^ (seed >> 31)) % width;
-        Duration::from_millis(wait.saturating_sub(spread).saturating_add(offset))
+        Duration::from_millis(
+            wait.saturating_sub(spread)
+                .saturating_add(offset)
+                .min(LONGEST_WAIT_MILLIS),
+        )
     }
 }
 
@@ -60,8 +73,23 @@ mod tests {
 
         for (wait, base) in waits.iter().zip([1, 2, 4, 8, 16, 30, 30]) {
             let base = Duration::from_secs(base);
-            assert!(*wait >= base * 3 / 4 && *wait <= base * 5 / 4, "{wait:?}");
+            assert!(
+                *wait >= base * 3 / 4 && *wait <= (base * 5 / 4).min(Duration::from_secs(30)),
+                "{wait:?}"
+            );
         }
+    }
+
+    #[test]
+    fn different_instance_seeds_have_different_reconnect_sequences() {
+        let sequence = |seed| {
+            let mut backoff = ReconnectBackoff::new(seed);
+            (0..5)
+                .map(|_| backoff.after(Duration::ZERO))
+                .collect::<Vec<_>>()
+        };
+        assert_ne!(sequence(1), sequence(2));
+        assert_eq!(sequence(1), sequence(1));
     }
 
     #[test]

@@ -97,6 +97,17 @@ impl LiveState {
             }
             StreamEvent::Activity(activity) => checks.activity(activity.wallet, now),
             StreamEvent::Overflowed => checks.events_lost(now),
+            StreamEvent::Reconciled(snapshot) => {
+                checks.stream_down(now);
+                if snapshot.is_connected {
+                    for (wallet, status) in &snapshot.subscriptions {
+                        if *status == binsight_chain::SubscriptionStatus::Subscribed {
+                            checks.subscribed(*wallet, now);
+                        }
+                    }
+                }
+                checks.events_lost(now);
+            }
             StreamEvent::Connected | StreamEvent::ServerError { .. } => {}
         }
         drop(checks);

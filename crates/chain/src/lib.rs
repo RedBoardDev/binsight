@@ -40,6 +40,7 @@ pub use rpc::{
     SIGNATURE_PAGE_LIMIT, SendFuture, SignatureInfo, SignaturesRequest, TransactionLookup,
 };
 pub use stream::{
-    Activity, ConnectFuture, DisconnectReason, StreamEvent, TungsteniteConnector, WalletStream,
-    WalletWatch, WsConnection, WsConnector, WsMessage, WsReceiveFuture, WsSendFuture,
+    Activity, ConnectFuture, DisconnectReason, StreamEvent, StreamSnapshot, SubscriptionStatus,
+    TungsteniteConnector, WalletStream, WalletWatch, WsConnection, WsConnector, WsMessage,
+    WsReceiveFuture, WsSendFuture,
 };

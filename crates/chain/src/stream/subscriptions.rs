@@ -15,6 +15,9 @@ use binsight_solana::Address;
 use tokio::time::Instant;
 
 /// How long a refused subscription waits before it is asked again.
+pub(super) const ACK_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// How long an explicit refusal holds its wallet back.
 const REFUSED_RETRY_DELAY: Duration = Duration::from_mins(5);
 
 /// What a subscription answer means.
@@ -33,7 +36,7 @@ pub(crate) enum Confirmation {
 pub(crate) struct Subscriptions {
     watched: BTreeSet<Address>,
     /// Subscribe requests waiting for their answer, by request id.
-    pending: HashMap<u64, Address>,
+    pending: HashMap<u64, (Address, Instant)>,
     /// Confirmed subscriptions, by subscription id.
     active: HashMap<u64, Address>,
     /// Refused wallets, and when to ask again.
@@ -74,7 +77,7 @@ impl Subscriptions {
             .iter()
             .filter(|wallet| {
                 !self.refused.contains_key(*wallet)
-                    && !self.pending.values().any(|pending| pending == *wallet)
+                    && !self.pending.values().any(|(pending, _)| pending == *wallet)
                     && !self.active.values().any(|active| active == *wallet)
             })
             .copied()
@@ -82,7 +85,10 @@ impl Subscriptions {
         due.into_iter()
             .map(|wallet| {
                 let request_id = self.new_request_id();
-                self.pending.insert(request_id, wallet);
+                self.pending.insert(
+                    request_id,
+                    (wallet, now.checked_add(ACK_TIMEOUT).unwrap_or(now)),
+                );
                 (request_id, wallet)
             })
             .collect()
@@ -96,7 +102,7 @@ impl Subscriptions {
 
     /// The server answered `request_id` with `subscription`.
     pub(crate) fn confirmed(&mut self, request_id: u64, subscription: u64) -> Confirmation {
-        let Some(wallet) = self.pending.remove(&request_id) else {
+        let Some((wallet, _)) = self.pending.remove(&request_id) else {
             return Confirmation::Unrelated;
         };
         if !self.watched.contains(&wallet) {
@@ -109,7 +115,7 @@ impl Subscriptions {
     /// The server refused `request_id` at `now`; returns the wallet it was for, which is asked
     /// again later, if it was a subscribe request.
     pub(crate) fn refused(&mut self, request_id: u64, now: Instant) -> Option<Address> {
-        let wallet = self.pending.remove(&request_id)?;
+        let (wallet, _) = self.pending.remove(&request_id)?;
         let retry_at = now.checked_add(REFUSED_RETRY_DELAY).unwrap_or(now);
         if self.watched.contains(&wallet) {
             self.refused.insert(wallet, retry_at);
@@ -124,7 +130,30 @@ impl Subscriptions {
 
     /// When the next refused wallet may be asked again.
     pub(crate) fn next_retry_at(&self) -> Option<Instant> {
-        self.refused.values().min().copied()
+        self.refused
+            .values()
+            .copied()
+            .chain(self.next_ack_at())
+            .min()
+    }
+
+    /// The earliest pending acknowledgement for a wallet still watched.
+    pub(crate) fn next_ack_at(&self) -> Option<Instant> {
+        self.pending
+            .values()
+            .filter(|(wallet, _)| self.watched.contains(wallet))
+            .map(|(_, deadline)| *deadline)
+            .min()
+    }
+
+    /// A wallet whose subscription was never acknowledged; reconnect before retrying so a
+    /// late acknowledgement cannot leave duplicate server subscriptions.
+    pub(crate) fn unanswered(&self, now: Instant) -> Option<Address> {
+        self.pending
+            .values()
+            .filter(|(wallet, deadline)| self.watched.contains(wallet) && *deadline <= now)
+            .min_by_key(|(_, deadline)| *deadline)
+            .map(|(wallet, _)| *wallet)
     }
 
     /// The connection ended: no subscription survives it.
@@ -203,6 +232,21 @@ mod tests {
         assert_eq!(subscriptions.requests_due(now), Vec::new());
         assert_eq!(subscriptions.next_retry_at(), Some(five_minutes));
         assert_eq!(subscriptions.requests_due(five_minutes).len(), 1);
+    }
+
+    #[test]
+    fn ignores_an_unwatched_pending_ack_deadline_but_releases_its_late_ack() {
+        let mut subscriptions = Subscriptions::default();
+        subscriptions.watch(WALLET);
+        let now = Instant::now();
+        let request = subscriptions.requests_due(now)[0].0;
+        subscriptions.unwatch(WALLET);
+        assert_eq!(subscriptions.next_retry_at(), None);
+        assert_eq!(subscriptions.unanswered(now + ACK_TIMEOUT), None);
+        assert_eq!(
+            subscriptions.confirmed(request, 77),
+            Confirmation::Release(77)
+        );
     }
 
     #[test]

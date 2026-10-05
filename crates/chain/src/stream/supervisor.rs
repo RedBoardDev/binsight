@@ -10,6 +10,7 @@
 
 use std::pin::pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use binsight_core::credits::CallOutcome;
@@ -21,11 +22,14 @@ use tracing::{debug, info, warn};
 use super::recent_signatures::RecentSignatures;
 use super::reconnect_backoff::ReconnectBackoff;
 use super::session::{SessionEnd, run_session};
-use super::stream_events::{DisconnectReason, StreamCommand, StreamEvent};
+use super::stream_events::{DisconnectReason, StreamCommand, StreamEvent, StreamSnapshot};
 use super::subscriptions::Subscriptions;
 use super::ws_connection::WsConnector;
 use crate::error::BudgetRefusal;
 use crate::rpc::RpcClient;
+
+/// Keeps separate streams on one process from reconnecting in step under the same clock.
+static STREAM_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 /// How long opening a connection may take.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -35,20 +39,28 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub(super) struct EventOutbox {
     events: mpsc::Sender<StreamEvent>,
     has_overflowed: bool,
+    owes_snapshot: bool,
+    snapshot: StreamSnapshot,
+    rpc: RpcClient,
 }
 
 impl EventOutbox {
-    pub(super) fn new(events: mpsc::Sender<StreamEvent>) -> Self {
+    pub(super) fn new(events: mpsc::Sender<StreamEvent>, rpc: RpcClient) -> Self {
         Self {
             events,
             has_overflowed: false,
+            owes_snapshot: false,
+            snapshot: StreamSnapshot::default(),
+            rpc,
         }
     }
 
     /// Sends `event`, or drops it and remembers to send `Overflowed` if the engine is behind.
     pub(super) fn send(&mut self, event: StreamEvent) {
+        self.snapshot.apply(&event);
+        self.rpc.publish_stream(self.snapshot.clone());
         self.flush_overflow();
-        if self.has_overflowed {
+        if self.has_overflowed || self.owes_snapshot {
             return;
         }
         if let Err(TrySendError::Full(_)) = self.events.try_send(event) {
@@ -61,7 +73,65 @@ impl EventOutbox {
     pub(super) fn flush_overflow(&mut self) {
         if self.has_overflowed && self.events.try_send(StreamEvent::Overflowed).is_ok() {
             self.has_overflowed = false;
+            self.owes_snapshot = true;
         }
+        if self.owes_snapshot
+            && self
+                .events
+                .try_send(StreamEvent::Reconciled(self.snapshot.clone()))
+                .is_ok()
+        {
+            self.owes_snapshot = false;
+        }
+    }
+
+    /// Wakes when an owed marker or snapshot can be delivered, even without another frame.
+    pub(super) async fn room_for_reconciliation(&self) {
+        if !(self.has_overflowed || self.owes_snapshot) {
+            return std::future::pending().await;
+        }
+        match self.events.reserve().await {
+            Ok(permit) => drop(permit),
+            Err(_) => std::future::pending().await,
+        }
+    }
+
+    pub(super) fn watched(&mut self, wallet: binsight_solana::Address) {
+        self.snapshot.watched.insert(wallet);
+        self.rpc.publish_stream(self.snapshot.clone());
+    }
+
+    pub(super) fn unwatched(&mut self, wallet: binsight_solana::Address) {
+        self.snapshot.subscriptions.remove(&wallet);
+        self.snapshot.watched.remove(&wallet);
+        self.rpc.publish_stream(self.snapshot.clone());
+    }
+}
+
+impl Drop for EventOutbox {
+    fn drop(&mut self) {
+        self.rpc.publish_stream(StreamSnapshot::default());
+    }
+}
+
+/// Unused streamed-data headroom is released even if the entire stream future is cancelled.
+struct StreamAdmission {
+    rpc: RpcClient,
+    booking: Option<crate::governor::CreditBooking>,
+}
+
+impl StreamAdmission {
+    fn settle(&mut self, outcome: CallOutcome) {
+        if let Some(booking) = self.booking.take() {
+            self.rpc.governor().record_stream_open(&booking, outcome);
+        }
+    }
+}
+
+impl Drop for StreamAdmission {
+    fn drop(&mut self) {
+        self.settle(CallOutcome::Cancelled);
+        self.rpc.governor().stream_ended();
     }
 }
 
@@ -79,9 +149,11 @@ impl Supervision {
         match command {
             StreamCommand::Watch(wallet) => {
                 self.subscriptions.watch(wallet);
+                self.outbox.watched(wallet);
             }
             StreamCommand::Unwatch(wallet) => {
                 self.subscriptions.unwatch(wallet);
+                self.outbox.unwatched(wallet);
             }
         }
     }
@@ -94,7 +166,9 @@ pub(super) async fn supervise(
     shutdown: impl Future<Output = ()>,
 ) {
     let mut shutdown = pin!(shutdown);
-    let mut backoff = ReconnectBackoff::default();
+    let seed = u64::try_from(supervision.rpc.governor().now().as_nanosecond()).unwrap_or_default()
+        ^ STREAM_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let mut backoff = ReconnectBackoff::new(seed);
     let mut is_refusal_reported = false;
     loop {
         if supervision.subscriptions.is_empty() {
@@ -103,20 +177,33 @@ pub(super) async fn supervise(
             }
             continue;
         }
-        if let Err(refusal) = supervision.rpc.governor().admit_stream_open() {
-            if !is_refusal_reported {
-                report_budget_refusal(&refusal, &mut supervision);
-                is_refusal_reported = true;
+        let opening_day = match supervision.rpc.governor().admit_stream_open() {
+            Ok(day) => day,
+            Err(refusal) => {
+                if !is_refusal_reported {
+                    report_budget_refusal(&refusal, &mut supervision);
+                    is_refusal_reported = true;
+                }
+                let pause = time_until(&supervision, refusal.resume_at());
+                let rpc = supervision.rpc.clone();
+                let should_retry = tokio::select! {
+                    () = rpc.credit_meter().changed() => true,
+                    should_retry = wait(Some(pause), &mut supervision, &mut shutdown) => should_retry,
+                };
+                if !should_retry {
+                    return;
+                }
+                continue;
             }
-            let pause = time_until(&supervision, refusal.resume_at());
-            if !wait(Some(pause), &mut supervision, &mut shutdown).await {
-                return;
-            }
-            continue;
-        }
-        let Some((lasted, reason)) =
-            connect_and_run(&*connector, &mut supervision, &mut shutdown).await
-        else {
+        };
+        let mut admission = StreamAdmission {
+            rpc: supervision.rpc.clone(),
+            booking: Some(opening_day),
+        };
+        let result =
+            connect_and_run(&*connector, &mut supervision, &mut shutdown, &mut admission).await;
+        drop(admission);
+        let Some((lasted, reason)) = result else {
             return;
         };
         is_refusal_reported = reason == DisconnectReason::BudgetRefused;
@@ -134,27 +221,27 @@ async fn connect_and_run(
     connector: &dyn WsConnector,
     supervision: &mut Supervision,
     shutdown: &mut (impl Future<Output = ()> + Unpin),
+    admission: &mut StreamAdmission,
 ) -> Option<(Duration, DisconnectReason)> {
-    let governor = supervision.rpc.governor();
     let opened = tokio::select! {
         () = &mut *shutdown => {
-            governor.record_stream_open(CallOutcome::Cancelled);
+            admission.settle(CallOutcome::Cancelled);
             return None;
         }
         opened = timeout(CONNECT_TIMEOUT, connector.connect()) => opened,
     };
     let mut connection = match opened {
         Ok(Ok(connection)) => {
-            governor.record_stream_open(CallOutcome::Ok);
+            admission.settle(CallOutcome::Ok);
             connection
         }
         Ok(Err(error)) => {
-            governor.record_stream_open(CallOutcome::NetworkError);
+            admission.settle(CallOutcome::NetworkError);
             let detail = error.to_string();
             return Some((Duration::ZERO, DisconnectReason::ConnectFailed { detail }));
         }
         Err(_elapsed) => {
-            governor.record_stream_open(CallOutcome::Timeout);
+            admission.settle(CallOutcome::Timeout);
             let detail = "the connection did not open in time".to_owned();
             return Some((Duration::ZERO, DisconnectReason::ConnectFailed { detail }));
         }
@@ -162,7 +249,8 @@ async fn connect_and_run(
     info!("stream connected");
     supervision.outbox.send(StreamEvent::Connected);
     let started = Instant::now();
-    match run_session(connection.as_mut(), supervision, shutdown).await {
+    let ended = run_session(connection.as_mut(), supervision, shutdown).await;
+    match ended {
         SessionEnd::Shutdown => None,
         SessionEnd::Lost(reason) => Some((started.elapsed(), reason)),
     }
@@ -211,6 +299,7 @@ async fn wait(
         tokio::select! {
             () = &mut *shutdown => return false,
             () = timer => return true,
+            () = supervision.outbox.room_for_reconciliation() => supervision.outbox.flush_overflow(),
             command = supervision.commands.recv() => match command {
                 None => return false,
                 Some(command) => {
@@ -224,3 +313,7 @@ async fn wait(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "tests/control_outbox.rs"]
+mod tests;

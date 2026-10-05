@@ -109,6 +109,13 @@ impl Ingestion {
     /// Asks the stream to watch the wallets of `wallets` it does not watch yet.
     fn watch_new_wallets(&self, wallets: &[TrackedWallet]) {
         let mut watched = self.watched.lock().unwrap_or_else(PoisonError::into_inner);
+        watched.retain(|address| {
+            if wallets.iter().any(|wallet| wallet.address == *address) {
+                return true;
+            }
+            self.watch.unwatch(*address);
+            false
+        });
         for wallet in wallets {
             if watched.insert(wallet.address) {
                 self.watch.watch(wallet.address);

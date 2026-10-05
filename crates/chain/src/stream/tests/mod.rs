@@ -15,7 +15,10 @@ use super::*;
 use crate::governor::BilledMethod;
 use crate::test_support::{ScriptedConnector, ScriptedTransport, scripted_client};
 
+mod budget_headroom;
+mod control_recovery;
 mod recovery;
+mod stalled_writes;
 
 const WALLET: Address = Address::from_bytes([1; 32]);
 const OTHER: Address = Address::from_bytes([2; 32]);
@@ -29,6 +32,7 @@ struct RunningStream {
     watch: WalletWatch,
     events: mpsc::Receiver<StreamEvent>,
     rpc: RpcClient,
+    clock: Arc<FixedClock>,
     stop: oneshot::Sender<()>,
     task: JoinHandle<()>,
 }
@@ -39,7 +43,11 @@ impl RunningStream {
         let clock = Arc::new(FixedClock::new(
             Timestamp::from_second(1_790_000_000).unwrap(),
         ));
-        let rpc = scripted_client(ScriptedTransport::new(), clock, daily_limit.map(Credits));
+        let rpc = scripted_client(
+            ScriptedTransport::new(),
+            clock.clone(),
+            daily_limit.map(Credits),
+        );
         let (stream, watch, events) = WalletStream::new(connector.clone(), rpc.clone());
         let (stop, stopped) = oneshot::channel::<()>();
         let task = tokio::spawn(stream.run(async {
@@ -50,6 +58,7 @@ impl RunningStream {
             watch,
             events,
             rpc,
+            clock,
             stop,
             task,
         }

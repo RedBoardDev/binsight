@@ -8,7 +8,7 @@
 mod scripted_stream;
 mod scripted_transport;
 
-pub use scripted_stream::ScriptedConnector;
+pub use scripted_stream::{ScriptedConnector, StreamWrite};
 pub use scripted_transport::{ExpectationBuilder, RecordedCall, ScriptedReply, ScriptedTransport};
 
 use std::sync::Arc;

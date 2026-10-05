@@ -1,17 +1,19 @@
 //! The JSON-RPC client: one call, with its budget, pacing, deadline and retries.
 //!
 //! [`RpcClient`] is a cheap handle (clones share everything). Each call gets a request id, then
-//! loops: the governor admits the attempt (the budget, then a rate slot in its priority's lane), the transport sends it
+//! loops: the governor admits the attempt (a rate slot in its priority's lane, then the budget at send time), the transport sends it
 //! under the method's deadline, the meter counts it with its outcome, and the call either returns
 //! or waits as the retry policy says. Every attempt is admitted and counted, so retries are never
 //! invisible. There is exactly one retry policy, here; the transport never retries on its own.
 //! The typed methods live in their own modules and build on [`RpcClient::call`].
 
 use std::fmt;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
+use crate::stream::StreamSnapshot;
 use binsight_core::clock::Clock;
+use binsight_core::credits::CallOutcome;
 use serde_json::Value;
 use tracing::debug;
 
@@ -34,6 +36,8 @@ struct ClientInner {
     transport: Arc<dyn RpcTransport>,
     governor: Governor,
     next_request_id: AtomicU64,
+    stream_snapshot: Mutex<StreamSnapshot>,
+    last_outcome: Mutex<Option<CallOutcome>>,
 }
 
 impl RpcClient {
@@ -49,6 +53,8 @@ impl RpcClient {
                 transport,
                 governor: Governor::new(governor, clock),
                 next_request_id: AtomicU64::new(1),
+                stream_snapshot: Mutex::new(StreamSnapshot::default()),
+                last_outcome: Mutex::new(None),
             }),
         }
     }
@@ -56,6 +62,32 @@ impl RpcClient {
     /// The credit meter, to restore today's spending at startup and to persist the counts.
     pub fn credit_meter(&self) -> &CreditMeter {
         self.inner.governor.meter()
+    }
+
+    /// Last completed RPC attempt; cancellation does not overwrite provider health.
+    pub fn last_outcome(&self) -> Option<CallOutcome> {
+        *self
+            .inner
+            .last_outcome
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Latest stream facts, regardless of whether the bounded event receiver fell behind.
+    pub fn stream_snapshot(&self) -> StreamSnapshot {
+        self.inner
+            .stream_snapshot
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    pub(crate) fn publish_stream(&self, snapshot: StreamSnapshot) {
+        *self
+            .inner
+            .stream_snapshot
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = snapshot;
     }
 
     /// The governor, which the stream shares to budget and count its own credits.
@@ -76,10 +108,14 @@ impl RpcClient {
         loop {
             attempt = attempt.saturating_add(1);
             let governor = &self.inner.governor;
-            governor.admit(method, context.priority).await?;
-            let sent = governor.send(method, *context);
+            let sent = governor.admit(method, *context).await?;
             let (outcome, result) = self.exchange(method, body.clone()).await.settle(method);
             sent.settle(outcome);
+            *self
+                .inner
+                .last_outcome
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) = Some(outcome);
             let error = match result {
                 Ok(result) => return Ok(result),
                 Err(error) => error,

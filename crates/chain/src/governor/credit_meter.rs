@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use binsight_core::clock::{Clock, utc_day};
 use binsight_core::credits::{CallOutcome, Credits, Priority};
 use jiff::civil::Date;
+use tokio::sync::{Notify, watch};
 
 use super::billing_cycle::BillingCycleDay;
 use super::budget_guard::{BudgetGuard, CreditStanding};
@@ -22,15 +23,35 @@ use super::usage_counts::{CreditUsage, UsageCounts};
 use crate::error::BudgetRefusal;
 use crate::rpc::CallContext;
 
+/// A request's immutable spending bucket and admitted cost.
+#[derive(Debug)]
+pub(crate) struct CreditBooking {
+    pub(crate) day: Date,
+    pub(crate) cost: Credits,
+    provider_probe: Option<Arc<()>>,
+}
+
+/// Actual admission or a temporary hold for the stream's not-yet-delivered first data.
+#[derive(Debug)]
+pub(crate) enum CreditAdmission {
+    /// The cost was admitted and dated for immediate sending.
+    Booked(CreditBooking),
+    /// Only unused first-data headroom prevents admission.
+    WaitingForStreamData,
+}
+
 /// Counts the credits spent and guards the budget.
 pub struct CreditMeter {
     clock: Arc<dyn Clock>,
     state: Mutex<MeterState>,
+    changed: Notify,
+    headroom_released: watch::Sender<()>,
 }
 
 struct MeterState {
     guard: BudgetGuard,
     counts: UsageCounts,
+    stream_headroom: Credits,
 }
 
 impl CreditMeter {
@@ -49,9 +70,12 @@ impl CreditMeter {
         let guard = BudgetGuard::new(limits, cycle_day, clock.now());
         Self {
             clock,
+            changed: Notify::new(),
+            headroom_released: watch::channel(()).0,
             state: Mutex::new(MeterState {
                 guard,
                 counts: UsageCounts::default(),
+                stream_headroom: Credits::ZERO,
             }),
         }
     }
@@ -64,6 +88,7 @@ impl CreditMeter {
             cycle: spent_cycle.max(spent_today),
         };
         self.lock().guard.seed(spending, self.clock.now());
+        self.changed.notify_one();
     }
 
     /// The first day of the current billing cycle, to read its spending back from the database.
@@ -95,39 +120,141 @@ impl CreditMeter {
     }
 
     /// Books `cost` for a request of `priority` before it is sent, if the budget admits it.
+    #[cfg(test)]
     pub(crate) fn reserve(&self, cost: Credits, priority: Priority) -> Result<(), BudgetRefusal> {
+        self.book(cost, priority).map(|admission| {
+            assert!(
+                matches!(admission, CreditAdmission::Booked(_)),
+                "this test helper requires no stream hold"
+            );
+        })
+    }
+
+    /// Admits and dates actual spend, distinguishing a temporary stream hold from a limit.
+    /// A waiting call has no booking and no spending until it retries successfully.
+    pub(crate) fn book(
+        &self,
+        cost: Credits,
+        priority: Priority,
+    ) -> Result<CreditAdmission, BudgetRefusal> {
+        let mut state = self.lock();
+        let now = self.clock.now();
+        let held = state.stream_headroom;
         let spend = Spend {
             priority,
             cost,
-            now: self.clock.now(),
+            now,
         };
-        self.lock().guard.book(spend)
+        if let Err(refusal) = state.guard.book_with_headroom(spend, held) {
+            if held > Credits::ZERO && state.guard.check_booking(spend, Credits::ZERO).is_ok() {
+                return Ok(CreditAdmission::WaitingForStreamData);
+            }
+            return Err(refusal);
+        }
+        self.changed.notify_one();
+        Ok(CreditAdmission::Booked(CreditBooking {
+            day: utc_day(now),
+            cost,
+            provider_probe: state.guard.provider_probe(),
+        }))
     }
 
-    /// Gives back a booking whose request was not sent after all.
-    pub(crate) fn release(&self, cost: Credits) {
-        self.lock().guard.release(cost, self.clock.now());
+    /// Admits the opening and holds its first data unit against concurrent RPC admission.
+    /// Only the opening is spending until the server actually delivers data.
+    pub(crate) fn book_stream_open(
+        &self,
+        opening: Credits,
+        first_unit: Credits,
+    ) -> Result<CreditBooking, BudgetRefusal> {
+        let mut state = self.lock();
+        let now = self.clock.now();
+        if let Some(refusal) = state.guard.provider_refusal_for_stream(now) {
+            return Err(refusal);
+        }
+        state.guard.book_with_headroom(
+            Spend {
+                priority: Priority::Realtime,
+                cost: opening,
+                now,
+            },
+            first_unit,
+        )?;
+        state.stream_headroom = first_unit;
+        Ok(CreditBooking {
+            day: utc_day(now),
+            cost: opening,
+            provider_probe: None,
+        })
+    }
+
+    /// Releases unused first-unit headroom when a connection attempt or session ends.
+    pub(crate) fn release_stream_headroom(&self) {
+        self.lock().stream_headroom = Credits::ZERO;
+        self.headroom_released.send_replace(());
+    }
+
+    /// Subscribes before checking admission so a release between check and wait is retained.
+    pub(crate) fn headroom_changes(&self) -> watch::Receiver<()> {
+        self.headroom_released.subscribe()
+    }
+
+    /// How many requests are listening for the first-data hold to end.
+    #[cfg(test)]
+    pub(crate) fn headroom_waiters(&self) -> usize {
+        self.headroom_released.receiver_count()
+    }
+
+    /// Wakes the stream when RPC spending may require a preventive close.
+    pub(crate) async fn changed(&self) {
+        self.changed.notified().await;
+    }
+
+    /// Whether another streamed unit is covered, without holding idle credits indefinitely.
+    pub(crate) fn stream_refusal(&self, unit: Credits) -> Option<BudgetRefusal> {
+        let mut state = self.lock();
+        let now = self.clock.now();
+        if let Some(refusal) = state.guard.provider_refusal_for_stream(now) {
+            return Some(refusal);
+        }
+        if let Some(refusal) = state.guard.hard_refusal(now) {
+            return Some(refusal);
+        }
+        state
+            .guard
+            .check_headroom(
+                Spend {
+                    priority: Priority::Realtime,
+                    cost: Credits::ZERO,
+                    now,
+                },
+                unit,
+            )
+            .err()
     }
 
     /// Notes that the provider refused a request because the cycle's credits are used up.
     pub(crate) fn provider_refused(&self) {
         self.lock().guard.provider_refused(self.clock.now());
+        self.changed.notify_one();
     }
 
     /// Counts one request that was sent, with how it ended.
     pub(crate) fn record(
         &self,
+        booking: &CreditBooking,
         method: BilledMethod,
         context: &CallContext,
         outcome: CallOutcome,
-        cost: Credits,
     ) {
-        let day = utc_day(self.clock.now());
         let mut state = self.lock();
-        if outcome == CallOutcome::Ok {
-            state.guard.provider_served();
+        if outcome == CallOutcome::Ok
+            && state.guard.provider_served(booking.provider_probe.as_ref())
+        {
+            self.changed.notify_one();
         }
-        state.counts.count(day, method, context, outcome, (1, cost));
+        state
+            .counts
+            .count(booking.day, method, context, outcome, (1, booking.cost));
     }
 
     /// Counts `units` of `method` the provider delivered without being asked, such as streamed
@@ -138,9 +265,9 @@ impl CreditMeter {
         context: &CallContext,
         units: u64,
         cost: Credits,
-    ) {
-        let now = self.clock.now();
+    ) -> Result<(), BudgetRefusal> {
         let mut state = self.lock();
+        let now = self.clock.now();
         state.guard.add(cost, now);
         state.counts.count(
             utc_day(now),
@@ -149,11 +276,17 @@ impl CreditMeter {
             CallOutcome::Ok,
             (units, cost),
         );
-    }
-
-    /// The refusal every request would meet now, if a hard limit is reached.
-    pub(crate) fn hard_refusal(&self) -> Option<BudgetRefusal> {
-        self.lock().guard.hard_refusal(self.clock.now())
+        state.stream_headroom = Credits::ZERO;
+        self.headroom_released.send_replace(());
+        let next_unit = super::cost_table::cost(BilledMethod::StreamData);
+        state.guard.check_headroom(
+            Spend {
+                priority: Priority::Realtime,
+                cost: Credits::ZERO,
+                now,
+            },
+            next_unit,
+        )
     }
 
     fn lock(&self) -> MutexGuard<'_, MeterState> {
@@ -170,93 +303,5 @@ impl std::fmt::Debug for CreditMeter {
 }
 
 #[cfg(test)]
-mod tests {
-    use binsight_core::clock::FixedClock;
-    use jiff::{SignedDuration, Timestamp};
-
-    use binsight_core::credits::Purpose;
-    use binsight_solana::Address;
-
-    use super::*;
-    use crate::rpc::RpcMethod;
-
-    /// 2026-09-21 at 14:13 UTC.
-    const SEPTEMBER_21_AFTERNOON: i64 = 1_790_000_000;
-
-    fn context() -> CallContext {
-        CallContext {
-            priority: Priority::History,
-            purpose: Purpose::TransactionFetch,
-            wallet: Some(Address::from_bytes([1; 32])),
-        }
-    }
-
-    fn meter(limit: Option<u64>) -> (Arc<FixedClock>, CreditMeter) {
-        let clock = Arc::new(FixedClock::new(
-            Timestamp::from_second(SEPTEMBER_21_AFTERNOON).unwrap(),
-        ));
-        let meter = CreditMeter::new(
-            clock.clone(),
-            Credits(1_000_000),
-            BillingCycleDay::FIRST,
-            limit.map(Credits),
-        );
-        (clock, meter)
-    }
-
-    #[test]
-    fn refuses_every_call_once_the_daily_hard_limit_is_reached() {
-        let (_clock, meter) = meter(Some(2));
-
-        assert_eq!(meter.reserve(Credits(1), Priority::Realtime), Ok(()));
-        assert_eq!(meter.reserve(Credits(1), Priority::Realtime), Ok(()));
-        let refusal = meter.reserve(Credits(1), Priority::Realtime).unwrap_err();
-
-        let BudgetRefusal::DailyHardLimitReached { limit, resets_at } = refusal else {
-            panic!("not the daily limit: {refusal:?}");
-        };
-        assert_eq!(limit, Credits(2));
-        assert_eq!(resets_at.to_string(), "2026-09-22T00:00:00Z");
-        assert_eq!(meter.spent_today(), Credits(2));
-    }
-
-    #[test]
-    fn keeps_the_guard_across_a_restart_once_seeded() {
-        let (_clock, meter) = meter(Some(5));
-
-        meter.seed(Credits(5), Credits(5));
-
-        assert!(meter.reserve(Credits(1), Priority::Realtime).is_err());
-    }
-
-    #[test]
-    fn starts_each_utc_day_with_nothing_spent() {
-        let (clock, meter) = meter(Some(1));
-        meter.reserve(Credits(1), Priority::Realtime).unwrap();
-        assert!(meter.reserve(Credits(1), Priority::Realtime).is_err());
-
-        clock.advance(SignedDuration::from_hours(13)).unwrap();
-
-        assert_eq!(meter.spent_today(), Credits::ZERO);
-        assert_eq!(meter.reserve(Credits(1), Priority::Realtime), Ok(()));
-    }
-
-    #[test]
-    fn refuses_everything_but_an_hourly_probe_once_the_provider_says_the_credits_are_used_up() {
-        let (clock, meter) = meter(None);
-
-        meter.provider_refused();
-        let refused = meter.reserve(Credits(1), Priority::Realtime);
-        clock.advance(SignedDuration::from_hours(1)).unwrap();
-        let probe = meter.reserve(Credits(1), Priority::Realtime);
-        let method = BilledMethod::Rpc(RpcMethod::GetTransaction);
-        meter.record(method, &context(), CallOutcome::Ok, Credits(1));
-
-        assert!(matches!(
-            refused,
-            Err(BudgetRefusal::CycleQuotaSpent { .. })
-        ));
-        assert_eq!(probe, Ok(()));
-        assert_eq!(meter.reserve(Credits(1), Priority::Realtime), Ok(()));
-    }
-}
+#[path = "tests/credit_meter.rs"]
+mod tests;

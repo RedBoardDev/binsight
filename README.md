@@ -73,7 +73,7 @@ wins over the file). Invalid settings are all reported at once and the server do
 | `BINSIGHT_HELIUS_PLAN` | no | `free` | Your Helius plan (`free`, `developer`, `business` or `professional`): it sets how fast binsight may send requests. |
 | `BINSIGHT_MONTHLY_CREDITS` | no | the plan's (1000000 on `free`) | The credits your plan grants per month, if they differ from the plan's. |
 | `BINSIGHT_CREDIT_CYCLE_DAY` | no | `1` | The day of the month (1 to 28, UTC) your plan's credits reset on; binsight spreads what is left of them over the days until then. |
-| `BINSIGHT_DAILY_CREDIT_LIMIT` | no | — | A hard cap on the credits spent per UTC day: once it is reached, binsight sends nothing until the next day. |
+| `BINSIGHT_DAILY_CREDIT_LIMIT` | no | — | A hard admission cap per UTC day: once it is reached, binsight sends nothing until the next day. Already delivered stream data is counted in full. |
 | `BINSIGHT_DATA_DIR` | no | `$XDG_DATA_HOME/binsight`, else `~/.local/share/binsight`; `/data` in the image | Where the database, its backups and the instance secrets live. |
 | `BINSIGHT_BIND` | no | `127.0.0.1:8080`; `0.0.0.0:8080` in the image | The address and port the server listens on. |
 | `BINSIGHT_PUBLIC_URL` | no | — | The address browsers use, such as `https://binsight.example.com` (no path). Set it behind a reverse proxy: it is trusted for cross-site checks, and `https` makes the session cookie `Secure`. |
@@ -81,6 +81,16 @@ wins over the file). Invalid settings are all reported at once and the server do
 | `BINSIGHT_LOG` | no | `info` | The log filter (`warn`, `debug`, `binsight_api=debug`…). |
 | `BINSIGHT_LOG_FORMAT` | no | `pretty` | `pretty` or `json`. |
 | `BINSIGHT_CONFIG_FILE` | no | `$XDG_CONFIG_HOME/binsight/binsight.env`, else `~/.config/binsight/binsight.env` | The configuration file (also `--config-file`). A missing file at the default path is fine. |
+
+A WebSocket opening needs at least three available credits: one for opening and two for the first
+started data unit. That data headroom also holds back concurrent RPC calls until the first data
+arrives or the connection ends. Afterwards, an RPC admission that leaves less than two credits
+wakes the stream to close it preventively, letting historical work use the remaining credits.
+Later data is pushed by the provider: a frame already in flight
+can cross several billing units before binsight closes the connection. Its entire actual cost
+is counted, even if it overshoots the daily admission cap. The billing-cycle budget keeps a 5%
+margin for these unavoidable pushes; the daily cap cannot bound bytes already sent by a remote
+server.
 
 `binsight admin config` shows the effective configuration and where each value comes from, without the
 secrets.

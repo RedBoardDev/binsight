@@ -7,6 +7,8 @@
 //! idea of the cycle is wrong; a probe the provider answers lifts the refusal. The guard takes
 //! the time as an argument; the budget rules themselves live in `daily_budget`.
 
+use std::sync::Arc;
+
 use binsight_core::clock::utc_day;
 use binsight_core::credits::{Credits, Priority};
 use jiff::civil::Date;
@@ -33,6 +35,8 @@ pub struct CreditStanding {
     pub cycle_credits: Credits,
     /// The first day of the current billing cycle.
     pub cycle_first_day: Date,
+    /// Exact UTC instant the configured billing cycle ends.
+    pub cycle_resets_at: Timestamp,
     /// Whether every request is refused: the daily limit is reached or the cycle's credits are
     /// spent.
     pub is_refusing_all: bool,
@@ -46,8 +50,13 @@ pub(crate) struct BudgetGuard {
     day: Date,
     cycle: BillingCycle,
     spending: Spending,
-    /// When the provider said the cycle's credits were used up: the next probe's instant.
-    provider_refusal: Option<Timestamp>,
+    provider_refusal: Option<ProviderRefusal>,
+}
+
+#[derive(Debug)]
+struct ProviderRefusal {
+    probe_at: Timestamp,
+    token: Arc<()>,
 }
 
 impl BudgetGuard {
@@ -77,26 +86,54 @@ impl BudgetGuard {
     }
 
     /// Books `spend` if the budget admits it.
+    #[cfg(test)]
     pub(crate) fn book(&mut self, spend: Spend) -> Result<(), BudgetRefusal> {
-        self.roll(spend.now);
-        if let Some(probe_at) = self.provider_refusal {
-            if spend.now < probe_at {
-                return Err(BudgetRefusal::CycleQuotaSpent {
-                    resume_at: probe_at.min(self.cycle.resets_at()),
-                });
-            }
-            self.provider_refusal = Some(next_probe(spend.now));
+        self.book_with_headroom(spend, Credits::ZERO)
+    }
+
+    /// Held streamed-data credits affect admission, but are not reported as spending.
+    pub(crate) fn book_with_headroom(
+        &mut self,
+        spend: Spend,
+        held: Credits,
+    ) -> Result<(), BudgetRefusal> {
+        self.check_booking(spend, held)?;
+        if let Some(refusal) = self.provider_refusal.as_mut() {
+            refusal.probe_at = next_probe(spend.now);
         }
-        admit(self.limits, self.spending, self.cycle, spend)?;
         self.add(spend.cost, spend.now);
         Ok(())
     }
 
-    /// Gives back a booking whose request was never sent.
-    pub(crate) fn release(&mut self, cost: Credits, now: Timestamp) {
-        self.roll(now);
-        self.spending.today = Credits(self.spending.today.0.saturating_sub(cost.0));
-        self.spending.cycle = Credits(self.spending.cycle.0.saturating_sub(cost.0));
+    /// Checks both provider refusal and spending without booking a probe or request.
+    pub(crate) fn check_booking(
+        &mut self,
+        spend: Spend,
+        held: Credits,
+    ) -> Result<(), BudgetRefusal> {
+        self.roll(spend.now);
+        if let Some(refusal) = self.provider_refusal.as_ref()
+            && spend.now < refusal.probe_at
+        {
+            return Err(BudgetRefusal::CycleQuotaSpent {
+                resume_at: refusal.probe_at.min(self.cycle.resets_at()),
+            });
+        }
+        self.check_headroom(spend, held)
+    }
+
+    /// Checks spending and held data headroom without consuming a request or provider probe.
+    pub(crate) fn check_headroom(
+        &mut self,
+        spend: Spend,
+        held: Credits,
+    ) -> Result<(), BudgetRefusal> {
+        self.roll(spend.now);
+        let guarded = Spending {
+            today: self.spending.today.saturating_add(held),
+            cycle: self.spending.cycle.saturating_add(held),
+        };
+        admit(self.limits, guarded, self.cycle, spend)
     }
 
     /// Adds credits spent without asking (data the provider already streamed).
@@ -108,22 +145,52 @@ impl BudgetGuard {
 
     /// The provider said the cycle's credits are used up: refuse everything but an hourly probe.
     pub(crate) fn provider_refused(&mut self, now: Timestamp) {
-        self.provider_refusal = Some(next_probe(now));
+        self.roll(now);
+        self.provider_refusal = Some(ProviderRefusal {
+            probe_at: next_probe(now),
+            token: Arc::new(()),
+        });
     }
 
-    /// The provider answered a request: whatever it said before, it serves again.
-    pub(crate) fn provider_served(&mut self) {
-        self.provider_refusal = None;
+    /// Captures the refusal an admitted hourly probe is checking.
+    pub(crate) fn provider_probe(&self) -> Option<Arc<()>> {
+        self.provider_refusal
+            .as_ref()
+            .map(|refusal| refusal.token.clone())
+    }
+
+    /// Only an answer to the current refusal's probe proves the provider serves again.
+    pub(crate) fn provider_served(&mut self, probe: Option<&Arc<()>>) -> bool {
+        if self
+            .provider_refusal
+            .as_ref()
+            .zip(probe)
+            .is_some_and(|(refusal, token)| Arc::ptr_eq(&refusal.token, token))
+        {
+            self.provider_refusal = None;
+            return true;
+        }
+        false
+    }
+
+    /// A handshake cannot prove quota recovery or consume the hourly RPC probe.
+    pub(crate) fn provider_refusal_for_stream(&mut self, now: Timestamp) -> Option<BudgetRefusal> {
+        self.roll(now);
+        self.provider_refusal
+            .as_ref()
+            .map(|_| BudgetRefusal::CycleQuotaSpent {
+                resume_at: self.cycle.resets_at(),
+            })
     }
 
     /// Whether the hard limits still let anything through.
     pub(crate) fn hard_refusal(&mut self, now: Timestamp) -> Option<BudgetRefusal> {
         self.roll(now);
-        if let Some(probe_at) = self.provider_refusal
-            && now < probe_at
+        if let Some(refusal) = self.provider_refusal.as_ref()
+            && now < refusal.probe_at
         {
             return Some(BudgetRefusal::CycleQuotaSpent {
-                resume_at: probe_at.min(self.cycle.resets_at()),
+                resume_at: refusal.probe_at.min(self.cycle.resets_at()),
             });
         }
         let one_live_credit = Spend {
@@ -143,6 +210,7 @@ impl BudgetGuard {
             daily_allowance: daily_allowance(self.limits, self.spending, self.cycle, self.day),
             cycle_credits: self.limits.cycle_credits,
             cycle_first_day: self.cycle.first_day(),
+            cycle_resets_at: self.cycle.resets_at(),
             is_refusing_all,
         }
     }
@@ -220,6 +288,18 @@ mod tests {
     }
 
     #[test]
+    fn retains_a_provider_refusal_received_after_the_cycle_changed() {
+        let mut guard = guard(None);
+        guard.provider_refused(at(3_600));
+        assert_eq!(
+            guard.book(realtime(at(3_600))),
+            Err(BudgetRefusal::CycleQuotaSpent {
+                resume_at: at(7_200)
+            })
+        );
+    }
+
+    #[test]
     fn probes_once_an_hour_after_the_provider_said_the_credits_are_used_up() {
         let mut guard = guard(None);
 
@@ -230,19 +310,10 @@ mod tests {
             Err(BudgetRefusal::CycleQuotaSpent { resume_at }) if resume_at == at(-3_600)
         ));
         assert_eq!(guard.book(realtime(at(-3_600))), Ok(()));
+        let probe = guard.provider_probe();
         assert!(guard.book(realtime(at(-3_599))).is_err());
-        guard.provider_served();
+        guard.provider_served(probe.as_ref());
         assert_eq!(guard.book(realtime(at(-3_598))), Ok(()));
-    }
-
-    #[test]
-    fn gives_back_a_booking_that_was_never_sent() {
-        let mut guard = guard(Some(1));
-        guard.book(realtime(at(0))).unwrap();
-
-        guard.release(Credits(1), at(0));
-
-        assert_eq!(guard.book(realtime(at(0))), Ok(()));
     }
 
     #[test]

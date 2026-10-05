@@ -9,7 +9,7 @@
 
 use std::time::Duration;
 
-use tokio::time::{Instant, sleep_until, timeout};
+use tokio::time::{Instant, sleep_until, timeout, timeout_at};
 use tracing::{debug, warn};
 
 use super::data_billing::DataBilling;
@@ -23,6 +23,9 @@ use crate::error::StreamError;
 
 /// How long a closing handshake may take at shutdown.
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// A stalled write is a broken connection, even if no shutdown was requested.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How a session ended.
 #[derive(Debug)]
@@ -39,6 +42,8 @@ enum Wake {
     Command(Option<StreamCommand>),
     Received(Option<Result<WsMessage, StreamError>>),
     Timer,
+    OutboxRoom,
+    BudgetChanged,
 }
 
 /// Runs one connection until it ends.
@@ -54,7 +59,15 @@ pub(super) async fn run_session(
             close(connection).await;
             return SessionEnd::Lost(DisconnectReason::NothingToWatch);
         }
-        if let Err(reason) = send_due_subscriptions(connection, supervision).await {
+        let subscriptions = tokio::select! {
+            biased;
+            () = &mut *shutdown => {
+                close(connection).await;
+                return SessionEnd::Shutdown;
+            }
+            result = send_due_subscriptions(connection, supervision) => result,
+        };
+        if let Err(reason) = subscriptions {
             return SessionEnd::Lost(reason);
         }
         supervision.outbox.flush_overflow();
@@ -64,24 +77,43 @@ pub(super) async fn run_session(
             command = supervision.commands.recv() => Wake::Command(command),
             received = connection.receive() => Wake::Received(received),
             () = sleep_until(wake_at) => Wake::Timer,
+            () = supervision.outbox.room_for_reconciliation() => Wake::OutboxRoom,
+            () = supervision.rpc.credit_meter().changed() => Wake::BudgetChanged,
         };
-        let step = match wake {
-            Wake::Shutdown | Wake::Command(None) => {
+        if matches!(wake, Wake::Shutdown | Wake::Command(None)) {
+            close(connection).await;
+            return SessionEnd::Shutdown;
+        }
+        let handling = async {
+            match wake {
+                Wake::Shutdown | Wake::Command(None) => Ok(()),
+                Wake::Command(Some(command)) => obey(command, connection, supervision).await,
+                Wake::Received(received) => {
+                    receive(
+                        received,
+                        &mut liveness,
+                        &mut billing,
+                        connection,
+                        supervision,
+                    )
+                    .await
+                }
+                Wake::Timer | Wake::BudgetChanged => {
+                    keep_alive(&mut liveness, connection, supervision).await
+                }
+                Wake::OutboxRoom => {
+                    supervision.outbox.flush_overflow();
+                    Ok(())
+                }
+            }
+        };
+        let step = tokio::select! {
+            biased;
+            () = &mut *shutdown => {
                 close(connection).await;
                 return SessionEnd::Shutdown;
             }
-            Wake::Command(Some(command)) => obey(command, connection, supervision).await,
-            Wake::Received(received) => {
-                receive(
-                    received,
-                    &mut liveness,
-                    &mut billing,
-                    connection,
-                    supervision,
-                )
-                .await
-            }
-            Wake::Timer => keep_alive(&mut liveness, connection, supervision).await,
+            step = handling => step,
         };
         if let Err(reason) = step {
             return SessionEnd::Lost(reason);
@@ -109,12 +141,15 @@ async fn keep_alive(
     connection: &mut dyn WsConnection,
     supervision: &Supervision,
 ) -> Result<(), DisconnectReason> {
-    if let Some(refusal) = supervision.rpc.governor().hard_refusal() {
+    if let Some(refusal) = supervision.rpc.governor().stream_refusal() {
         warn!(%refusal, "the stream is closed until the credit limit resets");
         close(connection).await;
         return Err(DisconnectReason::BudgetRefused);
     }
     let now = Instant::now();
+    if let Some(wallet) = supervision.subscriptions.unanswered(now) {
+        return Err(DisconnectReason::SubscriptionUnanswered { wallet });
+    }
     match liveness.check(now) {
         LivenessCheck::Dead => {
             warn!("the stream did not answer a ping; reconnecting");
@@ -137,12 +172,16 @@ async fn obey(
     match command {
         StreamCommand::Watch(wallet) => {
             supervision.subscriptions.watch(wallet);
+            supervision.outbox.watched(wallet);
             Ok(())
         }
-        StreamCommand::Unwatch(wallet) => match supervision.subscriptions.unwatch(wallet) {
-            Some(subscription) => release(subscription, connection, supervision).await,
-            None => Ok(()),
-        },
+        StreamCommand::Unwatch(wallet) => {
+            supervision.outbox.unwatched(wallet);
+            match supervision.subscriptions.unwatch(wallet) {
+                Some(subscription) => release(subscription, connection, supervision).await,
+                None => Ok(()),
+            }
+        }
     }
 }
 
@@ -171,8 +210,7 @@ async fn receive(
     let started_units = billing.delivered(message.billed_bytes());
     if started_units > 0 {
         let governor = supervision.rpc.governor();
-        governor.charge_stream_data(started_units);
-        if let Some(refusal) = governor.hard_refusal() {
+        if let Err(refusal) = governor.charge_stream_data(started_units) {
             warn!(%refusal, "the stream is closed until the credit limit resets");
             close(connection).await;
             return Err(DisconnectReason::BudgetRefused);
@@ -189,12 +227,22 @@ async fn send_due_subscriptions(
     connection: &mut dyn WsConnection,
     supervision: &mut Supervision,
 ) -> Result<(), DisconnectReason> {
-    for (request_id, wallet) in supervision.subscriptions.requests_due(Instant::now()) {
-        send(
-            connection,
-            WsMessage::Text(subscribe_request(request_id, wallet)),
+    let now = Instant::now();
+    let requests = supervision.subscriptions.requests_due(now);
+    let deadline = supervision.subscriptions.next_ack_at().unwrap_or(now);
+    for (request_id, wallet) in requests {
+        let written = timeout_at(
+            deadline,
+            send(
+                connection,
+                WsMessage::Text(subscribe_request(request_id, wallet)),
+            ),
         )
-        .await?;
+        .await;
+        match written {
+            Ok(result) => result?,
+            Err(_) => return Err(DisconnectReason::SubscriptionUnanswered { wallet }),
+        }
     }
     Ok(())
 }
@@ -214,12 +262,14 @@ async fn send(
     connection: &mut dyn WsConnection,
     message: WsMessage,
 ) -> Result<(), DisconnectReason> {
-    connection
-        .send(message)
-        .await
-        .map_err(|error| DisconnectReason::ConnectionLost {
+    match timeout(WRITE_TIMEOUT, connection.send(message)).await {
+        Ok(result) => result.map_err(|error| DisconnectReason::ConnectionLost {
             detail: error.to_string(),
-        })
+        }),
+        Err(_) => Err(DisconnectReason::ConnectionLost {
+            detail: "the stream write did not finish in time".to_owned(),
+        }),
+    }
 }
 
 /// Closes the connection politely, without waiting long for the server.

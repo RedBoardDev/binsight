@@ -192,3 +192,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "credit_usage/tests/headroom_recovery.rs"]
+mod headroom_recovery;
