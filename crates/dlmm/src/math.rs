@@ -12,4 +12,4 @@ mod q64;
 
 pub use position_amounts::{PositionAmounts, PositionValueError, position_amounts};
 pub use price::{BinMathError, price_from_bin, unit_price};
-pub use q64::{Q64x64, div_q64, mul_shr_64};
+pub use q64::{Q64DivisionError, Q64x64, div_q64, div_raw_q64, mul_shr_64};

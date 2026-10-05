@@ -26,3 +26,15 @@ liquidity and fees, not rewards, human prices, or transfer-fee-adjusted proceeds
 The layout reference is the public SDK's
 [IDL at revision 576919e3e4368e542c402f000b4264724f7f23ec](https://github.com/MeteoraAg/dlmm-sdk/blob/576919e3e4368e542c402f000b4264724f7f23ec/ts-client/src/dlmm/idl/idl.json).
 A current mainnet PositionV2 snapshot remains a separate acceptance requirement.
+
+`q64-division.json` contains 152 independent Python bigint results for
+`quotient = (value << 64) // price`, with `null` for a zero price or a quotient
+greater than `2**128-1`. The first 120 cases are the Cartesian product, in order, of:
+
+- amounts: `0, 1, 3, 2**64-1, 2**64, 2**64+1, 2**127-1, 2**127, 2**128-2, 2**128-1`;
+- prices: `0, 1, 2, 3, 2**64-1, 2**64, 2**64+1, 3*2**64, 2**127-1, 2**127, 2**128-2, 2**128-1`.
+
+For the remaining 32 cases, `random.Random(20261005)` draws the amount and then
+the price with `randrange(2**128)`. The oracle uses direct unbounded division,
+without the Rust remainder recurrence or a rounded reciprocal. These are
+mathematical fixtures; they do not claim an SDK or mainnet comparison.

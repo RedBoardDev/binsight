@@ -1,5 +1,7 @@
 //! Q64.64 fixed-point numbers and the two operations that value amounts with them.
 
+use binsight_core::units::RawTokenAmount;
+
 /// A Q64.64 fixed-point number: `value / 2^64`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Q64x64(pub u128);
@@ -33,7 +35,60 @@ pub fn mul_shr_64(amount: u128, price: Q64x64) -> Option<u128> {
 /// `floor(value × 2^64 / price)`: how many base units `value` quote units buy at `price`.
 /// `None` when the price is zero or the result does not fit in a `u128`.
 pub fn div_q64(value: u64, price: Q64x64) -> Option<u128> {
-    (u128::from(value) << FRACTION_BITS).checked_div(price.0)
+    div_raw_q64(RawTokenAmount(u128::from(value)), price)
+        .ok()
+        .map(|amount| amount.0)
+}
+
+/// An amount cannot be divided by a Q64.64 price.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum Q64DivisionError {
+    /// The denominator is zero.
+    #[error("the Q64 price is zero")]
+    ZeroPrice,
+    /// The quotient exceeds the raw amount's integer range.
+    #[error("the amount divided by the Q64 price overflows")]
+    Overflow,
+}
+
+/// `floor(value × 2^64 / price)`, including values above `u64::MAX`.
+///
+/// Divides the original amount first, then appends its 64 fractional zero bits by long division.
+/// The remainder stays below the price, so neither it nor an intermediate product needs 192 bits.
+///
+/// # Errors
+/// Returns [`Q64DivisionError::ZeroPrice`] for a zero price and
+/// [`Q64DivisionError::Overflow`] when the final raw amount does not fit in a `u128`.
+pub fn div_raw_q64(
+    value: RawTokenAmount,
+    price: Q64x64,
+) -> Result<RawTokenAmount, Q64DivisionError> {
+    let mut quotient = value
+        .0
+        .checked_div(price.0)
+        .ok_or(Q64DivisionError::ZeroPrice)?;
+    let mut remainder = value
+        .0
+        .checked_rem(price.0)
+        .ok_or(Q64DivisionError::ZeroPrice)?;
+    for _ in 0..FRACTION_BITS {
+        let gap = price
+            .0
+            .checked_sub(remainder)
+            .ok_or(Q64DivisionError::Overflow)?;
+        let carry = u128::from(remainder >= gap);
+        remainder = if remainder >= gap {
+            remainder.checked_sub(gap)
+        } else {
+            remainder.checked_add(remainder)
+        }
+        .ok_or(Q64DivisionError::Overflow)?;
+        quotient = quotient
+            .checked_mul(2)
+            .and_then(|doubled| doubled.checked_add(carry))
+            .ok_or(Q64DivisionError::Overflow)?;
+    }
+    Ok(RawTokenAmount(quotient))
 }
 
 #[cfg(test)]
