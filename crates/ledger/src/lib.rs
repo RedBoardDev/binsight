@@ -1,7 +1,8 @@
 //! # binsight-ledger
 //!
-//! **Responsibility:** the accounting of binsight: typed ledger entries, liquidity position PnL,
-//! FIFO cost basis, net worth, curves and the bridge between them. Transaction booking explains real balance changes with typed entries.
+//! **Responsibility:** the accounting of binsight: transaction booking, typed ledger entries,
+//! liquidity position PnL, FIFO cost basis, net worth and curves. The [`facts`] describe wallet
+//! accounting and the [`report`] rules turn those facts into the figures shown by the screens.
 //!
 //! **May depend on:** `binsight-core`, `binsight-solana`, `binsight-dlmm`.
 //! **Must not depend on:** `binsight-store`, `binsight-chain`, `binsight-engine`, `binsight-api`,
@@ -19,3 +20,5 @@
 
 /// Typed accounting of each wallet transaction.
 pub mod book;
+pub mod facts;
+pub mod report;

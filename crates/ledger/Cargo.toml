@@ -12,9 +12,11 @@ publish.workspace = true
 binsight-core.workspace = true
 binsight-solana.workspace = true
 binsight-dlmm.workspace = true
+jiff.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+jiff = { workspace = true, features = ["tzdb-bundle-always"] }
 proptest.workspace = true
 
 [lints]
