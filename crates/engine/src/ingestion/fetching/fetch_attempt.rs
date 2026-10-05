@@ -81,3 +81,6 @@ pub(super) async fn fetch_one(ingestion: Ingestion, task: FetchTask) -> Fetched 
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
