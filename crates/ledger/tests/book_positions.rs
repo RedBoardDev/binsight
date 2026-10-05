@@ -1,4 +1,5 @@
 //! Position flows remain separate from swaps and fees withheld on Token-2022 transfers.
+#[path = "common/book.rs"]
 mod common;
 use binsight_core::units::RawTokenAmount;
 use binsight_dlmm::activity::{MovementKind, TxActivity};

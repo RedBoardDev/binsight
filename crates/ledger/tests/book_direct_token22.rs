@@ -1,4 +1,5 @@
 //! Direct Token-2022 capital keeps every counterparty and the recipient's actual transfer tax.
+#[path = "common/book.rs"]
 mod common;
 use binsight_dlmm::activity::TxActivity;
 use binsight_ledger::book::{Counterparty, EntryKind, WalletContext, book_transaction};

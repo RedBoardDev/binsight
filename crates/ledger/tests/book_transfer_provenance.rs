@@ -1,4 +1,5 @@
 //! Gross/net adjustments follow each DLMM emitting call, including nested sibling calls.
+#[path = "common/book.rs"]
 mod common;
 use binsight_core::units::RawTokenAmount;
 use binsight_dlmm::activity::TxActivity;

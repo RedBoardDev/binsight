@@ -1,4 +1,5 @@
 //! Known protocol classifications take precedence over inferred exchanges.
+#[path = "common/book.rs"]
 mod common;
 use binsight_dlmm::activity::TxActivity;
 use binsight_ledger::book::{
