@@ -163,7 +163,7 @@ impl TestApp {
                 let mut spec =
                     WorldSpec::new(start, jiff::tz::TimeZone::get(TEST_TIMEZONE).unwrap());
                 spec.importing_wallet = options.importing_wallet;
-                DataSource::Demo(Arc::new(DemoPortfolio::new(&spec, clock.clone()).unwrap()))
+                DataSource::Demo(Arc::new(DemoPortfolio::new(&spec).unwrap()))
             }
         };
         let data_source = options.read_model.map_or(data_source, DataSource::Demo);

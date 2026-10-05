@@ -40,8 +40,8 @@ pub(super) async fn engine(
             refuse_tracked_wallets(store, &config.data_dir).await?;
             warn!("demo mode: serving generated figures; nothing is tracked or sent");
             let spec = WorldSpec::new(clock.now(), TimeZone::UTC);
-            let portfolio = DemoPortfolio::new(&spec, Arc::clone(clock))
-                .map_err(|error| Failure::Unexpected(error.into()))?;
+            let portfolio =
+                DemoPortfolio::new(&spec).map_err(|error| Failure::Unexpected(error.into()))?;
             let source = DataSource::Demo(Arc::new(portfolio));
             Ok((None, EngineHandle::without_engine(store.clone(), source)))
         }

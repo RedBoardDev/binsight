@@ -4,9 +4,7 @@
 #![allow(clippy::unwrap_used, reason = "tests fail loudly")]
 
 use std::collections::BTreeSet;
-use std::sync::Arc;
 
-use binsight_core::clock::FixedClock;
 use binsight_demo::{DemoPortfolio, WorldSpec};
 use binsight_engine::portfolio::query::{ClosedPageRequest, ClosedQuery, ClosedSort, SortOrder};
 use binsight_engine::portfolio::{HistoryReads, Scope};
@@ -19,7 +17,7 @@ const ANCHOR: &str = "2026-10-04T15:30:00Z";
 fn portfolio() -> DemoPortfolio {
     let anchor: Timestamp = ANCHOR.parse().unwrap();
     let spec = WorldSpec::new(anchor, TimeZone::get("Europe/Paris").unwrap());
-    DemoPortfolio::new(&spec, Arc::new(FixedClock::new(anchor))).unwrap()
+    DemoPortfolio::new(&spec).unwrap()
 }
 
 fn every_close() -> ClosedQuery {

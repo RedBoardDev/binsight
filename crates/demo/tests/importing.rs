@@ -2,9 +2,6 @@
 
 #![allow(clippy::unwrap_used, reason = "tests fail loudly")]
 
-use std::sync::Arc;
-
-use binsight_core::clock::FixedClock;
 use binsight_core::ratio::Percent;
 use binsight_demo::{DemoError, DemoPortfolio, ImportingWalletSpec, WorldSpec};
 use jiff::Timestamp;
@@ -21,7 +18,7 @@ fn rejects_known_percentages_outside_the_import_range() {
             progress: Some(Percent(progress)),
         });
         assert!(matches!(
-            DemoPortfolio::new(&spec, Arc::new(FixedClock::new(anchor))),
+            DemoPortfolio::new(&spec),
             Err(DemoError::OutOfRange)
         ));
     }

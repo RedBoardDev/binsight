@@ -1,8 +1,5 @@
 //! The demo world as a source of figures: every read runs the engine's query on its snapshot.
 
-use std::sync::Arc;
-
-use binsight_core::clock::Clock;
 use binsight_engine::portfolio::query::{
     ClosedPageRequest, ClosedQuery, EventPageRequest, IntervalChoice, OpenPositionsRequest,
     OverviewRequest, PoolQuery, PositionRequest, SeriesRequest,
@@ -27,26 +24,24 @@ use crate::world::{World, WorldSpec};
 /// A generated portfolio that answers the API's reads, as the engine will from the chain.
 pub struct DemoPortfolio {
     world: World,
-    clock: Arc<dyn Clock>,
 }
 
 impl DemoPortfolio {
-    /// Generates the world of `spec`; reads happen at the time of `clock`.
+    /// Generates an immutable world whose reads share the anchor instant of `spec`.
     ///
     /// # Errors
     ///
     /// Returns [`DemoError`] if the scenario cannot be generated (never for the default one).
-    pub fn new(spec: &WorldSpec, clock: Arc<dyn Clock>) -> Result<Self, DemoError> {
+    pub fn new(spec: &WorldSpec) -> Result<Self, DemoError> {
         Ok(Self {
             world: World::generate(spec)?,
-            clock,
         })
     }
 
-    /// The instant and time zone of a read now.
+    /// The instant and time zone shared by the generated world.
     fn context(&self) -> ReadContext {
         ReadContext {
-            now: self.clock.now(),
+            now: self.world.anchor,
             timezone: self.world.timezone.clone(),
         }
     }
@@ -178,7 +173,6 @@ impl PositionReads for DemoPortfolio {
 
 #[cfg(test)]
 mod tests {
-    use binsight_core::clock::FixedClock;
     use binsight_engine::portfolio::views::SyncState;
     use jiff::Timestamp;
     use jiff::tz::TimeZone;
@@ -188,7 +182,7 @@ mod tests {
     fn portfolio() -> DemoPortfolio {
         let anchor: Timestamp = "2026-10-04T15:30:00Z".parse().unwrap();
         let spec = WorldSpec::new(anchor, TimeZone::get("Europe/Paris").unwrap());
-        DemoPortfolio::new(&spec, Arc::new(FixedClock::new(anchor))).unwrap()
+        DemoPortfolio::new(&spec).unwrap()
     }
 
     #[tokio::test]

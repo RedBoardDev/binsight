@@ -53,6 +53,8 @@ pub struct ImportingWalletSpec {
 /// A generated world.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct World {
+    /// The instant shared by every generated fact and financial read.
+    pub(crate) anchor: Timestamp,
     /// The facts, valued and indexed.
     pub(crate) snapshot: Snapshot,
     /// The state of the demo instance.
@@ -72,6 +74,7 @@ impl World {
     pub(crate) fn generate(spec: &WorldSpec) -> Result<Self, DemoError> {
         let generated = generate(spec)?;
         Ok(Self {
+            anchor: spec.anchor,
             snapshot: Snapshot::new(generated.facts)?,
             status: generated.status,
             timezone: spec.timezone.clone(),
