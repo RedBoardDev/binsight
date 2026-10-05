@@ -6,34 +6,36 @@ use binsight_core::error::AmountError;
 use binsight_solana::Signature;
 use binsight_solana::transaction::InstructionPosition;
 
-use crate::facts::{FlowValuation, PositionEventFact, PositionEventKind, QuoteUnits};
+use crate::facts::{FlowValuation, PositionEventFact, PositionEventKind, PositionId, QuoteUnits};
 
 /// The accounting contribution of one half, with the whole group's valuation quality.
 #[derive(Debug, Clone, Copy, Default)]
-pub(super) struct Contribution {
+pub(crate) struct Contribution {
     /// The net contribution assigned to this half.
-    pub(super) value: QuoteUnits,
+    pub(crate) value: QuoteUnits,
     /// Whether either half left base transfers unpriced.
-    pub(super) valuation: FlowValuation,
+    pub(crate) valuation: FlowValuation,
 }
 
 /// The accounting contribution of every rebalance half, assigned before any pagination.
-pub(super) fn contributions(
+/// Each lifetime, transaction and instruction has its own net and valuation coverage.
+pub(crate) fn contributions(
     events: &[PositionEventFact],
 ) -> Result<Vec<Contribution>, AmountError> {
-    let mut groups: BTreeMap<(Signature, InstructionPosition), Totals> = BTreeMap::new();
+    let mut groups: BTreeMap<(PositionId, Signature, InstructionPosition), Totals> =
+        BTreeMap::new();
     for (index, event) in events.iter().enumerate() {
         let (movement, total) = match event.kind {
             PositionEventKind::RebalanceDeposit { movement, .. } => {
                 let totals = groups
-                    .entry((event.signature, movement.instruction))
+                    .entry((event.position, event.signature, movement.instruction))
                     .or_default();
                 totals.first_deposit.get_or_insert(index);
                 (movement, totals)
             }
             PositionEventKind::RebalanceWithdrawal(movement) => {
                 let totals = groups
-                    .entry((event.signature, movement.instruction))
+                    .entry((event.position, event.signature, movement.instruction))
                     .or_default();
                 totals.first_withdrawal.get_or_insert(index);
                 (movement, totals)
@@ -92,3 +94,6 @@ struct Totals {
     indices: Vec<usize>,
     valuation: FlowValuation,
 }
+
+#[cfg(test)]
+mod tests;

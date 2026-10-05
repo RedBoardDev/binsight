@@ -14,7 +14,7 @@ use crate::facts::{
 };
 use binsight_core::exactness::Exactness;
 
-mod rebalance;
+pub(crate) mod rebalance;
 
 /// Values the movements, in their supplied chain order, at the position's rate.
 /// Movements that carry no tokens have no value. The returned vector has one item per movement.
