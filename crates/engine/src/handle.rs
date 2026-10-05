@@ -63,6 +63,8 @@ impl EngineHandle {
             database: check_database(&self.store).await,
             engine: self.status(),
             credits: self.rpc.credit_meter().standing().into(),
+            rpc: self.rpc.last_outcome().into(),
+            stream: self.rpc.stream_snapshot().into(),
         }
     }
 
@@ -78,5 +80,97 @@ impl EngineHandle {
     /// missed; it should then refresh its state rather than rely on the stream.
     pub fn subscribe(&self) -> broadcast::Receiver<EngineEvent> {
         self.events.subscribe()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::health::{RpcHealth, StreamHealth};
+    use crate::test_support::{
+        RunningEngine, TEST_START, signature_page, temporary_engine, transaction_reply,
+    };
+    use binsight_chain::CallContext;
+    use binsight_chain::test_support::ScriptedReply;
+    use binsight_core::credits::{Priority, Purpose};
+    use binsight_solana::{Address, Signature};
+
+    #[tokio::test]
+    async fn health_reads_unknown_idle_without_making_network_calls() {
+        let setup = temporary_engine().await;
+        for _ in 0..3 {
+            let health = setup.handle.health().await;
+            assert_eq!(health.rpc, RpcHealth::Unknown);
+            assert_eq!(health.stream, StreamHealth::Idle);
+        }
+        assert_eq!(setup.transport.calls(), Vec::new());
+        assert_eq!(setup.stream.connections_opened(), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn health_retains_real_rpc_failure_and_recovery_without_probing() {
+        let setup = temporary_engine().await;
+        setup
+            .transport
+            .expect("getTransaction")
+            .respond(ScriptedReply::RpcError {
+                code: -32015,
+                message: "Transaction version (2) is not supported".to_owned(),
+            });
+        setup
+            .transport
+            .expect("getTransaction")
+            .respond(transaction_reply());
+        let context = CallContext {
+            priority: Priority::Realtime,
+            purpose: Purpose::TransactionFetch,
+            wallet: None,
+        };
+        assert!(
+            setup
+                .handle
+                .rpc
+                .transaction(Signature::from_bytes([1; 64]), context)
+                .await
+                .is_err()
+        );
+        assert_eq!(setup.handle.health().await.rpc, RpcHealth::Unavailable);
+        assert_eq!(setup.transport.calls().len(), 1);
+        assert!(
+            setup
+                .handle
+                .rpc
+                .transaction(Signature::from_bytes([2; 64]), context)
+                .await
+                .is_ok()
+        );
+        assert_eq!(setup.handle.health().await.rpc, RpcHealth::Ok);
+        assert_eq!(setup.transport.calls().len(), 2);
+        assert_eq!(setup.stream.connections_opened(), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn parked_versions_are_present_in_real_wallet_backlog() {
+        let setup = temporary_engine().await;
+        let wallet = Address::from_bytes([1; 32]);
+        setup.store.wallets().add(wallet, TEST_START).await.unwrap();
+        setup
+            .transport
+            .expect("getSignaturesForAddress")
+            .respond(signature_page(0, 1));
+        setup
+            .transport
+            .expect("getTransaction")
+            .respond(ScriptedReply::RpcError {
+                code: -32015,
+                message: "Transaction version (2) is not supported".to_owned(),
+            });
+        let engine = RunningEngine::start(setup);
+        engine
+            .wait_for_counts(wallet, |counts| counts.unsupported_version == 1)
+            .await;
+        let backlog = engine.store.fetch_queue().backlog(wallet).await.unwrap();
+        assert_eq!(backlog.unsupported_version, 1);
+        assert_eq!(backlog.failed, 0);
+        engine.stop().await;
     }
 }

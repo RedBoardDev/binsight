@@ -28,6 +28,8 @@ createServer((request, response) => {
         version: '0.1.0',
         database: 'ok',
         engine: 'running',
+        rpc: 'unknown',
+        stream: 'idle',
       });
       return;
     case '/api/v1/events': {

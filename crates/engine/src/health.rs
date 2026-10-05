@@ -7,7 +7,8 @@
 
 use std::time::Duration;
 
-use binsight_chain::CreditStanding;
+use binsight_chain::{CreditStanding, StreamSnapshot, SubscriptionStatus};
+use binsight_core::credits::CallOutcome;
 use binsight_core::credits::Credits;
 use binsight_store::{Store, StoreError};
 use tracing::warn;
@@ -53,6 +54,64 @@ impl From<CreditStanding> for CreditHealth {
     }
 }
 
+/// The result of the latest completed RPC attempt, without issuing a health probe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RpcHealth {
+    /// No attempt has finished yet, including when ingestion is disabled.
+    Unknown,
+    /// The provider answered a successful request.
+    Ok,
+    /// The latest attempt failed or was refused.
+    Unavailable,
+}
+
+impl From<Option<CallOutcome>> for RpcHealth {
+    fn from(outcome: Option<CallOutcome>) -> Self {
+        match outcome {
+            None | Some(CallOutcome::Cancelled) => Self::Unknown,
+            Some(CallOutcome::Ok) => Self::Ok,
+            Some(_) => Self::Unavailable,
+        }
+    }
+}
+
+/// Connection and subscription health, independent of the lossy activity channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamHealth {
+    /// No wallet needs a connection.
+    Idle,
+    /// Watched wallets are waiting for their first connection or acknowledgement.
+    Connecting,
+    /// Every watched wallet is subscribed on an open connection.
+    Connected,
+    /// A connection or subscription failed or was refused.
+    Unavailable,
+}
+
+impl From<StreamSnapshot> for StreamHealth {
+    fn from(snapshot: StreamSnapshot) -> Self {
+        if snapshot.watched.is_empty() {
+            return Self::Idle;
+        }
+        if snapshot.disconnect_reason.is_some()
+            || snapshot
+                .subscriptions
+                .values()
+                .any(|status| matches!(status, SubscriptionStatus::Refused { .. }))
+        {
+            return Self::Unavailable;
+        }
+        if snapshot.is_connected
+            && snapshot.watched.iter().all(|wallet| {
+                snapshot.subscriptions.get(wallet) == Some(&SubscriptionStatus::Subscribed)
+            })
+        {
+            return Self::Connected;
+        }
+        Self::Connecting
+    }
+}
+
 /// The health of the engine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EngineHealth {
@@ -62,6 +121,10 @@ pub struct EngineHealth {
     pub engine: EngineStatus,
     /// Where the RPC credits stand.
     pub credits: CreditHealth,
+    /// The latest completed RPC result; no network probe is sent.
+    pub rpc: RpcHealth,
+    /// The latest connection and subscription facts.
+    pub stream: StreamHealth,
 }
 
 /// Pings the database with a deadline.
@@ -91,6 +154,35 @@ fn database_health(ping: Option<Result<(), StoreError>>) -> ComponentHealth {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stream_health_is_factual_for_idle_connecting_connected_and_refused_wallets() {
+        use binsight_solana::Address;
+        let wallet = Address::from_bytes([1; 32]);
+        let mut snapshot = StreamSnapshot::default();
+        assert_eq!(StreamHealth::from(snapshot.clone()), StreamHealth::Idle);
+        snapshot.watched.insert(wallet);
+        assert_eq!(
+            StreamHealth::from(snapshot.clone()),
+            StreamHealth::Connecting
+        );
+        snapshot.is_connected = true;
+        snapshot
+            .subscriptions
+            .insert(wallet, SubscriptionStatus::Subscribed);
+        assert_eq!(
+            StreamHealth::from(snapshot.clone()),
+            StreamHealth::Connected
+        );
+        snapshot.subscriptions.insert(
+            wallet,
+            SubscriptionStatus::Refused {
+                code: -32000,
+                message: "subscription refused".to_owned(),
+            },
+        );
+        assert_eq!(StreamHealth::from(snapshot), StreamHealth::Unavailable);
+    }
 
     #[test]
     fn reports_a_database_that_answers_as_ok() {

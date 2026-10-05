@@ -145,8 +145,12 @@ export interface components {
             database: components["schemas"]["ComponentStatus"];
             /** @description Where the engine is in its lifecycle. */
             engine: components["schemas"]["EngineStatus"];
+            /** @description Latest RPC attempt, read from memory without issuing a request. */
+            rpc: components["schemas"]["RpcStatus"];
             /** @description `ok` when every component answers. */
             status: components["schemas"]["HealthStatus"];
+            /** @description Latest connection and subscription facts. */
+            stream: components["schemas"]["StreamStatus"];
             /** @description The binsight version, for example `0.1.0`. */
             version: string;
         };
@@ -178,6 +182,11 @@ export interface components {
              */
             password: string;
         };
+        /**
+         * @description The latest completed RPC attempt; health requests never probe the provider.
+         * @enum {string}
+         */
+        RpcStatus: "unknown" | "ok" | "unavailable";
         /** @description The current session. */
         SessionInfo: {
             /** @description Always `true`: without a session the API answers `401` instead. */
@@ -188,6 +197,11 @@ export interface components {
              */
             expires_at: string;
         };
+        /**
+         * @description The stream's actual connection and subscription state.
+         * @enum {string}
+         */
+        StreamStatus: "idle" | "connecting" | "connected" | "unavailable";
     };
     responses: never;
     parameters: never;
@@ -353,7 +367,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The server and its database answer. */
+            /** @description The server and its required components answer. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -362,7 +376,7 @@ export interface operations {
                     "application/json": components["schemas"]["Health"];
                 };
             };
-            /** @description The database does not answer. */
+            /** @description A required component is unavailable. */
             503: {
                 headers: {
                     [name: string]: unknown;

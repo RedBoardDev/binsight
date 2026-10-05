@@ -19,6 +19,7 @@ const SELECT_BACKLOG: &str = "
     SELECT
         coalesce(sum(f.priority = 'history' AND f.state IN ('pending', 'empty_retry')), 0),
         coalesce(sum(f.state = 'failed'), 0),
+        coalesce(sum(f.state = 'unsupported_version'), 0),
         min(CASE WHEN f.priority <> 'history' AND f.state IN ('pending', 'empty_retry')
                  THEN f.next_attempt_at END)
     FROM wallet_signature s JOIN tx_fetch f ON f.signature = s.signature
@@ -48,6 +49,8 @@ pub struct WalletBacklog {
     pub history_unfetched: u64,
     /// Transactions whose attempts ran out (still tried again daily).
     pub failed: u64,
+    /// Parked transactions which this binary cannot read.
+    pub unsupported_version: u64,
     /// When the oldest live or catch-up fetch waiting fell due, if one waits.
     pub oldest_live_due_at: Option<Timestamp>,
 }
@@ -57,13 +60,14 @@ pub(super) fn read_backlog(
     connection: &Connection,
     wallet: Address,
 ) -> Result<WalletBacklog, StoreError> {
-    let (history_unfetched, failed, oldest): (i64, i64, Option<i64>) =
+    let (history_unfetched, failed, unsupported_version, oldest): (i64, i64, i64, Option<i64>) =
         connection.query_row(SELECT_BACKLOG, [wallet.to_string()], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
         })?;
     Ok(WalletBacklog {
         history_unfetched: unsigned_from_sql(history_unfetched, "count")?,
         failed: unsigned_from_sql(failed, "count")?,
+        unsupported_version: unsigned_from_sql(unsupported_version, "count")?,
         oldest_live_due_at: oldest.map(timestamp_from_sql).transpose()?,
     })
 }

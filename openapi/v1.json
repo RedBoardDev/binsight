@@ -196,7 +196,7 @@
         "operationId": "getHealth",
         "responses": {
           "200": {
-            "description": "The server and its database answer.",
+            "description": "The server and its required components answer.",
             "content": {
               "application/json": {
                 "schema": {
@@ -206,7 +206,7 @@
             }
           },
           "503": {
-            "description": "The database does not answer.",
+            "description": "A required component is unavailable.",
             "content": {
               "application/json": {
                 "schema": {
@@ -314,7 +314,9 @@
           "status",
           "version",
           "database",
-          "engine"
+          "engine",
+          "rpc",
+          "stream"
         ],
         "properties": {
           "database": {
@@ -325,9 +327,17 @@
             "$ref": "#/components/schemas/EngineStatus",
             "description": "Where the engine is in its lifecycle."
           },
+          "rpc": {
+            "$ref": "#/components/schemas/RpcStatus",
+            "description": "Latest RPC attempt, read from memory without issuing a request."
+          },
           "status": {
             "$ref": "#/components/schemas/HealthStatus",
             "description": "`ok` when every component answers."
+          },
+          "stream": {
+            "$ref": "#/components/schemas/StreamStatus",
+            "description": "Latest connection and subscription facts."
           },
           "version": {
             "type": "string",
@@ -403,6 +413,15 @@
           }
         }
       },
+      "RpcStatus": {
+        "type": "string",
+        "description": "The latest completed RPC attempt; health requests never probe the provider.",
+        "enum": [
+          "unknown",
+          "ok",
+          "unavailable"
+        ]
+      },
       "SessionInfo": {
         "type": "object",
         "description": "The current session.",
@@ -421,6 +440,16 @@
             "description": "When the session ends (RFC 3339, UTC); the owner must then sign in again."
           }
         }
+      },
+      "StreamStatus": {
+        "type": "string",
+        "description": "The stream's actual connection and subscription state.",
+        "enum": [
+          "idle",
+          "connecting",
+          "connected",
+          "unavailable"
+        ]
       }
     },
     "securitySchemes": {

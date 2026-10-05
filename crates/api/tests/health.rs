@@ -19,7 +19,9 @@ async fn reports_a_healthy_server_with_its_version() {
     {
       "database": "ok",
       "engine": "starting",
+      "rpc": "unknown",
       "status": "ok",
+      "stream": "idle",
       "version": "[version]"
     }
     "#);

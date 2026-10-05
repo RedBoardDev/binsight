@@ -58,7 +58,10 @@ pub(super) struct SyncFacts {
 
 /// The sync state `facts` describe at `now`.
 pub(super) fn sync_state(facts: &SyncFacts, now: Timestamp) -> SyncState {
-    if facts.stop == Some(Stop::ProviderRefusal) || facts.backlog.failed > 0 {
+    if facts.stop == Some(Stop::ProviderRefusal)
+        || facts.backlog.failed > 0
+        || facts.backlog.unsupported_version > 0
+    {
         return SyncState::Error;
     }
     if !facts.is_history_listed || facts.backlog.history_unfetched > 0 {
@@ -126,6 +129,18 @@ mod tests {
 
         assert_eq!(sync_state(&failing, now()), SyncState::Error);
         assert_eq!(sync_state(&refused, now()), SyncState::Error);
+    }
+
+    #[test]
+    fn never_reports_live_when_an_unsupported_transaction_is_parked() {
+        let parked = SyncFacts {
+            backlog: WalletBacklog {
+                unsupported_version: 1,
+                ..WalletBacklog::default()
+            },
+            ..live()
+        };
+        assert_eq!(sync_state(&parked, now()), SyncState::Error);
     }
 
     #[test]
