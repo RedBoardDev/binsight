@@ -4,6 +4,8 @@
 //! each currency separately; [`resolve`] picks the requested currency and applies the quality
 //! of its conversion. A missing rate makes only the converted side unavailable, never zero.
 
+pub mod quote;
+
 use binsight_core::decimal::format_signed_units;
 use binsight_core::error::AmountError;
 use binsight_core::exactness::Exactness;

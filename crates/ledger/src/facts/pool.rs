@@ -1,5 +1,9 @@
 //! A DLMM pool: its two tokens, its bin step, and the token its positions are valued in.
 
+mod quote;
+
+pub use quote::{PhysicalSide, QuoteConvention};
+
 use binsight_solana::Address;
 
 use super::token::{TokenFacts, TokenKind};
@@ -29,6 +33,14 @@ pub enum QuoteAsset {
 }
 
 impl PoolFacts {
+    /// Selects SOL, then USDC, then USDT, on either physical side.
+    ///
+    /// Token kinds and decimals must already come from verified mint facts. This factory
+    /// does not activate a display or valuation migration for existing Y-only consumers.
+    pub fn quote_convention(&self) -> Option<QuoteConvention> {
+        QuoteConvention::of(self)
+    }
+
     /// The quote asset of the pool, or `None` when its quote token is neither SOL nor a dollar
     /// stablecoin (binsight cannot value its positions then).
     pub fn quote_asset(&self) -> Option<QuoteAsset> {

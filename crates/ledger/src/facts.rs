@@ -27,7 +27,7 @@ pub use event::{
 pub use holdings::{UnpricedToken, WalletHoldings};
 pub use mark::OpenPnlMark;
 pub use open::{BinLiquidity, OpenPositionFacts};
-pub use pool::{PoolFacts, QuoteAsset};
+pub use pool::{PhysicalSide, PoolFacts, QuoteAsset, QuoteConvention};
 pub use position::{PositionId, PositionIdError, QuoteUnits, Strategy};
 pub use rates::{DailyRate, SolUsdRates};
 pub use token::{TokenFacts, TokenKind};
