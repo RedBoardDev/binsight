@@ -19,6 +19,7 @@ binsight-store = { path = "crates/store" }
 binsight-chain = { path = "crates/chain" }
 binsight-engine = { path = "crates/engine" }
 binsight-api = { path = "crates/api" }
+binsight-demo = { path = "crates/demo" }
 
 anyhow = "1.0.104"
 axum = "0.8.9"

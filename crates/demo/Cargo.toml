@@ -1,0 +1,27 @@
+[package]
+name = "binsight-demo"
+description = "A generated, coherent portfolio that stands in for the chain in demo mode."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+binsight-core.workspace = true
+binsight-dlmm.workspace = true
+binsight-engine.workspace = true
+binsight-ledger.workspace = true
+binsight-solana.workspace = true
+jiff.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+jiff = { workspace = true, features = ["tzdb-bundle-always"] }
+proptest.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
