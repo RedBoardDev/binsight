@@ -105,6 +105,10 @@ msgstr "Annuler"
 msgid "Cards"
 msgstr "Cartes"
 
+#: src/applications/Shared/Chart/Ui/PulseChart/PulseTable.tsx
+msgid "Chart readings"
+msgstr "Lectures du graphique"
+
 #: src/applications/Shared/Layout/Ui/ResponsiveDrawer.tsx
 msgid "Close"
 msgstr "Fermer"
@@ -129,9 +133,19 @@ msgstr "La copie a échoué : sélectionnez le texte et copiez-le."
 msgid "Could not sign out."
 msgstr "La déconnexion a échoué."
 
+#: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/SampleReadout.tsx
+#: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/useSampleReadings.ts
+#: src/applications/Shared/Chart/Ui/PulseChart/PulseLegend.tsx
+msgid "Cumulative"
+msgstr "Cumulé"
+
 #: src/applications/Shared/Preference/Ui/CurrencyToggle.tsx
 msgid "Currency"
 msgstr "Devise"
+
+#: src/applications/Shared/Chart/Ui/PulseChart/PulseLegend.tsx
+msgid "Daily"
+msgstr "Quotidien"
 
 #: src/core/theme/ThemeSwitcher.tsx
 msgid "Dark theme"
@@ -247,6 +261,11 @@ msgstr "moins"
 msgid "More"
 msgstr "Plus"
 
+#: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/useSampleReadings.ts
+#: src/applications/Shared/Chart/Ui/PulseChart.tsx
+msgid "No chart values"
+msgstr "Aucune valeur sur le graphique"
+
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "No losing position yet."
 msgstr "Aucune position perdante pour l’instant."
@@ -299,6 +318,11 @@ msgstr "Période"
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "plus"
 msgstr "plus"
+
+#: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/SampleReadout.tsx
+#: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/useSampleReadings.ts
+msgid "Profit"
+msgstr "Profit"
 
 #: src/applications/Realtime/Ui/streamStateLabels.ts
 msgid "Reconnecting"
@@ -471,6 +495,10 @@ msgstr "Réessayer"
 msgid "Unavailable"
 msgstr "Indisponible"
 
+#: src/applications/Shared/Chart/Ui/PulseChart.tsx
+msgid "Use the arrow keys to explore the chart. Home and End select the first and last readings."
+msgstr "Utilisez les flèches pour parcourir le graphique. Début et Fin sélectionnent la première et la dernière lecture."
+
 #: src/applications/Health/Ui/HealthCard/HealthReport.tsx
 #: src/applications/Setting/Ui/SettingsPage/AboutSection.tsx
 msgid "Version"
@@ -479,6 +507,11 @@ msgstr "Version"
 #: src/applications/Shared/Control/Ui/ViewToggle.tsx
 msgid "View"
 msgstr "Vue"
+
+#: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/SampleReadout.tsx
+#: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/useSampleReadings.ts
+msgid "vs net worth"
+msgstr "vs patrimoine net"
 
 #: src/applications/Wallet/Ui/WalletsPage.tsx
 #: src/core/Layout/AppShell/navItems.ts

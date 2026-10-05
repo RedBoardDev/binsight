@@ -1,17 +1,6 @@
-import { test as base, expect, type Page, type TestInfo } from '@playwright/test';
+import { expect, type Page, type TestInfo } from '@playwright/test';
 import { expectNoA11yViolations } from '../expectNoA11yViolations';
-import { watchConsole } from '../watchConsole';
-
-const test = base.extend<{ browserErrors: readonly string[] }>({
-  browserErrors: [
-    async ({ page }, use) => {
-      const errors = watchConsole(page);
-      await use(errors);
-      expect(errors, 'the page renders without browser errors').toEqual([]);
-    },
-    { auto: true },
-  ],
-});
+import { test } from '../visualTest';
 
 const SCREENSHOT_DIR = 'test-results/visual';
 // A route opened for the first time is compiled on demand by the dev server.

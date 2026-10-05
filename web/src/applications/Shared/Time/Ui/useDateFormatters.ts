@@ -11,6 +11,7 @@ const EMPTY_VALUE = '—';
 interface DateFormatters {
   readonly formatTime: (timestamp: string | null) => string;
   readonly formatDateTime: (timestamp: string | null) => string;
+  readonly formatShortDate: (timestamp: string | null) => string;
   readonly formatMoment: (timestamp: string | null, now: number) => string;
 }
 
@@ -44,6 +45,9 @@ export const useDateFormatters = (): DateFormatters => {
       date: new Intl.DateTimeFormat(locale, { ...DATE_DISPLAY_OPTIONS.date, timeZone }),
     };
     return {
+      formatShortDate: formatWith(
+        new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric', timeZone }),
+      ),
       formatTime: formatWith(new Intl.DateTimeFormat(locale, { timeStyle: 'medium', timeZone })),
       formatDateTime: formatWith(
         new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'medium', timeZone }),

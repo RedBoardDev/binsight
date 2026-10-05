@@ -35,5 +35,18 @@ describe('useDateFormatters', () => {
 
     expect(result.current.formatDateTime(null)).toBe('—');
     expect(result.current.formatDateTime('not a date')).toBe('—');
+    expect(result.current.formatShortDate(null)).toBe('—');
+    expect(result.current.formatShortDate('not a date')).toBe('—');
+  });
+
+  it('formats compact chart dates in the same language and time zone as other dates', () => {
+    i18n.loadAndActivate({ locale: 'fr', messages: frenchMessages });
+    const { result } = renderHook(() => useDateFormatters(), { wrapper });
+    const timestamp = '2026-10-03T21:00:15Z';
+    expect(result.current.formatShortDate(timestamp)).toBe(
+      new Intl.DateTimeFormat('fr-FR', { month: 'short', day: 'numeric' }).format(
+        new Date(timestamp),
+      ),
+    );
   });
 });

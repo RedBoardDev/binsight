@@ -1,5 +1,6 @@
 import { PageHeader } from '@app/applications/Shared/Layout/Ui/PageHeader';
 import { AmountsSection } from './DesignReferencePage/AmountsSection';
+import { ChartsSection } from './DesignReferencePage/ChartsSection';
 import { ColorsSection } from './DesignReferencePage/ColorsSection';
 import { ControlsSection } from './DesignReferencePage/ControlsSection';
 import { IdentitySection } from './DesignReferencePage/IdentitySection';
@@ -15,6 +16,7 @@ export const DesignReferencePage = () => (
     <PageHeader title="Design reference" />
     <div className="flex flex-col gap-16">
       <AmountsSection />
+      <ChartsSection />
       <IdentitySection />
       <ColorsSection />
       <TypographySection />

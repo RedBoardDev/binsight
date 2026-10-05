@@ -105,6 +105,10 @@ msgstr "Abbrechen"
 msgid "Cards"
 msgstr "Karten"
 
+#: src/applications/Shared/Chart/Ui/PulseChart/PulseTable.tsx
+msgid "Chart readings"
+msgstr "Diagrammwerte"
+
 #: src/applications/Shared/Layout/Ui/ResponsiveDrawer.tsx
 msgid "Close"
 msgstr "Schließen"
@@ -129,9 +133,19 @@ msgstr "Kopieren fehlgeschlagen: Markieren Sie den Text und kopieren Sie ihn."
 msgid "Could not sign out."
 msgstr "Abmelden fehlgeschlagen."
 
+#: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/SampleReadout.tsx
+#: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/useSampleReadings.ts
+#: src/applications/Shared/Chart/Ui/PulseChart/PulseLegend.tsx
+msgid "Cumulative"
+msgstr "Kumuliert"
+
 #: src/applications/Shared/Preference/Ui/CurrencyToggle.tsx
 msgid "Currency"
 msgstr "Währung"
+
+#: src/applications/Shared/Chart/Ui/PulseChart/PulseLegend.tsx
+msgid "Daily"
+msgstr "Täglich"
 
 #: src/core/theme/ThemeSwitcher.tsx
 msgid "Dark theme"
@@ -247,6 +261,11 @@ msgstr "minus"
 msgid "More"
 msgstr "Mehr"
 
+#: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/useSampleReadings.ts
+#: src/applications/Shared/Chart/Ui/PulseChart.tsx
+msgid "No chart values"
+msgstr "Keine Diagrammwerte"
+
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "No losing position yet."
 msgstr "Noch keine Verlustposition."
@@ -299,6 +318,11 @@ msgstr "Zeitraum"
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "plus"
 msgstr "plus"
+
+#: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/SampleReadout.tsx
+#: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/useSampleReadings.ts
+msgid "Profit"
+msgstr "Gewinn"
 
 #: src/applications/Realtime/Ui/streamStateLabels.ts
 msgid "Reconnecting"
@@ -471,6 +495,10 @@ msgstr "Erneut versuchen"
 msgid "Unavailable"
 msgstr "Nicht verfügbar"
 
+#: src/applications/Shared/Chart/Ui/PulseChart.tsx
+msgid "Use the arrow keys to explore the chart. Home and End select the first and last readings."
+msgstr "Erkunden Sie das Diagramm mit den Pfeiltasten. Pos1 und Ende wählen den ersten und letzten Wert."
+
 #: src/applications/Health/Ui/HealthCard/HealthReport.tsx
 #: src/applications/Setting/Ui/SettingsPage/AboutSection.tsx
 msgid "Version"
@@ -479,6 +507,11 @@ msgstr "Version"
 #: src/applications/Shared/Control/Ui/ViewToggle.tsx
 msgid "View"
 msgstr "Ansicht"
+
+#: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/SampleReadout.tsx
+#: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/useSampleReadings.ts
+msgid "vs net worth"
+msgstr "vs Nettovermögen"
 
 #: src/applications/Wallet/Ui/WalletsPage.tsx
 #: src/core/Layout/AppShell/navItems.ts

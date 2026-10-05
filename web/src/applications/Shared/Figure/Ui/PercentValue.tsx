@@ -13,6 +13,7 @@ interface PercentValueProps {
   placement: PercentPlacement;
   signing: FigureSigning;
   layout?: FigureLayout;
+  tone?: 'signed' | 'neutral';
 }
 
 // A percentage. Never hidden with the amounts: a ratio reveals no balance.
@@ -21,6 +22,7 @@ export const PercentValue = ({
   placement,
   signing,
   layout = 'inline',
+  tone = 'signed',
 }: PercentValueProps) => {
   const format = useFigureFormatter();
   const reasons = figure.exactness === 'complete' ? [] : figure.reasons;
@@ -33,7 +35,7 @@ export const PercentValue = ({
   return (
     <span className="num inline-flex items-baseline gap-[0.2em] whitespace-nowrap">
       {mark}
-      <span className={TONE_CLASSES[formatted.tone]}>
+      <span className={TONE_CLASSES[tone === 'neutral' ? 'neutral' : formatted.tone]}>
         {formatted.sign}
         {formattedText(formatted)}
       </span>
