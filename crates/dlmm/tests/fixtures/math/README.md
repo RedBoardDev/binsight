@@ -38,3 +38,17 @@ For the remaining 32 cases, `random.Random(20261005)` draws the amount and then
 the price with `randrange(2**128)`. The oracle uses direct unbounded division,
 without the Rust remainder recurrence or a rounded reciprocal. These are
 mathematical fixtures; they do not claim an SDK or mainnet comparison.
+
+`inverse-unit-price.json` contains 1,100 independent Python bigint results for
+`floor(2**64 * 10**(18 + y_decimals - x_decimals) / raw)`, moving a negative
+power of ten to the denominator. A zero raw price or result above `2**128-1`
+is recorded as `null`. These are mathematical presentation fixtures, not SDK
+or mainnet comparisons; they do not replace the original raw price for amounts.
+
+The first 100 cases are the Cartesian product, in order, of raw prices
+`0, 1, 2, 3, 2**64-1, 2**64, 2**64+1, 3*2**64, 2**127, 2**128-1`
+and decimal pairs `(0,0), (6,9), (9,6), (0,255), (255,0), (0,38),
+(0,39), (18,0), (19,0), (255,255)`. The remaining 1,000 cases use
+`random.Random(20261005)`, drawing raw with `randrange(1, 2**128)` and then
+X and Y decimals each with `randrange(256)`. Expected values use direct
+unbounded integer division, without the Rust decimal remainder recurrence.
