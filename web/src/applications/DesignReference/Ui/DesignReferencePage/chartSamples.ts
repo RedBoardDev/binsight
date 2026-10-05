@@ -34,7 +34,7 @@ const figure = (
   return {
     exactness,
     value,
-    reasons: SAMPLE_REASONS[exactness],
+    reasons: [...SAMPLE_REASONS[exactness]],
   };
 };
 
@@ -45,7 +45,7 @@ const percent = (
   const value = decimal(amount);
   return exactness === 'complete'
     ? { exactness, value }
-    : { exactness, value, reasons: SAMPLE_REASONS[exactness] };
+    : { exactness, value, reasons: [...SAMPLE_REASONS[exactness]] };
 };
 const unavailable: Figure = { exactness: 'unavailable', reasons: [{ code: 'zero_denominator' }] };
 const unavailablePercent: PercentFigure = {

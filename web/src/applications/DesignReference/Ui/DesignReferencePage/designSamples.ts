@@ -32,8 +32,7 @@ export const SAMPLE_AMOUNTS = {
     reasons: [
       {
         code: 'unpriced_token',
-        token: { mint: 'sample-mint', symbol: 'GRIFT', decimals: 6 },
-        amount: sample('1240000'),
+        mint: 'sample-mint',
         wallet: 'sample-wallet',
       },
     ],

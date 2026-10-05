@@ -17,6 +17,8 @@ React + TypeScript (strict) + Vite, served as a same-origin SPA by the Rust bina
 - `src/lib/`: infrastructure with no React and no business notion (API client, SSE stream).
 - `src/applications/<Entity>/{Api,Domain,Ui}`: one folder per entity, PascalCase singular, exactly three layers.
   - `Domain/`: pure TypeScript (zod and Lingui `msg` allowed). No React, no I/O, no HeroUI, no TanStack.
+    Type-only imports from the generated OpenAPI declarations are allowed for aliases of wire shapes; never import
+    the API client or runtime helpers.
   - `Api/`: data access: `get<X>.ts` (fetcher), `<x>Query.ts` (query options), `use<X>.api.ts` (query hook with
     `meta.entities`), `<verb><X>.ts` (write returning a tagged union), `<x>Guards.ts` (route guards for
     `beforeLoad`).

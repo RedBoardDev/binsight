@@ -3,8 +3,10 @@ import {
   solFractionDigits,
 } from '@app/applications/Shared/Figure/Domain/amountPlacement';
 import {
+  type DecimalString,
   integerDigitCount,
   isFractionOfOne,
+  requireDecimalString,
 } from '@app/applications/Shared/Figure/Domain/decimalString';
 import type { Money } from '@app/applications/Shared/Figure/Domain/figure';
 import {
@@ -27,25 +29,30 @@ const SMALL_DOLLARS = { minimumSignificantDigits: 2, maximumSignificantDigits: 4
 const AXIS = { notation: 'compact', maximumSignificantDigits: 3 } as const;
 const USD_STYLE = { style: 'currency', currency: 'USD', currencyDisplay: 'narrowSymbol' } as const;
 
-const precisionOf = (money: Money, placement: AmountPlacement): Intl.NumberFormatOptions => {
+const precisionOf = (
+  money: Money,
+  placement: AmountPlacement,
+  amount: DecimalString,
+): Intl.NumberFormatOptions => {
   if (placement === 'axis') {
     return AXIS;
   }
   if (money.unit === 'sol') {
-    const digits = solFractionDigits(placement, integerDigitCount(money.amount));
+    const digits = solFractionDigits(placement, integerDigitCount(amount));
     return { minimumFractionDigits: digits, maximumFractionDigits: digits };
   }
-  return isFractionOfOne(money.amount) ? SMALL_DOLLARS : CENTS;
+  return isFractionOfOne(amount) ? SMALL_DOLLARS : CENTS;
 };
 
 // The unit itself is not in the digits, except the dollar sign: SOL is drawn as the Solana mark
 // and stablecoins as their ticker, next to the number.
 export const formatAmount = (money: Money, format: AmountFormat): FormattedNumber => {
+  const amount = requireDecimalString(money.amount);
   const options: Intl.NumberFormatOptions = {
-    ...precisionOf(money, format.placement),
+    ...precisionOf(money, format.placement, amount),
     ...(money.unit === 'usd' ? USD_STYLE : {}),
     signDisplay: SIGN_DISPLAY[format.signing],
   };
-  const parts = numberFormat(format.languageTag, options).formatToParts(money.amount);
+  const parts = numberFormat(format.languageTag, options).formatToParts(amount);
   return toFormattedNumber(parts, format.signing);
 };

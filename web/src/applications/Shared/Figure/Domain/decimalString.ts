@@ -8,11 +8,21 @@ export type DecimalString = `${number}` & { readonly [decimalStringBrand]: true 
 
 const CANONICAL_DECIMAL = /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]*[1-9])?$/;
 
-export const isDecimalString = (value: string): value is DecimalString =>
-  CANONICAL_DECIMAL.test(value) && value !== '-0';
+export const isDecimalString = (value: unknown): value is DecimalString =>
+  typeof value === 'string' && CANONICAL_DECIMAL.test(value) && value !== '-0';
 
-export const parseDecimalString = (value: string): DecimalString | null =>
+export const parseDecimalString = (value: unknown): DecimalString | null =>
   isDecimalString(value) ? value : null;
+
+// Formatting is a boundary for generated API strings. Reject a malformed value before Intl
+// can accept an exponent, coerce it, or display a misleading number.
+export const requireDecimalString = (value: unknown): DecimalString => {
+  const decimal = parseDecimalString(value);
+  if (decimal === null) {
+    throw new RangeError('Expected a canonical decimal string');
+  }
+  return decimal;
+};
 
 const unsignedPart = (value: DecimalString): string =>
   value.startsWith('-') ? value.slice(1) : value;

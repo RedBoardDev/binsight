@@ -44,6 +44,11 @@ const pureDomain: ImportRule = ({ importer, target }) => {
   if (layerOf(importer) !== 'Domain') {
     return null;
   }
+  // This generated .d.ts contains declarations only. TypeScript requires import type for
+  // these shapes; importing them does not bring the API client or I/O into Domain.
+  if (target.kind === 'internal' && target.path === 'lib/api/generated/openapi') {
+    return null;
+  }
   const isForbidden =
     isOneOfPackages(target, REACT_AND_UI_PACKAGES) ||
     isInternalUnder(target, ['lib', 'core', 'routes']) ||

@@ -1,3 +1,4 @@
+import { requireDecimalString } from '@app/applications/Shared/Figure/Domain/decimalString';
 import type { Price } from '@app/applications/Shared/Figure/Domain/figure';
 import { numberFormat } from '@app/applications/Shared/Figure/Domain/numberFormat';
 
@@ -19,7 +20,7 @@ export const formatPrice = (price: Price, languageTag: string): FormattedPrice =
   const parts = numberFormat(languageTag, {
     minimumSignificantDigits: SIGNIFICANT_DIGITS,
     maximumSignificantDigits: SIGNIFICANT_DIGITS,
-  }).formatToParts(price.amount);
+  }).formatToParts(requireDecimalString(price.amount));
   const text = parts.map((part) => part.value).join('');
   const integer = parts.find((part) => part.type === 'integer')?.value;
   const decimal = parts.find((part) => part.type === 'decimal')?.value;

@@ -3,6 +3,7 @@ import {
   isDecimalString,
   isFractionOfOne,
   parseDecimalString,
+  requireDecimalString,
 } from '@app/applications/Shared/Figure/Domain/decimalString';
 import { describe, expect, it } from 'vitest';
 
@@ -24,6 +25,16 @@ describe('parseDecimalString', () => {
   it('refuses what the API never sends', () => {
     for (const value of ['', '+1', '-0', '1.50', '01', '1e3', '.5', '1.', 'NaN', ' 1']) {
       expect(parseDecimalString(value)).toBeNull();
+    }
+  });
+});
+
+describe('generated decimal strings at the formatting boundary', () => {
+  it('keeps long exact amounts and refuses coercible malformed strings', () => {
+    const amount = '123456789012345678901234567890.5';
+    expect(requireDecimalString(amount)).toBe(amount);
+    for (const value of ['1e3', '-0', '01', 'NaN', 42, null, true]) {
+      expect(() => requireDecimalString(value)).toThrow(RangeError);
     }
   });
 });

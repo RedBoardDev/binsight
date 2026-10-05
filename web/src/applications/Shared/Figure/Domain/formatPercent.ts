@@ -1,6 +1,6 @@
 import {
-  type DecimalString,
   integerDigitCount,
+  requireDecimalString,
 } from '@app/applications/Shared/Figure/Domain/decimalString';
 import {
   type FigureSigning,
@@ -23,9 +23,10 @@ const LARGE_PERCENT_INTEGER_DIGITS = 4;
 
 // The value is already in percent ("2.56" is 2.56 %): the percent unit adds the sign of the
 // language (a narrow space before it in French) without multiplying by 100.
-export const formatPercent = (value: DecimalString, format: PercentFormat): FormattedNumber => {
+export const formatPercent = (value: string, format: PercentFormat): FormattedNumber => {
+  const decimal = requireDecimalString(value);
   const digits =
-    integerDigitCount(value) >= LARGE_PERCENT_INTEGER_DIGITS
+    integerDigitCount(decimal) >= LARGE_PERCENT_INTEGER_DIGITS
       ? 0
       : PERCENT_FRACTION_DIGITS[format.placement];
   const parts = numberFormat(format.languageTag, {
@@ -34,6 +35,6 @@ export const formatPercent = (value: DecimalString, format: PercentFormat): Form
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
     signDisplay: SIGN_DISPLAY[format.signing],
-  }).formatToParts(value);
+  }).formatToParts(decimal);
   return toFormattedNumber(parts, format.signing);
 };

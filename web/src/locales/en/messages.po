@@ -15,10 +15,6 @@ msgstr "(opens in a new tab)"
 msgid "{seconds, plural, one {Too many failed attempts. Try again in # second.} other {Too many failed attempts. Try again in # seconds.}}"
 msgstr "{seconds, plural, one {Too many failed attempts. Try again in # second.} other {Too many failed attempts. Try again in # seconds.}}"
 
-#: src/applications/Shared/Figure/Ui/figureSpeech.ts
-msgid "{symbol} has no price yet: it counts as zero."
-msgstr "{symbol} has no price yet: it counts as zero."
-
 #. Period of one month, in a row of short pills.
 #: src/applications/Shared/Scope/Domain/period.ts
 msgid "1M"
@@ -46,6 +42,10 @@ msgstr "A movement of the position has no price."
 #: src/core/pwa/UpdatePrompt.tsx
 msgid "A new version of binsight is available."
 msgstr "A new version of binsight is available."
+
+#: src/applications/Shared/Figure/Ui/figureSpeech.ts
+msgid "A token held by the wallet has no price yet."
+msgstr "A token held by the wallet has no price yet."
 
 #: src/applications/Setting/Ui/SettingsPage/AboutSection.tsx
 msgid "About"
@@ -109,8 +109,6 @@ msgstr "Cancel"
 msgid "Cards"
 msgstr "Cards"
 
-#: src/applications/Shared/Chart/Ui/BinHistogram.tsx
-#: src/applications/Shared/Chart/Ui/ChartReadings.tsx
 #: src/applications/Shared/Chart/Ui/PulseChart/PulseTable.tsx
 msgid "Chart readings"
 msgstr "Chart readings"
@@ -119,10 +117,6 @@ msgstr "Chart readings"
 msgid "Close"
 msgstr "Close"
 
-#: src/applications/Shared/Chart/Ui/PriceChart/useCandleReadings.tsx
-msgid "Closing price"
-msgstr "Closing price"
-
 #: src/applications/Realtime/Ui/streamStateLabels.ts
 msgid "Connecting"
 msgstr "Connecting"
@@ -130,6 +124,10 @@ msgstr "Connecting"
 #: src/applications/Realtime/Ui/RealtimeStatusCard.tsx
 msgid "Connection"
 msgstr "Connection"
+
+#: src/applications/Shared/Figure/Ui/figureSpeech.ts
+msgid "Converted with the provisional SOL to dollar rate for {day}."
+msgstr "Converted with the provisional SOL to dollar rate for {day}."
 
 #: src/applications/Shared/Ui/CopyButton.tsx
 msgid "Copied"
@@ -202,10 +200,6 @@ msgstr "Healthy"
 msgid "Hide amounts"
 msgstr "Hide amounts"
 
-#: src/applications/Shared/Chart/Ui/PriceChart/useCandleReadings.tsx
-msgid "High"
-msgstr "High"
-
 #: src/applications/ClosedPosition/Ui/HistoryPage.tsx
 #: src/core/Layout/AppShell/navItems.ts
 msgid "History"
@@ -214,11 +208,6 @@ msgstr "History"
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "History still importing: {progress} done."
 msgstr "History still importing: {progress} done."
-
-#. placeholder {0}: source.quoteSymbol.toUpperCase()
-#: src/applications/Shared/Chart/Ui/PriceChart/PriceChartHeader.tsx
-msgid "in {0}"
-msgstr "in {0}"
 
 #: src/applications/Auth/Ui/LoginForm/errorCopy.ts
 #: src/applications/Shared/Ui/apiErrorMessages.ts
@@ -258,10 +247,6 @@ msgstr "Live updates"
 msgid "Live updates:"
 msgstr "Live updates:"
 
-#: src/applications/Shared/Chart/Ui/PriceChart/useCandleReadings.tsx
-msgid "Low"
-msgstr "Low"
-
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "lower bound"
 msgstr "lower bound"
@@ -285,9 +270,7 @@ msgid "More"
 msgstr "More"
 
 #: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/useSampleReadings.ts
-#: src/applications/Shared/Chart/Ui/LineSeriesChart.tsx
 #: src/applications/Shared/Chart/Ui/PulseChart.tsx
-#: src/applications/Shared/Chart/Ui/StackedBarChart.tsx
 msgid "No chart values"
 msgstr "No chart values"
 
@@ -296,8 +279,12 @@ msgid "No losing position yet."
 msgstr "No losing position yet."
 
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
-msgid "No SOL to dollar rate for {day}."
-msgstr "No SOL to dollar rate for {day}."
+msgid "No SOL to dollar rate is available."
+msgstr "No SOL to dollar rate is available."
+
+#: src/applications/Shared/Figure/Ui/figureSpeech.ts
+msgid "No valuation is available for the positions open at this point."
+msgstr "No valuation is available for the positions open at this point."
 
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "not available"
@@ -311,9 +298,9 @@ msgstr "Not available"
 msgid "Nothing to compare with yet."
 msgstr "Nothing to compare with yet."
 
-#: src/applications/Shared/Chart/Ui/PriceChart/useCandleReadings.tsx
-msgid "Open"
-msgstr "Open"
+#: src/applications/Shared/Figure/Ui/figureSpeech.ts
+msgid "Open PnL uses a mark {age} seconds before this point."
+msgstr "Open PnL uses a mark {age} seconds before this point."
 
 #: src/applications/Setting/Ui/SettingsPage/AboutSection.tsx
 msgid "Open-source licenses"
@@ -347,18 +334,6 @@ msgstr "Period"
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "plus"
 msgstr "plus"
-
-#: src/applications/Shared/Chart/Ui/PriceChart/PriceChartHeader.tsx
-msgid "Price"
-msgstr "Price"
-
-#: src/applications/Shared/Chart/Ui/PriceChart/LightweightPriceChart.tsx
-msgid "Price history is not available for this pool yet"
-msgstr "Price history is not available for this pool yet"
-
-#: src/applications/Shared/Chart/Ui/PriceChart/PriceChartHeader.tsx
-msgid "Price interval"
-msgstr "Price interval"
 
 #: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/SampleReadout.tsx
 #: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/useSampleReadings.ts
@@ -470,10 +445,6 @@ msgstr "System theme"
 msgid "Table"
 msgstr "Table"
 
-#: src/applications/Shared/Chart/Ui/PriceChart/PriceChartErrorBoundary.tsx
-msgid "The price chart could not be loaded."
-msgstr "The price chart could not be loaded."
-
 #: src/applications/Shared/Ui/apiErrorMessages.ts
 msgid "The request was not valid. Reload the app and try again."
 msgstr "The request was not valid. Reload the app and try again."
@@ -527,6 +498,10 @@ msgstr "This page could not be displayed. Try again; if it keeps failing, reload
 msgid "This password is too long."
 msgstr "This password is too long."
 
+#: src/applications/Shared/Figure/Ui/figureSpeech.ts
+msgid "This pool's quote token cannot be valued yet."
+msgstr "This pool's quote token cannot be valued yet."
+
 #: src/applications/Shared/Ui/apiErrorMessages.ts
 msgid "This position is no longer tracked."
 msgstr "This position is no longer tracked."
@@ -552,10 +527,7 @@ msgstr "Try again"
 msgid "Unavailable"
 msgstr "Unavailable"
 
-#: src/applications/Shared/Chart/Ui/BinHistogram.tsx
-#: src/applications/Shared/Chart/Ui/LineSeriesChart.tsx
 #: src/applications/Shared/Chart/Ui/PulseChart.tsx
-#: src/applications/Shared/Chart/Ui/StackedBarChart.tsx
 msgid "Use the arrow keys to explore the chart. Home and End select the first and last readings."
 msgstr "Use the arrow keys to explore the chart. Home and End select the first and last readings."
 
@@ -593,3 +565,40 @@ msgstr "Why not available?"
 #: src/applications/Shared/Ui/apiErrorMessages.ts
 msgid "Your session has ended. Sign in again."
 msgstr "Your session has ended. Sign in again."
+
+#: src/applications/Shared/Chart/Ui/PriceChart/useCandleReadings.tsx
+msgid "Closing price"
+msgstr "Closing price"
+
+#: src/applications/Shared/Chart/Ui/PriceChart/useCandleReadings.tsx
+msgid "High"
+msgstr "High"
+
+#. placeholder {0}: source.quoteSymbol.toUpperCase()
+#: src/applications/Shared/Chart/Ui/PriceChart/PriceChartHeader.tsx
+msgid "in {0}"
+msgstr "in {0}"
+
+#: src/applications/Shared/Chart/Ui/PriceChart/useCandleReadings.tsx
+msgid "Low"
+msgstr "Low"
+
+#: src/applications/Shared/Chart/Ui/PriceChart/useCandleReadings.tsx
+msgid "Open"
+msgstr "Open"
+
+#: src/applications/Shared/Chart/Ui/PriceChart/PriceChartHeader.tsx
+msgid "Price"
+msgstr "Price"
+
+#: src/applications/Shared/Chart/Ui/PriceChart/LightweightPriceChart.tsx
+msgid "Price history is not available for this pool yet"
+msgstr "Price history is not available for this pool yet"
+
+#: src/applications/Shared/Chart/Ui/PriceChart/PriceChartHeader.tsx
+msgid "Price interval"
+msgstr "Price interval"
+
+#: src/applications/Shared/Chart/Ui/PriceChart/PriceChartErrorBoundary.tsx
+msgid "The price chart could not be loaded."
+msgstr "The price chart could not be loaded."

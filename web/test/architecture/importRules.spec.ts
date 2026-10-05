@@ -17,6 +17,7 @@ describe('findImportViolations', () => {
   it('accepts imports that follow the layers', () => {
     const allowed: ReadonlyArray<readonly [string, string]> = [
       ['applications/Auth/Domain/loginForm.ts', 'zod'],
+      ['applications/Shared/Figure/Domain/figure.ts', '@app/lib/api/generated/openapi'],
       ['applications/Auth/Domain/loginForm.ts', '@lingui/core/macro'],
       ['applications/Auth/Api/login.ts', '@app/applications/Auth/Domain/loginForm'],
       [
@@ -45,6 +46,7 @@ describe('findImportViolations', () => {
     expect(rulesBrokenBy(domain, '@tanstack/react-query')).toEqual(['pure-domain']);
     expect(rulesBrokenBy(domain, 'lucide-react')).toEqual(['pure-domain']);
     expect(rulesBrokenBy(domain, '@app/lib/api/client')).toEqual(['pure-domain']);
+    expect(rulesBrokenBy(domain, '@app/lib/api/generated/runtime')).toEqual(['pure-domain']);
     expect(rulesBrokenBy(domain, '@app/core/i18n/i18n')).toEqual(['pure-domain']);
     expect(rulesBrokenBy(domain, '@app/applications/Auth/Api/login')).toEqual(['pure-domain']);
     expect(rulesBrokenBy(domain, '@app/applications/Shared/Ui/toast')).toEqual(['pure-domain']);

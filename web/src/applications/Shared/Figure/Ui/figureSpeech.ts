@@ -71,10 +71,8 @@ export const speakFigure = (i18n: I18n, figure: SpokenFigure): string => {
 
 export const describeReason = (i18n: I18n, reason: FigureReason): string => {
   switch (reason.code) {
-    case 'unpriced_token': {
-      const { symbol } = reason.token;
-      return i18n._(msg`${symbol} has no price yet: it counts as zero.`);
-    }
+    case 'unpriced_token':
+      return i18n._(msg`A token held by the wallet has no price yet.`);
     case 'reconstructed_history':
       return i18n._(msg`Reconstructed for the time before the wallet was added.`);
     case 'history_incomplete': {
@@ -89,10 +87,20 @@ export const describeReason = (i18n: I18n, reason: FigureReason): string => {
     }
     case 'unpriced_leg':
       return i18n._(msg`A movement of the position has no price.`);
-    case 'no_usd_rate': {
-      const { day } = reason;
-      return i18n._(msg`No SOL to dollar rate for ${day}.`);
+    case 'provisional_rate': {
+      const day = reason.day;
+      return i18n._(msg`Converted with the provisional SOL to dollar rate for ${day}.`);
     }
+    case 'stale_mark': {
+      const age = i18n.number(reason.age_seconds);
+      return i18n._(msg`Open PnL uses a mark ${age} seconds before this point.`);
+    }
+    case 'missing_open_pnl_mark':
+      return i18n._(msg`No valuation is available for the positions open at this point.`);
+    case 'no_usd_rate':
+      return i18n._(msg`No SOL to dollar rate is available.`);
+    case 'unsupported_quote':
+      return i18n._(msg`This pool's quote token cannot be valued yet.`);
     case 'zero_denominator':
       return i18n._(msg`Nothing to compare with yet.`);
     case 'no_losses':

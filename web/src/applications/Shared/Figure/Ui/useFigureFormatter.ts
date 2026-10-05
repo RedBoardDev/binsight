@@ -28,11 +28,11 @@ interface FigureFormatter {
     signing: FigureSigning,
   ) => FormattedNumber;
   readonly percent: (
-    value: DecimalString,
+    value: string,
     placement: PercentPlacement,
     signing: FigureSigning,
   ) => FormattedNumber;
-  readonly ratio: (value: DecimalString) => string;
+  readonly ratio: (value: string) => string;
   readonly price: (price: Price) => FormattedPrice;
   readonly tokenQuantity: (amount: DecimalString) => string;
 }
