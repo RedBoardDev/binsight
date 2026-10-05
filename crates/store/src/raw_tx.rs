@@ -96,15 +96,19 @@ impl RawTxRepo {
     /// Returns [`StoreError::PayloadChecksumMismatch`] if the stored payload is damaged, or another
     /// error if the database cannot be read.
     pub async fn payload(&self, signature: Signature) -> Result<Option<Vec<u8>>, StoreError> {
-        let Some(record) = self.get(signature).await? else {
-            return Ok(None);
-        };
-        let stored = StoredPayload {
-            compression: record.compression,
-            bytes: record.payload,
-            sha256: record.payload_sha256,
-        };
-        decompress(&stored).map(Some)
+        self.database
+            .read(move |connection| {
+                let Some(record) = read_record(connection, signature)? else {
+                    return Ok(None);
+                };
+                let stored = StoredPayload {
+                    compression: record.compression,
+                    bytes: record.payload,
+                    sha256: record.payload_sha256,
+                };
+                decompress(&stored).map(Some)
+            })
+            .await
     }
 
     /// How many transactions the registry holds.

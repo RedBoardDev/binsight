@@ -7,6 +7,7 @@
 //! payload without changing any position. Because the version is stored, a new decoder version
 //! can find what it has to re-decode. This module stores results; it does not decode anything.
 
+mod pending;
 mod statements;
 
 #[cfg(test)]
@@ -19,6 +20,7 @@ use jiff::Timestamp;
 use crate::database::Database;
 use crate::error::StoreError;
 use crate::store::Store;
+pub use pending::DecodeScan;
 use statements::{read_record, read_snapshot, replace_record};
 
 /// One event a decoder found in a transaction.

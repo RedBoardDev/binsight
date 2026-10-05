@@ -46,6 +46,7 @@ pub(super) async fn fetch_one(ingestion: Ingestion, task: FetchTask) -> Fetched 
             let signature = fetched.signature;
             match queue.complete(fetched).await {
                 Ok(()) => {
+                    ingestion.new_raw.notify_one();
                     debug!(%signature, "transaction fetched");
                     Fetched::Recorded
                 }

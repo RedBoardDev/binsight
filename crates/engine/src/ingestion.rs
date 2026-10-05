@@ -1,7 +1,7 @@
 //! Ingestion: every tracked wallet's transactions, from its first to the one it just made, each
 //! fetched once into the raw registry.
 //!
-//! Three workers run side by side. The listing worker lists each wallet's signatures (its whole
+//! Ingestion, decoding and sync reporting run side by side. The listing worker lists each wallet's signatures (its whole
 //! history page by page, then again from its newest on a schedule) and writes every page with its
 //! fetch tasks and the cursor move in one transaction. The live listener turns what the stream
 //! reports into fetches and into checks for the listing worker. The fetch worker reads the queue
@@ -10,6 +10,7 @@
 //! everything they write is transactional, so stopping in the middle of a page loses nothing.
 //! With no wallet tracked, nothing is ever sent, not even a stream opened.
 
+mod decoding;
 mod failure_backoff;
 mod fetching;
 mod listing;
@@ -47,6 +48,7 @@ pub(crate) struct Ingestion {
     rpc: RpcClient,
     clock: Arc<dyn Clock>,
     new_tasks: Arc<Notify>,
+    new_raw: Arc<Notify>,
     live: Arc<LiveState>,
     watch: WalletWatch,
     watched: Arc<Mutex<HashSet<Address>>>,
@@ -67,6 +69,7 @@ impl Ingestion {
             rpc,
             clock,
             new_tasks: Arc::new(Notify::new()),
+            new_raw: Arc::new(Notify::new()),
             live,
             watch,
             watched: Arc::new(Mutex::new(HashSet::new())),
@@ -86,6 +89,7 @@ impl Ingestion {
             run_fetcher(self, shutdown),
             run_live_listener(self, events, shutdown),
             run_sync_monitor(self, shutdown),
+            decoding::run_decoder(self, shutdown),
         );
     }
 

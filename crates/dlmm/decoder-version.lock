@@ -1,6 +1,6 @@
 # Written by the corpus test of binsight-dlmm (BINSIGHT_UPDATE_DECODER_LOCK=1); do not edit.
 # The SHA-256 of the decoder's output on each fixture, under the version that produced it.
-version = 1
+version = 2
 
 [outputs]
 "claim-fee-v1-alone-tx-1" = "155bb133e7fc3fd96898425dd843280d00dc6ac487ec2ece53a216ba0a16da80"

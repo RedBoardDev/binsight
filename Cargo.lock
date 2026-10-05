@@ -305,9 +305,11 @@ version = "0.1.0"
 dependencies = [
  "binsight-chain",
  "binsight-core",
+ "binsight-dlmm",
  "binsight-solana",
  "binsight-store",
  "jiff",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror",

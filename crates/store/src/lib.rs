@@ -36,7 +36,7 @@ mod store;
 mod upgrade;
 
 pub use credits::{CreditTotal, CreditUsage, CreditsRepo};
-pub use decoded::{DecodeOutcome, DecodeRecord, DecodedEvent, DecodedRepo};
+pub use decoded::{DecodeOutcome, DecodeRecord, DecodeScan, DecodedEvent, DecodedRepo};
 pub use error::StoreError;
 pub use ingestion::{
     DetectedSignature, FetchCounts, FetchFailure, FetchQueueRepo, FetchSetback, FetchTask,

@@ -9,4 +9,4 @@
 pub const DECODER_NAME: &str = "dlmm";
 
 /// The version of this decoder's output; it starts at 1 and only goes up.
-pub const DECODER_VERSION: u32 = 1;
+pub const DECODER_VERSION: u32 = 2;
