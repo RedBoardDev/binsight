@@ -5,7 +5,7 @@
 //! are read from the exact integer string `amount`. This module only mirrors the JSON; turning it
 //! into checked domain values happens in the modules that use it.
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 
 /// The `result` of `getTransaction`.
@@ -42,7 +42,8 @@ pub(super) enum RpcVersion {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct RpcMeta {
-    /// `null` when the transaction succeeded, otherwise the error.
+    /// Required execution result: explicit `null` means success, an absent field proves nothing.
+    #[serde(deserialize_with = "required_execution_result")]
     pub(super) err: Option<Value>,
     /// The total fee charged, in lamports.
     pub(super) fee: u64,
@@ -119,4 +120,12 @@ pub(super) struct RpcLoadedAddresses {
     pub(super) writable: Vec<String>,
     /// Loaded as read-only, in lookup order.
     pub(super) readonly: Vec<String>,
+}
+
+/// A custom nullable reader keeps serde from treating a missing Option field as explicit null.
+fn required_execution_result<'de, D>(deserializer: D) -> Result<Option<Value>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<Value>::deserialize(deserializer)
 }

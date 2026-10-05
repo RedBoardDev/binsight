@@ -232,3 +232,23 @@ fn keeps_both_owners_when_a_token_account_changes_owner() {
     );
     assert_eq!(balance.owner_post, Some(common::address(new_owner)));
 }
+
+#[test]
+fn refuses_an_absent_execution_result_instead_of_treating_it_as_success() {
+    for name in ["legacy-sol-transfer", "failed-swap-through-dlmm"] {
+        let mut payload: serde_json::Value =
+            serde_json::from_slice(&common::case(name).transaction_json(0)).unwrap();
+        payload["meta"].as_object_mut().unwrap().remove("err");
+        let bytes = serde_json::to_vec(&payload).unwrap();
+        match read(&bytes) {
+            Err(TransactionReadError::Json(error)) => {
+                assert!(error.is_data());
+                assert!(error.to_string().contains("missing field `err`"));
+            }
+            result => panic!(
+                "missing execution result accepted in {name}: {:?}",
+                result.map(|tx| tx.outcome)
+            ),
+        }
+    }
+}
