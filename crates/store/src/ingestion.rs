@@ -24,5 +24,5 @@ pub use fetch_counts::{FetchCounts, WalletBacklog};
 pub use fetch_queue::FetchQueueRepo;
 pub use fetch_task::{FetchFailure, FetchSetback, FetchTask, FetchedTx, RetryState};
 pub use listing_page::ListingPage;
-pub use signatures::{ListedSignature, SignaturesRepo};
+pub use signatures::{ListedSignature, SignaturesRepo, WalletSignatureScan};
 pub use wallets::{TrackedWallet, WalletsRepo};

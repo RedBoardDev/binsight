@@ -1,7 +1,7 @@
-//! The signatures listed for each wallet, and reading one back.
+//! The signatures listed for each wallet, read individually or in bounded metadata pages.
 //!
 //! A signature is written with its listed page (`listing_page`), in one transaction with its fetch
-//! task and the cursor move. This module names a listed signature and reads one; which page to
+//! task and the cursor move. This module names and reads listed signatures; which page to
 //! list and where the cursor goes are the engine's decisions.
 
 use binsight_solana::{Address, Signature};
@@ -12,6 +12,10 @@ use crate::database::Database;
 use crate::database::codec::{flag_from_sql, timestamp_from_sql, u32_from_sql, unsigned_from_sql};
 use crate::error::StoreError;
 use crate::store::Store;
+
+mod scan;
+
+pub use scan::WalletSignatureScan;
 
 const SELECT_SIGNATURE: &str = "
     SELECT slot, slot_order, block_time, is_failed FROM wallet_signature
