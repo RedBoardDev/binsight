@@ -13,18 +13,16 @@
 //! Every error answers with the same JSON body, built in `error`. Authentication settings come
 //! from [`auth`]; the files of the web app from any [`WebAssets`] source.
 
+mod app;
 pub mod auth;
+mod contract;
 mod error;
-mod health;
-mod layers;
+mod history;
+mod instance;
 mod live;
 pub mod openapi;
-mod router;
-mod server;
-mod state;
-mod web_app;
+mod overview;
+mod positions;
+mod stats;
 
-pub use router::router;
-pub use server::serve;
-pub use state::{AppState, AppStateParts};
-pub use web_app::{INDEX_FILE, WebAsset, WebAssets};
+pub use app::{AppState, AppStateParts, INDEX_FILE, WebAsset, WebAssets, router, serve};

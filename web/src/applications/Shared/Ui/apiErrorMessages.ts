@@ -11,9 +11,13 @@ const API_ERROR_MESSAGES: Record<ErrorCode, MessageDescriptor> = {
   forbidden_cross_origin: msg`The request was refused because it did not come from binsight itself.`,
   not_found: msg`This item no longer exists.`,
   method_not_allowed: msg`The server refused this action. Reload the app and try again.`,
+  wallet_not_found: msg`This wallet is no longer tracked.`,
+  position_not_found: msg`This position is no longer tracked.`,
   request_timeout: msg`The server took too long to answer. Try again.`,
+  invalid_cursor: msg`This list has changed. Reload it to see the latest.`,
   payload_too_large: msg`The request was too large for the server.`,
   too_many_attempts: msg`Too many attempts. Wait a moment and try again.`,
+  data_not_ready: msg`binsight is still preparing your figures. Try again in a moment.`,
   internal: msg`The server ran into a problem. Try again later.`,
 };
 

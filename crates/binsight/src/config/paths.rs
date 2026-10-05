@@ -1,7 +1,7 @@
 //! The default locations of the data folder and of the configuration file.
 //!
 //! They follow the XDG conventions: `$XDG_DATA_HOME/binsight` (else `~/.local/share/binsight`)
-//! for data, `$XDG_CONFIG_HOME/binsight/binsight.env` (else `~/.config/binsight/binsight.env`) for
+//! for data (`binsight-demo` in demo mode), `$XDG_CONFIG_HOME/binsight/binsight.env` (else `~/.config/binsight/binsight.env`) for
 //! the configuration. A leading `~/` in a configured path means the home folder. These functions
 //! only compute paths; they never touch the disk.
 
@@ -11,6 +11,11 @@ use std::path::{Path, PathBuf};
 /// The default data folder, if the environment says where the home or data folder is.
 pub(crate) fn default_data_dir(env: &BTreeMap<String, String>) -> Option<PathBuf> {
     folder_from(env, "XDG_DATA_HOME", ".local/share").map(|base| base.join("binsight"))
+}
+
+/// The default data folder of demo mode, next to the real one so the two never mix.
+pub(crate) fn default_demo_data_dir(env: &BTreeMap<String, String>) -> Option<PathBuf> {
+    folder_from(env, "XDG_DATA_HOME", ".local/share").map(|base| base.join("binsight-demo"))
 }
 
 /// The default configuration file, if the environment says where the home or config folder is.

@@ -119,12 +119,12 @@ pub struct EngineHealth {
     pub database: ComponentHealth,
     /// Where the engine is in its lifecycle.
     pub engine: EngineStatus,
-    /// Where the RPC credits stand.
-    pub credits: CreditHealth,
-    /// The latest completed RPC result; no network probe is sent.
-    pub rpc: RpcHealth,
-    /// The latest connection and subscription facts.
-    pub stream: StreamHealth,
+    /// Where actual RPC credits stand; absent when ingestion has no provider.
+    pub credits: Option<CreditHealth>,
+    /// Latest completed RPC result without a probe; absent when there is no transport.
+    pub rpc: Option<RpcHealth>,
+    /// Latest connection/subscription facts; absent when there is no transport.
+    pub stream: Option<StreamHealth>,
 }
 
 /// Pings the database with a deadline.

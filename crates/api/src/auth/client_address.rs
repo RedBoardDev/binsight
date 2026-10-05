@@ -16,7 +16,7 @@ use axum::extract::{ConnectInfo, FromRequestParts};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderName};
 
-use crate::state::AppState;
+use crate::app::AppState;
 
 /// The bits of an IPv6 address that identify one host's block (`/64`).
 const IPV6_HOST_BLOCK_MASK: u128 = !0 << 64;

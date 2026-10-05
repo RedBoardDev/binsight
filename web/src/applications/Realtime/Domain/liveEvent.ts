@@ -10,11 +10,21 @@ const engineStatusSchema = z.object({
   status: z.enum(['starting', 'running', 'stopping']),
 });
 
-const liveEventSchema = z.discriminatedUnion('type', [heartbeatSchema, engineStatusSchema]);
+const walletSyncChangedSchema = z.object({
+  type: z.literal('wallet_sync_changed'),
+  wallet: z.string(),
+  state: z.enum(['importing', 'live', 'lagging', 'error']),
+});
+
+const liveEventSchema = z.discriminatedUnion('type', [
+  heartbeatSchema,
+  engineStatusSchema,
+  walletSyncChangedSchema,
+]);
 
 export type LiveEvent = z.infer<typeof liveEventSchema>;
 
-export const LIVE_EVENT_TYPES = ['heartbeat', 'engine_status'] as const;
+export const LIVE_EVENT_TYPES = ['heartbeat', 'engine_status', 'wallet_sync_changed'] as const;
 
 const parseJson = (data: string): unknown => {
   try {

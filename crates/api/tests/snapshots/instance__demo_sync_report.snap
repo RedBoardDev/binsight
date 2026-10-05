@@ -1,0 +1,67 @@
+---
+source: crates/api/tests/instance.rs
+expression: response.json()
+---
+{
+  "as_of": "2026-09-21T14:13:20Z",
+  "chain": {
+    "last_slot": 445000000,
+    "last_slot_at": "2026-09-21T14:13:20Z"
+  },
+  "credits": {
+    "budget": 1000000,
+    "cycle": {
+      "end": "2026-10-17T00:00:00Z",
+      "start": "2026-09-17T00:00:00Z"
+    },
+    "is_over_budget": false,
+    "projected": 863995,
+    "used": 132266,
+    "used_percent": {
+      "exactness": "complete",
+      "value": "13.2266"
+    }
+  },
+  "engine": "running",
+  "started_at": "2026-09-21T14:13:20Z",
+  "state": "lagging",
+  "valuation_interval_seconds": 10,
+  "wallets": [
+    {
+      "import": null,
+      "indexed_tx": 4291,
+      "lag_seconds": null,
+      "last_tx_at": "2026-09-21T12:36:00Z",
+      "state": "live",
+      "wallet": {
+        "address": "C6w9dL1omhyPtyYnQdZeFcbk3mcUzQgXJYQT2XN5xRUq",
+        "color": "wallet_1",
+        "label": "Main"
+      }
+    },
+    {
+      "import": null,
+      "indexed_tx": 2308,
+      "lag_seconds": 180,
+      "last_tx_at": "2026-09-21T10:10:00Z",
+      "state": "lagging",
+      "wallet": {
+        "address": "H8dBDBULv1kPgqs3Pfc8gvkS3aqcqNmRCPkXhSZXQe4X",
+        "color": "wallet_2",
+        "label": "Degen"
+      }
+    },
+    {
+      "import": null,
+      "indexed_tx": 368,
+      "lag_seconds": null,
+      "last_tx_at": "2026-09-21T06:06:40Z",
+      "state": "live",
+      "wallet": {
+        "address": "7oz2w2VzUmffCuwBwTmuC1evos4EkG4goAyHiYXGVowM",
+        "color": "wallet_3",
+        "label": "Cold"
+      }
+    }
+  ]
+}

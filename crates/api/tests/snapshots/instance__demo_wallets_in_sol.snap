@@ -1,0 +1,185 @@
+---
+source: crates/api/tests/instance.rs
+expression: in_sol.json()
+---
+{
+  "items": [
+    {
+      "added_at": "2025-03-22T14:13:20Z",
+      "closed_count": 1050,
+      "net_worth": {
+        "exactness": "complete",
+        "value": {
+          "amount": "142.567784838",
+          "unit": "sol"
+        }
+      },
+      "open_count": 5,
+      "out_of_range_count": 0,
+      "real_pnl": {
+        "exactness": "complete",
+        "value": {
+          "amount": "34.567784838",
+          "unit": "sol"
+        }
+      },
+      "share_of_net_worth": {
+        "exactness": "estimated",
+        "reasons": [
+          {
+            "code": "unpriced_token",
+            "mint": "8rUqG6J957Az39QPCfzb18bKLiK5r28wFTkNqwpDFbU7",
+            "wallet": "H8dBDBULv1kPgqs3Pfc8gvkS3aqcqNmRCPkXhSZXQe4X"
+          }
+        ],
+        "value": "37.445962"
+      },
+      "sync": {
+        "import": null,
+        "indexed_tx": 4291,
+        "lag_seconds": null,
+        "last_tx_at": "2026-09-21T12:36:00Z",
+        "state": "live"
+      },
+      "wallet": {
+        "address": "C6w9dL1omhyPtyYnQdZeFcbk3mcUzQgXJYQT2XN5xRUq",
+        "color": "wallet_1",
+        "label": "Main"
+      }
+    },
+    {
+      "added_at": "2026-02-20T14:13:20Z",
+      "closed_count": 560,
+      "net_worth": {
+        "exactness": "partial",
+        "reasons": [
+          {
+            "code": "unpriced_token",
+            "mint": "8rUqG6J957Az39QPCfzb18bKLiK5r28wFTkNqwpDFbU7",
+            "wallet": "H8dBDBULv1kPgqs3Pfc8gvkS3aqcqNmRCPkXhSZXQe4X"
+          }
+        ],
+        "value": {
+          "amount": "119.029615617",
+          "unit": "sol"
+        }
+      },
+      "open_count": 2,
+      "out_of_range_count": 1,
+      "real_pnl": {
+        "exactness": "partial",
+        "reasons": [
+          {
+            "code": "unpriced_token",
+            "mint": "8rUqG6J957Az39QPCfzb18bKLiK5r28wFTkNqwpDFbU7",
+            "wallet": "H8dBDBULv1kPgqs3Pfc8gvkS3aqcqNmRCPkXhSZXQe4X"
+          }
+        ],
+        "value": {
+          "amount": "19.029615617",
+          "unit": "sol"
+        }
+      },
+      "share_of_net_worth": {
+        "exactness": "estimated",
+        "reasons": [
+          {
+            "code": "unpriced_token",
+            "mint": "8rUqG6J957Az39QPCfzb18bKLiK5r28wFTkNqwpDFbU7",
+            "wallet": "H8dBDBULv1kPgqs3Pfc8gvkS3aqcqNmRCPkXhSZXQe4X"
+          }
+        ],
+        "value": "31.263574"
+      },
+      "sync": {
+        "import": null,
+        "indexed_tx": 2308,
+        "lag_seconds": 180,
+        "last_tx_at": "2026-09-21T10:10:00Z",
+        "state": "lagging"
+      },
+      "wallet": {
+        "address": "H8dBDBULv1kPgqs3Pfc8gvkS3aqcqNmRCPkXhSZXQe4X",
+        "color": "wallet_2",
+        "label": "Degen"
+      }
+    },
+    {
+      "added_at": "2026-09-08T14:13:20Z",
+      "closed_count": 90,
+      "net_worth": {
+        "exactness": "complete",
+        "value": {
+          "amount": "119.131993819",
+          "unit": "sol"
+        }
+      },
+      "open_count": 1,
+      "out_of_range_count": 1,
+      "real_pnl": {
+        "exactness": "complete",
+        "value": {
+          "amount": "-0.868006181",
+          "unit": "sol"
+        }
+      },
+      "share_of_net_worth": {
+        "exactness": "estimated",
+        "reasons": [
+          {
+            "code": "unpriced_token",
+            "mint": "8rUqG6J957Az39QPCfzb18bKLiK5r28wFTkNqwpDFbU7",
+            "wallet": "H8dBDBULv1kPgqs3Pfc8gvkS3aqcqNmRCPkXhSZXQe4X"
+          }
+        ],
+        "value": "31.290464"
+      },
+      "sync": {
+        "import": null,
+        "indexed_tx": 368,
+        "lag_seconds": null,
+        "last_tx_at": "2026-09-21T06:06:40Z",
+        "state": "live"
+      },
+      "wallet": {
+        "address": "7oz2w2VzUmffCuwBwTmuC1evos4EkG4goAyHiYXGVowM",
+        "color": "wallet_3",
+        "label": "Cold"
+      }
+    }
+  ],
+  "next_cursor": null,
+  "total": {
+    "closed_count": 1700,
+    "net_worth": {
+      "exactness": "partial",
+      "reasons": [
+        {
+          "code": "unpriced_token",
+          "mint": "8rUqG6J957Az39QPCfzb18bKLiK5r28wFTkNqwpDFbU7",
+          "wallet": "H8dBDBULv1kPgqs3Pfc8gvkS3aqcqNmRCPkXhSZXQe4X"
+        }
+      ],
+      "value": {
+        "amount": "380.729394274",
+        "unit": "sol"
+      }
+    },
+    "open_count": 8,
+    "out_of_range_count": 2,
+    "real_pnl": {
+      "exactness": "partial",
+      "reasons": [
+        {
+          "code": "unpriced_token",
+          "mint": "8rUqG6J957Az39QPCfzb18bKLiK5r28wFTkNqwpDFbU7",
+          "wallet": "H8dBDBULv1kPgqs3Pfc8gvkS3aqcqNmRCPkXhSZXQe4X"
+        }
+      ],
+      "value": {
+        "amount": "52.729394274",
+        "unit": "sol"
+      }
+    }
+  }
+}

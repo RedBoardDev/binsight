@@ -2,6 +2,19 @@ import { parseLiveEvent } from '@app/applications/Realtime/Domain/liveEvent';
 import { describe, expect, it } from 'vitest';
 
 describe('parseLiveEvent', () => {
+  it.each(['importing', 'live', 'lagging', 'error'])(
+    'reads a wallet sync change to %s',
+    (state) => {
+      const event = { type: 'wallet_sync_changed', wallet: 'sample-wallet', state };
+      expect(parseLiveEvent(event.type, JSON.stringify(event))).toEqual(event);
+    },
+  );
+
+  it('drops a wallet sync change with an unknown state', () => {
+    const event = { type: 'wallet_sync_changed', wallet: 'sample-wallet', state: 'unknown' };
+    expect(parseLiveEvent(event.type, JSON.stringify(event))).toBeNull();
+  });
+
   it('reads a heartbeat', () => {
     const data = '{"type":"heartbeat","server_time":"2026-10-03T21:00:15.123456Z"}';
 

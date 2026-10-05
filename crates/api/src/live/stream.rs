@@ -58,11 +58,11 @@ pub(crate) fn live_events(
     // First the subscription, then the status: see the module documentation.
     let subscription = BroadcastStream::new(engine.subscribe());
     let current_status = stream::once(ready(current_status_event(&engine)));
-    let engine_events = subscription.filter_map(move |received| {
-        ready(received.map_or_else(
-            |_lagged| Some(current_status_event(&engine)),
+    let engine_events = subscription.map(move |received| {
+        received.map_or_else(
+            |_lagged| current_status_event(&engine),
             |event| LiveEvent::from_engine(&event),
-        ))
+        )
     });
     current_status
         .chain(stream::select(heartbeats(clock), engine_events))
@@ -91,11 +91,12 @@ mod tests {
     use jiff::Timestamp;
 
     use super::*;
-    use crate::health;
+    use crate::instance::health;
 
     /// An engine whose status changes right after it is read, before anything else happens.
     struct ChangingRightAfterTheRead {
         events: broadcast::Sender<EngineEvent>,
+        change: EngineEvent,
     }
 
     impl EngineFeed for ChangingRightAfterTheRead {
@@ -104,9 +105,7 @@ mod tests {
         }
 
         fn status(&self) -> EngineStatus {
-            let _ = self.events.send(EngineEvent::StatusChanged {
-                status: EngineStatus::Running,
-            });
+            let _ = self.events.send(self.change.clone());
             EngineStatus::Starting
         }
     }
@@ -118,7 +117,12 @@ mod tests {
         let clock = Arc::new(FixedClock::new(Timestamp::UNIX_EPOCH));
 
         let stream = live_events(
-            ChangingRightAfterTheRead { events },
+            ChangingRightAfterTheRead {
+                events,
+                change: EngineEvent::StatusChanged {
+                    status: EngineStatus::Running,
+                },
+            },
             clock,
             CancellationToken::new(),
         );
@@ -135,5 +139,78 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn relays_a_wallet_sync_change_instead_of_silently_dropping_it() {
+        let (events, _) = broadcast::channel(8);
+        let wallet = binsight_solana::Address::from_bytes([1; 32]);
+        let stream = live_events(
+            ChangingRightAfterTheRead {
+                events,
+                change: EngineEvent::WalletSyncChanged {
+                    wallet,
+                    state: binsight_engine::SyncState::Error,
+                },
+            },
+            Arc::new(FixedClock::new(Timestamp::UNIX_EPOCH)),
+            CancellationToken::new(),
+        );
+        let messages: Vec<_> = stream.take(2).collect().await;
+        assert_eq!(
+            messages,
+            vec![
+                LiveEvent::EngineStatus {
+                    status: health::EngineStatus::Starting
+                },
+                LiveEvent::WalletSyncChanged {
+                    wallet: wallet.to_string(),
+                    state: crate::contract::SyncState::Error
+                },
+            ]
+        );
+    }
+    struct RunningEngineFeed {
+        events: broadcast::Sender<EngineEvent>,
+    }
+
+    impl EngineFeed for RunningEngineFeed {
+        fn subscribe(&self) -> broadcast::Receiver<EngineEvent> {
+            self.events.subscribe()
+        }
+
+        fn status(&self) -> EngineStatus {
+            EngineStatus::Running
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn resends_current_status_when_a_slow_client_loses_a_wallet_sync_change() {
+        let (events, _) = broadcast::channel(1);
+        let stream = live_events(
+            RunningEngineFeed {
+                events: events.clone(),
+            },
+            Arc::new(FixedClock::new(Timestamp::UNIX_EPOCH)),
+            CancellationToken::new(),
+        );
+        tokio::pin!(stream);
+        let expected = LiveEvent::EngineStatus {
+            status: health::EngineStatus::Running,
+        };
+        assert_eq!(stream.next().await, Some(expected.clone()));
+        events
+            .send(EngineEvent::WalletSyncChanged {
+                wallet: binsight_solana::Address::from_bytes([1; 32]),
+                state: binsight_engine::SyncState::Error,
+            })
+            .unwrap();
+        events
+            .send(EngineEvent::StatusChanged {
+                status: EngineStatus::Running,
+            })
+            .unwrap();
+        assert_eq!(stream.next().await, Some(expected.clone()));
+        assert_eq!(stream.next().await, Some(expected));
     }
 }

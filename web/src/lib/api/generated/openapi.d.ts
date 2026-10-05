@@ -106,15 +106,592 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Reads the overview of every wallet, or of one. */
+        get: operations["getOverview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Lists the pools of the history. */
+        get: operations["listPools"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/positions/closed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Lists closed positions, a page at a time. */
+        get: operations["listClosedPositions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/positions/open": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Lists the open positions, sorted, with their totals. */
+        get: operations["listOpenPositions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/positions/recent-closes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Lists the positions closed today and yesterday. */
+        get: operations["getRecentCloses"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/positions/{position_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Reads one position with its chart. */
+        get: operations["getPosition"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/positions/{position_id}/candles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Reads the candles of a position's chart. */
+        get: operations["getPositionCandles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/positions/{position_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Lists a position's movements, newest first. */
+        get: operations["listPositionEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Reads the settings of the instance. */
+        get: operations["getSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stats/series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Reads a chart series. */
+        get: operations["getStatsSeries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Reports how the instance and each wallet keep up with the chain. */
+        get: operations["getSyncReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tokens/{mint}/logo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Serves a token's logo. */
+        get: operations["getTokenLogo"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/wallets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Lists the tracked wallets with their figures. */
+        get: operations["listWallets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description The billing cycle supplied by the credit source. */
+        BillingCycle: {
+            /**
+             * Format: date-time
+             * @description The reset instant, exclusive.
+             */
+            end: string;
+            /**
+             * Format: date-time
+             * @description The first charged instant, inclusive.
+             */
+            start: string;
+        };
+        /** @description One bar of a bin chart. */
+        BinBar: {
+            /** @description Its base token, in whole tokens. */
+            base: components["schemas"]["DecimalString"];
+            /**
+             * Format: int32
+             * @description Its (first) bin.
+             */
+            bin_id: number;
+            /** @description Its height: its value as a share of the largest bar, from `0` to `1`. */
+            height: components["schemas"]["DecimalString"];
+            price?: components["schemas"]["Price"] | null;
+            /** @description Its quote token, in whole tokens. */
+            quote: components["schemas"]["DecimalString"];
+        };
+        /** @description A position's liquidity bin by bin (at most 70 bars; bins are grouped beyond). */
+        BinChart: {
+            /**
+             * Format: int32
+             * @description The pool's active bin.
+             */
+            active_bin_id: number;
+            /** @description One bar per bin (or group of bins), lowest first. */
+            bars: components["schemas"]["BinBar"][];
+            /**
+             * Format: int32
+             * @description The lowest bin of the range.
+             */
+            lower_bin_id: number;
+            /**
+             * Format: int32
+             * @description The highest bin of the range.
+             */
+            upper_bin_id: number;
+        };
+        /**
+         * @description The size of the buckets.
+         * @enum {string}
+         */
+        Bucket: "day" | "week" | "month";
+        /** @description One candle, in quote tokens per base token (the chart's quote token). */
+        Candle: {
+            /** @description The last price. */
+            close: components["schemas"]["DecimalString"];
+            /** @description The highest price. */
+            high: components["schemas"]["DecimalString"];
+            /** @description The lowest price. */
+            low: components["schemas"]["DecimalString"];
+            /** @description The first price. */
+            open: components["schemas"]["DecimalString"];
+            /**
+             * Format: date-time
+             * @description When it starts.
+             */
+            start: string;
+            volume_usd?: components["schemas"]["DecimalString"] | null;
+        };
+        /**
+         * @description The size of a candle.
+         * @enum {string}
+         */
+        CandleInterval: "1m" | "5m" | "15m" | "1h" | "4h" | "1d";
+        /**
+         * @description Where candles come from.
+         * @enum {string}
+         */
+        CandleSource: "geckoterminal" | "demo";
+        /** @description Whether candles could be read, tagged by `state`. */
+        CandleStatus: {
+            /** @enum {string} */
+            state: "fresh";
+        } | {
+            /**
+             * Format: date-time
+             * @description When they were read.
+             */
+            fetched_at: string;
+            /** @enum {string} */
+            state: "stale";
+        } | {
+            /** @description Why. */
+            reason: components["schemas"]["CandlesUnavailable"];
+            /**
+             * Format: int64
+             * @description How long to wait before asking again, in seconds, when known.
+             */
+            retry_after_seconds?: number | null;
+            /** @enum {string} */
+            state: "unavailable";
+        };
+        /**
+         * @description Why candles are not available.
+         * @enum {string}
+         */
+        CandlesUnavailable: "source_unreachable" | "rate_limited" | "pool_not_indexed" | "no_data";
+        /** @description The last slot the instance saw. */
+        ChainTip: {
+            /**
+             * Format: int64
+             * @description The slot.
+             */
+            last_slot?: number | null;
+            /**
+             * Format: date-time
+             * @description When it was seen.
+             */
+            last_slot_at?: string | null;
+        };
+        /** @description A movement on the chart. */
+        ChartMarker: {
+            /**
+             * Format: date-time
+             * @description When it happened.
+             */
+            at: string;
+            /** @description What it was. */
+            kind: components["schemas"]["MovementKind"];
+            price?: components["schemas"]["Price"] | null;
+            /** @description Its transaction signature (base58). */
+            signature: string;
+        };
+        /** @description The positions closed on one local day. */
+        ClosedDay: {
+            /** @description The local date, `YYYY-MM-DD`. */
+            day: string;
+            /** @description The latest of them, at most 20. */
+            items: components["schemas"]["ClosedPositionRow"][];
+            /** @description How many more closed that day (History shows them). */
+            remaining_count: number;
+            /** @description The totals of every position closed that day (today's equal the overview's `today`). */
+            totals: components["schemas"]["ClosedTotals"];
+            /** @description Its window. */
+            window: components["schemas"]["Window"];
+        };
+        /** @description A closed position: its row and its chart. */
+        ClosedPositionDetail: components["schemas"]["ClosedPositionRow"] & {
+            /** @description Its price chart. */
+            chart: components["schemas"]["PositionChart"];
+        };
+        /** @description A page of History. */
+        ClosedPositionPage: {
+            /**
+             * Format: date-time
+             * @description The instant the list is read at, fixed by its first page: later closes are left out.
+             */
+            as_of: string;
+            /**
+             * @description The summary of each local day the page touches, over the whole filtered list; a day cut
+             *     by two pages comes twice with the same figures. `null` unless sorted by `closed_at`.
+             */
+            day_groups?: components["schemas"]["DayGroup"][] | null;
+            /** @description The positions, sorted as asked. */
+            items: components["schemas"]["ClosedPositionRow"][];
+            /** @description How many positions match the filters at that instant, over every page. */
+            matched_count: number;
+            /** @description The cursor of the next page; `null` on the last one. */
+            next_cursor?: string | null;
+            /**
+             * @description How many positions of the wallet filter closed by that instant, whatever the other
+             *     filters (`matched_count / total_count` in the title).
+             */
+            total_count: number;
+        };
+        /** @description One closed position. Its figures are exact on their own, even while a wallet imports. */
+        ClosedPositionRow: {
+            /** @description The position account (it can host several positions over time). */
+            address: string;
+            /**
+             * Format: date-time
+             * @description When it closed.
+             */
+            closed_at: string;
+            /** @description Its PnL per day held (holdings under an hour count as an hour), in percent. */
+            dpr: components["schemas"]["PercentFigure"];
+            /** @description The fees it claimed. */
+            fees: components["schemas"]["Figure"];
+            /** @description The fees as a percentage of what it invested. */
+            fees_pct: components["schemas"]["PercentFigure"];
+            /**
+             * Format: int64
+             * @description How long it was held, in seconds.
+             */
+            held_seconds: number;
+            /** @description Its stable id, `<address>-<opening signature>`; permanent links use it. */
+            id: string;
+            /** @description What it invested. */
+            invested: components["schemas"]["Figure"];
+            /** @description Whether nothing ever moved: an empty shell (its outcome is `flat`). */
+            is_shell: boolean;
+            /** @description Its liquidity PnL: withdrawn + fees + rewards − invested. */
+            lp_pnl: components["schemas"]["Figure"];
+            market_pnl?: components["schemas"]["Figure"] | null;
+            /** @description How its PnL was measured. */
+            method: components["schemas"]["PnlMethod"];
+            /**
+             * Format: date-time
+             * @description When it opened.
+             */
+            opened_at: string;
+            outcome?: components["schemas"]["Outcome"] | null;
+            /** @description Its PnL. */
+            pnl: components["schemas"]["Figure"];
+            /** @description Its PnL as a percentage of what it invested. */
+            pnl_pct: components["schemas"]["PercentFigure"];
+            /** @description Its pool. */
+            pool: components["schemas"]["PoolRef"];
+            /** @description Farming rewards, separately from swap fees. */
+            rewards: components["schemas"]["Figure"];
+            strategy?: components["schemas"]["Strategy"] | null;
+            /** @description The wallet that owned it. */
+            wallet: components["schemas"]["WalletRef"];
+            /** @description What it withdrew. */
+            withdrawn: components["schemas"]["Figure"];
+        };
+        /** @description The totals of a set of closed positions (every one counts, empty shells as `flat`). */
+        ClosedTotals: {
+            /**
+             * Format: int64
+             * @description The mean holding time, in seconds; `null` for an empty set.
+             */
+            average_held_seconds?: number | null;
+            /** @description How many. */
+            count: number;
+            /** @description The sum of their fees. */
+            fees: components["schemas"]["Figure"];
+            /** @description How many ended flat: exactly even, or empty shells. */
+            flat: number;
+            /** @description The sum invested. */
+            invested: components["schemas"]["Figure"];
+            /** @description How many lost. */
+            losses: number;
+            /**
+             * Format: int64
+             * @description The median holding time, in seconds; `null` for an empty set.
+             */
+            median_held_seconds?: number | null;
+            /** @description The sum of their PnL. */
+            pnl: components["schemas"]["Figure"];
+            /** @description `Σ PnL / Σ invested`. */
+            pnl_pct: components["schemas"]["PercentFigure"];
+            /** @description Farming rewards, separately from swap fees. */
+            rewards: components["schemas"]["Figure"];
+            /** @description Closed lives whose native PnL sign is not proved yet. */
+            unclassified_count: number;
+            /**
+             * @description `wins / (wins + losses)`, flat positions left out; estimated with unclassified lives.
+             *     Unavailable without a proved win or loss.
+             */
+            win_rate: components["schemas"]["PercentFigure"];
+            /** @description How many gained. */
+            wins: number;
+            /** @description The sum withdrawn. */
+            withdrawn: components["schemas"]["Figure"];
+        };
         /**
          * @description Whether one component answers.
          * @enum {string}
          */
         ComponentStatus: "ok" | "unavailable";
+        /**
+         * @description What a position holds.
+         * @enum {string}
+         */
+        Composition: "mixed" | "all_base" | "all_quote";
+        /** @description Actual credits admitted by the engine's provider governor, without issuing a request. */
+        CreditHealth: {
+            /**
+             * Format: int64
+             * @description Credits spent in the billing cycle.
+             */
+            cycle_used: number;
+            /**
+             * Format: int64
+             * @description Today's remaining allowance under the current billing cycle.
+             */
+            daily_allowance: number;
+            /** @description Whether every request is currently refused by a hard governor limit. */
+            hard_limit_reached: boolean;
+            /**
+             * Format: int64
+             * @description Credits granted by the billing cycle.
+             */
+            quota: number;
+            /**
+             * Format: int64
+             * @description Credits spent today (UTC).
+             */
+            today_used: number;
+        };
+        /** @description The provider credits of the current billing cycle. */
+        CreditsSummary: {
+            /**
+             * Format: int64
+             * @description The cycle budget.
+             */
+            budget: number;
+            /** @description Exact cycle boundaries from the governor, simulated independently in demo mode. */
+            cycle: components["schemas"]["BillingCycle"];
+            /** @description Observed or projected excess; null when neither proves a verdict yet. */
+            is_over_budget: boolean | null;
+            /**
+             * Format: int64
+             * @description Expected cycle spending by elapsed seconds; null when no second has elapsed.
+             */
+            projected: number | null;
+            /**
+             * Format: int64
+             * @description Credits spent so far.
+             */
+            used: number;
+            /** @description `used / budget`, in percent. */
+            used_percent: components["schemas"]["PercentFigure"];
+        };
+        /**
+         * @description The currency figures are shown in.
+         * @enum {string}
+         */
+        Currency: "sol" | "usd";
+        /**
+         * @description Where the figures the API serves come from.
+         * @enum {string}
+         */
+        DataSource: "chain" | "demo";
+        /** @description The summary of the filtered positions closed on one local day. */
+        DayGroup: {
+            /** @description How many closed. */
+            count: number;
+            /** @description The local date, `YYYY-MM-DD`. */
+            day: string;
+            /** @description How many ended flat: exactly even, or empty shells. */
+            flat: number;
+            /** @description How many lost. */
+            losses: number;
+            /** @description The sum of their PnL. */
+            pnl: components["schemas"]["Figure"];
+            /** @description Closed lives whose native PnL sign is not proved yet. */
+            unclassified_count: number;
+            /** @description `wins / (wins + losses)`. */
+            win_rate: components["schemas"]["PercentFigure"];
+            /** @description How many gained. */
+            wins: number;
+        };
+        /**
+         * @description An exact decimal number written as text: no exponent, no `+`, no leading zero, no trailing
+         *     zero after the point, never `-0`. For example `"61.541203117"`, `"-0.949"`, `"0"`.
+         * @example -1.25
+         */
+        DecimalString: string;
         /**
          * @description Where the engine is in its lifecycle.
          * @enum {string}
@@ -129,7 +706,7 @@ export interface components {
          * @description Why a request failed. Stable: clients use it as their translation key.
          * @enum {string}
          */
-        ErrorCode: "invalid_request" | "unauthenticated" | "invalid_credentials" | "forbidden_cross_origin" | "not_found" | "method_not_allowed" | "request_timeout" | "payload_too_large" | "too_many_attempts" | "internal";
+        ErrorCode: "invalid_request" | "unauthenticated" | "invalid_credentials" | "forbidden_cross_origin" | "not_found" | "method_not_allowed" | "wallet_not_found" | "position_not_found" | "request_timeout" | "invalid_cursor" | "payload_too_large" | "too_many_attempts" | "data_not_ready" | "internal";
         /** @description The content of an error body. */
         ErrorDetail: {
             /** @description The stable error code; clients translate it. */
@@ -139,18 +716,90 @@ export interface components {
             /** @description The id of the request, also in the `x-request-id` response header. */
             request_id: string;
         };
+        /** @description The range a movement set. */
+        EventRange: {
+            lower?: components["schemas"]["Price"] | null;
+            /**
+             * Format: int32
+             * @description The lowest bin.
+             */
+            lower_bin_id: number;
+            upper?: components["schemas"]["Price"] | null;
+            /**
+             * Format: int32
+             * @description The highest bin.
+             */
+            upper_bin_id: number;
+        };
+        /**
+         * @description An amount and how far it can be trusted. `value` is present unless the figure is
+         *     `unavailable`; `reasons` say why a figure is not `complete`.
+         */
+        Figure: {
+            /** @enum {string} */
+            exactness: "complete";
+            /** @description The amount. */
+            value: components["schemas"]["Money"];
+        } | {
+            /** @enum {string} */
+            exactness: "partial";
+            /** @description Why it is partial. */
+            reasons: components["schemas"]["Reason"][];
+            /** @description The amount of what could be valued. */
+            value: components["schemas"]["Money"];
+        } | {
+            /** @enum {string} */
+            exactness: "estimated";
+            /** @description Why it is estimated. */
+            reasons: components["schemas"]["Reason"][];
+            /** @description The estimated amount. */
+            value: components["schemas"]["Money"];
+        } | {
+            /** @enum {string} */
+            exactness: "unavailable";
+            /** @description Why. */
+            reasons: components["schemas"]["Reason"][];
+        };
+        /**
+         * @description How fresh a screen's figures are. Freshness never changes a figure's exactness: a lagging
+         *     wallet's figures stay exact, only older.
+         */
+        Freshness: {
+            /**
+             * Format: date-time
+             * @description When the figures were read.
+             */
+            as_of: string;
+            /**
+             * Format: int64
+             * @description The largest lag of those wallets, in seconds, when known.
+             */
+            lag_seconds?: number | null;
+            /** @description The worst sync state of the wallets they cover. */
+            state: components["schemas"]["SyncState"];
+        };
+        /** @description The real PnL gained over a period. */
+        Gain: {
+            /** @description The gain as a percentage of the net worth at the start; `unavailable` for `all`. */
+            pct: components["schemas"]["PercentFigure"];
+            /** @description Real PnL now − real PnL at the start (the real PnL series ends on it). */
+            value: components["schemas"]["Figure"];
+            /** @description The period's window. */
+            window: components["schemas"]["Window"];
+        };
         /** @description The health report. */
         Health: {
+            credits: components["schemas"]["CreditHealth"] | null;
+            /** @description Where the figures come from. */
+            data_source: components["schemas"]["DataSource"];
             /** @description Whether the database answers. */
             database: components["schemas"]["ComponentStatus"];
             /** @description Where the engine is in its lifecycle. */
             engine: components["schemas"]["EngineStatus"];
-            /** @description Latest RPC attempt, read from memory without issuing a request. */
-            rpc: components["schemas"]["RpcStatus"];
+            rpc: components["schemas"]["RpcStatus"] | null;
             /** @description `ok` when every component answers. */
             status: components["schemas"]["HealthStatus"];
-            /** @description Latest connection and subscription facts. */
-            stream: components["schemas"]["StreamStatus"];
+            stream: components["schemas"]["StreamStatus"] | null;
             /** @description The binsight version, for example `0.1.0`. */
             version: string;
         };
@@ -159,6 +808,40 @@ export interface components {
          * @enum {string}
          */
         HealthStatus: "ok" | "unavailable";
+        /** @description The progress of a history import. */
+        ImportProgress: {
+            /**
+             * Format: int64
+             * @description How long it should still take, in seconds, when known.
+             */
+            eta_seconds?: number | null;
+            /** @description How far it is, in percent. */
+            progress: components["schemas"]["DecimalString"];
+        };
+        /** @description A wallet importing its history. */
+        ImportingWallet: {
+            /** @description How far the import is, in percent. */
+            progress: components["schemas"]["DecimalString"];
+            /** @description The wallet. */
+            wallet: components["schemas"]["WalletRef"];
+        };
+        /**
+         * @description The settings of the instance. Language, theme and density are preferences of each device and
+         *     are not here.
+         */
+        InstanceSettings: {
+            /** @description The currency figures are shown in unless a client asks for another. */
+            default_currency: components["schemas"]["Currency"];
+            /** @description Whether clients hide amounts until the owner reveals them. */
+            hide_amounts_by_default: boolean;
+            /**
+             * @description The IANA time zone that decides where days start (today, periods, calendars), such as
+             *     `Europe/Paris`.
+             */
+            timezone: string;
+            /** @description `default` until the owner chooses a time zone (clients may then suggest theirs once). */
+            timezone_source: components["schemas"]["TimezoneSource"];
+        };
         /** @description A message of the live event stream. */
         LiveEvent: {
             /**
@@ -173,6 +856,13 @@ export interface components {
             status: components["schemas"]["EngineStatus"];
             /** @enum {string} */
             type: "engine_status";
+        } | {
+            /** @description The state decided from real ingestion facts. */
+            state: components["schemas"]["SyncState"];
+            /** @enum {string} */
+            type: "wallet_sync_changed";
+            /** @description The wallet address in base58. */
+            wallet: string;
         };
         /** @description A login attempt. Deliberately not `Debug`: it holds the password. */
         LoginRequest: {
@@ -182,11 +872,517 @@ export interface components {
              */
             password: string;
         };
+        /** @description An exact amount of money. */
+        Money: {
+            /** @description The amount in whole units (`"1.5"` SOL), signed for gains and losses. */
+            amount: components["schemas"]["DecimalString"];
+            /** @description The unit. */
+            unit: components["schemas"]["MoneyUnit"];
+        };
+        /**
+         * @description The unit of an amount.
+         * @enum {string}
+         */
+        MoneyUnit: "sol" | "usd" | "usdc" | "usdt";
+        /**
+         * @description What a movement did.
+         * @enum {string}
+         */
+        MovementKind: "open" | "add" | "rebalance_withdrawal" | "rebalance_deposit" | "reward_claim" | "remove" | "claim" | "close";
+        /** @description The net worth in its parts. */
+        NetWorth: {
+            /** @description Free SOL and priced tokens. */
+            idle: components["schemas"]["Figure"];
+            /** @description The liquidity in open positions. */
+            lp: components["schemas"]["Figure"];
+            /** @description The rent closing accounts would give back. */
+            recoverable_rent: components["schemas"]["Figure"];
+            /** @description idle + lp + unclaimed fees + recoverable rent. */
+            total: components["schemas"]["Figure"];
+            /** @description The fees the open positions could claim. */
+            unclaimed_fees: components["schemas"]["Figure"];
+            /** @description The tokens held without a price, left out of the total (which is then `partial`). */
+            unpriced: components["schemas"]["UnpricedHolding"][];
+        };
+        /**
+         * @description How an open position's PnL is measured: at its bins.
+         * @enum {string}
+         */
+        OpenMethod: "pool";
+        /** @description An open position: its row, how fresh it is, and its chart. */
+        OpenPositionDetail: components["schemas"]["OpenPositionRow"] & {
+            /** @description Its price chart. */
+            chart: components["schemas"]["PositionChart"];
+            /** @description How fresh its figures are. */
+            freshness: components["schemas"]["Freshness"];
+        };
+        /** @description One open position. */
+        OpenPositionRow: {
+            /** @description The position account. */
+            address: string;
+            apr?: components["schemas"]["PercentFigure"] | null;
+            /** @description Its liquidity, bin by bin. */
+            bins: components["schemas"]["BinChart"];
+            /** @description The fees it claimed. */
+            claimed_fees: components["schemas"]["Figure"];
+            /** @description Its PnL per day open (under an hour counts as an hour), in percent. */
+            dpr: components["schemas"]["PercentFigure"];
+            /** @description claimed + unclaimed fees. */
+            fees: components["schemas"]["Figure"];
+            /** @description Its stable id, `<address>-<opening signature>`. */
+            id: string;
+            /** @description What it invested. */
+            invested: components["schemas"]["Figure"];
+            lower?: components["schemas"]["Price"] | null;
+            /** @description Always `pool`: an open position is marked at its bins. */
+            method: components["schemas"]["OpenMethod"];
+            /** @description invested − withdrawn. */
+            net_invested: components["schemas"]["Figure"];
+            /**
+             * Format: date-time
+             * @description When it opened (clients compute its age).
+             */
+            opened_at: string;
+            /** @description withdrawn + claimed fees + rewards + value + unclaimed fees − invested. */
+            pnl: components["schemas"]["Figure"];
+            /** @description Its PnL as a percentage of what it invested. */
+            pnl_pct: components["schemas"]["PercentFigure"];
+            /** @description Its pool. */
+            pool: components["schemas"]["PoolRef"];
+            price?: components["schemas"]["Price"] | null;
+            /** @description Where the price stands against the range. */
+            range: components["schemas"]["RangeInfo"];
+            /** @description Farming rewards, separately from swap fees. */
+            rewards: components["schemas"]["Figure"];
+            /** @description Its value as a share of its wallet's net worth. */
+            share_of_net_worth: components["schemas"]["PercentFigure"];
+            strategy?: components["schemas"]["Strategy"] | null;
+            /** @description The fees it could claim. */
+            unclaimed_fees: components["schemas"]["Figure"];
+            upper?: components["schemas"]["Price"] | null;
+            /** @description The value of its liquidity. */
+            value: components["schemas"]["Figure"];
+            /** @description The wallet that owns it. */
+            wallet: components["schemas"]["WalletRef"];
+            /** @description What it withdrew. */
+            withdrawn: components["schemas"]["Figure"];
+        };
+        /** @description The open positions and their totals. */
+        OpenPositions: {
+            /** @description How fresh the figures are. */
+            freshness: components["schemas"]["Freshness"];
+            /** @description The positions, sorted as asked. */
+            items: components["schemas"]["OpenPositionRow"][];
+            /** @description Always `null`: the list is never paged. */
+            next_cursor?: string | null;
+            /** @description The totals (`value` equals the net worth's `lp`, `unclaimed_fees` its unclaimed fees). */
+            totals: components["schemas"]["OpenTotals"];
+        };
+        /** @description The open positions together. */
+        OpenSummary: {
+            /** @description How many. */
+            count: number;
+            /** @description How many are out of range. */
+            out_of_range_count: number;
+            /** @description Their open PnL. */
+            pnl: components["schemas"]["Figure"];
+            /** @description Their PnL as a percentage of their net investment. */
+            pnl_pct: components["schemas"]["PercentFigure"];
+            /** @description The fees they could claim (the same as the net worth's part). */
+            unclaimed_fees: components["schemas"]["Figure"];
+            /** @description How many have fees to claim. */
+            unclaimed_position_count: number;
+        };
+        /** @description The totals of the open positions. */
+        OpenTotals: {
+            /** @description The fees they claimed. */
+            claimed_fees: components["schemas"]["Figure"];
+            /** @description How many. */
+            count: number;
+            /** @description claimed + unclaimed fees. */
+            fees: components["schemas"]["Figure"];
+            /** @description What they invested. */
+            invested: components["schemas"]["Figure"];
+            /** @description invested − withdrawn. */
+            net_invested: components["schemas"]["Figure"];
+            /** @description How many are out of range. */
+            out_of_range_count: number;
+            /** @description Their open PnL. */
+            pnl: components["schemas"]["Figure"];
+            /** @description Their PnL as a percentage of their net investment. */
+            pnl_pct: components["schemas"]["PercentFigure"];
+            /** @description Farming rewards, separately from swap fees. */
+            rewards: components["schemas"]["Figure"];
+            /** @description The fees they could claim. */
+            unclaimed_fees: components["schemas"]["Figure"];
+            /** @description Their value. */
+            value: components["schemas"]["Figure"];
+            /** @description What they withdrew. */
+            withdrawn: components["schemas"]["Figure"];
+        };
+        /**
+         * @description How a closed position ended, read on the sign of its PnL in the pool's quote token.
+         * @enum {string}
+         */
+        Outcome: "win" | "loss" | "flat";
+        /** @description Everything the overview shows. */
+        Overview: {
+            /** @description How fresh its figures are. */
+            freshness: components["schemas"]["Freshness"];
+            /** @description The real PnL gained over the period. */
+            gain: components["schemas"]["Gain"];
+            /** @description The net worth now: `total` is the sum of the four parts. */
+            net_worth: components["schemas"]["NetWorth"];
+            /** @description The open positions together. */
+            open: components["schemas"]["OpenSummary"];
+            /** @description Which wallets lag behind the chain or import their history. */
+            sync: components["schemas"]["OverviewSync"];
+            /**
+             * @description The positions closed since local midnight: the same totals as today's recent closes and
+             *     History for today.
+             */
+            today: components["schemas"]["Today"];
+            wallet?: components["schemas"]["WalletRef"] | null;
+            /** @description What deserves attention, most urgent first. */
+            watch: components["schemas"]["WatchItem"][];
+        };
+        /** @description The synchronization of the wallets the overview covers. */
+        OverviewSync: {
+            /** @description The wallets importing their history. */
+            importing: components["schemas"]["ImportingWallet"][];
+            /** @description The wallets behind the chain. */
+            lagging: components["schemas"]["WalletRef"][];
+            /** @description The worst state. */
+            state: components["schemas"]["SyncState"];
+        };
+        /** @description A percentage (`"2.56"` is 2.56 %) and how far it can be trusted, shaped like [`Figure`]. */
+        PercentFigure: {
+            /** @enum {string} */
+            exactness: "complete";
+            /** @description The percentage. */
+            value: components["schemas"]["DecimalString"];
+        } | {
+            /** @enum {string} */
+            exactness: "partial";
+            /** @description Why it is partial. */
+            reasons: components["schemas"]["Reason"][];
+            /** @description The percentage. */
+            value: components["schemas"]["DecimalString"];
+        } | {
+            /** @enum {string} */
+            exactness: "estimated";
+            /** @description Why it is estimated. */
+            reasons: components["schemas"]["Reason"][];
+            /** @description The percentage. */
+            value: components["schemas"]["DecimalString"];
+        } | {
+            /** @enum {string} */
+            exactness: "unavailable";
+            /** @description Why. */
+            reasons: components["schemas"]["Reason"][];
+        };
+        /**
+         * @description How a position's PnL was measured.
+         * @enum {string}
+         */
+        PnlMethod: "fifo" | "pool";
+        /** @description A pool of the history. */
+        PoolOption: {
+            /** @description How many of its positions closed: what History lists for this pool alone. */
+            closed_count: number;
+            /**
+             * Format: date-time
+             * @description When its latest position closed; `null` when none did.
+             */
+            last_closed_at?: string | null;
+            /** @description How many of its positions are open. */
+            open_count: number;
+            /** @description The pool (two pools of one pair differ by `bin_step`). */
+            pool: components["schemas"]["PoolRef"];
+        };
+        /** @description Pools of the history. */
+        PoolOptions: {
+            /** @description The pools: exact symbol matches first, then the latest close first. */
+            items: components["schemas"]["PoolOption"][];
+            /** @description Always `null`: the list is never paged. */
+            next_cursor?: string | null;
+        };
+        /** @description A DLMM pool. */
+        PoolRef: {
+            /** @description The pool address (base58). */
+            address: string;
+            /** @description The token whose price moves. */
+            base: components["schemas"]["TokenRef"];
+            /**
+             * Format: int32
+             * @description Its bin step, in basis points.
+             */
+            bin_step: number;
+            /** @description The token prices are expressed in. */
+            quote: components["schemas"]["TokenRef"];
+            quote_kind?: components["schemas"]["QuoteKind"] | null;
+        };
+        /** @description The candles of a position's chart. */
+        PositionCandles: {
+            /** @description The candles, oldest first; empty when unavailable. */
+            candles: components["schemas"]["Candle"][];
+            /**
+             * Format: date-time
+             * @description The first instant of the chart.
+             */
+            from: string;
+            /** @description Their size. */
+            interval: components["schemas"]["CandleInterval"];
+            /** @description Where they come from (clients credit `geckoterminal`). */
+            source: components["schemas"]["CandleSource"];
+            /** @description Whether they could be read. */
+            status: components["schemas"]["CandleStatus"];
+            /**
+             * Format: date-time
+             * @description The last instant of the chart.
+             */
+            to: string;
+        };
+        /**
+         * @description The price chart of a position, always in its pool's quote token (never converted to dollars,
+         *     so the range band stays exact).
+         */
+        PositionChart: {
+            current_price?: components["schemas"]["Price"] | null;
+            /** @description The candle size that suits the window (what `interval=auto` picks). */
+            default_interval: components["schemas"]["CandleInterval"];
+            /**
+             * Format: date-time
+             * @description The first instant: a tenth of the position's life before it opened.
+             */
+            from: string;
+            /** @description Every candle size that draws the window in at most 1000 candles, smallest first. */
+            intervals: components["schemas"]["CandleInterval"][];
+            /** @description One marker per movement, oldest first. */
+            markers: components["schemas"]["ChartMarker"][];
+            /** @description The token prices are expressed in. */
+            quote: components["schemas"]["TokenRef"];
+            /** @description The range over time, oldest first (it changes when the position rebalances). */
+            ranges: components["schemas"]["RangeSpan"][];
+            /**
+             * Format: date-time
+             * @description The last instant: now while open, a tenth of its life after it closed otherwise.
+             */
+            to: string;
+        };
+        /** @description A position, tagged by `status`. */
+        PositionDetail: (components["schemas"]["OpenPositionDetail"] & {
+            /** @enum {string} */
+            status: "open";
+        }) | (components["schemas"]["ClosedPositionDetail"] & {
+            /** @enum {string} */
+            status: "closed";
+        });
+        /** @description One movement of a position. */
+        PositionEvent: {
+            /**
+             * Format: date-time
+             * @description When its transaction happened.
+             */
+            at: string;
+            base?: components["schemas"]["DecimalString"] | null;
+            /** @description What it did. */
+            kind: components["schemas"]["MovementKind"];
+            price?: components["schemas"]["Price"] | null;
+            quote?: components["schemas"]["DecimalString"] | null;
+            range?: components["schemas"]["EventRange"] | null;
+            reward?: components["schemas"]["RewardMovement"] | null;
+            /** @description Its transaction signature (base58); several movements can share one. */
+            signature: string;
+            value?: components["schemas"]["Figure"] | null;
+        };
+        /** @description A page of movements, newest first. */
+        PositionEvents: {
+            /** @description The movements. */
+            items: components["schemas"]["PositionEvent"][];
+            /** @description The cursor of the next (older) page; `null` on the last page. */
+            next_cursor?: string | null;
+        };
+        /** @description A unit price: quote tokens per base token, with at most twelve significant digits. */
+        Price: {
+            /** @description The price. */
+            amount: components["schemas"]["DecimalString"];
+            /** @description The token it is expressed in. */
+            quote: components["schemas"]["PriceQuote"];
+        };
+        /**
+         * @description The token a price is expressed in.
+         * @enum {string}
+         */
+        PriceQuote: "sol" | "usdc" | "usdt";
+        /**
+         * @description What a pool's quote token is.
+         * @enum {string}
+         */
+        QuoteKind: "sol" | "stable";
+        /** @description Where the price stands against a range. */
+        RangeInfo: {
+            /** @description What the position holds (above the range: only quote; below: only base). */
+            composition: components["schemas"]["Composition"];
+            /** @description How far the price can fall to the bottom of the range, in percent (negative outside). */
+            margin_down: components["schemas"]["PercentFigure"];
+            /** @description How far the price can rise to the top of the range, in percent (negative outside). */
+            margin_up: components["schemas"]["PercentFigure"];
+            /**
+             * Format: date-time
+             * @description Since when it is on that side; `null` when it never moved since the opening.
+             */
+            since?: string | null;
+            /** @description Inside, above or below. */
+            status: components["schemas"]["RangeStatus"];
+        };
+        /**
+         * @description Where the price is against a range.
+         * @enum {string}
+         */
+        RangeSide: "above" | "below";
+        /** @description The range of a position over a span of time. */
+        RangeSpan: {
+            /**
+             * Format: date-time
+             * @description When the range was set.
+             */
+            from: string;
+            lower?: components["schemas"]["Price"] | null;
+            /**
+             * Format: date-time
+             * @description When it changed or the position closed; `null` while it holds.
+             */
+            to?: string | null;
+            upper?: components["schemas"]["Price"] | null;
+        };
+        /**
+         * @description Where the price stands against a range.
+         * @enum {string}
+         */
+        RangeStatus: "in_range" | "above" | "below";
+        /** @description One reason a figure is partial, estimated or unavailable, tagged by `code`. */
+        Reason: {
+            /** @enum {string} */
+            code: "unpriced_token";
+            /** @description The token's mint. */
+            mint: string;
+            /** @description The wallet that holds it. */
+            wallet: string;
+        } | {
+            /** @enum {string} */
+            code: "reconstructed_history";
+            /**
+             * Format: date-time
+             * @description When it was added (RFC 3339, UTC): what comes before is reconstructed.
+             */
+            until: string;
+            /** @description The wallet. */
+            wallet: string;
+        } | {
+            /** @enum {string} */
+            code: "history_incomplete";
+            /** @description How far the import is, in percent. */
+            progress: components["schemas"]["DecimalString"];
+            /** @description The wallet. */
+            wallet: string;
+        } | {
+            /** @enum {string} */
+            code: "unpriced_leg";
+            /** @description The position id. */
+            position: string;
+        } | {
+            /** @enum {string} */
+            code: "unsupported_quote";
+            /** @description The pool. */
+            pool: string;
+        } | {
+            /** @enum {string} */
+            code: "provisional_rate";
+            /**
+             * Format: date
+             * @description The UTC day that has not closed yet.
+             */
+            day: string;
+        } | {
+            /**
+             * Format: int64
+             * @description Whole seconds between the mark and the requested instant.
+             */
+            age_seconds: number;
+            /** @enum {string} */
+            code: "stale_mark";
+        } | {
+            /** @enum {string} */
+            code: "missing_open_pnl_mark";
+            /** @description The wallet whose historical open PnL is unavailable. */
+            wallet: string;
+        } | {
+            /** @enum {string} */
+            code: "no_usd_rate";
+        } | {
+            /** @enum {string} */
+            code: "zero_denominator";
+        } | {
+            /** @enum {string} */
+            code: "no_losses";
+        };
+        /** @description The positions closed today and yesterday. */
+        RecentCloses: {
+            /** @description Today, then yesterday (always both, possibly empty). */
+            days: components["schemas"]["ClosedDay"][];
+            last_close?: components["schemas"]["ClosedPositionRow"] | null;
+        };
+        /** @description The raw proof of a reward claim, without assuming the token's decimals or price. */
+        RewardMovement: {
+            /** @description The mint paid by the pool's reward program, in base58. */
+            mint: string;
+            /** @description A canonical integer string of raw token units, not a human token amount. */
+            raw_amount: string;
+            /**
+             * Format: int64
+             * @description Which reward program of the pool paid it.
+             */
+            reward_index: number;
+        };
         /**
          * @description The latest completed RPC attempt; health requests never probe the provider.
          * @enum {string}
          */
         RpcStatus: "unknown" | "ok" | "unavailable";
+        /**
+         * @description Which series.
+         * @enum {string}
+         */
+        Series: "net_worth" | "real_pnl" | "positions";
+        /** @description The headline figures of a series. */
+        SeriesHeader: {
+            change?: components["schemas"]["Figure"] | null;
+            net_deposits?: components["schemas"]["Figure"] | null;
+            /**
+             * @description The net worth now, the gain (equal to the overview's), or the PnL of the positions
+             *     closed in the window.
+             */
+            value: components["schemas"]["Figure"];
+        };
+        /** @description One point of a series. */
+        SeriesPoint: {
+            bar?: components["schemas"]["Figure"] | null;
+            bar_share_of_net_worth?: components["schemas"]["PercentFigure"] | null;
+            /**
+             * Format: date-time
+             * @description The end of its bucket (now for the last one).
+             */
+            end: string;
+            /** @description The change since the start of the window (the net worth itself for `net_worth`). */
+            line: components["schemas"]["Figure"];
+            line_share_of_net_worth?: components["schemas"]["PercentFigure"] | null;
+            /**
+             * Format: date-time
+             * @description The start of its bucket.
+             */
+            start: string;
+        };
         /** @description The current session. */
         SessionInfo: {
             /** @description Always `true`: without a session the API answers `401` instead. */
@@ -197,11 +1393,292 @@ export interface components {
              */
             expires_at: string;
         };
+        /** @description A series over a window. */
+        StatsSeries: {
+            /** @description The size of its buckets. */
+            bucket: components["schemas"]["Bucket"];
+            /** @description The headline figures. */
+            header: components["schemas"]["SeriesHeader"];
+            /** @description One point per bucket; the first and the last are cut at the window's bounds. */
+            points: components["schemas"]["SeriesPoint"][];
+            /** @description Which series. */
+            series: components["schemas"]["Series"];
+            /** @description The window. */
+            window: components["schemas"]["Window"];
+        };
+        /**
+         * @description How a position spreads its liquidity over its bins.
+         * @enum {string}
+         */
+        Strategy: "spot" | "curve" | "bid_ask";
         /**
          * @description The stream's actual connection and subscription state.
          * @enum {string}
          */
         StreamStatus: "idle" | "connecting" | "connected" | "unavailable";
+        /** @description The synchronization of the instance. */
+        SyncReport: {
+            /**
+             * Format: date-time
+             * @description When this report was made.
+             */
+            as_of: string;
+            /** @description The chain tip. */
+            chain: components["schemas"]["ChainTip"];
+            /** @description The credits of the billing cycle. */
+            credits: components["schemas"]["CreditsSummary"];
+            /** @description Where the engine is in its lifecycle. */
+            engine: components["schemas"]["EngineStatus"];
+            /**
+             * Format: date-time
+             * @description When the engine started.
+             */
+            started_at: string;
+            /** @description The worst state of the wallets. */
+            state: components["schemas"]["SyncState"];
+            /**
+             * Format: int64
+             * @description How often open positions are valued, in seconds, when they are.
+             */
+            valuation_interval_seconds?: number | null;
+            /** @description Each wallet, in the order of the wallet list. */
+            wallets: components["schemas"]["WalletSyncLine"][];
+        };
+        /**
+         * @description How a wallet (or the instance) keeps up with the chain, from the best to the worst.
+         * @enum {string}
+         */
+        SyncState: "live" | "importing" | "lagging" | "error";
+        /**
+         * @description Where the time zone setting comes from.
+         * @enum {string}
+         */
+        TimezoneSource: "default" | "owner";
+        /** @description The positions closed since local midnight. */
+        Today: {
+            /** @description Their totals; `pnl_pct` is `Σ PnL / Σ invested` of today's closes. */
+            totals: components["schemas"]["ClosedTotals"];
+            /** @description Today's window. */
+            window: components["schemas"]["Window"];
+        };
+        /**
+         * @description How a client draws a token's logo. Logos are always served by binsight itself, never by a
+         *     third party.
+         */
+        TokenLogo: {
+            /** @enum {string} */
+            kind: "sol";
+        } | {
+            /** @enum {string} */
+            kind: "image";
+            /** @description The image path, such as `/api/v1/tokens/<mint>/logo?v=<fingerprint>`. */
+            url: string;
+        } | {
+            /** @enum {string} */
+            kind: "none";
+        };
+        /** @description A token: its mint, its metadata when known, its decimals and how to draw its logo. */
+        TokenRef: {
+            /**
+             * Format: int32
+             * @description The decimals of the mint, read on-chain.
+             */
+            decimals: number;
+            /** @description How to draw its logo. */
+            logo: components["schemas"]["TokenLogo"];
+            /** @description The mint (base58). */
+            mint: string;
+            /** @description The full name; `null` when unknown. */
+            name?: string | null;
+            /** @description The ticker; `null` when unknown (clients show the short mint). */
+            symbol?: string | null;
+        };
+        /** @description A token held without a price, left out of the net worth. */
+        UnpricedHolding: {
+            /** @description How much, in whole tokens. */
+            amount: components["schemas"]["DecimalString"];
+            /** @description The token. */
+            token: components["schemas"]["TokenRef"];
+            /** @description Who holds it. */
+            wallet: components["schemas"]["WalletRef"];
+        };
+        /**
+         * @description One of the eight wallet colors of the theme.
+         * @enum {string}
+         */
+        WalletColor: "wallet_1" | "wallet_2" | "wallet_3" | "wallet_4" | "wallet_5" | "wallet_6" | "wallet_7" | "wallet_8";
+        /** @description The tracked wallets and their total. */
+        WalletList: {
+            /** @description Each wallet, in the order they were added. */
+            items: components["schemas"]["WalletSummary"][];
+            /** @description Always `null`: the list is never paged. */
+            next_cursor?: string | null;
+            /** @description Every wallet together. */
+            total: components["schemas"]["WalletsTotal"];
+        };
+        /** @description A tracked wallet: its address, its label and its color. */
+        WalletRef: {
+            /** @description The wallet address (base58). */
+            address: string;
+            /** @description Its color in charts and legends. */
+            color: components["schemas"]["WalletColor"];
+            /** @description Its label: never empty, at most 10 characters (the short address when the owner gave none). */
+            label: string;
+        };
+        /** @description One tracked wallet and its figures. */
+        WalletSummary: {
+            /**
+             * Format: date-time
+             * @description When the owner added it.
+             */
+            added_at: string;
+            /** @description How many positions it closed (as History counts them). */
+            closed_count: number;
+            /** @description Its net worth now. */
+            net_worth: components["schemas"]["Figure"];
+            /** @description How many positions it has open. */
+            open_count: number;
+            /** @description How many of them are out of range. */
+            out_of_range_count: number;
+            /** @description Its real PnL since its first activity: net worth − net capital put in. */
+            real_pnl: components["schemas"]["Figure"];
+            /** @description Its net worth as a share of the total net worth. */
+            share_of_net_worth: components["schemas"]["PercentFigure"];
+            /** @description Its synchronization (the same as in `GET /sync`). */
+            sync: components["schemas"]["WalletSync"];
+            /** @description The wallet. */
+            wallet: components["schemas"]["WalletRef"];
+        };
+        /** @description The synchronization of one wallet. */
+        WalletSync: {
+            import?: components["schemas"]["ImportProgress"] | null;
+            /**
+             * Format: int64
+             * @description How many of its transactions are indexed.
+             */
+            indexed_tx: number;
+            /**
+             * Format: int64
+             * @description How far behind the chain it is, in seconds, when known.
+             */
+            lag_seconds?: number | null;
+            /**
+             * Format: date-time
+             * @description When its last transaction happened.
+             */
+            last_tx_at?: string | null;
+            /** @description Its state. */
+            state: components["schemas"]["SyncState"];
+        };
+        /** @description A wallet and its synchronization. */
+        WalletSyncLine: components["schemas"]["WalletSync"] & {
+            /** @description The wallet. */
+            wallet: components["schemas"]["WalletRef"];
+        };
+        /** @description The figures of every wallet together. */
+        WalletsTotal: {
+            /** @description How many positions were closed. */
+            closed_count: number;
+            /** @description The total net worth. */
+            net_worth: components["schemas"]["Figure"];
+            /** @description How many positions are open. */
+            open_count: number;
+            /** @description How many of them are out of range. */
+            out_of_range_count: number;
+            /** @description The total real PnL. */
+            real_pnl: components["schemas"]["Figure"];
+        };
+        /** @description Something that deserves the owner's attention, tagged by `kind`. */
+        WatchItem: {
+            /** @enum {string} */
+            kind: "out_of_range";
+            /** @description Its pool. */
+            pool: components["schemas"]["PoolRef"];
+            /** @description The position id. */
+            position: string;
+            /** @description Whether the price is above or below the range. */
+            side: components["schemas"]["RangeSide"];
+            /**
+             * Format: date-time
+             * @description Since when, when known.
+             */
+            since?: string | null;
+            /** @description Its wallet. */
+            wallet: components["schemas"]["WalletRef"];
+        } | {
+            /** @description How much, in whole tokens. */
+            amount: components["schemas"]["DecimalString"];
+            /** @enum {string} */
+            kind: "unpriced_token";
+            /** @description The token. */
+            token: components["schemas"]["TokenRef"];
+            /** @description The wallet. */
+            wallet: components["schemas"]["WalletRef"];
+        } | {
+            /**
+             * Format: int64
+             * @description How long it should still take, in seconds, when known.
+             */
+            eta_seconds?: number | null;
+            /** @enum {string} */
+            kind: "importing";
+            /** @description How far it is, in percent. */
+            progress: components["schemas"]["DecimalString"];
+            /** @description The wallet. */
+            wallet: components["schemas"]["WalletRef"];
+        } | {
+            /** @enum {string} */
+            kind: "lagging";
+            /**
+             * Format: int64
+             * @description By how many seconds, when known.
+             */
+            lag_seconds?: number | null;
+            /** @description The wallet. */
+            wallet: components["schemas"]["WalletRef"];
+        } | {
+            /**
+             * Format: int64
+             * @description The budget.
+             */
+            budget: number;
+            /** @enum {string} */
+            kind: "credits_over_budget";
+            /**
+             * Format: int64
+             * @description Expected cycle spending; null when no second has elapsed.
+             */
+            projected: number | null;
+            /**
+             * Format: int64
+             * @description Credits already admitted by the source.
+             */
+            used: number;
+        };
+        /** @description The span of time figures cover: from `start` (included) to `end` (excluded). */
+        Window: {
+            /** @description The local date (`YYYY-MM-DD`) when `period` is `day`, otherwise `null`. */
+            day?: string | null;
+            /**
+             * Format: date-time
+             * @description The instant right after the window: now, or the next local midnight for a past day.
+             */
+            end: string;
+            /** @description The period asked for, or `day` for one local date. */
+            period: components["schemas"]["WindowPeriod"];
+            /**
+             * Format: date-time
+             * @description The first instant (RFC 3339, UTC).
+             */
+            start: string;
+            /** @description The IANA time zone its days are cut in. */
+            timezone: string;
+        };
+        /**
+         * @description What a window covers: one of the periods, or one local date.
+         * @enum {string}
+         */
+        WindowPeriod: "today" | "7d" | "1m" | "3m" | "1y" | "all" | "day";
     };
     responses: never;
     parameters: never;
@@ -403,6 +1880,797 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    getOverview: {
+        parameters: {
+            query?: {
+                /** @description `all` (the default) or the address of a tracked wallet. */
+                wallet?: string;
+                /** @description `today`, `7d`, `1m` (the default), `3m`, `1y` or `all`. */
+                period?: "today" | "7d" | "1m" | "3m" | "1y" | "all";
+                /** @description The currency of the figures (`sol` by default). */
+                currency?: components["schemas"]["Currency"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The overview. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Overview"];
+                };
+            };
+            /** @description A query parameter is invalid (`invalid_request`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not signed in (`unauthenticated`). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The wallet is not tracked (`wallet_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The engine does not serve figures yet (`data_not_ready`). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    listPools: {
+        parameters: {
+            query?: {
+                /** @description `all` (the default) or the address of a tracked wallet. */
+                wallet?: string;
+                /**
+                 * @description A symbol (by prefix), a pair (`BONK/SOL`), a token name, or a mint or pool address (by
+                 *     prefix, from 4 characters); 1 to 64 characters. Exact symbols come first.
+                 */
+                search?: string;
+                /**
+                 * @description Comma-separated pool addresses, at most 20: names the pools a filter already holds. Not
+                 *     with `search`.
+                 */
+                address?: string;
+                /** @description How many pools at most (20 by default, 50 at most). */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The pools. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PoolOptions"];
+                };
+            };
+            /** @description A query parameter is invalid (`invalid_request`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not signed in (`unauthenticated`). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The wallet is not tracked (`wallet_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The engine does not serve figures yet (`data_not_ready`). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    listClosedPositions: {
+        parameters: {
+            query?: {
+                /** @description `all` (the default) or the address of a tracked wallet. */
+                wallet?: string;
+                /** @description Only the positions closed on this local date (`YYYY-MM-DD`). */
+                day?: string;
+                /**
+                 * @description A symbol (by prefix), a pair (`BONK/SOL`), a token name, or a mint, pool, position address
+                 *     or position id (by prefix, from 4 characters); 1 to 64 characters.
+                 */
+                search?: string;
+                /**
+                 * @description Comma-separated outcomes: `win`, `loss`, `flat` (exactly even, or an empty shell).
+                 *     Explicit outcomes include only proved signs. Absent: every closed life, including
+                 *     those with an indeterminate outcome.
+                 */
+                outcome?: string;
+                /** @description Comma-separated strategies: `spot`, `curve`, `bid_ask`. Absent: every strategy. */
+                strategy?: string;
+                /** @description Comma-separated pool addresses, at most 20 (from `listPools`). Absent: every pool. */
+                pool?: string;
+                /** @description What to sort by (`closed_at` by default). */
+                sort?: "closed_at" | "held" | "invested" | "withdrawn" | "fees" | "pnl" | "pnl_pct" | "dpr";
+                /** @description The direction (`desc` by default). */
+                order?: "asc" | "desc";
+                /** @description The `next_cursor` of the previous page, with the same filters; absent for the first page. */
+                cursor?: string;
+                /** @description How many positions at most (50 by default, 200 at most). */
+                limit?: number;
+                /** @description The currency of the figures (`sol` by default). */
+                currency?: components["schemas"]["Currency"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of closed positions. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClosedPositionPage"];
+                };
+            };
+            /** @description A query parameter is invalid (`invalid_request`), or the cursor belongs to another query (`invalid_cursor`: start again from the first page). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not signed in (`unauthenticated`). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The wallet is not tracked (`wallet_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The engine does not serve figures yet (`data_not_ready`). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    listOpenPositions: {
+        parameters: {
+            query?: {
+                /** @description `all` (the default) or the address of a tracked wallet. */
+                wallet?: string;
+                /**
+                 * @description What to sort by (`range` by default: out of range first, longest out first, then the
+                 *     in-range ones closest to an edge).
+                 */
+                sort?: "range" | "value" | "pnl" | "fees" | "unclaimed" | "dpr" | "age" | "pair";
+                /** @description The direction (`asc` for `range` and `pair`, `desc` otherwise, by default). */
+                order?: "asc" | "desc";
+                /** @description The currency of the figures (`sol` by default). */
+                currency?: components["schemas"]["Currency"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The open positions. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenPositions"];
+                };
+            };
+            /** @description A query parameter is invalid (`invalid_request`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not signed in (`unauthenticated`). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The wallet is not tracked (`wallet_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The engine does not serve figures yet (`data_not_ready`). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    getRecentCloses: {
+        parameters: {
+            query?: {
+                /** @description `all` (the default) or the address of a tracked wallet. */
+                wallet?: string;
+                /** @description The currency of the figures (`sol` by default). */
+                currency?: components["schemas"]["Currency"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Today's and yesterday's closes. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecentCloses"];
+                };
+            };
+            /** @description A query parameter is invalid (`invalid_request`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not signed in (`unauthenticated`). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The wallet is not tracked (`wallet_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The engine does not serve figures yet (`data_not_ready`). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    getPosition: {
+        parameters: {
+            query?: {
+                /** @description The currency of the figures (`sol` by default). */
+                currency?: components["schemas"]["Currency"];
+            };
+            header?: never;
+            path: {
+                /** @description The position's permanent id: `<address>-<opening signature>`, both in base58. */
+                position_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The position. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PositionDetail"];
+                };
+            };
+            /** @description The id or a query parameter is invalid (`invalid_request`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not signed in (`unauthenticated`). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description No tracked wallet holds or held this position (`position_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The engine does not serve figures yet (`data_not_ready`). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    getPositionCandles: {
+        parameters: {
+            query?: {
+                /** @description `auto` (the default: the chart's `default_interval`) or one of the chart's `intervals`. */
+                interval?: "auto" | "1m" | "5m" | "15m" | "1h" | "4h" | "1d";
+            };
+            header?: never;
+            path: {
+                /** @description The position's permanent id: `<address>-<opening signature>`, both in base58. */
+                position_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The candles, or why they are unavailable. Fresh candles of closed positions are cached for a day; live, stale and unavailable responses are not stored. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PositionCandles"];
+                };
+            };
+            /** @description The id is invalid, or the interval is not one of the chart's (`invalid_request`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not signed in (`unauthenticated`). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description No tracked wallet holds or held this position (`position_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The engine does not serve figures yet (`data_not_ready`). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    listPositionEvents: {
+        parameters: {
+            query?: {
+                /** @description The `next_cursor` of the previous page; absent for the newest movements. */
+                cursor?: string;
+                /** @description How many movements at most (50 by default, 200 at most). */
+                limit?: number;
+                /** @description The currency of the values (`sol` by default). */
+                currency?: components["schemas"]["Currency"];
+            };
+            header?: never;
+            path: {
+                /** @description The position's permanent id: `<address>-<opening signature>`, both in base58. */
+                position_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of movements. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PositionEvents"];
+                };
+            };
+            /** @description The id or a query parameter is invalid (`invalid_request`), or the cursor is not one of this timeline (`invalid_cursor`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not signed in (`unauthenticated`). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description No tracked wallet holds or held this position (`position_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The engine does not serve figures yet (`data_not_ready`). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    getSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The settings of the instance. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstanceSettings"];
+                };
+            };
+            /** @description Not signed in (`unauthenticated`). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The engine does not serve figures yet (`data_not_ready`). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    getStatsSeries: {
+        parameters: {
+            query?: {
+                /** @description `all` (the default) or the address of a tracked wallet. */
+                wallet?: string;
+                /** @description `today`, `7d`, `1m` (the default), `3m`, `1y` or `all`. */
+                period?: "today" | "7d" | "1m" | "3m" | "1y" | "all";
+                /** @description Which series (`real_pnl` by default). */
+                series?: components["schemas"]["Series"];
+                /** @description The size of the buckets (`day` by default); a window may have at most 1000 of them. */
+                bucket?: components["schemas"]["Bucket"];
+                /** @description The currency of the figures (`sol` by default). */
+                currency?: components["schemas"]["Currency"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The series. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatsSeries"];
+                };
+            };
+            /** @description A query parameter is invalid, or the window has more than 1000 buckets (`invalid_request`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not signed in (`unauthenticated`). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The wallet is not tracked (`wallet_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The engine does not serve figures yet (`data_not_ready`). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    getSyncReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The synchronization of the instance. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncReport"];
+                };
+            };
+            /** @description Not signed in (`unauthenticated`). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The engine does not serve figures yet (`data_not_ready`). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    getTokenLogo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The token's mint (base58). */
+                mint: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The logo: a PNG, JPEG, WebP or GIF image, as its `content-type` says. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": unknown;
+                };
+            };
+            /** @description The mint is not a valid address (`invalid_request`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not signed in (`unauthenticated`). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description No logo is stored for this token (`not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The engine does not serve figures yet (`data_not_ready`). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    listWallets: {
+        parameters: {
+            query?: {
+                /** @description The currency of the figures (`sol` by default). */
+                currency?: components["schemas"]["Currency"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The tracked wallets and their total. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WalletList"];
+                };
+            };
+            /** @description A query parameter is invalid (`invalid_request`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not signed in (`unauthenticated`). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The engine does not serve figures yet (`data_not_ready`). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
         };

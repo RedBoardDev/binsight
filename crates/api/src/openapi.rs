@@ -10,13 +10,13 @@ use axum::response::IntoResponse;
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
+use crate::app::DocumentedRoutes;
 use crate::auth::SESSION_COOKIE_NAME;
 use crate::error::{ErrorBody, ErrorCode, ErrorDetail};
-use crate::router::DocumentedRoutes;
 
 /// The version of the API contract. A compatible addition bumps the minor version; a breaking
 /// change gets a new `/api/v2` instead.
-pub const API_CONTRACT_VERSION: &str = "1.0.0";
+pub const API_CONTRACT_VERSION: &str = "1.4.0";
 
 /// The parts of the contract that are not routes: metadata and shared schemas.
 #[derive(OpenApi)]
@@ -24,7 +24,10 @@ pub const API_CONTRACT_VERSION: &str = "1.0.0";
     info(
         title = "binsight",
         version = API_CONTRACT_VERSION,
-        description = "The HTTP API of a binsight server: health, authentication and live events.",
+        description = "The HTTP API of a binsight server: health, authentication, live events, \
+            the tracked wallets, their synchronization and the settings of the instance. Amounts, \
+            prices and percentages are canonical decimal strings; every figure carries its \
+            exactness.",
         license(name = "MIT", identifier = "MIT"),
     ),
     components(schemas(ErrorBody, ErrorDetail, ErrorCode)),
@@ -33,6 +36,12 @@ pub const API_CONTRACT_VERSION: &str = "1.0.0";
         (name = "system", description = "The state of the server and its contract."),
         (name = "auth", description = "Signing in and out with the owner's password."),
         (name = "live", description = "Events pushed to the clients as they happen."),
+        (name = "wallets", description = "The tracked wallets and their figures."),
+        (name = "settings", description = "The settings every client of the instance shares."),
+        (name = "portfolio", description = "The overview of the portfolio."),
+        (name = "positions", description = "Liquidity positions and their tokens."),
+        (name = "history", description = "The closed positions and the pools of the history."),
+        (name = "stats", description = "Statistics and chart series."),
     ),
 )]
 pub(crate) struct ApiDoc;

@@ -89,6 +89,10 @@ msgstr "Zurück zur Übersicht"
 msgid "binsight cannot be reached. Check your connection and try again."
 msgstr "binsight ist nicht erreichbar. Prüfen Sie Ihre Verbindung und versuchen Sie es erneut."
 
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "binsight is still preparing your figures. Try again in a moment."
+msgstr "binsight bereitet Ihre Zahlen noch vor. Versuchen Sie es gleich noch einmal."
+
 #: src/core/RootErrorBoundary.tsx
 msgid "binsight stopped working"
 msgstr "binsight funktioniert nicht mehr"
@@ -511,6 +515,10 @@ msgstr "Diese Adresse entspricht keiner Seite von binsight."
 msgid "This item no longer exists."
 msgstr "Dieses Element existiert nicht mehr."
 
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "This list has changed. Reload it to see the latest."
+msgstr "Diese Liste hat sich geändert. Laden Sie sie neu, um den aktuellen Stand zu sehen."
+
 #: src/core/ShellErrorScreen.tsx
 msgid "This page could not be displayed. Try again; if it keeps failing, reload the app."
 msgstr "Diese Seite konnte nicht angezeigt werden. Versuchen Sie es erneut; wenn der Fehler bleibt, laden Sie die App neu."
@@ -518,6 +526,14 @@ msgstr "Diese Seite konnte nicht angezeigt werden. Versuchen Sie es erneut; wenn
 #: src/applications/Auth/Ui/LoginForm/errorCopy.ts
 msgid "This password is too long."
 msgstr "Dieses Passwort ist zu lang."
+
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "This position is no longer tracked."
+msgstr "Diese Position wird nicht mehr verfolgt."
+
+#: src/applications/Shared/Ui/apiErrorMessages.ts
+msgid "This wallet is no longer tracked."
+msgstr "Diese Wallet wird nicht mehr verfolgt."
 
 #: src/applications/Shared/Ui/apiErrorMessages.ts
 msgid "Too many attempts. Wait a moment and try again."

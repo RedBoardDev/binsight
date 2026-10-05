@@ -1,3 +1,4 @@
+import { QueryObserver } from '@tanstack/react-query';
 import { healthyServer } from '@test/fixtures/health';
 import { renderAppAt } from '@test/renderAppAt';
 import { jsonResponse, signedInSession, signedOutSession, stubApi } from '@test/stubApi';
@@ -94,5 +95,46 @@ describe('RealtimeProvider', () => {
 
     expect(await screen.findByRole('button', { name: 'Sign in' })).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/login');
+  });
+
+  it('refreshes the active page when a wallet sync changes', async () => {
+    const getHealth = vi.fn(() => jsonResponse(200, HEALTHY));
+    stubApi({ 'GET /api/v1/auth/session': signedInSession, 'GET /api/v1/health': getHealth });
+    const openedStream = stubEventSource();
+    renderAppAt('/health');
+    const stream = await openedStream();
+    await screen.findByText('Healthy');
+    const callsBefore = getHealth.mock.calls.length;
+
+    act(() =>
+      stream.send('wallet_sync_changed', {
+        type: 'wallet_sync_changed',
+        wallet: 'sample-wallet',
+        state: 'error',
+      }),
+    );
+
+    await waitFor(() => expect(getHealth.mock.calls.length).toBeGreaterThan(callsBefore));
+  });
+  it('refreshes an active sync query when a status message replaces lost events', async () => {
+    stubApi({ 'GET /api/v1/auth/session': signedInSession });
+    const openedStream = stubEventSource();
+    const { queryClient } = renderAppAt('/health');
+    const stream = await openedStream();
+    const readSync = vi.fn(async () => ({ state: 'live' }));
+    const observer = new QueryObserver(queryClient, {
+      queryKey: ['sync'],
+      queryFn: readSync,
+      staleTime: Number.POSITIVE_INFINITY,
+      meta: { entities: [] },
+    });
+    const unsubscribe = observer.subscribe(() => undefined);
+    try {
+      await waitFor(() => expect(readSync).toHaveBeenCalledTimes(1));
+      act(() => stream.send('engine_status', { type: 'engine_status', status: 'running' }));
+      await waitFor(() => expect(readSync).toHaveBeenCalledTimes(2));
+    } finally {
+      unsubscribe();
+    }
   });
 });

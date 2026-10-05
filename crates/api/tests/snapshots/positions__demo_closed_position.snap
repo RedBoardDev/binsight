@@ -1,0 +1,191 @@
+---
+source: crates/api/tests/positions.rs
+expression: "detail(&app, id).await"
+---
+{
+  "address": "BpkemGKazKYfXMDsap1G2emic5LpW87yrmRQmoA2NykY",
+  "chart": {
+    "current_price": null,
+    "default_interval": "1h",
+    "from": "2026-09-16T20:39:57Z",
+    "intervals": [
+      "15m",
+      "1h",
+      "4h",
+      "1d"
+    ],
+    "markers": [
+      {
+        "at": "2026-09-17T06:50:30Z",
+        "kind": "open",
+        "price": {
+          "amount": "0.00252205799475",
+          "quote": "sol"
+        },
+        "signature": "5WjmLbwBVAteKskMNBcHnYDAagCvsM8bfQ8Twn6tyHqqGfaJxSddCK2TemXznHLdUxgs7knDxgJh1jMY7MhDvG4r"
+      },
+      {
+        "at": "2026-09-17T06:50:30Z",
+        "kind": "add",
+        "price": {
+          "amount": "0.00252205799475",
+          "quote": "sol"
+        },
+        "signature": "5WjmLbwBVAteKskMNBcHnYDAagCvsM8bfQ8Twn6tyHqqGfaJxSddCK2TemXznHLdUxgs7knDxgJh1jMY7MhDvG4r"
+      },
+      {
+        "at": "2026-09-18T16:45:00Z",
+        "kind": "claim",
+        "price": {
+          "amount": "0.00257295555475",
+          "quote": "sol"
+        },
+        "signature": "vduTN1uCdyKRiizPdU2twJNHiZpLdxY5W5WVs9VXVfBQDMAkyEgjXaz2xpKn8tX9RkP3T9NGymGizfPYxp3D6P6"
+      },
+      {
+        "at": "2026-09-21T12:36:00Z",
+        "kind": "claim",
+        "price": {
+          "amount": "0.00267785288926",
+          "quote": "sol"
+        },
+        "signature": "rXHffZwZW4WCwWf4iQsH8btBwZsWenTXLZyAc3oQJHUZfwujUejbsz4k4BRChNpaUj5FQivYHkcBFdFdw7opbLs"
+      },
+      {
+        "at": "2026-09-21T12:36:00Z",
+        "kind": "remove",
+        "price": {
+          "amount": "0.00267785288926",
+          "quote": "sol"
+        },
+        "signature": "rXHffZwZW4WCwWf4iQsH8btBwZsWenTXLZyAc3oQJHUZfwujUejbsz4k4BRChNpaUj5FQivYHkcBFdFdw7opbLs"
+      },
+      {
+        "at": "2026-09-21T12:36:00Z",
+        "kind": "close",
+        "price": {
+          "amount": "0.00267785288926",
+          "quote": "sol"
+        },
+        "signature": "rXHffZwZW4WCwWf4iQsH8btBwZsWenTXLZyAc3oQJHUZfwujUejbsz4k4BRChNpaUj5FQivYHkcBFdFdw7opbLs"
+      }
+    ],
+    "quote": {
+      "decimals": 9,
+      "logo": {
+        "kind": "sol"
+      },
+      "mint": "3fpJjugexTVxzpW6USwSaGAp3e7omJfR1EzUTihSjkJn",
+      "name": "Solana",
+      "symbol": "SOL"
+    },
+    "ranges": [
+      {
+        "from": "2026-09-17T06:50:30Z",
+        "lower": {
+          "amount": "0.00238007775091",
+          "quote": "sol"
+        },
+        "to": "2026-09-21T12:36:00Z",
+        "upper": {
+          "amount": "0.00267250787351",
+          "quote": "sol"
+        }
+      }
+    ],
+    "to": "2026-09-21T14:13:20Z"
+  },
+  "closed_at": "2026-09-21T12:36:00Z",
+  "dpr": {
+    "exactness": "complete",
+    "value": "0"
+  },
+  "fees": {
+    "exactness": "complete",
+    "value": {
+      "amount": "0.02073282",
+      "unit": "sol"
+    }
+  },
+  "fees_pct": {
+    "exactness": "complete",
+    "value": "1.95"
+  },
+  "held_seconds": 366330,
+  "id": "BpkemGKazKYfXMDsap1G2emic5LpW87yrmRQmoA2NykY-5WjmLbwBVAteKskMNBcHnYDAagCvsM8bfQ8Twn6tyHqqGfaJxSddCK2TemXznHLdUxgs7knDxgJh1jMY7MhDvG4r",
+  "invested": {
+    "exactness": "complete",
+    "value": {
+      "amount": "1.063221557",
+      "unit": "sol"
+    }
+  },
+  "is_shell": false,
+  "lp_pnl": {
+    "exactness": "complete",
+    "value": {
+      "amount": "0",
+      "unit": "sol"
+    }
+  },
+  "market_pnl": null,
+  "method": "pool",
+  "opened_at": "2026-09-17T06:50:30Z",
+  "outcome": "flat",
+  "pnl": {
+    "exactness": "complete",
+    "value": {
+      "amount": "0",
+      "unit": "sol"
+    }
+  },
+  "pnl_pct": {
+    "exactness": "complete",
+    "value": "0"
+  },
+  "pool": {
+    "address": "Em1Hj2NEmfWo3TwgdJZAgSWEvEAEHMnprXWiMT74u4Uk",
+    "base": {
+      "decimals": 6,
+      "logo": {
+        "kind": "image",
+        "url": "/api/v1/tokens/6Cy4bsfHWSz97CTcZrrShVQKySUEpkxQKQqJQjmard4p/logo?v=cb515cbbb146"
+      },
+      "mint": "6Cy4bsfHWSz97CTcZrrShVQKySUEpkxQKQqJQjmard4p",
+      "name": "Jupiter",
+      "symbol": "JUP"
+    },
+    "bin_step": 20,
+    "quote": {
+      "decimals": 9,
+      "logo": {
+        "kind": "sol"
+      },
+      "mint": "3fpJjugexTVxzpW6USwSaGAp3e7omJfR1EzUTihSjkJn",
+      "name": "Solana",
+      "symbol": "SOL"
+    },
+    "quote_kind": "sol"
+  },
+  "rewards": {
+    "exactness": "complete",
+    "value": {
+      "amount": "0",
+      "unit": "sol"
+    }
+  },
+  "status": "closed",
+  "strategy": "bid_ask",
+  "wallet": {
+    "address": "C6w9dL1omhyPtyYnQdZeFcbk3mcUzQgXJYQT2XN5xRUq",
+    "color": "wallet_1",
+    "label": "Main"
+  },
+  "withdrawn": {
+    "exactness": "complete",
+    "value": {
+      "amount": "1.042488737",
+      "unit": "sol"
+    }
+  }
+}

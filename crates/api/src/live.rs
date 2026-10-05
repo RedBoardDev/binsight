@@ -18,9 +18,9 @@ use axum::response::IntoResponse;
 use axum::response::sse::{Event, Sse};
 use futures_util::StreamExt;
 
+use crate::app::AppState;
 use crate::auth::Session;
 use crate::error::ErrorBody;
-use crate::state::AppState;
 pub(crate) use event::LiveEvent;
 use stream::live_events;
 

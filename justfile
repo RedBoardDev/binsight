@@ -32,6 +32,16 @@ dev: rust-dev-env
     just web-dev &
     wait -n
 
+# Like dev, on the generated demo world: no Helius key is read and nothing reaches the network.
+[group('dev')]
+dev-demo: rust-dev-env
+    #!/usr/bin/env bash
+    set -euo pipefail
+    trap 'kill 0' EXIT
+    just demo &
+    just web-dev &
+    wait -n
+
 # Everything CI checks.
 check: rust-check web-check
 
@@ -242,6 +252,13 @@ rust-run *ARGS: rust-dev-env
 [group('rust')]
 rust-admin *ARGS: rust-dev-env
     BINSIGHT_CONFIG_FILE=.dev/binsight.env cargo run --quiet -p binsight -- admin {{ ARGS }}
+
+# Its own data folder keeps the demo away from the wallets a chain run may track in .dev/data.
+[doc('Run the server on the generated demo world (no Helius key needed, nothing is tracked).')]
+[group('rust')]
+demo *ARGS: rust-dev-env
+    mkdir -p .dev/demo-data
+    BINSIGHT_CONFIG_FILE=.dev/binsight.env BINSIGHT_DEMO=true BINSIGHT_DATA_DIR="$PWD/.dev/demo-data" cargo run -p binsight -- run {{ ARGS }}
 
 # Build the release binary from scratch, so it embeds the current web build.
 [group('rust')]

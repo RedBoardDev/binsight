@@ -23,6 +23,7 @@ anyhow.workspace = true
 binsight-api.workspace = true
 binsight-chain.workspace = true
 binsight-core.workspace = true
+binsight-demo.workspace = true
 binsight-engine.workspace = true
 binsight-solana.workspace = true
 binsight-store.workspace = true
@@ -30,6 +31,7 @@ clap.workspace = true
 dialoguer.workspace = true
 getrandom.workspace = true
 hex.workspace = true
+jiff.workspace = true
 rust-embed.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "time"] }

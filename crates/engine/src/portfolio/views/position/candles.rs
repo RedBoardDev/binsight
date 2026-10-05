@@ -64,7 +64,7 @@ pub struct CandlesView {
     pub source: CandleSource,
     /// Whether they could be read.
     pub status: CandleStatus,
-    /// Whether the window is over, so the candles will never change.
+    /// Whether the requested window is over; source status still determines cacheability.
     pub is_final: bool,
     /// The candles, oldest first; empty when unavailable.
     pub candles: Vec<CandleView>,

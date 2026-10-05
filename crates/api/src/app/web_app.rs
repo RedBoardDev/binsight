@@ -17,8 +17,8 @@ use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 
+use super::state::AppState;
 use crate::error::{ApiError, ErrorCode};
-use crate::state::AppState;
 
 /// The page served for every path of the app, as a [`WebAssets`] source names it.
 pub const INDEX_FILE: &str = "index.html";

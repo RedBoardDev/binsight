@@ -12,12 +12,18 @@ use utoipa::OpenApi;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
+use super::layers;
+use super::state::AppState;
+use super::web_app::serve_web_app;
 use crate::auth::{require_session, routes as auth};
 use crate::error::{ApiError, ErrorCode};
+use crate::history::{closed, pools};
+use crate::instance::{health, settings, sync, wallets};
 use crate::openapi::ApiDoc;
-use crate::state::AppState;
-use crate::web_app::serve_web_app;
-use crate::{health, layers, live, openapi};
+use crate::overview::{open_positions, recent_closes, summary};
+use crate::positions::{candles, detail, events, logo};
+use crate::stats::series;
+use crate::{live, openapi};
 
 /// The complete application: every route, its fallbacks and the middleware stack.
 pub fn router(state: AppState) -> Router {
@@ -53,7 +59,20 @@ impl DocumentedRoutes {
             .routes(routes!(auth::logout));
         let protected = OpenApiRouter::new()
             .routes(routes!(auth::get_session))
-            .routes(routes!(live::stream_events));
+            .routes(routes!(live::stream_events))
+            .routes(routes!(sync::get_sync_report))
+            .routes(routes!(settings::get_settings))
+            .routes(routes!(wallets::list_wallets))
+            .routes(routes!(summary::get_overview))
+            .routes(routes!(open_positions::list_open_positions))
+            .routes(routes!(recent_closes::get_recent_closes))
+            .routes(routes!(series::get_stats_series))
+            .routes(routes!(closed::list_closed_positions))
+            .routes(routes!(pools::list_pools))
+            .routes(routes!(detail::get_position))
+            .routes(routes!(events::list_position_events))
+            .routes(routes!(candles::get_position_candles))
+            .routes(routes!(logo::get_token_logo));
         Self { public, protected }
     }
 }

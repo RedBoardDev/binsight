@@ -2,9 +2,11 @@
 //!
 //! In order: validate the configuration (nothing starts if it is invalid), start logging, handle
 //! the stop signals, lock the data folder, open and upgrade the database (backing it up first),
-//! create the instance secrets, listen, then run the engine and the HTTP server until a stop
-//! signal. Shutdown is graceful but bounded: after [`SHUTDOWN_DEADLINE_SECS`] seconds whatever is
+//! create the instance secrets, pick the source of the figures (the chain, or the generated demo
+//! world), listen, then run the engine and the HTTP server until a stop signal. Shutdown is graceful but bounded: after [`SHUTDOWN_DEADLINE_SECS`] seconds whatever is
 //! left is dropped.
+
+mod sources;
 
 use std::net::SocketAddr;
 use std::path::Path;
@@ -13,10 +15,6 @@ use std::time::Duration;
 
 use binsight_api::auth::AuthSettings;
 use binsight_api::{AppState, AppStateParts, router};
-use binsight_chain::{
-    GovernorSettings, HttpTransport, RpcClient, RpcEndpoint, StreamEndpoint, TungsteniteConnector,
-    WsConnector,
-};
 use binsight_core::clock::Clock;
 use binsight_engine::{Engine, SystemClock};
 use binsight_store::{BackupOptions, Store, UpgradeOptions};
@@ -71,9 +69,7 @@ async fn serve(config: Config) -> Result<(), Failure> {
     let store = open_store(&data_dir, clock.as_ref()).await?;
     let session_secret = ensure_instance_secrets(&store).await?;
     let listener = listen(config.bind).await?;
-    let rpc = rpc_client(&config, clock.clone())?;
-    let stream = stream_connector(&config)?;
-    let (engine, handle) = Engine::new(store.clone(), rpc, stream, clock.clone());
+    let (engine, handle) = sources::engine(&config, &store, &clock).await?;
     let state = AppState::new(AppStateParts {
         engine: handle,
         auth: AuthSettings {
@@ -112,38 +108,6 @@ pub(in crate::commands) async fn open_store(
     Ok(store)
 }
 
-/// The Helius client. Nothing is sent until the engine has a wallet to ingest.
-fn rpc_client(config: &Config, clock: Arc<dyn Clock>) -> Result<RpcClient, Failure> {
-    let endpoint = RpcEndpoint::helius_mainnet(&config.helius_api_key);
-    let transport = HttpTransport::new(endpoint).map_err(|error| {
-        Failure::Unexpected(anyhow::Error::new(error).context("prepare the RPC client"))
-    })?;
-    let budget = config.credit_budget;
-    info!(
-        plan = %budget.plan,
-        monthly_credits = budget.monthly_credits.0,
-        cycle_day = budget.cycle_day.get(),
-        daily_credit_limit = budget.daily_credit_limit.map(|limit| limit.0),
-        "rpc credit budget"
-    );
-    let governor = GovernorSettings {
-        requests_per_second: budget.plan.requests_per_second(),
-        cycle_credits: budget.monthly_credits,
-        cycle_day: budget.cycle_day,
-        daily_credit_limit: budget.daily_credit_limit,
-    };
-    Ok(RpcClient::new(Arc::new(transport), governor, clock))
-}
-
-/// The Helius WebSocket stream. Nothing is opened until a wallet is watched.
-fn stream_connector(config: &Config) -> Result<Arc<dyn WsConnector>, Failure> {
-    let endpoint = StreamEndpoint::helius_mainnet(&config.helius_api_key);
-    let connector = TungsteniteConnector::new(endpoint).map_err(|error| {
-        Failure::Unexpected(anyhow::Error::new(error).context("prepare the stream"))
-    })?;
-    Ok(Arc::new(connector))
-}
-
 async fn listen(address: SocketAddr) -> Result<TcpListener, Failure> {
     let listener = TcpListener::bind(address)
         .await
@@ -155,17 +119,22 @@ async fn listen(address: SocketAddr) -> Result<TcpListener, Failure> {
     Ok(listener)
 }
 
-/// Runs the engine and the server together. A cancelled `shutdown` (a stop signal), or either of
-/// them ending (normally or not), stops both; once stopping, they get
+/// Runs the engine (none in demo mode) and the server together. A cancelled `shutdown` (a stop
+/// signal), or either of them ending (normally or not), stops both; once stopping, they get
 /// [`SHUTDOWN_DEADLINE_SECS`] seconds.
 async fn supervise(
-    engine: Engine,
+    engine: Option<Engine>,
     state: AppState,
     listener: TcpListener,
     shutdown: CancellationToken,
 ) -> Result<(), Failure> {
     // The engine's future holds every ingestion worker: it lives on the heap, not in this one.
+    // Demo mode has no engine: its part only waits for the shutdown.
     let engine = stop_all_when_done(shutdown.clone(), async {
+        let Some(engine) = engine else {
+            shutdown.cancelled().await;
+            return Ok(());
+        };
         Box::pin(engine.run(shutdown.clone()))
             .await
             .map_err(|error| Failure::Unexpected(error.into()))

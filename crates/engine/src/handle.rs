@@ -1,8 +1,12 @@
 //! The handle the rest of the application uses to talk to the engine.
 //!
 //! A handle is cheap to clone and safe to share between tasks. It reads the current status and
-//! each wallet's sync state, checks the health and subscribes to the engine's events; it cannot stop or drive the engine,
-//! which only the owner of [`crate::Engine`] can do.
+//! each wallet's sync state,
+//! checks the health, subscribes to the engine's events and reads the portfolio from the source
+//! of figures it was given; it cannot stop or drive the engine, which only the owner of
+//! [`crate::Engine`] can do.
+
+use std::sync::Arc;
 
 use std::collections::BTreeMap;
 
@@ -14,16 +18,29 @@ use tokio::sync::{broadcast, watch};
 use crate::events::EngineEvent;
 use crate::health::{EngineHealth, check_database};
 use crate::ingestion::SyncState;
+use crate::portfolio::{DataSource, DataSourceKind, NotReadyPortfolio, ReadModel};
 use crate::status::EngineStatus;
 
 /// A shared, read-only view of a running engine.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct EngineHandle {
     store: Store,
-    rpc: RpcClient,
+    rpc: Option<RpcClient>,
     status: watch::Receiver<EngineStatus>,
     sync_states: watch::Receiver<BTreeMap<Address, SyncState>>,
     events: broadcast::Sender<EngineEvent>,
+    data_source: DataSourceKind,
+    read_model: Arc<dyn ReadModel>,
+}
+
+impl std::fmt::Debug for EngineHandle {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("EngineHandle")
+            .field("store", &self.store)
+            .field("data_source", &self.data_source)
+            .finish_non_exhaustive()
+    }
 }
 
 impl EngineHandle {
@@ -38,11 +55,59 @@ impl EngineHandle {
     ) -> Self {
         Self {
             store,
-            rpc,
+            rpc: Some(rpc),
             status,
             sync_states,
             events,
+            data_source: DataSourceKind::Chain,
+            read_model: Arc::new(NotReadyPortfolio),
         }
+    }
+
+    /// A handle for an application that runs no engine (demo mode): it reports the engine as
+    /// running, publishes no event and reads the portfolio from `source`. Nothing ingests, so
+    /// nothing is written to the database or sent to the network.
+    pub fn without_engine(store: Store, source: DataSource) -> Self {
+        let (_status_sender, status) = watch::channel(EngineStatus::Running);
+        let (events, _) = broadcast::channel(1);
+        let (_sync_sender, sync_states) = watch::channel(BTreeMap::new());
+        Self {
+            store,
+            rpc: None,
+            status,
+            sync_states,
+            events,
+            data_source: source.kind(),
+            read_model: match source {
+                DataSource::Chain => Arc::new(NotReadyPortfolio),
+                DataSource::Demo(read_model) => read_model,
+            },
+        }
+    }
+
+    /// The same handle, reading the portfolio from `source`. In chain mode the portfolio is not
+    /// ready until the engine serves figures.
+    #[must_use]
+    pub fn with_data_source(mut self, source: DataSource) -> Self {
+        if matches!(&source, DataSource::Demo(_)) {
+            return Self::without_engine(self.store, source);
+        }
+        self.data_source = source.kind();
+        self.read_model = match source {
+            DataSource::Chain => Arc::new(NotReadyPortfolio),
+            DataSource::Demo(read_model) => read_model,
+        };
+        self
+    }
+
+    /// Which source serves the figures.
+    pub fn data_source(&self) -> DataSourceKind {
+        self.data_source
+    }
+
+    /// The portfolio, as the API reads it.
+    pub fn read_model(&self) -> &dyn ReadModel {
+        self.read_model.as_ref()
     }
 
     /// The database, for the engine's own tests.
@@ -62,9 +127,12 @@ impl EngineHandle {
         EngineHealth {
             database: check_database(&self.store).await,
             engine: self.status(),
-            credits: self.rpc.credit_meter().standing().into(),
-            rpc: self.rpc.last_outcome().into(),
-            stream: self.rpc.stream_snapshot().into(),
+            credits: self
+                .rpc
+                .as_ref()
+                .map(|rpc| rpc.credit_meter().standing().into()),
+            rpc: self.rpc.as_ref().map(|rpc| rpc.last_outcome().into()),
+            stream: self.rpc.as_ref().map(|rpc| rpc.stream_snapshot().into()),
         }
     }
 
@@ -99,9 +167,25 @@ mod tests {
         let setup = temporary_engine().await;
         for _ in 0..3 {
             let health = setup.handle.health().await;
-            assert_eq!(health.rpc, RpcHealth::Unknown);
-            assert_eq!(health.stream, StreamHealth::Idle);
+            assert_eq!(health.rpc, Some(RpcHealth::Unknown));
+            assert_eq!(health.stream, Some(StreamHealth::Idle));
         }
+        assert_eq!(setup.transport.calls(), Vec::new());
+        assert_eq!(setup.stream.connections_opened(), 0);
+    }
+
+    #[tokio::test]
+    async fn detaches_real_transport_observations_when_the_handle_serves_demo_figures() {
+        let setup = temporary_engine().await;
+        let handle = setup
+            .handle
+            .with_data_source(DataSource::Demo(std::sync::Arc::new(
+                crate::portfolio::NotReadyPortfolio,
+            )));
+        let health = handle.health().await;
+        assert_eq!(health.credits, None);
+        assert_eq!(health.rpc, None);
+        assert_eq!(health.stream, None);
         assert_eq!(setup.transport.calls(), Vec::new());
         assert_eq!(setup.stream.connections_opened(), 0);
     }
@@ -129,21 +213,28 @@ mod tests {
             setup
                 .handle
                 .rpc
+                .as_ref()
+                .unwrap()
                 .transaction(Signature::from_bytes([1; 64]), context)
                 .await
                 .is_err()
         );
-        assert_eq!(setup.handle.health().await.rpc, RpcHealth::Unavailable);
+        assert_eq!(
+            setup.handle.health().await.rpc,
+            Some(RpcHealth::Unavailable)
+        );
         assert_eq!(setup.transport.calls().len(), 1);
         assert!(
             setup
                 .handle
                 .rpc
+                .as_ref()
+                .unwrap()
                 .transaction(Signature::from_bytes([2; 64]), context)
                 .await
                 .is_ok()
         );
-        assert_eq!(setup.handle.health().await.rpc, RpcHealth::Ok);
+        assert_eq!(setup.handle.health().await.rpc, Some(RpcHealth::Ok));
         assert_eq!(setup.transport.calls().len(), 2);
         assert_eq!(setup.stream.connections_opened(), 0);
     }
@@ -172,5 +263,21 @@ mod tests {
         assert_eq!(backlog.unsupported_version, 1);
         assert_eq!(backlog.failed, 0);
         engine.stop().await;
+    }
+
+    use binsight_ledger::report::valued::Currency;
+
+    use crate::portfolio::{DataSource, DataSourceKind, ReadError};
+
+    #[tokio::test]
+    async fn answers_not_ready_in_chain_mode() {
+        let setup = temporary_engine().await;
+        let handle = setup.handle.with_data_source(DataSource::Chain);
+
+        assert_eq!(handle.data_source(), DataSourceKind::Chain);
+        let wallets = handle.read_model().wallets(Currency::Sol).await;
+        assert_eq!(wallets, Err(ReadError::NotReady));
+        let sync = handle.read_model().sync_report().await;
+        assert_eq!(sync, Err(ReadError::NotReady));
     }
 }

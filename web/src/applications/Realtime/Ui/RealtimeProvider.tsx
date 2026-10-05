@@ -4,7 +4,6 @@ import { type RealtimeEffect, toEffects } from '@app/applications/Realtime/Domai
 import { reconnectDelay } from '@app/applications/Realtime/Domain/reconnectDelay';
 import { realtimeStatusStore } from '@app/applications/Realtime/Ui/realtimeStatusStore';
 import { useDisconnectedRefresh } from '@app/applications/Realtime/Ui/useDisconnectedRefresh';
-import { invalidateEntities } from '@app/core/query/entityPredicate';
 import { openEventStream, type StreamState } from '@app/lib/sse/eventStream';
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { type ReactNode, useEffect } from 'react';
@@ -17,8 +16,8 @@ const applyEffect = (queryClient: QueryClient, effect: RealtimeEffect): void => 
     case 'heartbeat':
       realtimeStatusStore.recordHeartbeat(effect.at);
       return;
-    case 'invalidateEntities':
-      void invalidateEntities(queryClient, effect.entities);
+    case 'refreshActiveQueries':
+      void queryClient.invalidateQueries({ type: 'active' });
       return;
   }
 };

@@ -8,6 +8,7 @@
 mod api_error;
 mod code;
 mod json;
+mod read_error;
 mod rendering;
 
 pub(crate) use api_error::ApiError;

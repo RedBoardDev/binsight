@@ -2,15 +2,15 @@
 //!
 //! [`LiveEvent`] is a union tagged by `type`; the SSE `event:` name of each message equals that
 //! `type`, so a browser can listen to each kind by name. It is registered in the contract so the
-//! clients' types follow it. This module defines the wire form and converts engine events to it;
-//! the events the wire does not carry yet (a wallet's sync state) are left out.
+//! clients' types follow it. This module defines the wire form and converts engine events to it.
 
 use binsight_engine::EngineEvent;
 use jiff::Timestamp;
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use crate::health::EngineStatus;
+use crate::contract::SyncState;
+use crate::instance::health::EngineStatus;
 
 /// A message of the live event stream.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
@@ -26,6 +26,13 @@ pub(crate) enum LiveEvent {
         /// The new status.
         status: EngineStatus,
     },
+    /// The monitor changed a tracked wallet's synchronization state.
+    WalletSyncChanged {
+        /// The wallet address in base58.
+        wallet: String,
+        /// The state decided from real ingestion facts.
+        state: SyncState,
+    },
 }
 
 impl LiveEvent {
@@ -34,18 +41,22 @@ impl LiveEvent {
         match self {
             Self::Heartbeat { .. } => "heartbeat",
             Self::EngineStatus { .. } => "engine_status",
+            Self::WalletSyncChanged { .. } => "wallet_sync_changed",
         }
     }
 }
 
 impl LiveEvent {
-    /// The wire form of an engine event, if the stream carries that kind yet.
-    pub(crate) fn from_engine(event: &EngineEvent) -> Option<Self> {
+    /// The wire form of an engine event.
+    pub(crate) fn from_engine(event: &EngineEvent) -> Self {
         match *event {
-            EngineEvent::StatusChanged { status } => Some(Self::EngineStatus {
+            EngineEvent::StatusChanged { status } => Self::EngineStatus {
                 status: status.into(),
-            }),
-            EngineEvent::WalletSyncChanged { .. } => None,
+            },
+            EngineEvent::WalletSyncChanged { wallet, state } => Self::WalletSyncChanged {
+                wallet: wallet.to_string(),
+                state: state.into(),
+            },
         }
     }
 }
@@ -63,6 +74,10 @@ mod tests {
             LiveEvent::EngineStatus {
                 status: EngineStatus::Running,
             },
+            LiveEvent::from_engine(&EngineEvent::WalletSyncChanged {
+                wallet: binsight_solana::Address::from_bytes([1; 32]),
+                state: binsight_engine::SyncState::Lagging,
+            }),
         ];
         for event in events {
             let json = serde_json::to_value(&event).unwrap();

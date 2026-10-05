@@ -28,7 +28,7 @@ pub(crate) use session::Session;
 use axum_extra::extract::cookie::Key;
 use tower_http::csrf::CsrfLayer;
 
-use crate::layers::Transport;
+use crate::app::Transport;
 use throttle::LoginThrottle;
 
 /// What the authentication handlers share, built once from the [`AuthSettings`].

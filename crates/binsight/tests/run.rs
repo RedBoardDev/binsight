@@ -70,3 +70,60 @@ async fn stops_cleanly_on_sigterm() {
 
     assert_eq!(status.code(), Some(0));
 }
+
+#[tokio::test]
+async fn serves_the_demo_world_without_a_helius_key() {
+    let home = tempfile::tempdir().unwrap();
+    let data = home.path().join("data").display().to_string();
+    let variables = [
+        ("BINSIGHT_PASSWORD", common::PASSWORD),
+        ("BINSIGHT_DATA_DIR", data.as_str()),
+        ("BINSIGHT_BIND", "127.0.0.1:0"),
+        ("BINSIGHT_DEMO", "true"),
+    ];
+    let server = Server::start(home.path(), &variables).await;
+
+    let health = get_health(&server.address).await;
+
+    assert!(health.contains(r#""data_source":"demo""#), "{health}");
+    server.send_sigterm().await;
+}
+
+#[tokio::test]
+async fn refuses_demo_mode_on_a_data_folder_that_tracks_wallets() {
+    let home = tempfile::tempdir().unwrap();
+    let variables = valid_variables(home.path(), "127.0.0.1:0");
+    let added = binsight(
+        home.path(),
+        &["admin", "wallet-add", "11111111111111111111111111111111"],
+        &as_pairs(&variables),
+    )
+    .output()
+    .await
+    .unwrap();
+    assert_eq!(added.status.code(), Some(0), "{added:?}");
+    let mut demo = as_pairs(&variables);
+    demo.push(("BINSIGHT_DEMO", "true"));
+
+    let output = binsight(home.path(), &["run"], &demo)
+        .output()
+        .await
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(78));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("because it tracks wallets"), "{stderr}");
+}
+
+/// `GET /api/v1/health` over a plain connection, the raw response as text.
+async fn get_health(address: &str) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+    stream
+        .write_all(b"GET /api/v1/health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).await.unwrap();
+    response
+}

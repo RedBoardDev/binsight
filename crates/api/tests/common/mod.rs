@@ -6,6 +6,10 @@
     reason = "each test binary uses a different part of these shared helpers"
 )]
 
+pub(crate) mod figures;
+pub(crate) mod history_rates;
+pub(crate) mod positions;
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -16,6 +20,8 @@ use axum::http::{HeaderMap, HeaderName, Request, StatusCode};
 use binsight_api::auth::{AuthSettings, ClientIpHeader, OwnerPassword, PublicUrl, SessionSecret};
 use binsight_api::{AppState, AppStateParts, WebAsset, WebAssets, router};
 use binsight_core::clock::FixedClock;
+use binsight_demo::{DemoPortfolio, ImportingWalletSpec, WorldSpec};
+use binsight_engine::portfolio::DataSource;
 use binsight_engine::test_support::temporary_engine;
 use binsight_engine::{Engine, EngineHandle};
 use http_body_util::BodyExt;
@@ -28,6 +34,9 @@ pub(crate) const PASSWORD: &str = "correct horse battery staple";
 
 /// The instant every test application starts at.
 pub(crate) const START_SECONDS: i64 = 1_790_000_000;
+
+/// The time zone of the demo world of every test application.
+pub(crate) const TEST_TIMEZONE: &str = "Europe/Paris";
 
 /// The web app files of every test application.
 pub(crate) const INDEX_HTML: &str = "<!doctype html><title>binsight</title>";
@@ -51,8 +60,20 @@ impl WebAssets for FakeWebAssets {
     }
 }
 
+/// Where a test application takes its figures from.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Figures {
+    /// The chain: the engine serves nothing yet.
+    Chain,
+    /// The default demo world, anchored at the start instant in Europe/Paris.
+    Demo,
+}
+
 /// How to build a test application.
 pub(crate) struct TestAppOptions {
+    pub(crate) figures: Figures,
+    pub(crate) read_model: Option<Arc<dyn binsight_engine::portfolio::ReadModel>>,
+    pub(crate) importing_wallet: Option<ImportingWalletSpec>,
     pub(crate) password: &'static str,
     pub(crate) secret_byte: u8,
     pub(crate) public_url: Option<&'static str>,
@@ -62,6 +83,9 @@ pub(crate) struct TestAppOptions {
 impl Default for TestAppOptions {
     fn default() -> Self {
         Self {
+            figures: Figures::Chain,
+            read_model: None,
+            importing_wallet: None,
             password: PASSWORD,
             secret_byte: 42,
             public_url: None,
@@ -78,6 +102,7 @@ pub(crate) struct TestApp {
     pub(crate) clock: Arc<FixedClock>,
     pub(crate) shutdown: CancellationToken,
     pub(crate) handle: EngineHandle,
+    pub(crate) network_io: Box<dyn Fn() -> (usize, u32) + Send + Sync>,
     engine: Option<Engine>,
     _database_folder: tempfile::TempDir,
 }
@@ -117,15 +142,48 @@ impl TestApp {
         Self::with(TestAppOptions::default()).await
     }
 
+    /// An application serving the default demo world, signed-in requests made easy.
+    pub(crate) async fn demo() -> Self {
+        Self::with(TestAppOptions {
+            figures: Figures::Demo,
+            ..TestAppOptions::default()
+        })
+        .await
+    }
+
     /// An application on a fresh temporary database.
     pub(crate) async fn with(options: TestAppOptions) -> Self {
         let temporary = temporary_engine().await;
-        let clock = Arc::new(FixedClock::new(
-            Timestamp::from_second(START_SECONDS).unwrap(),
-        ));
+        let start = Timestamp::from_second(START_SECONDS).unwrap();
+        let clock = Arc::new(FixedClock::new(start));
         let shutdown = CancellationToken::new();
+        let data_source = match options.figures {
+            Figures::Chain => DataSource::Chain,
+            Figures::Demo => {
+                let mut spec =
+                    WorldSpec::new(start, jiff::tz::TimeZone::get(TEST_TIMEZONE).unwrap());
+                spec.importing_wallet = options.importing_wallet;
+                DataSource::Demo(Arc::new(DemoPortfolio::new(&spec, clock.clone()).unwrap()))
+            }
+        };
+        let data_source = options.read_model.map_or(data_source, DataSource::Demo);
+        let runs_engine = matches!(&data_source, DataSource::Chain);
+        let handle = match data_source {
+            DataSource::Chain => temporary.handle.with_data_source(DataSource::Chain),
+            source @ DataSource::Demo(_) => {
+                EngineHandle::without_engine(temporary.store.clone(), source)
+            }
+        };
+        let engine = if runs_engine {
+            Some(temporary.engine)
+        } else {
+            None
+        };
+        let transport = temporary.transport;
+        let stream = temporary.stream;
+        let network_io = Box::new(move || (transport.calls().len(), stream.connections_opened()));
         let state = AppState::new(AppStateParts {
-            engine: temporary.handle.clone(),
+            engine: handle.clone(),
             auth: AuthSettings {
                 password: OwnerPassword::parse(options.password).unwrap(),
                 session_secret: SessionSecret::from_bytes([options.secret_byte; 32]),
@@ -143,8 +201,9 @@ impl TestApp {
             state,
             clock,
             shutdown,
-            handle: temporary.handle,
-            engine: Some(temporary.engine),
+            handle,
+            engine,
+            network_io,
             _database_folder: temporary.folder,
         }
     }
@@ -201,6 +260,12 @@ impl TestApp {
             .body(Body::empty())
             .unwrap();
         self.send(request).await
+    }
+
+    /// Signs in and sends a `GET` to `path`.
+    pub(crate) async fn get_signed_in(&self, path: &str) -> TestResponse {
+        let cookie = self.session_cookie().await;
+        self.get_with_cookie(path, &cookie).await
     }
 
     /// Sends `request` through the whole application and reads the response.
