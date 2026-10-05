@@ -145,3 +145,46 @@ async fn never_calls_an_unindexed_empty_history_complete() {
     assert_eq!(sync["wallets"][0]["state"], "importing");
     assert_eq!(sync["wallets"][0]["import"]["progress"], "40");
 }
+
+#[tokio::test]
+async fn keeps_uncovered_net_deposits_unknown_without_degrading_covered_windows() {
+    let now = Timestamp::from_second(START_SECONDS).unwrap();
+    let app = importing(Some(
+        now.checked_sub(SignedDuration::from_hours(36)).unwrap(),
+    ))
+    .await;
+    let baseline = TestApp::demo().await;
+    let scopes = scopes(&app).await;
+    let wallet = &scopes[1];
+    for currency in ["sol", "usd"] {
+        for scope in ["all", wallet.as_str()] {
+            for period in ["all", "7d"] {
+                let path = format!(
+                    "/api/v1/stats/series?series=net_worth&period={period}&wallet={scope}&currency={currency}"
+                );
+                let response = app.get_signed_in(&path).await.json();
+                assert_incomplete(&response["header"]["net_deposits"], wallet);
+            }
+            let path = format!(
+                "/api/v1/stats/series?series=net_worth&period=today&wallet={scope}&currency={currency}"
+            );
+            let response = app.get_signed_in(&path).await.json();
+            let complete = baseline.get_signed_in(&path).await.json();
+            assert_eq!(
+                response["header"]["net_deposits"],
+                complete["header"]["net_deposits"]
+            );
+        }
+        let path = format!(
+            "/api/v1/stats/series?series=net_worth&period=all&wallet={}&currency={currency}",
+            scopes[2]
+        );
+        let response = app.get_signed_in(&path).await.json();
+        let complete = baseline.get_signed_in(&path).await.json();
+        assert_eq!(
+            response["header"]["net_deposits"],
+            complete["header"]["net_deposits"]
+        );
+    }
+    assert_eq!((app.network_io)(), (0, 0));
+}
