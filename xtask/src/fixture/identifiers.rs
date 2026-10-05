@@ -34,7 +34,7 @@ impl CaseName {
     }
 }
 
-/// The name of a JSON-RPC method, such as `getSignaturesForAddress`: ASCII letters only.
+/// A JSON-RPC method name: an ASCII letter followed by ASCII letters or digits.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RpcMethod(String);
 
@@ -42,11 +42,11 @@ impl RpcMethod {
     /// Parses a method name.
     pub(crate) fn parse(text: &str) -> anyhow::Result<Self> {
         ensure!(
-            !text.is_empty()
+            text.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
                 && text
-                    .chars()
-                    .all(|character| character.is_ascii_alphabetic()),
-            "the RPC method `{text}` must be made of ASCII letters only"
+                    .bytes()
+                    .all(|character| character.is_ascii_alphanumeric()),
+            "the RPC method `{text}` must start with an ASCII letter and contain only ASCII letters or digits"
         );
         Ok(Self(text.to_owned()))
     }
@@ -136,10 +136,31 @@ mod tests {
     }
 
     #[test]
-    fn accepts_letter_only_rpc_methods() {
-        assert!(RpcMethod::parse("getSignaturesForAddress").is_ok());
-        assert!(RpcMethod::parse("get/../Transaction").is_err());
-        assert!(RpcMethod::parse("").is_err());
+    fn accepts_standard_and_versioned_rpc_method_names() {
+        for accepted in [
+            "getSignaturesForAddress",
+            "getProgramAccountsV2",
+            "getTokenAccountsByOwnerV2",
+        ] {
+            assert!(RpcMethod::parse(accepted).is_ok(), "{accepted}");
+        }
+    }
+
+    #[test]
+    fn refuses_rpc_names_that_are_paths_or_not_ascii_identifiers() {
+        for refused in [
+            "",
+            "2get",
+            "get/../Transaction",
+            "../V2",
+            "getV2/escape",
+            "get.V2",
+            "get V2",
+            "gétProgramAccounts",
+            "getProgramAccountsV₂",
+        ] {
+            assert!(RpcMethod::parse(refused).is_err(), "{refused}");
+        }
     }
 
     #[test]
