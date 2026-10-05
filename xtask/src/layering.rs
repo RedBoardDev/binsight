@@ -176,8 +176,30 @@ mod tests {
             messages(&packages),
             [
                 "binsight-core is a pure crate and must not depend on tokio \
-              (pure crates may only use: thiserror, serde, serde_json, bs58, base64, borsh, jiff, sha2)"
+              (pure crates may only use: thiserror, serde, serde_json, bs58, base64, borsh, jiff, sha2, curve25519-dalek)"
             ]
+        );
+    }
+
+    #[test]
+    fn reserves_curve_point_validation_to_solana() {
+        let mut packages = planned_workspace();
+        add_dependency(
+            &mut packages,
+            "binsight-solana",
+            "curve25519-dalek",
+            DependencyKind::Normal,
+        );
+        assert_eq!(messages(&packages), Vec::<String>::new());
+        add_dependency(
+            &mut packages,
+            "binsight-dlmm",
+            "curve25519-dalek",
+            DependencyKind::Normal,
+        );
+        assert_eq!(
+            messages(&packages),
+            ["binsight-dlmm must not depend on curve25519-dalek (only binsight-solana may)"]
         );
     }
 

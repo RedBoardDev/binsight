@@ -82,6 +82,11 @@ pub(crate) struct ExclusiveOwner {
 /// External crates reserved to the crate that owns the concern. Applies to normal and build
 /// dependencies; tests (dev dependencies) may use anything.
 pub(crate) const EXCLUSIVE_OWNERS: &[ExclusiveOwner] = &[
+    // Only Solana address derivation needs to reject ed25519 curve points.
+    ExclusiveOwner {
+        dependency: "curve25519-dalek",
+        owners: &[SOLANA],
+    },
     // The database file belongs to the store.
     ExclusiveOwner {
         dependency: "rusqlite",
@@ -195,4 +200,5 @@ pub(crate) const PURE_EXTERNAL_ALLOWLIST: &[&str] = &[
     "borsh",
     "jiff",
     "sha2",
+    "curve25519-dalek",
 ];

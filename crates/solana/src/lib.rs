@@ -24,6 +24,7 @@ mod base58;
 mod byte_reader;
 pub mod commitment;
 pub mod error;
+pub mod program_address;
 pub mod programs;
 pub mod signature;
 pub mod transaction;
