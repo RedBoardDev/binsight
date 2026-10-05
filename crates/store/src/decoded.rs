@@ -2,18 +2,24 @@
 //!
 //! The result of decoding one transaction with one decoder is replaced as a whole: the previous
 //! outcome and its events are deleted and the new ones inserted in the same transaction, so a
-//! reader never sees a half-written result. Because the version is stored, a new decoder version
+//! reader never sees a half-written result. The transaction execution outcome is retained
+//! separately from decoder success: failed instructions can have emitted events in the raw
+//! payload without changing any position. Because the version is stored, a new decoder version
 //! can find what it has to re-decode. This module stores results; it does not decode anything.
 
 mod statements;
 
+#[cfg(test)]
+mod execution_tests;
+
 use binsight_solana::Signature;
+use binsight_solana::transaction::TxOutcome;
 use jiff::Timestamp;
 
 use crate::database::Database;
 use crate::error::StoreError;
 use crate::store::Store;
-use statements::{read_record, replace_record};
+use statements::{read_record, read_snapshot, replace_record};
 
 /// One event a decoder found in a transaction.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,7 +53,11 @@ pub struct DecodeRecord {
     pub decoder: String,
     /// The version of the decoder that produced this result (1 or more).
     pub decoder_version: u32,
-    /// What it found.
+    /// Whether the transaction executed successfully, independently of decoder success.
+    /// `None` means an older record or an unreadable payload did not establish this fact;
+    /// it must never be interpreted as a successful transaction.
+    pub execution_outcome: Option<TxOutcome>,
+    /// What the decoder found. A decoding failure does not imply chain execution failure.
     pub outcome: DecodeOutcome,
     /// When it ran.
     pub decoded_at: Timestamp,
@@ -97,7 +107,11 @@ impl DecodedRepo {
         decoder: String,
     ) -> Result<Option<DecodeRecord>, StoreError> {
         self.database
-            .read(move |connection| read_record(connection, signature, decoder))
+            .read(move |connection| {
+                read_snapshot(connection, |snapshot| {
+                    read_record(snapshot, signature, decoder)
+                })
+            })
             .await
     }
 }
@@ -123,6 +137,7 @@ mod tests {
             signature,
             decoder: "dlmm".to_owned(),
             decoder_version: version,
+            execution_outcome: None,
             outcome,
             decoded_at: Timestamp::from_second(1_790_000_200).unwrap(),
         }

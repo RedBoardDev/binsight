@@ -43,6 +43,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "wallet_signature_order",
         sql: include_str!("../../migrations/0005_wallet_signature_order.sql"),
     },
+    Migration {
+        version: 6,
+        name: "decoded_execution",
+        sql: include_str!("../../migrations/0006_decoded_execution.sql"),
+    },
 ];
 
 #[cfg(test)]
@@ -103,6 +108,38 @@ mod tests {
                 migration.name
             );
         }
+    }
+
+    #[test]
+    fn preserves_legacy_decode_records_without_inventing_execution_success() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        let (before, added) = MIGRATIONS.split_at(5);
+        for migration in before {
+            connection.execute_batch(migration.sql).unwrap();
+        }
+        connection
+            .execute_batch(
+                "INSERT INTO raw_tx VALUES
+             ('legacy', 1, NULL, '0', 'finalized', 'base64', 'none',
+              x'00', zeroblob(32), 0);
+             INSERT INTO tx_decode VALUES ('legacy', 'dlmm', 1, 'decoded', NULL, 0);
+             INSERT INTO decoded_event VALUES
+             ('legacy', 'dlmm', 0, 1, 'dlmm.add_liquidity', '{\"amount\":\"1\"}');",
+            )
+            .unwrap();
+        connection.execute_batch(added[0].sql).unwrap();
+        let kept: (String, Option<String>, Option<String>) = connection
+            .query_row(
+                "SELECT outcome, execution_outcome, execution_error FROM tx_decode",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(kept, ("decoded".to_owned(), None, None));
+        let payload: String = connection
+            .query_row("SELECT payload FROM decoded_event", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(payload, "{\"amount\":\"1\"}");
     }
 
     #[test]
