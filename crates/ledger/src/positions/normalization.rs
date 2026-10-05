@@ -1,9 +1,13 @@
 //! Normalized raw activity sealed with the exact replayed transaction and conserved book.
 //!
 //! Deposits carry proven net units; withdrawals and claims retain gross units, with transfer
-//! costs in the separate book. This boundary does not value, date or net position movements.
+//! costs in the separate book. Raw quotation is a separate, explicitly selected pool boundary;
+//! neither boundary creates dated facts, currency conversions or net accounting totals.
 
 mod legs;
+mod valuation;
+
+pub use valuation::{QuotedPositionTransaction, SelectedPoolMovement, ValuationError};
 
 use binsight_dlmm::activity::{PositionMovement, RewardClaim};
 

@@ -1,8 +1,9 @@
 //! Replay proved position lifetimes and ownership before booking each wallet transaction.
 //!
 //! Sources retain the raw transaction, original activity and explicit ordering provenance.
-//! This module neither values amounts nor reads storage, the network or a clock. Missing
-//! creation or dates remain visible diagnostics; no position identity is reconstructed.
+//! Raw quotations require injected pool facts and keep their selected convention explicit.
+//! This module reads neither storage, the network nor a clock. Missing creation or dates
+//! remain visible diagnostics; no position identity is reconstructed.
 
 mod diagnostic;
 mod lifetime;
@@ -17,6 +18,7 @@ pub use lifetime::{
 };
 pub use normalization::{
     BookedPositionTransaction, NormalizationError, NormalizedPositionActivity,
+    QuotedPositionTransaction, SelectedPoolMovement, ValuationError,
 };
 pub use ownership::TransactionOwnership;
 pub use replay::{PositionLifetimes, PositionReplayContext};
