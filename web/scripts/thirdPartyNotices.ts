@@ -85,11 +85,22 @@ export const toPackageEntries = (report: unknown): PackageEntry[] => {
     .sort((a, b) => a.name.localeCompare(b.name) || a.version.localeCompare(b.version));
 };
 
-const readLicenseTexts = (packagePath: string): string[] =>
-  readdirSync(packagePath)
+export const readLicenseTexts = (entry: PackageEntry): string[] => {
+  const texts = readdirSync(entry.path)
     .filter((file) => LICENSE_FILE.test(file))
     .sort()
-    .map((file) => readFileSync(join(packagePath, file), 'utf8').trim());
+    .map((file) => readFileSync(join(entry.path, file), 'utf8').trim());
+  // The npm distribution omits upstream NOTICE. Keep the exact tagged notice in our source tree.
+  if (entry.name === 'lightweight-charts') {
+    texts.push(
+      readFileSync(
+        new URL('../licenses/lightweight-charts.NOTICE', import.meta.url),
+        'utf8',
+      ).trim(),
+    );
+  }
+  return texts;
+};
 
 export const renderNotice = (entry: PackageEntry, texts: readonly string[]): string => {
   const header = `${entry.name} ${entry.version} (${entry.license})`;
@@ -122,7 +133,7 @@ const main = (): void => {
     console.info(`${entries.length} production packages, all with an allowed license`);
     return;
   }
-  const notices = entries.map((entry) => renderNotice(entry, readLicenseTexts(entry.path)));
+  const notices = entries.map((entry) => renderNotice(entry, readLicenseTexts(entry)));
   const intro =
     'Third-party software in the binsight web app\n\nbinsight is MIT-licensed. The web app it serves includes the packages below, each under its own license.\n';
   const rustNotices = readFileSync(RUST_NOTICES_PATH, 'utf8');

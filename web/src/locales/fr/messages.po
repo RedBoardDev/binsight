@@ -115,6 +115,10 @@ msgstr "Lectures du graphique"
 msgid "Close"
 msgstr "Fermer"
 
+#: src/applications/Shared/Chart/Ui/PriceChart/useCandleReadings.tsx
+msgid "Closing price"
+msgstr "Prix de clôture"
+
 #: src/applications/Realtime/Ui/streamStateLabels.ts
 msgid "Connecting"
 msgstr "Connexion"
@@ -194,6 +198,10 @@ msgstr "Opérationnel"
 msgid "Hide amounts"
 msgstr "Masquer les montants"
 
+#: src/applications/Shared/Chart/Ui/PriceChart/useCandleReadings.tsx
+msgid "High"
+msgstr "Plus haut"
+
 #: src/applications/ClosedPosition/Ui/HistoryPage.tsx
 #: src/core/Layout/AppShell/navItems.ts
 msgid "History"
@@ -202,6 +210,11 @@ msgstr "Historique"
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "History still importing: {progress} done."
 msgstr "Historique en cours d’import : {progress} fait."
+
+#. placeholder {0}: source.quoteSymbol.toUpperCase()
+#: src/applications/Shared/Chart/Ui/PriceChart/PriceChartHeader.tsx
+msgid "in {0}"
+msgstr "en {0}"
 
 #: src/applications/Auth/Ui/LoginForm/errorCopy.ts
 #: src/applications/Shared/Ui/apiErrorMessages.ts
@@ -240,6 +253,10 @@ msgstr "Mises à jour en direct"
 #: src/applications/Realtime/Ui/RealtimeStatusIndicator.tsx
 msgid "Live updates:"
 msgstr "Mises à jour en direct :"
+
+#: src/applications/Shared/Chart/Ui/PriceChart/useCandleReadings.tsx
+msgid "Low"
+msgstr "Plus bas"
 
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "lower bound"
@@ -290,6 +307,10 @@ msgstr "Indisponible"
 msgid "Nothing to compare with yet."
 msgstr "Rien à comparer pour l’instant."
 
+#: src/applications/Shared/Chart/Ui/PriceChart/useCandleReadings.tsx
+msgid "Open"
+msgstr "Ouverture"
+
 #: src/applications/Setting/Ui/SettingsPage/AboutSection.tsx
 msgid "Open-source licenses"
 msgstr "Licences open source"
@@ -322,6 +343,18 @@ msgstr "Période"
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "plus"
 msgstr "plus"
+
+#: src/applications/Shared/Chart/Ui/PriceChart/PriceChartHeader.tsx
+msgid "Price"
+msgstr "Prix"
+
+#: src/applications/Shared/Chart/Ui/PriceChart/LightweightPriceChart.tsx
+msgid "Price history is not available for this pool yet"
+msgstr "L’historique des prix n’est pas encore disponible pour ce pool"
+
+#: src/applications/Shared/Chart/Ui/PriceChart/PriceChartHeader.tsx
+msgid "Price interval"
+msgstr "Intervalle de prix"
 
 #: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/SampleReadout.tsx
 #: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/useSampleReadings.ts
@@ -432,6 +465,10 @@ msgstr "Thème du système"
 #: src/applications/Shared/Control/Ui/ViewToggle.tsx
 msgid "Table"
 msgstr "Tableau"
+
+#: src/applications/Shared/Chart/Ui/PriceChart/PriceChartErrorBoundary.tsx
+msgid "The price chart could not be loaded."
+msgstr "Le graphique des prix n’a pas pu être chargé."
 
 #: src/applications/Shared/Ui/apiErrorMessages.ts
 msgid "The request was not valid. Reload the app and try again."

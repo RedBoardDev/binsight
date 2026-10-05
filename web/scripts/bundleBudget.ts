@@ -81,6 +81,19 @@ const difference = (files: ReadonlySet<string>, loaded: ReadonlySet<string>): Se
 
 const isRoute = (key: string): boolean => key.startsWith('src/routes/');
 
+const PRICE_CHART_CHUNK = 'src/applications/Shared/Chart/Ui/PriceChart/LightweightPriceChart.tsx';
+
+export const eagerPriceChartLoads = (manifest: Manifest): readonly string[] => {
+  const chart = manifest[PRICE_CHART_CHUNK];
+  if (chart === undefined) return [];
+  const chartFiles = staticClosure(manifest, PRICE_CHART_CHUNK);
+  return Object.keys(manifest).filter((key) => {
+    if (manifest[key]?.isEntry !== true && !isRoute(key)) return false;
+    const loaded = staticClosure(manifest, key);
+    return [...chartFiles].some((file) => loaded.has(file) && file === chart.file);
+  });
+};
+
 export const measureBundle = (
   manifest: Manifest,
   budget: Budget,
@@ -130,6 +143,11 @@ const main = (): void => {
   const manifest: Manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'));
   const budget: Budget = JSON.parse(readFileSync(BUDGET_PATH, 'utf8'));
   const measures = measureBundle(manifest, budget, gzipKbOnDisk);
+  const eagerCharts = eagerPriceChartLoads(manifest);
+  if (eagerCharts.length > 0) {
+    console.error(`PriceChart must stay lazy: ${eagerCharts.join(', ')}`);
+    process.exit(1);
+  }
   const overs = measures.filter((measure) => measure.kb > measure.limitKb);
   for (const { name, kb, limitKb } of measures) {
     const status = kb > limitKb ? 'OVER' : 'ok';

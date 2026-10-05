@@ -2,7 +2,8 @@
   "firstLoadKb": 260,
   "lazyChunkKb": 60,
   "lazyChunkKbOverrides": {
-    "src/routes/login.tsx": 30
+    "src/routes/login.tsx": 30,
+    "src/applications/Shared/Chart/Ui/PriceChart/LightweightPriceChart.tsx": 65
   },
   "cssKb": 50
 }

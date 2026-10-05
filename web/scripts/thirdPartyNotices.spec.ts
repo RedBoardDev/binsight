@@ -1,5 +1,11 @@
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { isAllowedLicense, renderNotice, toPackageEntries } from './thirdPartyNotices';
+import {
+  isAllowedLicense,
+  readLicenseTexts,
+  renderNotice,
+  toPackageEntries,
+} from './thirdPartyNotices';
 
 describe('isAllowedLicense', () => {
   it('accepts permissive licenses', () => {
@@ -52,5 +58,21 @@ describe('renderNotice', () => {
 
   it('names the license when the package ships no license file', () => {
     expect(renderNotice(entry, [])).toContain('its license is MIT');
+  });
+});
+
+describe('readLicenseTexts', () => {
+  it('ships the exact TradingView NOTICE even though its npm package omits that file', () => {
+    const entry = {
+      name: 'lightweight-charts',
+      version: '5.2.1',
+      license: 'Apache-2.0',
+      path: fileURLToPath(new URL('../node_modules/lightweight-charts', import.meta.url)),
+    };
+    const notice = renderNotice(entry, readLicenseTexts(entry));
+    expect(notice).toContain('Apache License');
+    expect(notice).toContain(
+      'TradingView Lightweight Charts™\nCopyright (с) 2025 TradingView, Inc. https://www.tradingview.com/',
+    );
   });
 });

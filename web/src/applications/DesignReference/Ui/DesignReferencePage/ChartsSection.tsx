@@ -3,6 +3,7 @@ import { ReferenceSection } from '@app/applications/DesignReference/Ui/DesignRef
 import { PulseChart } from '@app/applications/Shared/Chart/Ui/PulseChart';
 import { useState } from 'react';
 import { BinSamples } from './ChartsSection/BinSamples';
+import { CandleSamples } from './ChartsSection/CandleSamples';
 import { SampleReadout } from './ChartsSection/SampleReadout';
 import { SeriesSamples } from './ChartsSection/SeriesSamples';
 import { useSampleReadings } from './ChartsSection/useSampleReadings';
@@ -23,6 +24,7 @@ export const ChartsSection = () => {
       />
       <BinSamples />
       <SeriesSamples />
+      <CandleSamples />
     </ReferenceSection>
   );
 };

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   type Budget,
+  eagerPriceChartLoads,
   type Manifest,
   measureBundle,
   parentLayouts,
@@ -38,6 +39,27 @@ const countFiles = (files: ReadonlySet<string>): number => files.size;
 describe('staticClosure', () => {
   it('follows the static imports of a chunk', () => {
     expect(staticClosure(MANIFEST, 'index.html')).toEqual(new Set(['entry.js', 'shared.js']));
+  });
+});
+
+describe('eagerPriceChartLoads', () => {
+  const chartKey = 'src/applications/Shared/Chart/Ui/PriceChart/LightweightPriceChart.tsx';
+  it('allows the price chart as a dynamic chunk without loading it in a route', () => {
+    expect(
+      eagerPriceChartLoads({
+        ...MANIFEST,
+        [chartKey]: { file: 'candles.js', isDynamicEntry: true },
+      }),
+    ).toEqual([]);
+  });
+  it('rejects a price chart statically pulled into the entry or a route', () => {
+    const manifest = {
+      ...MANIFEST,
+      [chartKey]: { file: 'candles.js', isDynamicEntry: true },
+      'index.html': { file: 'entry.js', isEntry: true, imports: [chartKey] },
+      'src/routes/login.tsx': { file: 'login.js', isDynamicEntry: true, imports: [chartKey] },
+    };
+    expect(eagerPriceChartLoads(manifest)).toEqual(['index.html', 'src/routes/login.tsx']);
   });
 });
 
