@@ -26,7 +26,7 @@
 //! ledger's job.
 
 mod claims;
-mod emitter;
+pub(crate) mod emitter;
 mod facts;
 mod lifecycle_guard;
 mod rebalance;

@@ -3,13 +3,19 @@
 //! An instruction is identified by its first 8 bytes, never by a label a node or an indexer puts
 //! on the transaction. The kind says what an instruction does to a position: it is what tells a
 //! withdrawal from a position (never a purchase) from a swap routed through a pool (a real trade).
-//! This module only classifies; it does not decode an instruction's parameters.
+//! This module classifies and reads where an instruction names its pool's tokens
+//! ([`named_tokens`]) or the bin array it creates ([`bin_array_funding`]); it does not decode an
+//! instruction's parameters.
 
+mod accounts;
 mod table;
 
-use binsight_solana::transaction::InstructionNode;
+use binsight_solana::transaction::{InstructionNode, InstructionPosition, TransactionView};
 
 use crate::program::{EVENT_IX_TAG, PROGRAM_ID};
+pub use accounts::{
+    BinArrayFunding, NamedTokens, bin_array_funding, named_tokens, position_rent_receiver,
+};
 use table::INSTRUCTIONS;
 pub(crate) use table::{
     CLAIM_REWARD, CLAIM_REWARD_MINT_ACCOUNT, CLAIM_REWARD2, CLAIM_REWARD2_MINT_ACCOUNT,
@@ -73,6 +79,11 @@ pub fn instruction_name(instruction: &InstructionNode) -> Option<&'static str> {
         return None;
     }
     known(instruction.data.as_bytes()).map(|(name, _)| name)
+}
+
+/// The DLMM call that emitted an event at `at`, proven by its instruction stack.
+pub fn event_emitter(tx: &TransactionView, at: InstructionPosition) -> Option<&InstructionNode> {
+    crate::activity::emitter::emitter(tx, at)
 }
 
 /// The name and kind of the instruction whose data is `data`, if its discriminator is known.

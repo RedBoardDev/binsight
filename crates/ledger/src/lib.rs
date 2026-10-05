@@ -1,7 +1,7 @@
 //! # binsight-ledger
 //!
 //! **Responsibility:** the accounting of binsight: typed ledger entries, liquidity position PnL,
-//! FIFO cost basis, net worth, curves and the bridge between them. Nothing is implemented yet.
+//! FIFO cost basis, net worth, curves and the bridge between them. Transaction booking explains real balance changes with typed entries.
 //!
 //! **May depend on:** `binsight-core`, `binsight-solana`, `binsight-dlmm`.
 //! **Must not depend on:** `binsight-store`, `binsight-chain`, `binsight-engine`, `binsight-api`,
@@ -16,3 +16,6 @@
     clippy::as_conversions,
     clippy::arithmetic_side_effects
 )]
+
+/// Typed accounting of each wallet transaction.
+pub mod book;

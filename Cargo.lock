@@ -315,6 +315,13 @@ dependencies = [
 [[package]]
 name = "binsight-ledger"
 version = "0.1.0"
+dependencies = [
+ "binsight-core",
+ "binsight-dlmm",
+ "binsight-solana",
+ "proptest",
+ "thiserror",
+]
 
 [[package]]
 name = "binsight-solana"

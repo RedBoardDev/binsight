@@ -11,7 +11,7 @@ use binsight_solana::transaction::{InstructionNode, InstructionPosition, Transac
 use crate::program::PROGRAM_ID;
 
 /// The DLMM instruction that emitted the event at `at`, if it can be told.
-pub(super) fn emitter(tx: &TransactionView, at: InstructionPosition) -> Option<&InstructionNode> {
+pub(crate) fn emitter(tx: &TransactionView, at: InstructionPosition) -> Option<&InstructionNode> {
     let index = tx
         .instructions
         .binary_search_by_key(&at, |instruction| instruction.position)
