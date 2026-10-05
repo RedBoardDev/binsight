@@ -4,6 +4,7 @@ import { PulseChart } from '@app/applications/Shared/Chart/Ui/PulseChart';
 import { useState } from 'react';
 import { BinSamples } from './ChartsSection/BinSamples';
 import { SampleReadout } from './ChartsSection/SampleReadout';
+import { SeriesSamples } from './ChartsSection/SeriesSamples';
 import { useSampleReadings } from './ChartsSection/useSampleReadings';
 
 export const ChartsSection = () => {
@@ -21,6 +22,7 @@ export const ChartsSection = () => {
         renderReadout={(index) => <SampleReadout index={index} />}
       />
       <BinSamples />
+      <SeriesSamples />
     </ReferenceSection>
   );
 };

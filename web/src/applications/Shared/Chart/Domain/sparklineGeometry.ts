@@ -14,11 +14,25 @@ const SPARKLINE_WIDTH_UNITS = 100;
 interface SparklineGeometry {
   readonly strokes: readonly ChartStroke[];
   readonly lastPoint: ChartPoint | null;
+  readonly points: readonly ExactChartPoint[];
+  readonly positions: readonly number[];
 }
 
-export const sparklineGeometry = (values: readonly Figure[], height: number): SparklineGeometry => {
-  if (!Number.isFinite(height) || height <= SPARKLINE_PADDING_PX * 2)
+export const sparklineGeometry = (
+  values: readonly Figure[],
+  height: number,
+  width = SPARKLINE_WIDTH_UNITS,
+  padding = SPARKLINE_PADDING_PX,
+): SparklineGeometry => {
+  if (
+    !Number.isFinite(padding) ||
+    padding <= 0 ||
+    !Number.isFinite(height) ||
+    height <= padding * 2
+  )
     throw new RangeError('A sparkline needs room for its stroke and point');
+  if (!Number.isFinite(width) || width <= padding * 2)
+    throw new RangeError('A line needs room for its horizontal padding');
   const plotted = values.map((figure) =>
     figure.exactness === 'unavailable' ? null : plotValue(figure.value.amount),
   );
@@ -28,7 +42,12 @@ export const sparklineGeometry = (values: readonly Figure[], height: number): Sp
       minimum: available.reduce((minimum, value) => Math.min(minimum, value), available[0] ?? 0),
       maximum: available.reduce((maximum, value) => Math.max(maximum, value), available[0] ?? 0),
     },
-    { minimum: height - SPARKLINE_PADDING_PX, maximum: SPARKLINE_PADDING_PX },
+    { minimum: height - padding, maximum: padding },
+  );
+  const positions = values.map((_, index) =>
+    values.length === 1
+      ? width / 2
+      : padding + (index * (width - padding * 2)) / (values.length - 1),
   );
   const points: ExactChartPoint[] = values.map((figure, index) => {
     const value = plotted[index];
@@ -37,11 +56,7 @@ export const sparklineGeometry = (values: readonly Figure[], height: number): Sp
     return {
       exactness: figure.exactness,
       point: {
-        x:
-          values.length === 1
-            ? SPARKLINE_WIDTH_UNITS / 2
-            : SPARKLINE_PADDING_PX +
-              (index * (SPARKLINE_WIDTH_UNITS - SPARKLINE_PADDING_PX * 2)) / (values.length - 1),
+        x: positions[index] ?? width / 2,
         y: scale.project(value),
       },
     };
@@ -50,5 +65,7 @@ export const sparklineGeometry = (values: readonly Figure[], height: number): Sp
   return {
     strokes: estimatedSegments(points),
     lastPoint: last?.exactness === 'unavailable' ? null : (last?.point ?? null),
+    points,
+    positions,
   };
 };

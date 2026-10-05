@@ -11,7 +11,12 @@ const money = (amount: string): Extract<Figure, { exactness: 'complete' }> => {
 
 describe('sparklineGeometry', () => {
   it('draws a centered constant point and an empty geometry without invented readings', () => {
-    expect(sparklineGeometry([], 22)).toEqual({ strokes: [], lastPoint: null });
+    expect(sparklineGeometry([], 22)).toEqual({
+      strokes: [],
+      lastPoint: null,
+      points: [],
+      positions: [],
+    });
     expect(sparklineGeometry([money('0')], 22).lastPoint).toEqual({ x: 50, y: 11 });
     const constant = sparklineGeometry([money('2'), money('2')], 22);
     expect(constant.lastPoint).toEqual({ x: 97, y: 11 });
@@ -31,5 +36,16 @@ describe('sparklineGeometry', () => {
     expect(sparklineGeometry([money('1'), money('9'.repeat(400))], 22).lastPoint).toBeNull();
     for (const height of [0, 6, Number.NaN, Number.POSITIVE_INFINITY])
       expect(() => sparklineGeometry([], height)).toThrow(RangeError);
+  });
+
+  it('uses pixel width for the interactive line while retaining every missing index', () => {
+    const unavailable: Figure = { exactness: 'unavailable', reasons: [] };
+    const geometry = sparklineGeometry([money('100'), unavailable, money('101')], 200, 600);
+    expect(geometry.positions).toEqual([3, 300, 597]);
+    expect(geometry.points[1]).toEqual({ exactness: 'unavailable' });
+    expect(geometry.lastPoint).toEqual({ x: 597, y: 3 });
+    expect(geometry.points[0]).toEqual({ exactness: 'complete', point: { x: 3, y: 197 } });
+    for (const width of [0, 6, Number.NaN, Number.POSITIVE_INFINITY])
+      expect(() => sparklineGeometry([], 22, width)).toThrow(RangeError);
   });
 });

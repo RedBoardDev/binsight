@@ -106,6 +106,7 @@ msgid "Cards"
 msgstr "Cards"
 
 #: src/applications/Shared/Chart/Ui/BinHistogram.tsx
+#: src/applications/Shared/Chart/Ui/ChartReadings.tsx
 #: src/applications/Shared/Chart/Ui/PulseChart/PulseTable.tsx
 msgid "Chart readings"
 msgstr "Chart readings"
@@ -263,7 +264,9 @@ msgid "More"
 msgstr "More"
 
 #: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/useSampleReadings.ts
+#: src/applications/Shared/Chart/Ui/LineSeriesChart.tsx
 #: src/applications/Shared/Chart/Ui/PulseChart.tsx
+#: src/applications/Shared/Chart/Ui/StackedBarChart.tsx
 msgid "No chart values"
 msgstr "No chart values"
 
@@ -497,7 +500,9 @@ msgid "Unavailable"
 msgstr "Unavailable"
 
 #: src/applications/Shared/Chart/Ui/BinHistogram.tsx
+#: src/applications/Shared/Chart/Ui/LineSeriesChart.tsx
 #: src/applications/Shared/Chart/Ui/PulseChart.tsx
+#: src/applications/Shared/Chart/Ui/StackedBarChart.tsx
 msgid "Use the arrow keys to explore the chart. Home and End select the first and last readings."
 msgstr "Use the arrow keys to explore the chart. Home and End select the first and last readings."
 
