@@ -1,6 +1,7 @@
 //! Transactional replay of ownership deltas; facts and booking consume its proved output later.
 
 mod actions;
+mod booking;
 mod delta;
 mod evidence;
 mod lifecycle;
@@ -85,6 +86,15 @@ impl PositionLifetimes {
     ) -> Result<TransactionOwnership, LifetimeError> {
         let last = order::validate(self, source)?;
         let delta = delta::TransactionDelta::build(self, source)?;
+        Ok(self.commit_delta(source, last, delta))
+    }
+
+    fn commit_delta(
+        &mut self,
+        source: &PositionTransaction,
+        last: LastTransaction,
+        delta: delta::TransactionDelta,
+    ) -> TransactionOwnership {
         self.known.extend(delta.known);
         self.lifetimes.extend(delta.lifetimes);
         self.seen_ids.extend(delta.new_ids);
@@ -92,7 +102,7 @@ impl PositionLifetimes {
         self.last = Some(last);
         self.diagnostics
             .extend(delta.ownership.diagnostics.iter().copied());
-        Ok(delta.ownership)
+        delta.ownership
     }
 
     /// Returns every known open/closed life and every unresolved diagnostic.

@@ -6,6 +6,7 @@
 
 mod diagnostic;
 mod lifetime;
+mod normalization;
 mod ownership;
 mod replay;
 mod source;
@@ -13,6 +14,9 @@ mod source;
 pub use diagnostic::{LifetimeDiagnostic, LifetimeError};
 pub use lifetime::{
     LifecycleSource, PositionLifetime, PositionLifetimeHistory, RawActivityEvidence,
+};
+pub use normalization::{
+    BookedPositionTransaction, NormalizationError, NormalizedPositionActivity,
 };
 pub use ownership::TransactionOwnership;
 pub use replay::{PositionLifetimes, PositionReplayContext};
