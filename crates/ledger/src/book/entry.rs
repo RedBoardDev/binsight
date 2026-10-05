@@ -8,7 +8,7 @@
 
 use std::fmt;
 
-use binsight_solana::Address;
+use binsight_solana::{Address, transaction::InstructionPosition};
 
 use super::residue::BridgeId;
 
@@ -22,6 +22,33 @@ pub struct LedgerEntry {
     pub amount: i128,
     /// Why it changed.
     pub kind: EntryKind,
+    /// The exact activity row that produced a position leg, within the same transaction.
+    /// Ordinary entries, including transfer tax, have no position source.
+    pub source: Option<PositionActivitySource>,
+}
+
+/// A position leg's origin in the transaction's original DLMM activity.
+///
+/// Keep that activity and the raw transaction with the entries. An index identifies the
+/// original row, while `at` confirms its instruction; neither amount nor position matching
+/// can distinguish two identical rebalance legs. A zero deposit with a source records a
+/// nonzero gross movement whose proven transfer tax leaves zero net capital.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PositionActivitySource {
+    /// A row in `TxActivity::movements`.
+    Movement {
+        /// The row's index in the original movements vector.
+        index: usize,
+        /// The event's instruction position.
+        at: InstructionPosition,
+    },
+    /// A row in `TxActivity::reward_claims`.
+    RewardClaim {
+        /// The row's index, distinct from the program's reward index (0 or 1).
+        index: usize,
+        /// The event's instruction position.
+        at: InstructionPosition,
+    },
 }
 
 /// What a wallet holds, as the ledger counts it.

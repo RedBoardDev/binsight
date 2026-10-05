@@ -16,7 +16,7 @@ mod worksheet;
 mod wsol;
 
 pub use context::WalletContext;
-pub use entry::{Asset, Counterparty, EntryKind, LedgerEntry, RentPurpose};
+pub use entry::{Asset, Counterparty, EntryKind, LedgerEntry, PositionActivitySource, RentPurpose};
 pub use residue::BridgeId;
 
 use binsight_dlmm::activity::TxActivity;
@@ -71,9 +71,10 @@ pub enum BookError {
 ///
 /// Position history must keep the original [`TxActivity`] and transaction alongside these
 /// entries. Deposit/withdrawal entries contain raw legs; the activity retains each rebalance's
-/// kind and event instruction position. A position assembler groups those legs by transaction
-/// signature and event position, and counts only their net capital contribution. Entries alone
-/// cannot reconstruct rebalance provenance or distinguish an unknown strategy.
+/// kind and event instruction position. Each position entry's source indexes that original
+/// activity, including a zero net deposit when a nonzero gross movement is entirely taxed.
+/// Assemblers validate source index, instruction, kind and mint against the same transaction
+/// bundle; entries alone cannot distinguish an unknown strategy or recover gross amounts.
 ///
 /// # Errors
 /// Returns [`BookError`] on overflow, malformed instructions, unresolved movement mints,

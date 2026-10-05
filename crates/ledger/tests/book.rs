@@ -38,6 +38,7 @@ fn charges_only_the_fee_of_a_failed_transaction() {
     assert_eq!(
         book(&tx),
         [LedgerEntry {
+            source: None,
             asset: Asset::Sol,
             amount: -10_000,
             kind: EntryKind::FailedTxFee
@@ -75,6 +76,7 @@ fn books_a_direct_sol_transfer_in_as_a_capital_deposit() {
     assert_eq!(
         book(&tx)[1],
         LedgerEntry {
+            source: None,
             asset: Asset::Sol,
             amount: 100_000,
             kind: EntryKind::CapitalDeposit {
@@ -136,6 +138,7 @@ fn moves_nothing_between_two_token_accounts_of_the_same_wallet() {
     assert_eq!(
         book(&tx),
         [LedgerEntry {
+            source: None,
             asset: Asset::Sol,
             amount: -5_000,
             kind: EntryKind::NetworkFee
@@ -168,6 +171,7 @@ fn books_a_jito_tip_as_a_tip_even_inside_a_protocol_transaction() {
     assert_eq!(
         book(&tx)[1],
         LedgerEntry {
+            source: None,
             asset: Asset::Sol,
             amount: -10_000,
             kind: EntryKind::Tip

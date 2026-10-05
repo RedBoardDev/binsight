@@ -1,7 +1,7 @@
 //! Book position movements in their real mints; no price or quote conversion belongs here.
 use super::context::OwnedPositions;
 use super::worksheet::Worksheet;
-use super::{Asset, BookError, EntryKind};
+use super::{Asset, BookError, EntryKind, PositionActivitySource};
 mod transfer_fee;
 
 use super::instructions::Decoded;
@@ -59,6 +59,7 @@ pub(super) fn book(
             sheet,
             MovementLeg {
                 mint: mints.x,
+                original_amount: movement.x.0,
                 amount: if sign < 0 {
                     fees.deposit_amount(movement_index, mints.x, movement.x.0)?
                 } else {
@@ -66,6 +67,10 @@ pub(super) fn book(
                 },
                 sign,
                 kind,
+                source: PositionActivitySource::Movement {
+                    index: movement_index,
+                    at: movement.at,
+                },
                 position: movement.position,
             },
         )?;
@@ -73,6 +78,7 @@ pub(super) fn book(
             sheet,
             MovementLeg {
                 mint: mints.y,
+                original_amount: movement.y.0,
                 amount: if sign < 0 {
                     fees.deposit_amount(movement_index, mints.y, movement.y.0)?
                 } else {
@@ -80,22 +86,31 @@ pub(super) fn book(
                 },
                 sign,
                 kind,
+                source: PositionActivitySource::Movement {
+                    index: movement_index,
+                    at: movement.at,
+                },
                 position: movement.position,
             },
         )?;
     }
-    for reward in &activity.reward_claims {
+    for (index, reward) in activity.reward_claims.iter().enumerate() {
         if owned.owns(reward.position) {
             add(
                 sheet,
                 MovementLeg {
                     mint: reward.mint,
+                    original_amount: reward.amount.0,
                     amount: reward.amount.0,
                     sign: 1,
                     kind: EntryKind::RewardClaim {
                         position: reward.position,
                     },
                     position: reward.position,
+                    source: PositionActivitySource::RewardClaim {
+                        index,
+                        at: reward.at,
+                    },
                 },
             )?;
         }
@@ -107,6 +122,8 @@ pub(super) fn book(
 struct MovementLeg {
     mint: Option<Address>,
     amount: u128,
+    original_amount: u128,
+    source: PositionActivitySource,
     sign: i128,
     kind: EntryKind,
     position: Address,
@@ -116,15 +133,17 @@ fn add(sheet: &mut Worksheet, leg: MovementLeg) -> Result<(), BookError> {
     let MovementLeg {
         mint,
         amount,
+        original_amount,
+        source,
         sign,
         kind,
         position,
     } = leg;
-    if amount == 0 {
+    if original_amount == 0 {
         return Ok(());
     }
     let mint = mint.ok_or(BookError::MissingMovementMint { position })?;
     let amount = i128::try_from(amount).map_err(|_| BookError::Overflow)?;
     let signed = amount.checked_mul(sign).ok_or(BookError::Overflow)?;
-    sheet.book(Asset::Token { mint }, signed, kind)
+    sheet.book_position(Asset::Token { mint }, signed, kind, source)
 }

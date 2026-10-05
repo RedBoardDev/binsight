@@ -7,7 +7,7 @@
 //! accounts; it does not decide what to book.
 
 use super::BookError;
-use super::entry::{Asset, EntryKind, LedgerEntry};
+use super::entry::{Asset, EntryKind, LedgerEntry, PositionActivitySource};
 
 /// The entries booked so far and the residue of every asset.
 pub(super) struct Worksheet {
@@ -38,6 +38,32 @@ impl Worksheet {
         if amount == 0 {
             return Ok(());
         }
+        self.book_entry(LedgerEntry {
+            asset,
+            amount,
+            kind,
+            source: None,
+        })
+    }
+
+    /// Records an already normalized position leg, including a proven zero net deposit.
+    pub(super) fn book_position(
+        &mut self,
+        asset: Asset,
+        amount: i128,
+        kind: EntryKind,
+        source: PositionActivitySource,
+    ) -> Result<(), BookError> {
+        self.book_entry(LedgerEntry {
+            asset,
+            amount,
+            kind,
+            source: Some(source),
+        })
+    }
+
+    fn book_entry(&mut self, entry: LedgerEntry) -> Result<(), BookError> {
+        let LedgerEntry { asset, amount, .. } = entry;
         let residue = match self
             .residues
             .binary_search_by_key(&asset, |&(known, _)| known)
@@ -50,11 +76,7 @@ impl Worksheet {
         };
         let residue = residue.ok_or(BookError::Overflow)?;
         *residue = residue.checked_sub(amount).ok_or(BookError::Overflow)?;
-        self.entries.push(LedgerEntry {
-            asset,
-            amount,
-            kind,
-        });
+        self.entries.push(entry);
         Ok(())
     }
 

@@ -3,7 +3,7 @@
 mod common;
 use binsight_core::units::RawTokenAmount;
 use binsight_dlmm::activity::TxActivity;
-use binsight_ledger::book::{EntryKind, WalletContext, book_transaction};
+use binsight_ledger::book::{EntryKind, PositionActivitySource, WalletContext, book_transaction};
 use binsight_solana::{
     transaction::{InstructionPosition, TransactionView},
     well_known::TOKEN_2022_PROGRAM,
@@ -123,6 +123,24 @@ fn nested_sibling_deposits_use_their_own_event_emitter_and_keep_net_events_intac
             .collect::<Vec<_>>(),
         [-950, -950]
     );
+    assert_eq!(
+        entries
+            .iter()
+            .filter(|entry| matches!(entry.kind, EntryKind::PositionDeposit { .. }))
+            .map(|entry| entry.source)
+            .collect::<Vec<_>>(),
+        activity
+            .movements
+            .iter()
+            .enumerate()
+            .map(|(index, movement)| {
+                Some(PositionActivitySource::Movement {
+                    index,
+                    at: movement.at,
+                })
+            })
+            .collect::<Vec<_>>()
+    );
     assert!(
         entries
             .iter()
@@ -161,6 +179,24 @@ fn two_gross_sibling_calls_below_one_top_level_keep_their_transfer_tax_separate(
             .map(|entry| entry.amount)
             .collect::<Vec<_>>(),
         [-950, -950]
+    );
+    assert_eq!(
+        entries
+            .iter()
+            .filter(|entry| matches!(entry.kind, EntryKind::PositionDeposit { .. }))
+            .map(|entry| entry.source)
+            .collect::<Vec<_>>(),
+        activity
+            .movements
+            .iter()
+            .enumerate()
+            .map(|(index, movement)| {
+                Some(PositionActivitySource::Movement {
+                    index,
+                    at: movement.at,
+                })
+            })
+            .collect::<Vec<_>>()
     );
     assert_eq!(
         entries
