@@ -4,8 +4,8 @@
 //! it emits ([`event::decode_events`]), what they did to positions
 //! ([`activity::position_activity`]), the kind of each of its instructions
 //! ([`instruction::classify`]), which tokens their amounts are ([`pool_tokens::PoolTokens`]), and
-//! the name and version under which their decoding is stored.
-//! Later: its account layouts and the fixed-point maths of its bins.
+//! the name and version under which their decoding is stored, and checked account snapshots
+//! ([`accounts`]). Later: the fixed-point maths of its bins.
 //!
 //! **May depend on:** `binsight-core`, `binsight-solana`.
 //! **Must not depend on:** `binsight-ledger`, `binsight-store`, `binsight-chain`,
@@ -21,6 +21,7 @@
     clippy::arithmetic_side_effects
 )]
 
+pub mod accounts;
 pub mod activity;
 pub mod decoder_version;
 pub mod event;
