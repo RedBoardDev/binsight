@@ -41,7 +41,7 @@ pub struct OverviewSync {
     /// The wallets behind the chain.
     pub lagging: Vec<WalletRef>,
     /// The wallets importing their history, with their progress.
-    pub importing: Vec<(WalletRef, Percent)>,
+    pub importing: Vec<(WalletRef, Option<Percent>)>,
 }
 
 /// Today: the positions closed since local midnight.
@@ -131,8 +131,8 @@ pub enum WatchItem {
     Importing {
         /// The wallet.
         wallet: WalletRef,
-        /// How far it is.
-        progress: Percent,
+        /// How far it is, when its total is known.
+        progress: Option<Percent>,
         /// How long it should still take, in seconds.
         eta_seconds: Option<u64>,
     },

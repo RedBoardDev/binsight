@@ -109,6 +109,8 @@ msgstr "Abbrechen"
 msgid "Cards"
 msgstr "Karten"
 
+#: src/applications/Shared/Chart/Ui/BinHistogram.tsx
+#: src/applications/Shared/Chart/Ui/ChartReadings.tsx
 #: src/applications/Shared/Chart/Ui/PulseChart/PulseTable.tsx
 msgid "Chart readings"
 msgstr "Diagrammwerte"
@@ -116,6 +118,10 @@ msgstr "Diagrammwerte"
 #: src/applications/Shared/Layout/Ui/ResponsiveDrawer.tsx
 msgid "Close"
 msgstr "Schließen"
+
+#: src/applications/Shared/Chart/Ui/PriceChart/useCandleReadings.tsx
+msgid "Closing price"
+msgstr "Schlusskurs"
 
 #: src/applications/Realtime/Ui/streamStateLabels.ts
 msgid "Connecting"
@@ -200,6 +206,10 @@ msgstr "Betriebsbereit"
 msgid "Hide amounts"
 msgstr "Beträge ausblenden"
 
+#: src/applications/Shared/Chart/Ui/PriceChart/useCandleReadings.tsx
+msgid "High"
+msgstr "Hoch"
+
 #: src/applications/ClosedPosition/Ui/HistoryPage.tsx
 #: src/core/Layout/AppShell/navItems.ts
 msgid "History"
@@ -208,6 +218,15 @@ msgstr "Verlauf"
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "History still importing: {progress} done."
 msgstr "Verlauf wird noch importiert: {progress} erledigt."
+
+#: src/applications/Shared/Figure/Ui/figureSpeech.ts
+msgid "History still importing."
+msgstr "Verlauf wird noch importiert."
+
+#. placeholder {0}: source.quoteSymbol.toUpperCase()
+#: src/applications/Shared/Chart/Ui/PriceChart/PriceChartHeader.tsx
+msgid "in {0}"
+msgstr "in {0}"
 
 #: src/applications/Auth/Ui/LoginForm/errorCopy.ts
 #: src/applications/Shared/Ui/apiErrorMessages.ts
@@ -247,6 +266,10 @@ msgstr "Live-Aktualisierungen"
 msgid "Live updates:"
 msgstr "Live-Aktualisierungen:"
 
+#: src/applications/Shared/Chart/Ui/PriceChart/useCandleReadings.tsx
+msgid "Low"
+msgstr "Tief"
+
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "lower bound"
 msgstr "Untergrenze"
@@ -270,7 +293,9 @@ msgid "More"
 msgstr "Mehr"
 
 #: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/useSampleReadings.ts
+#: src/applications/Shared/Chart/Ui/LineSeriesChart.tsx
 #: src/applications/Shared/Chart/Ui/PulseChart.tsx
+#: src/applications/Shared/Chart/Ui/StackedBarChart.tsx
 msgid "No chart values"
 msgstr "Keine Diagrammwerte"
 
@@ -297,6 +322,10 @@ msgstr "Nicht verfügbar"
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "Nothing to compare with yet."
 msgstr "Noch nichts zum Vergleichen."
+
+#: src/applications/Shared/Chart/Ui/PriceChart/useCandleReadings.tsx
+msgid "Open"
+msgstr "Eröffnung"
 
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "Open PnL uses a mark {age} seconds before this point."
@@ -334,6 +363,18 @@ msgstr "Zeitraum"
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "plus"
 msgstr "plus"
+
+#: src/applications/Shared/Chart/Ui/PriceChart/PriceChartHeader.tsx
+msgid "Price"
+msgstr "Preis"
+
+#: src/applications/Shared/Chart/Ui/PriceChart/LightweightPriceChart.tsx
+msgid "Price history is not available for this pool yet"
+msgstr "Für diesen Pool ist noch kein Preisverlauf verfügbar"
+
+#: src/applications/Shared/Chart/Ui/PriceChart/PriceChartHeader.tsx
+msgid "Price interval"
+msgstr "Preisintervall"
 
 #: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/SampleReadout.tsx
 #: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/useSampleReadings.ts
@@ -445,6 +486,10 @@ msgstr "Systemdesign"
 msgid "Table"
 msgstr "Tabelle"
 
+#: src/applications/Shared/Chart/Ui/PriceChart/PriceChartErrorBoundary.tsx
+msgid "The price chart could not be loaded."
+msgstr "Der Preischart konnte nicht geladen werden."
+
 #: src/applications/Shared/Ui/apiErrorMessages.ts
 msgid "The request was not valid. Reload the app and try again."
 msgstr "Die Anfrage war ungültig. Laden Sie die App neu und versuchen Sie es erneut."
@@ -527,7 +572,10 @@ msgstr "Erneut versuchen"
 msgid "Unavailable"
 msgstr "Nicht verfügbar"
 
+#: src/applications/Shared/Chart/Ui/BinHistogram.tsx
+#: src/applications/Shared/Chart/Ui/LineSeriesChart.tsx
 #: src/applications/Shared/Chart/Ui/PulseChart.tsx
+#: src/applications/Shared/Chart/Ui/StackedBarChart.tsx
 msgid "Use the arrow keys to explore the chart. Home and End select the first and last readings."
 msgstr "Erkunden Sie das Diagramm mit den Pfeiltasten. Pos1 und Ende wählen den ersten und letzten Wert."
 
@@ -565,40 +613,3 @@ msgstr "Warum nicht verfügbar?"
 #: src/applications/Shared/Ui/apiErrorMessages.ts
 msgid "Your session has ended. Sign in again."
 msgstr "Ihre Sitzung ist abgelaufen. Melden Sie sich erneut an."
-
-#: src/applications/Shared/Chart/Ui/PriceChart/useCandleReadings.tsx
-msgid "Closing price"
-msgstr "Schlusskurs"
-
-#: src/applications/Shared/Chart/Ui/PriceChart/useCandleReadings.tsx
-msgid "High"
-msgstr "Hoch"
-
-#. placeholder {0}: source.quoteSymbol.toUpperCase()
-#: src/applications/Shared/Chart/Ui/PriceChart/PriceChartHeader.tsx
-msgid "in {0}"
-msgstr "in {0}"
-
-#: src/applications/Shared/Chart/Ui/PriceChart/useCandleReadings.tsx
-msgid "Low"
-msgstr "Tief"
-
-#: src/applications/Shared/Chart/Ui/PriceChart/useCandleReadings.tsx
-msgid "Open"
-msgstr "Eröffnung"
-
-#: src/applications/Shared/Chart/Ui/PriceChart/PriceChartHeader.tsx
-msgid "Price"
-msgstr "Preis"
-
-#: src/applications/Shared/Chart/Ui/PriceChart/LightweightPriceChart.tsx
-msgid "Price history is not available for this pool yet"
-msgstr "Für diesen Pool ist noch kein Preisverlauf verfügbar"
-
-#: src/applications/Shared/Chart/Ui/PriceChart/PriceChartHeader.tsx
-msgid "Price interval"
-msgstr "Preisintervall"
-
-#: src/applications/Shared/Chart/Ui/PriceChart/PriceChartErrorBoundary.tsx
-msgid "The price chart could not be loaded."
-msgstr "Der Preischart konnte nicht geladen werden."

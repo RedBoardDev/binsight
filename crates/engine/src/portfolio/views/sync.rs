@@ -38,8 +38,8 @@ pub struct WalletSync {
 /// The progress of a history import.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImportProgress {
-    /// How far it is.
-    pub progress: Percent,
+    /// How far it is, when its total is known.
+    pub progress: Option<Percent>,
     /// How long it should still take, in seconds, when known.
     pub eta_seconds: Option<u64>,
 }

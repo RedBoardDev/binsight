@@ -25,8 +25,8 @@ pub enum HistoryCoverage {
     Importing {
         /// The start of a contiguous, fully indexed interval through now; `None` before proof.
         indexed_since: Option<Timestamp>,
-        /// How far the import is.
-        progress: Percent,
+        /// How far the import is, when its total is known.
+        progress: Option<Percent>,
     },
 }
 
@@ -51,15 +51,26 @@ mod tests {
         let since = Timestamp::from_second(1_000).unwrap();
         let importing = HistoryCoverage::Importing {
             indexed_since: Some(since),
-            progress: Percent::ZERO,
+            progress: Some(Percent::ZERO),
         };
         assert!(importing.covers(since));
         assert!(!importing.covers(Timestamp::from_second(999).unwrap()));
         assert!(HistoryCoverage::Complete.covers(Timestamp::UNIX_EPOCH));
         let just_started = HistoryCoverage::Importing {
             indexed_since: None,
-            progress: Percent::ZERO,
+            progress: Some(Percent::ZERO),
         };
         assert!(!just_started.covers(since));
+    }
+
+    #[test]
+    fn coverage_does_not_require_an_import_percentage() {
+        let since = Timestamp::from_second(1_000).unwrap();
+        let importing = HistoryCoverage::Importing {
+            indexed_since: Some(since),
+            progress: None,
+        };
+        assert!(importing.covers(since));
+        assert!(!importing.covers(Timestamp::from_second(999).unwrap()));
     }
 }

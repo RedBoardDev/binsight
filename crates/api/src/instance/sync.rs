@@ -31,8 +31,9 @@ pub(crate) struct WalletSync {
 /// The progress of a history import.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub(crate) struct ImportProgress {
-    /// How far it is, in percent.
-    pub(crate) progress: DecimalString,
+    /// How far it is, in percent; null when its total is unknown.
+    #[schema(required = true)]
+    pub(crate) progress: Option<DecimalString>,
     /// How long it should still take, in seconds, when known.
     pub(crate) eta_seconds: Option<u64>,
 }
@@ -113,7 +114,7 @@ impl From<&views::WalletSync> for WalletSync {
             last_tx_at: sync.last_tx_at,
             indexed_tx: sync.indexed_tx,
             import: sync.import.map(|import| ImportProgress {
-                progress: import.progress.into(),
+                progress: import.progress.map(DecimalString::from),
                 eta_seconds: import.eta_seconds,
             }),
         }

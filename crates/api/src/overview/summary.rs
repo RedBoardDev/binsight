@@ -54,8 +54,9 @@ pub(crate) struct OverviewSync {
 pub(crate) struct ImportingWallet {
     /// The wallet.
     pub(crate) wallet: WalletRef,
-    /// How far the import is, in percent.
-    pub(crate) progress: DecimalString,
+    /// How far the import is, in percent; null when its total is unknown.
+    #[schema(required = true)]
+    pub(crate) progress: Option<DecimalString>,
 }
 
 /// The positions closed since local midnight.
@@ -126,7 +127,7 @@ impl From<views::OverviewView> for Overview {
                     .iter()
                     .map(|(wallet, progress)| ImportingWallet {
                         wallet: wallet.into(),
-                        progress: (*progress).into(),
+                        progress: progress.map(DecimalString::from),
                     })
                     .collect(),
             },

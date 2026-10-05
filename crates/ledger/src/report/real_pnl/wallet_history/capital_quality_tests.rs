@@ -19,7 +19,7 @@ fn at(day: u8, hour: u8) -> Timestamp {
 fn importing(indexed_since: Option<Timestamp>) -> HistoryCoverage {
     HistoryCoverage::Importing {
         indexed_since,
-        progress: Percent(40_000_000),
+        progress: Some(Percent(40_000_000)),
     }
 }
 
@@ -59,7 +59,7 @@ fn assert_unknown(figure: &Figure<Valued>) {
     assert!(matches!(figure, Figure::Unavailable { .. }));
     assert!(figure.reasons().contains(&Reason::HistoryIncomplete {
         wallet: WALLET,
-        progress: Percent(40_000_000),
+        progress: Some(Percent(40_000_000)),
     }));
 }
 

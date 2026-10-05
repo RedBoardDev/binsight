@@ -67,3 +67,47 @@ fn gives_every_operation_a_stable_id() {
         }
     }
 }
+
+#[test]
+fn requires_nullable_import_progress_on_every_public_surface() {
+    let spec: serde_json::Value =
+        serde_json::from_str(&binsight_api::openapi::spec_json()).unwrap();
+    for name in ["ImportProgress", "ImportingWallet", "Reason", "WatchItem"] {
+        let schema = spec
+            .pointer(&format!("/components/schemas/{name}"))
+            .unwrap();
+        let object = schema.get("oneOf").map_or(schema, |variants| {
+            variants
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|variant| variant.pointer("/properties/progress").is_some())
+                .unwrap()
+        });
+        assert!(
+            object
+                .get("required")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|field| field == "progress"),
+            "{name} must require explicit progress"
+        );
+        let variants = object
+            .pointer("/properties/progress/oneOf")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert!(variants.iter().any(|variant| {
+            variant
+                .get("$ref")
+                .is_some_and(|reference| reference == "#/components/schemas/DecimalString")
+        }));
+        assert!(
+            variants
+                .iter()
+                .any(|variant| { variant.get("type").is_some_and(|kind| kind == "null") })
+        );
+    }
+}

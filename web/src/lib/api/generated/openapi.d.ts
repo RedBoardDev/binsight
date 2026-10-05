@@ -815,13 +815,11 @@ export interface components {
              * @description How long it should still take, in seconds, when known.
              */
             eta_seconds?: number | null;
-            /** @description How far it is, in percent. */
-            progress: components["schemas"]["DecimalString"];
+            progress: components["schemas"]["DecimalString"] | null;
         };
         /** @description A wallet importing its history. */
         ImportingWallet: {
-            /** @description How far the import is, in percent. */
-            progress: components["schemas"]["DecimalString"];
+            progress: components["schemas"]["DecimalString"] | null;
             /** @description The wallet. */
             wallet: components["schemas"]["WalletRef"];
         };
@@ -1282,8 +1280,7 @@ export interface components {
         } | {
             /** @enum {string} */
             code: "history_incomplete";
-            /** @description How far the import is, in percent. */
-            progress: components["schemas"]["DecimalString"];
+            progress: components["schemas"]["DecimalString"] | null;
             /** @description The wallet. */
             wallet: string;
         } | {
@@ -1622,8 +1619,7 @@ export interface components {
             eta_seconds?: number | null;
             /** @enum {string} */
             kind: "importing";
-            /** @description How far it is, in percent. */
-            progress: components["schemas"]["DecimalString"];
+            progress: components["schemas"]["DecimalString"] | null;
             /** @description The wallet. */
             wallet: components["schemas"]["WalletRef"];
         } | {

@@ -32,7 +32,7 @@ fn does_not_call_pnl_a_lower_bound_when_an_old_deposit_is_missing() {
         added_at: Timestamp::UNIX_EPOCH,
         history: HistoryCoverage::Importing {
             indexed_since: None,
-            progress: Percent::ZERO,
+            progress: Some(Percent::ZERO),
         },
     };
     let incomplete = known.with_history(&wallet);

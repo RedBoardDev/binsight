@@ -23,7 +23,7 @@ async fn importing(indexed_since: Option<Timestamp>) -> TestApp {
         importing_wallet: Some(ImportingWalletSpec {
             wallet_index: 0,
             indexed_since,
-            progress: Percent(40_000_000),
+            progress: Some(Percent(40_000_000)),
         }),
         ..TestAppOptions::default()
     })
@@ -187,4 +187,59 @@ async fn keeps_uncovered_net_deposits_unknown_without_degrading_covered_windows(
         );
     }
     assert_eq!((app.network_io)(), (0, 0));
+}
+
+#[tokio::test]
+async fn retains_importing_wallets_and_alerts_when_their_total_is_unknown() {
+    for (progress, expected) in [
+        (None, Value::Null),
+        (Some(Percent::ZERO), Value::String("0".into())),
+        (Some(Percent(40_000_000)), Value::String("40".into())),
+    ] {
+        let app = TestApp::with(TestAppOptions {
+            figures: Figures::Demo,
+            importing_wallet: Some(ImportingWalletSpec {
+                wallet_index: 0,
+                indexed_since: None,
+                progress,
+            }),
+            ..TestAppOptions::default()
+        })
+        .await;
+        let wallet = scopes(&app).await[1].clone();
+        let sync = app.get_signed_in("/api/v1/sync").await.json();
+        assert_eq!(sync["wallets"][0]["state"], "importing");
+        assert_eq!(sync["wallets"][0]["import"]["progress"], expected);
+        assert!(sync["wallets"][0]["import"].get("progress").is_some());
+        let overview = app
+            .get_signed_in(&format!("/api/v1/overview?wallet={wallet}"))
+            .await
+            .json();
+        assert_eq!(overview["sync"]["state"], "importing");
+        assert_eq!(overview["sync"]["importing"].as_array().unwrap().len(), 1);
+        let importing = &overview["sync"]["importing"][0];
+        assert_eq!(importing["wallet"]["address"], wallet);
+        assert_eq!(importing["progress"], expected);
+        assert!(importing.get("progress").is_some());
+        let watch = overview["watch"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["kind"] == "importing")
+            .unwrap();
+        assert_eq!(watch["wallet"]["address"], wallet);
+        assert_eq!(watch["progress"], expected);
+        assert!(watch.get("progress").is_some());
+        let pnl = &overview["today"]["totals"]["pnl"];
+        assert_incomplete(pnl, &wallet);
+        let reason = pnl["reasons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|reason| reason["code"] == "history_incomplete")
+            .unwrap();
+        assert_eq!(reason["progress"], expected);
+        assert!(reason.get("progress").is_some());
+        assert_eq!((app.network_io)(), (0, 0));
+    }
 }

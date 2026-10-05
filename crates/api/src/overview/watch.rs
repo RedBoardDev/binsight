@@ -48,8 +48,9 @@ pub(crate) enum WatchItem {
     Importing {
         /// The wallet.
         wallet: WalletRef,
-        /// How far it is, in percent.
-        progress: DecimalString,
+        /// How far it is, in percent; null when its total is unknown.
+        #[schema(required = true)]
+        progress: Option<DecimalString>,
         /// How long it should still take, in seconds, when known.
         eta_seconds: Option<u64>,
     },
@@ -123,7 +124,7 @@ impl From<&views::WatchItem> for WatchItem {
                 eta_seconds,
             } => Self::Importing {
                 wallet: wallet.into(),
-                progress: (*progress).into(),
+                progress: progress.map(DecimalString::from),
                 eta_seconds: *eta_seconds,
             },
             views::WatchItem::Lagging {

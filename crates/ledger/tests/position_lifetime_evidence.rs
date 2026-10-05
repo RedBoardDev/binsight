@@ -72,15 +72,15 @@ fn proves_an_empty_shell_only_when_the_whole_life_is_covered_and_sources_are_con
         HistoryCoverage::Complete,
         HistoryCoverage::Importing {
             indexed_since: Some(time(10)),
-            progress: Percent::ZERO,
+            progress: Some(Percent::ZERO),
         },
         HistoryCoverage::Importing {
             indexed_since: Some(time(11)),
-            progress: Percent::ZERO,
+            progress: Some(Percent::ZERO),
         },
         HistoryCoverage::Importing {
             indexed_since: None,
-            progress: Percent::ZERO,
+            progress: Some(Percent::ZERO),
         },
     ];
     for (index, history) in histories.into_iter().enumerate() {

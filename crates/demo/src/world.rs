@@ -46,8 +46,8 @@ pub struct ImportingWalletSpec {
     pub wallet_index: usize,
     /// The oldest indexed instant, or none before the first history page.
     pub indexed_since: Option<Timestamp>,
-    /// Import progress between zero and one hundred percent.
-    pub progress: Percent,
+    /// Import progress between zero and one hundred percent, or none when the total is unknown.
+    pub progress: Option<Percent>,
 }
 
 /// A generated world.

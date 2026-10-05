@@ -245,8 +245,9 @@ pub(crate) fn simulate_import(
     anchor: Timestamp,
 ) -> Result<(), DemoError> {
     if import.indexed_since.is_some_and(|since| since > anchor)
-        || import.progress.0 < 0
-        || import.progress.0 > 100_000_000
+        || import
+            .progress
+            .is_some_and(|progress| !(0..=100_000_000).contains(&progress.0))
     {
         return Err(DemoError::OutOfRange);
     }

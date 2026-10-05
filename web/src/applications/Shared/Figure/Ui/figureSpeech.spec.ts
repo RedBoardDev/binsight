@@ -72,4 +72,24 @@ describe('describeReason', () => {
       'Historique en cours d’import : 32,5 % fait.',
     );
   });
+
+  it('describes an import without inventing a percentage when its total is unknown', () => {
+    const cases = [
+      ['en', englishMessages, 'History still importing.'],
+      ['fr', frenchMessages, 'Historique en cours d’import.'],
+      ['de', germanMessages, 'Verlauf wird noch importiert.'],
+    ] as const;
+    for (const [locale, messages, expected] of cases) {
+      i18n.loadAndActivate({ locale, messages });
+      expect(
+        describeReason(i18n, {
+          code: 'history_incomplete',
+          wallet: 'wallet-address',
+          progress: null,
+        }),
+      ).toBe(expected);
+    }
+    i18n.loadAndActivate({ locale: 'en', messages: englishMessages });
+    expect(describeReason(i18n, importing('0'))).toBe('History still importing: 0.0% done.');
+  });
 });

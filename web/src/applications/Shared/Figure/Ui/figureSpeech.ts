@@ -76,6 +76,9 @@ export const describeReason = (i18n: I18n, reason: FigureReason): string => {
     case 'reconstructed_history':
       return i18n._(msg`Reconstructed for the time before the wallet was added.`);
     case 'history_incomplete': {
+      if (reason.progress === null) {
+        return i18n._(msg`History still importing.`);
+      }
       const progress = formattedText(
         formatPercent(reason.progress, {
           languageTag: i18n.locale,

@@ -2655,8 +2655,15 @@
             "minimum": 0
           },
           "progress": {
-            "$ref": "#/components/schemas/DecimalString",
-            "description": "How far it is, in percent."
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DecimalString",
+                "description": "How far it is, in percent; null when its total is unknown."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -2669,8 +2676,15 @@
         ],
         "properties": {
           "progress": {
-            "$ref": "#/components/schemas/DecimalString",
-            "description": "How far the import is, in percent."
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DecimalString",
+                "description": "How far the import is, in percent; null when its total is unknown."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "wallet": {
             "$ref": "#/components/schemas/WalletRef",
@@ -3992,8 +4006,15 @@
                 ]
               },
               "progress": {
-                "$ref": "#/components/schemas/DecimalString",
-                "description": "How far the import is, in percent."
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/DecimalString",
+                    "description": "How far the import is, in percent; null when its total is unknown."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "wallet": {
                 "type": "string",
@@ -4927,8 +4948,15 @@
                 ]
               },
               "progress": {
-                "$ref": "#/components/schemas/DecimalString",
-                "description": "How far it is, in percent."
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/DecimalString",
+                    "description": "How far it is, in percent; null when its total is unknown."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "wallet": {
                 "$ref": "#/components/schemas/WalletRef",

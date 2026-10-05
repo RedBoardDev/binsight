@@ -30,8 +30,9 @@ pub(crate) enum Reason {
     HistoryIncomplete {
         /// The wallet.
         wallet: String,
-        /// How far the import is, in percent.
-        progress: DecimalString,
+        /// How far the import is, in percent; null when its total is unknown.
+        #[schema(required = true)]
+        progress: Option<DecimalString>,
     },
     /// A position movement or reward could not be fully valued at its own token price.
     UnpricedLeg {
@@ -79,7 +80,7 @@ impl From<&LedgerReason> for Reason {
             },
             LedgerReason::HistoryIncomplete { wallet, progress } => Self::HistoryIncomplete {
                 wallet: wallet.to_string(),
-                progress: progress.into(),
+                progress: progress.map(DecimalString::from),
             },
             LedgerReason::UnpricedLeg { position } => Self::UnpricedLeg {
                 position: position.to_string(),

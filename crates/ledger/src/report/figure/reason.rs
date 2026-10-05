@@ -28,8 +28,8 @@ pub enum Reason {
     HistoryIncomplete {
         /// The wallet.
         wallet: Address,
-        /// How far the import is.
-        progress: Percent,
+        /// How far the import is, when its total is known.
+        progress: Option<Percent>,
     },
     /// A position movement or reward could not be fully valued at its own token price.
     UnpricedLeg {
