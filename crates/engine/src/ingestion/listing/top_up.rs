@@ -18,71 +18,94 @@ use super::top_up_rules::{raise_top, read_top_up_page};
 use crate::ingestion::Ingestion;
 use crate::ingestion::live::CheckReason;
 
-/// Lists and writes every signature of `wallet` newer than its top, for `reason`; returns when
-/// the listing started, which is what the written pages cover.
-pub(super) async fn top_up(
-    ingestion: &Ingestion,
-    wallet: &TrackedWallet,
-    reason: CheckReason,
-) -> Result<Timestamp, PageError> {
-    let started_at = ingestion.clock.now();
-    let top = match wallet.cursor {
-        WalletCursor::NotStarted => return Ok(started_at),
-        WalletCursor::ListingHistory { top, .. } => Some(top),
-        WalletCursor::HistoryComplete { top } => top,
-    };
-    let context = CallContext {
-        priority: reason.priority(),
-        purpose: reason.purpose(),
-        wallet: Some(wallet.address),
-    };
-    let mut cursor = wallet.cursor;
-    let mut before = None;
-    let mut boundary: Option<PageBoundary> = None;
-    let mut newest: Option<ListedTop> = None;
-    loop {
+/// One top-up's immutable joining target and the next page, retained across scheduler turns.
+#[derive(Debug)]
+pub(super) struct TopUp {
+    started_at: Timestamp,
+    top: Option<ListedTop>,
+    cursor: WalletCursor,
+    before: Option<binsight_solana::Signature>,
+    boundary: Option<PageBoundary>,
+    newest: Option<ListedTop>,
+    pub(super) reason: CheckReason,
+    pub(super) retry_at: Option<Timestamp>,
+}
+
+impl TopUp {
+    pub(super) fn new(wallet: &TrackedWallet, reason: CheckReason, now: Timestamp) -> Self {
+        let top = match wallet.cursor {
+            WalletCursor::NotStarted => None,
+            WalletCursor::ListingHistory { top, .. } => Some(top),
+            WalletCursor::HistoryComplete { top } => top,
+        };
+        Self {
+            started_at: now,
+            top,
+            cursor: wallet.cursor,
+            before: None,
+            boundary: None,
+            newest: None,
+            reason,
+            retry_at: None,
+        }
+    }
+
+    /// Writes only one page. The top remains unchanged until a page proves the join.
+    pub(super) async fn advance(
+        &mut self,
+        ingestion: &Ingestion,
+        wallet: binsight_solana::Address,
+    ) -> Result<Option<Timestamp>, PageError> {
+        if self.cursor == WalletCursor::NotStarted {
+            return Ok(Some(self.started_at));
+        }
         let request = SignaturesRequest {
-            address: wallet.address,
-            before,
-            until: top.map(|top| top.signature),
+            address: wallet,
+            before: self.before,
+            until: self.top.map(|top| top.signature),
+        };
+        let context = CallContext {
+            priority: self.reason.priority(),
+            purpose: self.reason.purpose(),
+            wallet: Some(wallet),
         };
         let page = list_page(ingestion, request, context).await?;
-        let read = read_top_up_page(top, &page);
-        newest = newest.or_else(|| {
+        let read = read_top_up_page(self.top, &page);
+        let newest = self.newest.or_else(|| {
             read.newer.first().map(|entry| ListedTop {
                 signature: entry.signature,
                 slot: entry.slot,
             })
         });
         let next_cursor = match newest {
-            Some(newest) if read.reached_top => raise_top(cursor, newest),
-            _ => cursor,
+            Some(newest) if read.reached_top => raise_top(self.cursor, newest),
+            _ => self.cursor,
         };
-        let ranked = rank_in_slots(&read.newer, boundary);
-        boundary = ranked.last().and_then(|last| {
+        let ranked = rank_in_slots(&read.newer, self.boundary);
+        let boundary = ranked.last().and_then(|last| {
             last.slot_order.map(|slot_order| PageBoundary {
                 slot: last.slot,
                 slot_order,
             })
         });
-        if !ranked.is_empty() || next_cursor != cursor {
+        if !ranked.is_empty() || next_cursor != self.cursor {
             let listing = ListingPage {
-                wallet: wallet.address,
+                wallet,
                 signatures: ranked,
-                previous_cursor: cursor,
+                previous_cursor: self.cursor,
                 cursor: next_cursor,
-                fetch_priority: reason.priority(),
+                fetch_priority: self.reason.priority(),
                 listed_at: ingestion.clock.now(),
             };
             let new_signatures = ingestion.store.signatures().record_listing(listing).await?;
             ingestion.new_tasks.notify_one();
-            debug!(wallet = %wallet.address, ?reason, new_signatures, "top-up page listed");
-            cursor = next_cursor;
+            debug!(%wallet, reason = ?self.reason, new_signatures, "top-up page listed");
         }
-        if read.reached_top {
-            return Ok(started_at);
-        }
-        before = page.last().map(|oldest| oldest.signature);
+        self.cursor = next_cursor;
+        self.newest = newest;
+        self.boundary = boundary;
+        self.before = page.last().map(|oldest| oldest.signature);
+        Ok(read.reached_top.then_some(self.started_at))
     }
 }
 

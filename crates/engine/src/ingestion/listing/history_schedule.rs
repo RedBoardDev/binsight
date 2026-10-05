@@ -41,6 +41,7 @@ pub(super) enum NextListing<'wallets> {
 #[derive(Debug, Default)]
 pub(super) struct ListingSchedule {
     wallets: HashMap<Address, Waiting>,
+    last_served: Option<Address>,
 }
 
 /// Why a wallet's next page is not due at once.
@@ -55,20 +56,24 @@ struct Waiting {
 }
 
 impl ListingSchedule {
-    /// The page to list next among `wallets` at `now`: the wallet due first, the first in the
-    /// list among those due at the same instant.
+    /// The available wallet due first, rotating by address when several pages are due.
     pub(super) fn next<'wallets>(
         &self,
         wallets: &'wallets [TrackedWallet],
         now: Timestamp,
+        is_available: impl Fn(Address) -> bool,
     ) -> NextListing<'wallets> {
         let due_first = wallets
             .iter()
+            .filter(|wallet| is_available(wallet.address))
             .filter_map(|wallet| {
                 let request = next_history_request(wallet.address, &wallet.cursor)?;
                 Some((self.due_at(wallet.address, now), wallet, request))
             })
-            .min_by_key(|(due_at, _, _)| *due_at);
+            .min_by_key(|(due_at, wallet, _)| {
+                let wraps = self.last_served.is_some_and(|last| wallet.address <= last);
+                (*due_at, wraps, wallet.address)
+            });
         match due_first {
             None => NextListing::Nothing,
             Some((due_at, _, _)) if due_at > now => NextListing::WaitUntil(due_at),
@@ -91,6 +96,7 @@ impl ListingSchedule {
         unconfirmed_end: Option<ListedEnd>,
         now: Timestamp,
     ) {
+        self.last_served = Some(wallet);
         self.wallets.remove(&wallet);
         if let Some(end) = unconfirmed_end {
             let due_at = now
@@ -108,6 +114,7 @@ impl ListingSchedule {
     /// Records that a page of `wallet` failed at `now`, and returns how many times in a row it
     /// has, and when it is tried again.
     pub(super) fn record_failure(&mut self, wallet: Address, now: Timestamp) -> (u32, Timestamp) {
+        self.last_served = Some(wallet);
         let waiting = self.wallets.entry(wallet).or_default();
         waiting.failures_in_a_row = waiting.failures_in_a_row.saturating_add(1);
         let retry_at = now
@@ -171,9 +178,44 @@ mod tests {
             wallet(3, WalletCursor::NotStarted),
         ];
 
-        let next = ListingSchedule::default().next(&wallets, now());
+        let next = ListingSchedule::default().next(&wallets, now(), |_| true);
 
         assert_eq!(listed_wallet(next), wallets[1].address);
+    }
+
+    #[test]
+    fn skips_wallets_with_an_unfinished_top_up() {
+        let wallets = [
+            wallet(1, WalletCursor::NotStarted),
+            wallet(2, WalletCursor::NotStarted),
+        ];
+        let schedule = ListingSchedule::default();
+        assert_eq!(
+            listed_wallet(schedule.next(&wallets, now(), |address| address != wallets[0].address)),
+            wallets[1].address
+        );
+    }
+
+    #[test]
+    fn rotates_due_wallets_after_each_successful_history_page() {
+        let wallets = [
+            wallet(1, WalletCursor::NotStarted),
+            wallet(2, WalletCursor::NotStarted),
+            wallet(3, WalletCursor::NotStarted),
+        ];
+        let mut schedule = ListingSchedule::default();
+        for address in [
+            wallets[0].address,
+            wallets[1].address,
+            wallets[2].address,
+            wallets[0].address,
+        ] {
+            assert_eq!(
+                listed_wallet(schedule.next(&wallets, now(), |_| true)),
+                address
+            );
+            schedule.record_page(address, None, now());
+        }
     }
 
     #[test]
@@ -187,7 +229,7 @@ mod tests {
         schedule.record_failure(wallets[0].address, now());
 
         assert_eq!(
-            listed_wallet(schedule.next(&wallets, now())),
+            listed_wallet(schedule.next(&wallets, now(), |_| true)),
             wallets[1].address
         );
     }
@@ -201,11 +243,11 @@ mod tests {
 
         assert_eq!((failures, retry_at), (1, later(30)));
         assert_eq!(
-            schedule.next(&wallets, later(10)),
+            schedule.next(&wallets, later(10), |_| true),
             NextListing::WaitUntil(later(30))
         );
         assert!(matches!(
-            schedule.next(&wallets, later(30)),
+            schedule.next(&wallets, later(30), |_| true),
             NextListing::List { .. }
         ));
     }
@@ -231,7 +273,7 @@ mod tests {
         schedule.record_page(wallets[0].address, Some(end.clone()), now());
 
         assert_eq!(
-            schedule.next(&wallets, now()),
+            schedule.next(&wallets, now(), |_| true),
             NextListing::WaitUntil(later(300))
         );
         assert_eq!(schedule.unconfirmed_end(wallets[0].address), Some(&end));
@@ -248,7 +290,7 @@ mod tests {
 
         assert_eq!(schedule.unconfirmed_end(wallets[0].address), Some(&end));
         assert_eq!(
-            schedule.next(&wallets, later(300)),
+            schedule.next(&wallets, later(300), |_| true),
             NextListing::WaitUntil(later(330))
         );
     }
@@ -258,7 +300,7 @@ mod tests {
         let wallets = [wallet(1, WalletCursor::HistoryComplete { top: None })];
 
         assert_eq!(
-            ListingSchedule::default().next(&wallets, now()),
+            ListingSchedule::default().next(&wallets, now(), |_| true),
             NextListing::Nothing
         );
     }

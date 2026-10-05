@@ -7,6 +7,7 @@
 //! holds its wallet back with a growing delay while the others go on; a class the budget defers
 //! waits until its deferral ends; a refusal that concerns every request pauses the worker.
 
+use std::collections::{BTreeMap, VecDeque};
 use std::time::Duration;
 
 use binsight_chain::SignaturesRequest;
@@ -19,7 +20,7 @@ use tracing::{debug, error, warn};
 use super::history_page::list_and_write;
 use super::history_schedule::{ListingSchedule, NextListing};
 use super::page_listing::PageError;
-use super::top_up::top_up;
+use super::top_up::TopUp;
 use crate::ingestion::Ingestion;
 use crate::ingestion::live::{CheckReason, NextCheck};
 use crate::ingestion::refusal::{ClassDeferrals, report_pause, time_until};
@@ -47,6 +48,9 @@ pub(super) enum Progress {
 pub(super) struct ListingWorker {
     history: ListingSchedule,
     deferrals: ClassDeferrals,
+    top_ups: BTreeMap<Address, TopUp>,
+    pending_pages: VecDeque<Address>,
+    paused_until: Option<Timestamp>,
 }
 
 impl ListingWorker {
@@ -61,6 +65,14 @@ impl ListingWorker {
         };
         ingestion.watch_new_wallets(&wallets);
         let now = ingestion.clock.now();
+        self.top_ups
+            .retain(|address, _| wallets.iter().any(|wallet| wallet.address == *address));
+        self.pending_pages
+            .retain(|address| self.top_ups.contains_key(address));
+        if let Some(until) = self.paused_until.filter(|until| *until > now) {
+            return Progress::Wait(Some(time_until(now, until)));
+        }
+        self.paused_until = None;
         let live = &ingestion.live;
         if !live.is_startup_settled(&wallets, now) {
             return Progress::Wait(Some(time_until(now, live.startup_grace_end())));
@@ -68,7 +80,12 @@ impl ListingWorker {
         let mut wake_at = self.deferrals.next_end(now);
         let least_urgent = self.deferrals.least_urgent_allowed(now);
         if let Some(least_urgent) = least_urgent {
-            match live.next_check(&wallets, least_urgent, now) {
+            let unchecked: Vec<_> = wallets
+                .iter()
+                .filter(|wallet| !self.top_ups.contains_key(&wallet.address))
+                .copied()
+                .collect();
+            match live.next_check(&unchecked, least_urgent, now) {
                 NextCheck::Check { wallet, reason } => {
                     return self.check(ingestion, &wallets, wallet, reason).await;
                 }
@@ -76,8 +93,26 @@ impl ListingWorker {
                 NextCheck::Nothing => {}
             }
         }
+        if let Some(allowed) = least_urgent {
+            let count = self.pending_pages.len();
+            for _ in 0..count {
+                let Some(wallet) = self.pending_pages.pop_front() else {
+                    break;
+                };
+                if let Some(top_up) = self.top_ups.get(&wallet) {
+                    if let Some(retry_at) = top_up.retry_at.filter(|retry_at| *retry_at > now) {
+                        wake_at = Some(earliest(wake_at, retry_at));
+                    } else if top_up.reason.priority() <= allowed {
+                        return self.advance_top_up(ingestion, wallet).await;
+                    }
+                }
+                self.pending_pages.push_back(wallet);
+            }
+        }
         if least_urgent.is_some_and(|least_urgent| HISTORY_CLASS <= least_urgent) {
-            match self.history.next(&wallets, now) {
+            match self.history.next(&wallets, now, |address| {
+                !self.top_ups.contains_key(&address)
+            }) {
                 NextListing::List { wallet, request } => {
                     return self.history_page(ingestion, wallet, request).await;
                 }
@@ -99,14 +134,36 @@ impl ListingWorker {
         let Some(tracked) = wallets.iter().find(|tracked| tracked.address == wallet) else {
             return Progress::Continue;
         };
-        match top_up(ingestion, tracked, reason).await {
-            Ok(started_at) => {
+        self.top_ups
+            .insert(wallet, TopUp::new(tracked, reason, ingestion.clock.now()));
+        self.advance_top_up(ingestion, wallet).await
+    }
+
+    async fn advance_top_up(&mut self, ingestion: &Ingestion, wallet: Address) -> Progress {
+        let Some(top_up) = self.top_ups.get_mut(&wallet) else {
+            return Progress::Continue;
+        };
+        let reason = top_up.reason;
+        match top_up.advance(ingestion, wallet).await {
+            Ok(Some(started_at)) => {
+                self.top_ups.remove(&wallet);
                 ingestion.live.checked(wallet, started_at);
+                Progress::Continue
+            }
+            Ok(None) => {
+                self.pending_pages.push_back(wallet);
                 Progress::Continue
             }
             Err(error) => {
                 let retry = |now| ingestion.live.check_failed(wallet, now);
-                self.setback(ingestion, wallet, reason.priority(), error, retry)
+                let failure = setback_failure(ingestion, wallet, error, retry);
+                if let Setback::RetryLater(at) = failure
+                    && let Some(top_up) = self.top_ups.get_mut(&wallet)
+                {
+                    top_up.retry_at = Some(at);
+                }
+                self.pending_pages.push_back(wallet);
+                self.apply(ingestion, reason.priority(), &failure)
             }
         }
     }
@@ -139,18 +196,6 @@ impl ListingWorker {
         }
     }
 
-    fn setback(
-        &mut self,
-        ingestion: &Ingestion,
-        wallet: Address,
-        class: Priority,
-        error: PageError,
-        retry: impl FnOnce(Timestamp) -> (u32, Timestamp),
-    ) -> Progress {
-        let failure = setback_failure(ingestion, wallet, error, retry);
-        self.apply(ingestion, class, &failure)
-    }
-
     /// Applies what a failed listing of `class` asks for.
     fn apply(&mut self, ingestion: &Ingestion, class: Priority, failure: &Setback) -> Progress {
         match *failure {
@@ -159,8 +204,11 @@ impl ListingWorker {
                 self.deferrals.defer(class, until);
                 Progress::Continue
             }
-            Setback::Pause(until) => Progress::Wait(Some(time_until(ingestion.clock.now(), until))),
-            Setback::RetryLater => Progress::Continue,
+            Setback::Pause(until) => {
+                self.paused_until = Some(until);
+                Progress::Wait(Some(time_until(ingestion.clock.now(), until)))
+            }
+            Setback::RetryLater(_) => Progress::Continue,
         }
     }
 }
@@ -173,7 +221,7 @@ enum Setback {
     /// Pause every listing until then.
     Pause(Timestamp),
     /// Its wallet was held back; go on with the others.
-    RetryLater,
+    RetryLater(Timestamp),
 }
 
 /// Reads `error`, and holds `wallet` back through `retry` when the failure is its own.
@@ -196,7 +244,7 @@ fn setback_failure(
             } else {
                 warn!(%wallet, %error, failures, %retry_at, "could not list a page; trying again later");
             }
-            Setback::RetryLater
+            Setback::RetryLater(retry_at)
         }
     }
 }
@@ -205,3 +253,7 @@ fn setback_failure(
 fn earliest(current: Option<Timestamp>, candidate: Timestamp) -> Timestamp {
     current.map_or(candidate, |current| current.min(candidate))
 }
+
+#[cfg(test)]
+#[path = "tests/top_up_recovery.rs"]
+mod tests;

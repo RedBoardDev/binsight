@@ -1,124 +1,115 @@
-//! The fetch worker: fetches every due transaction of the queue, a few at a time.
+//! Fetches due transactions continuously, reserving one of four slots for live work.
 //!
-//! It takes the tasks due now from the database (the most urgent class first, then the newest
-//! slots) and hands them to `fetch_batch`. When nothing is due it sleeps until the next task
-//! falls due, or until the listing queues new ones. A class the credit budget defers is left out
-//! of the queue until its deferral ends, while the more urgent classes go on: the tasks stay as
-//! they are, so a deferral costs neither an attempt nor a write. A refusal that concerns every
-//! request pauses the worker, and so does a database failure; new tasks do not cut a pause short.
+//! The queue is reconsidered at every completion and notification. Three slow historical
+//! requests cannot occupy the live slot; sent requests finish normally and are never replayed
+//! to make room. Sleeps use queue deadlines and notifications, not polling.
 
-mod fetch_batch;
+mod fetch_attempt;
 mod fetch_outcome;
+mod fetch_schedule;
 
+#[cfg(test)]
+mod priority_tests;
+
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use binsight_core::credits::Priority;
+use binsight_solana::Signature;
 use jiff::Timestamp;
+use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 
 use super::Ingestion;
 use super::refusal::{ClassDeferrals, time_until};
-use fetch_batch::{Fetched, fetch_all};
+use fetch_attempt::Fetched;
+use fetch_schedule::fill_slots;
 
-/// How many due tasks are read from the queue at once.
-const FETCH_BATCH_SIZE: u32 = 32;
-
-/// The longest the worker sleeps without looking at the queue again.
+/// The longest idle wait without reconsidering the queue.
 const IDLE_RECHECK: Duration = Duration::from_secs(60);
-
-/// How long to wait after the queue could not be read.
+/// Wait after a store operation fails, before issuing another billable fetch.
 const STORE_RETRY_DELAY: Duration = Duration::from_secs(30);
 
-/// Fetches due tasks until `shutdown` is cancelled.
+/// Fetches until shutdown, then waits for cancelled requests to record their spending.
 pub(super) async fn run_fetcher(ingestion: &Ingestion, shutdown: &CancellationToken) {
+    let mut running = JoinSet::new();
+    let mut active = BTreeMap::<Signature, Priority>::new();
     let mut deferrals = ClassDeferrals::default();
+    let mut pause_until: Option<Timestamp> = None;
     loop {
-        match fetch_due_tasks(ingestion, &mut deferrals, shutdown).await {
-            Next::Stop => return,
-            Next::Now => {}
-            Next::Idle(wait) => {
-                tokio::select! {
-                    () = shutdown.cancelled() => return,
-                    () = ingestion.new_tasks.notified() => {}
-                    () = tokio::time::sleep(wait) => {}
-                }
-            }
-            Next::Pause(pause) => {
-                tokio::select! {
-                    () = shutdown.cancelled() => return,
-                    () = tokio::time::sleep(pause) => {}
-                }
-            }
-        }
-    }
-}
-
-/// What the worker does after a batch.
-enum Next {
-    /// Look at the queue again at once.
-    Now,
-    /// Nothing is due: look at the queue again after this delay, or when new tasks arrive.
-    Idle(Duration),
-    /// Look at the queue again after this delay, whatever arrives meanwhile.
-    Pause(Duration),
-    /// Shutdown was requested.
-    Stop,
-}
-
-/// Fetches one batch of the due tasks `deferrals` allows, and says when to look at the queue
-/// again.
-async fn fetch_due_tasks(
-    ingestion: &Ingestion,
-    deferrals: &mut ClassDeferrals,
-    shutdown: &CancellationToken,
-) -> Next {
-    let now = ingestion.clock.now();
-    let Some(least_urgent) = deferrals.least_urgent_allowed(now) else {
-        return Next::Idle(idle_wait(ingestion, deferrals, None, now).await);
-    };
-    let queue = ingestion.store.fetch_queue();
-    let tasks = match queue.due(now, FETCH_BATCH_SIZE, least_urgent).await {
-        Ok(tasks) => tasks,
-        Err(error) => {
+        let now = ingestion.clock.now();
+        pause_until = pause_until.filter(|until| *until > now);
+        let least_urgent = deferrals.least_urgent_allowed(now);
+        let allowed = fetch_schedule::allowed_class(least_urgent, &active);
+        if pause_until.is_none()
+            && let Some(allowed) = allowed
+            && let Err(error) = fill_slots(ingestion, allowed, &mut active, &mut running).await
+        {
             error!(%error, "could not read the fetch queue");
-            return Next::Pause(STORE_RETRY_DELAY);
+            pause_until = now.checked_add(jiff::SignedDuration::from_secs(30)).ok();
         }
-    };
-    if tasks.is_empty() {
-        return Next::Idle(idle_wait(ingestion, deferrals, Some(least_urgent), now).await);
-    }
-    match fetch_all(ingestion, tasks, shutdown).await {
-        Fetched::Recorded => Next::Now,
-        Fetched::NotRecorded => Next::Pause(STORE_RETRY_DELAY),
-        Fetched::Deferred { class, until } => {
-            deferrals.defer(class, until);
-            Next::Now
+        let wait = match pause_until {
+            Some(until) => time_until(now, until),
+            None => {
+                idle_wait(
+                    ingestion,
+                    &deferrals,
+                    fetch_schedule::allowed_class(least_urgent, &active),
+                    &active,
+                )
+                .await
+            }
+        };
+        tokio::select! {
+            () = shutdown.cancelled() => { running.shutdown().await; return; }
+            result = running.join_next(), if !running.is_empty() => {
+                match result {
+                    Some(Ok((signature, outcome))) => {
+                        active.remove(&signature);
+                        match outcome {
+                            Fetched::Recorded => {}
+                            Fetched::Deferred { class, until } => deferrals.defer(class, until),
+                            Fetched::PausedUntil(until) => pause_until = Some(until),
+                            Fetched::NotRecorded => pause_until = ingestion.clock.now().checked_add(jiff::SignedDuration::from_secs(30)).ok(),
+                        }
+                    }
+                    Some(Err(error)) => {
+                        error!(%error, "a fetch task stopped before finishing");
+                        running.shutdown().await;
+                        active.clear();
+                        pause_until = ingestion.clock.now().checked_add(jiff::SignedDuration::from_secs(30)).ok();
+                    }
+                    None => {}
+                }
+            }
+            () = ingestion.new_tasks.notified(), if pause_until.is_none() => {}
+            () = tokio::time::sleep(wait) => {}
         }
-        Fetched::PausedUntil(until) => Next::Pause(time_until(ingestion.clock.now(), until)),
-        Fetched::Stopped => Next::Stop,
     }
 }
 
-/// How long to sleep when nothing allowed is due: until the next allowed task falls due or a
-/// deferral ends, at most a minute.
 async fn idle_wait(
     ingestion: &Ingestion,
     deferrals: &ClassDeferrals,
     least_urgent: Option<Priority>,
-    now: Timestamp,
+    active: &BTreeMap<Signature, Priority>,
 ) -> Duration {
+    let now = ingestion.clock.now();
     let next_task = match least_urgent {
         None => Ok(None),
-        Some(least_urgent) => {
-            let queue = ingestion.store.fetch_queue();
-            queue.next_attempt_at(least_urgent).await
+        Some(class) => {
+            ingestion
+                .store
+                .fetch_queue()
+                .next_attempt_excluding(class, active.keys().copied().collect())
+                .await
         }
     };
     let next_task = match next_task {
-        Ok(next_task) => next_task,
+        Ok(next) => next,
         Err(error) => {
-            error!(%error, "could not read when the next fetch is due");
+            error!(%error, "could not read the next fetch deadline");
             return STORE_RETRY_DELAY;
         }
     };

@@ -7,9 +7,9 @@
 //! again.
 
 use binsight_core::credits::Priority;
-use binsight_solana::Address;
+use binsight_solana::{Address, Signature};
 use jiff::Timestamp;
-use rusqlite::{Row, params};
+use rusqlite::{Row, params, params_from_iter, types::Value};
 
 use super::fetch_counts::{FetchCounts, WalletBacklog, count_states, read_backlog};
 use super::fetch_task::FetchTask;
@@ -95,6 +95,39 @@ impl FetchQueueRepo {
                     [urgency_rank(least_urgent)],
                     |row| row.get(0),
                 )?;
+                next.map(timestamp_from_sql).transpose()
+            })
+            .await
+    }
+
+    /// The next task deadline, excluding requests already in flight. This keeps a pending
+    /// response from turning the worker's idle timer into a busy loop.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database cannot be read.
+    pub async fn next_attempt_excluding(
+        &self,
+        least_urgent: Priority,
+        excluded: Vec<Signature>,
+    ) -> Result<Option<Timestamp>, StoreError> {
+        self.database
+            .read(move |connection| {
+                let mut query = SELECT_NEXT_ATTEMPT.to_owned();
+                let mut parameters = vec![Value::Integer(urgency_rank(least_urgent))];
+                if !excluded.is_empty() {
+                    let placeholders = excluded.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                    query.push_str(" AND signature NOT IN (");
+                    query.push_str(&placeholders);
+                    query.push(')');
+                    parameters.extend(
+                        excluded
+                            .into_iter()
+                            .map(|signature| Value::Text(signature.to_string())),
+                    );
+                }
+                let next: Option<i64> =
+                    connection.query_row(&query, params_from_iter(parameters), |row| row.get(0))?;
                 next.map(timestamp_from_sql).transpose()
             })
             .await
