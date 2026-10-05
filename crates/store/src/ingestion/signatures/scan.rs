@@ -3,10 +3,9 @@
 //! Signature text order is a storage traversal order, never proof of financial chronology.
 
 use binsight_solana::{Address, Signature};
-use rusqlite::{Row, params};
+use rusqlite::params;
 
-use super::{ListedSignature, SignaturesRepo, signature_from_row};
-use crate::database::codec::parse_from_sql;
+use super::{ListedSignature, SignaturesRepo, listed_from_row};
 use crate::error::StoreError;
 
 /// One bounded page of the signatures listed for a wallet.
@@ -50,17 +49,12 @@ impl SignaturesRepo {
                             .map_or_else(String::new, |signature| signature.to_string()),
                         i64::from(scan.limit),
                     ],
-                    |row| Ok(listed_from_scan(row)),
+                    |row| Ok(listed_from_row(row)),
                 )?;
                 rows.map(|row| row?).collect()
             })
             .await
     }
-}
-
-fn listed_from_scan(row: &Row<'_>) -> Result<ListedSignature, StoreError> {
-    let signature = parse_from_sql(&row.get::<_, String>(4)?, "listed signature")?;
-    signature_from_row(signature, row)
 }
 
 #[cfg(test)]
