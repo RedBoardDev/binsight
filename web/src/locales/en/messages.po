@@ -105,6 +105,7 @@ msgstr "Cancel"
 msgid "Cards"
 msgstr "Cards"
 
+#: src/applications/Shared/Chart/Ui/BinHistogram.tsx
 #: src/applications/Shared/Chart/Ui/PulseChart/PulseTable.tsx
 msgid "Chart readings"
 msgstr "Chart readings"
@@ -495,6 +496,7 @@ msgstr "Try again"
 msgid "Unavailable"
 msgstr "Unavailable"
 
+#: src/applications/Shared/Chart/Ui/BinHistogram.tsx
 #: src/applications/Shared/Chart/Ui/PulseChart.tsx
 msgid "Use the arrow keys to explore the chart. Home and End select the first and last readings."
 msgstr "Use the arrow keys to explore the chart. Home and End select the first and last readings."

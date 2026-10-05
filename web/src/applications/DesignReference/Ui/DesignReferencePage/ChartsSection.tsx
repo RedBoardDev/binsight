@@ -2,6 +2,7 @@ import { CHART_SAMPLES } from '@app/applications/DesignReference/Ui/DesignRefere
 import { ReferenceSection } from '@app/applications/DesignReference/Ui/DesignReferencePage/ReferenceSection';
 import { PulseChart } from '@app/applications/Shared/Chart/Ui/PulseChart';
 import { useState } from 'react';
+import { BinSamples } from './ChartsSection/BinSamples';
 import { SampleReadout } from './ChartsSection/SampleReadout';
 import { useSampleReadings } from './ChartsSection/useSampleReadings';
 
@@ -19,6 +20,7 @@ export const ChartsSection = () => {
         describePoint={describePoint}
         renderReadout={(index) => <SampleReadout index={index} />}
       />
+      <BinSamples />
     </ReferenceSection>
   );
 };

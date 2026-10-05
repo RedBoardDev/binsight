@@ -26,6 +26,9 @@
     --n-900: #121826;
     --n-950: #0b0f17;
 
+    --bin-y: var(--accent);
+    --bin-x: var(--n-500);
+
     /* Wallet dots, distinct from the gain and loss colors. The light theme darkens them. */
     --wallet-hue-1: #6ea8fe;
     --wallet-hue-2: #a99bf0;
