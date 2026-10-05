@@ -108,12 +108,14 @@ impl WalletHistory {
         self.first_activity
     }
 
-    /// The net capital put in at or before `instant`.
+    /// The net capital put in at or before `instant`; unknown until the whole origin is indexed.
     pub fn capital_at(&self, instant: Timestamp) -> Figure<Valued> {
-        self.capital.at(instant)
+        self.incomplete_reason()
+            .map_or_else(|| self.capital.at(instant), Figure::unavailable)
     }
 
     /// The net capital put in at or after `start` and before `end`.
+    /// Unknown when the indexed history does not cover the whole window.
     ///
     /// # Errors
     ///
@@ -123,7 +125,12 @@ impl WalletHistory {
         start: Timestamp,
         end: Timestamp,
     ) -> Result<Figure<Valued>, AmountError> {
-        self.capital.during(start, end)
+        let reasons = history_reasons([&self.wallet], Some(start));
+        if reasons.is_empty() {
+            self.capital.during(start, end)
+        } else {
+            Ok(Figure::Unavailable { reasons })
+        }
     }
 
     /// The PnL of the positions closed at or after `start` and before `end`.
@@ -200,7 +207,7 @@ impl WalletHistory {
             let unavailable = Figure::unavailable(reason);
             return Ok(PnlPoint {
                 real_pnl: unavailable.clone(),
-                capital: self.capital.at(instant),
+                capital: self.capital_at(instant),
                 net_worth: unavailable,
             });
         }
@@ -251,3 +258,6 @@ mod tests;
 #[cfg(test)]
 #[path = "wallet_history/mark_quality_tests.rs"]
 mod mark_quality_tests;
+
+#[cfg(test)]
+mod capital_quality_tests;

@@ -23,7 +23,7 @@ pub enum HistoryCoverage {
     Complete,
     /// The history is still being imported, newest first.
     Importing {
-        /// The oldest instant indexed so far; `None` before the first page.
+        /// The start of a contiguous, fully indexed interval through now; `None` before proof.
         indexed_since: Option<Timestamp>,
         /// How far the import is.
         progress: Percent,

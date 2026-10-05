@@ -21,7 +21,7 @@ pub use wallet_history::{WalletHistory, WalletHistoryFacts};
 
 use super::ReadRuleError;
 use super::figure::{Figure, Reasons};
-use super::period::Window;
+use super::period::{Period, Window, WindowScope};
 use super::valued::{Currency, Valued, percent_of, subtract_valued, sum_valued};
 use crate::facts::SolUsdRates;
 
@@ -121,6 +121,16 @@ impl<'a> PnlTimeline<'a> {
     ///
     /// Returns [`AmountError::Overflow`] when a sum overflows.
     pub fn net_deposits(&self, window: &Window) -> Result<Figure<Valued>, AmountError> {
+        if window.scope == WindowScope::Period(Period::All) {
+            let reasons: Reasons = self
+                .wallets
+                .iter()
+                .filter_map(|wallet| wallet.incomplete_reason())
+                .collect();
+            if !reasons.is_empty() {
+                return Ok(Figure::Unavailable { reasons });
+            }
+        }
         let deposits = self
             .wallets
             .iter()
