@@ -12,3 +12,7 @@
 # [[folder]]
 # path = "crates/example/src/routes"
 # reason = "why this folder cannot be split"
+
+[[folder]]
+path = "crates/engine/src"
+reason = "the portfolio read boundary makes thirteen root modules alongside ingestion and the existing lifecycle; move the lifecycle into a dedicated module in a later isolated change instead of restructuring the active ingestion interfaces"

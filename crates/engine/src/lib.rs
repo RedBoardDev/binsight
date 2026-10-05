@@ -2,8 +2,8 @@
 //!
 //! **Responsibility:** orchestration. It runs the engine lifecycle, ingests each tracked wallet's
 //! history into the raw registry (listing, then fetching every transaction once), persists the
-//! credits spent, publishes domain events and keeps projections in step with their calculation
-//! versions.
+//! credits spent, publishes domain events, keeps projections in step with their calculation
+//! versions and answers the API’s portfolio reads (see [`portfolio`]).
 //!
 //! **May depend on:** `binsight-core`, `binsight-solana`, `binsight-dlmm`, `binsight-ledger`,
 //! `binsight-store`, `binsight-chain`.
@@ -21,6 +21,7 @@ mod events;
 mod handle;
 mod health;
 mod ingestion;
+pub mod portfolio;
 pub mod projections;
 mod status;
 #[cfg(any(test, feature = "test-support"))]

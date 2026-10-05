@@ -20,6 +20,7 @@ test-support = ["dep:tempfile", "binsight-chain/test-support"]
 binsight-chain.workspace = true
 binsight-core.workspace = true
 binsight-dlmm.workspace = true
+binsight-ledger.workspace = true
 binsight-solana.workspace = true
 binsight-store.workspace = true
 jiff.workspace = true
@@ -33,6 +34,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 binsight-chain = { workspace = true, features = ["test-support"] }
+jiff = { workspace = true, features = ["tzdb-bundle-always"] }
 serde_json.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
