@@ -94,8 +94,8 @@ pub struct OpenSummary {
     pub pnl_pct: Figure<Percent>,
     /// The fees they could claim.
     pub unclaimed_fees: Figure<Money>,
-    /// How many have fees to claim.
-    pub unclaimed_position_count: usize,
+    /// How many have observed raw fees to claim; unknown if any position cannot be classified.
+    pub unclaimed_position_count: Option<usize>,
 }
 
 /// The real PnL gained over a period.

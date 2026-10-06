@@ -5,6 +5,7 @@ use binsight_solana::Address;
 use jiff::Timestamp;
 
 use super::position::{PositionId, QuoteUnits, Strategy};
+use crate::report::figure::Figure;
 
 /// An open position, valued at its pool's active bin.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,9 +31,13 @@ pub struct OpenPositionFacts {
     /// Nonzero rewards whose own token price is unknown; the known reward sum leaves them out.
     pub unpriced_rewards: u32,
     /// The value of its liquidity now, at the active bin.
-    pub value: QuoteUnits,
+    pub value: Figure<QuoteUnits>,
     /// The value of the fees it could claim now.
-    pub unclaimed_fees: QuoteUnits,
+    pub unclaimed_fees: Figure<QuoteUnits>,
+    /// Whether total raw pool fees are proved nonzero, independently of their valuation.
+    /// `Some(false)` requires complete zero raw X/Y fees, including pending and unsettled;
+    /// `None` means their presence is unknown. A positive raw amount may value to zero.
+    pub unclaimed_fee_presence: Option<bool>,
     /// The lowest bin of its range.
     pub lower_bin_id: i32,
     /// The highest bin of its range.

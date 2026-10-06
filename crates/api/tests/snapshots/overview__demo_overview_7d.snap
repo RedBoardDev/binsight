@@ -70,7 +70,7 @@ expression: response.json()
         }
       ],
       "value": {
-        "amount": "0.330189236",
+        "amount": "0.330189784",
         "unit": "sol"
       }
     },
@@ -100,7 +100,7 @@ expression: response.json()
     "lp": {
       "exactness": "complete",
       "value": {
-        "amount": "40.024047113",
+        "amount": "40.024047661",
         "unit": "sol"
       }
     },
@@ -121,7 +121,7 @@ expression: response.json()
         }
       ],
       "value": {
-        "amount": "380.729394274",
+        "amount": "380.729394822",
         "unit": "sol"
       }
     },
@@ -158,13 +158,13 @@ expression: response.json()
     "pnl": {
       "exactness": "complete",
       "value": {
-        "amount": "-0.184274245",
+        "amount": "-0.184273697",
         "unit": "sol"
       }
     },
     "pnl_pct": {
       "exactness": "complete",
-      "value": "-0.452434"
+      "value": "-0.452433"
     },
     "unclaimed_fees": {
       "exactness": "complete",

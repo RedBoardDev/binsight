@@ -7,7 +7,7 @@
       "name": "MIT",
       "identifier": "MIT"
     },
-    "version": "1.4.0"
+    "version": "1.5.0"
   },
   "paths": {
     "/api/v1/auth/login": {
@@ -322,7 +322,7 @@
             }
           },
           "503": {
-            "description": "The engine does not serve figures yet (`data_not_ready`).",
+            "description": "The engine does not serve figures yet, or the raw fee position count is not completely classified (`data_not_ready`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1474,6 +1474,110 @@
           }
         ]
       }
+    },
+    "/api/v2/overview": {
+      "get": {
+        "tags": [
+          "portfolio"
+        ],
+        "summary": "Reads the overview of every wallet, or of one.",
+        "operationId": "getOverviewV2",
+        "parameters": [
+          {
+            "name": "wallet",
+            "in": "query",
+            "description": "`all` (the default) or the address of a tracked wallet.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "period",
+            "in": "query",
+            "description": "`today`, `7d`, `1m` (the default), `3m`, `1y` or `all`.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "A period ending now: the last N local dates (today included), from local midnight in the\ninstance's time zone.",
+              "enum": [
+                "today",
+                "7d",
+                "1m",
+                "3m",
+                "1y",
+                "all"
+              ]
+            }
+          },
+          {
+            "name": "currency",
+            "in": "query",
+            "description": "The currency of the figures (`sol` by default).",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Currency"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The overview.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverviewV2"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A query parameter is invalid (`invalid_request`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The wallet is not tracked (`wallet_not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The engine does not serve figures yet (`data_not_ready`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -1519,7 +1623,7 @@
           },
           "height": {
             "$ref": "#/components/schemas/DecimalString",
-            "description": "Its height: its value as a share of the largest bar, from `0` to `1`."
+            "description": "Relative depth at each bin’s own price, from `0` to `1` of the largest bar.\nSupported pools use the selected native token; unsupported pools retain descriptive\nphysical Y depth, which never enters a financial figure."
           },
           "price": {
             "oneOf": [
@@ -2376,7 +2480,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/Price",
-                "description": "The price of the lowest bin; `null` when the pool's quote cannot be valued."
+                "description": "The lower numeric displayed price; physical bin IDs remain unchanged. Null without a supported quote."
               },
               {
                 "type": "null"
@@ -2392,7 +2496,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/Price",
-                "description": "The price of the highest bin; `null` when the pool's quote cannot be valued."
+                "description": "The upper numeric displayed price; physical bin IDs remain unchanged. Null without a supported quote."
               },
               {
                 "type": "null"
@@ -3119,6 +3223,27 @@
         }
       },
       "OpenSummary": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/OpenSummaryFields"
+          },
+          {
+            "type": "object",
+            "required": [
+              "unclaimed_position_count"
+            ],
+            "properties": {
+              "unclaimed_position_count": {
+                "type": "integer",
+                "description": "How many have observed raw fees to claim.",
+                "minimum": 0
+              }
+            }
+          }
+        ],
+        "description": "V1 only emits this response when all raw fee presences are classified."
+      },
+      "OpenSummaryFields": {
         "type": "object",
         "description": "The open positions together.",
         "required": [
@@ -3126,8 +3251,7 @@
           "out_of_range_count",
           "pnl",
           "pnl_pct",
-          "unclaimed_fees",
-          "unclaimed_position_count"
+          "unclaimed_fees"
         ],
         "properties": {
           "count": {
@@ -3151,13 +3275,32 @@
           "unclaimed_fees": {
             "$ref": "#/components/schemas/Figure",
             "description": "The fees they could claim (the same as the net worth's part)."
-          },
-          "unclaimed_position_count": {
-            "type": "integer",
-            "description": "How many have fees to claim.",
-            "minimum": 0
           }
         }
+      },
+      "OpenSummaryV2": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/OpenSummaryFields"
+          },
+          {
+            "type": "object",
+            "required": [
+              "unclaimed_position_count"
+            ],
+            "properties": {
+              "unclaimed_position_count": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "How many have observed raw fees to claim; null if any position's presence is unknown.",
+                "minimum": 0
+              }
+            }
+          }
+        ],
+        "description": "V2 explicitly carries the absence of a complete raw fee classification."
       },
       "OpenTotals": {
         "type": "object",
@@ -3239,6 +3382,26 @@
         ]
       },
       "Overview": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/OverviewFields"
+          },
+          {
+            "type": "object",
+            "required": [
+              "open"
+            ],
+            "properties": {
+              "open": {
+                "$ref": "#/components/schemas/OpenSummary",
+                "description": "The open positions together."
+              }
+            }
+          }
+        ],
+        "description": "The v1 overview; every successful response contains a proved integer fee count."
+      },
+      "OverviewFields": {
         "type": "object",
         "description": "Everything the overview shows.",
         "required": [
@@ -3246,7 +3409,6 @@
           "sync",
           "today",
           "net_worth",
-          "open",
           "gain",
           "watch"
         ],
@@ -3262,10 +3424,6 @@
           "net_worth": {
             "$ref": "#/components/schemas/NetWorth",
             "description": "The net worth now: `total` is the sum of the four parts."
-          },
-          "open": {
-            "$ref": "#/components/schemas/OpenSummary",
-            "description": "The open positions together."
           },
           "sync": {
             "$ref": "#/components/schemas/OverviewSync",
@@ -3323,6 +3481,26 @@
             "description": "The worst state."
           }
         }
+      },
+      "OverviewV2": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/OverviewFields"
+          },
+          {
+            "type": "object",
+            "required": [
+              "open"
+            ],
+            "properties": {
+              "open": {
+                "$ref": "#/components/schemas/OpenSummaryV2",
+                "description": "The open positions together."
+              }
+            }
+          }
+        ],
+        "description": "The v2 overview retains all other figures when a scoped fee presence is unknown."
       },
       "PercentFigure": {
         "oneOf": [
@@ -3900,7 +4078,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/Price",
-                "description": "The price of its lowest bin; `null` when the pool's quote cannot be valued."
+                "description": "The lower numeric displayed price bound; `null` when the quote cannot be valued."
               },
               {
                 "type": "null"
@@ -3919,7 +4097,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/Price",
-                "description": "The price of its highest bin; `null` when the pool's quote cannot be valued."
+                "description": "The upper numeric displayed price bound; `null` when the quote cannot be valued."
               },
               {
                 "type": "null"
@@ -4024,7 +4202,7 @@
           },
           {
             "type": "object",
-            "description": "A position movement or reward could not be fully valued at its own token price.",
+            "description": "A position movement, reward, liquidity or fee observation has an unpriced token quantity.",
             "required": [
               "position",
               "code"

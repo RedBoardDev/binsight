@@ -122,6 +122,29 @@ mod tests {
     }
 
     #[test]
+    fn recognizes_the_first_positions_definition_without_registering_a_producer() {
+        assert_eq!(REGISTRY, []);
+        let definition = ProjectionSpec {
+            name: "positions",
+            calc_version: binsight_ledger::calc_version::POSITIONS,
+        };
+        assert_eq!(
+            stale_projections(
+                &[definition],
+                &[ready("positions", binsight_ledger::calc_version::POSITIONS)]
+            ),
+            Vec::<&ProjectionSpec>::new()
+        );
+        assert_eq!(
+            stale_projections(
+                &[definition],
+                &[ready("positions", definition.calc_version + 1)]
+            ),
+            vec![&definition]
+        );
+    }
+
+    #[test]
     fn treats_an_interrupted_rebuild_as_stale() {
         let building = ProjectionState {
             status: ProjectionStatus::Building,

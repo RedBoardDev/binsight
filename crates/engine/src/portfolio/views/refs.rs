@@ -69,7 +69,7 @@ pub enum TokenLogo {
     None,
 }
 
-/// A pool as the screens show it.
+/// A pool in its selected display orientation; unsupported pools retain physical X/Y.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PoolRef {
     /// The pool address.

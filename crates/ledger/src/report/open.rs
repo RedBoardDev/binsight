@@ -3,17 +3,26 @@
 //!
 //! The open PnL is everything the position returned or holds minus what it cost: withdrawn +
 //! claimed fees + rewards + value + unclaimed fees − invested. The fees of an open position are what it
-//! claimed plus what it could claim now. Above its range a position holds only quote token; below,
-//! only base token.
+//! claimed plus what it could claim now. Displayed range and composition follow the selected
+//! quote convention; liquidity bin IDs and raw X/Y amounts remain physical.
 
 use binsight_core::error::AmountError;
 use binsight_core::exactness::Exactness;
 use binsight_core::price::Price;
 use binsight_core::ratio::{Percent, RatioError};
 
+mod native;
+
+pub use native::open_pnl;
+
+use native::{native_fees, native_sum};
+
 use super::figure::{Figure, Reason, Reasons};
 use super::valued::{Valued, value_quote};
-use crate::facts::{OpenPositionFacts, PoolFacts, QuoteUnits, SolUsdRates, WalletFacts};
+use crate::facts::{
+    OpenPositionFacts, PhysicalSide, PoolFacts, QuoteConvention, QuoteUnits, SolUsdRates,
+    WalletFacts,
+};
 
 /// Where the active bin stands against a position's range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -99,22 +108,6 @@ impl OpenValuation {
         rates: &SolUsdRates,
     ) -> Result<Self, AmountError> {
         let value = |amount: QuoteUnits| value_leaf(amount, position, pool, rates);
-        let signed = |amount| {
-            let figure = value(amount)?;
-            if position.unpriced_movements == 0
-                && position.unpriced_rebalances == 0
-                && position.unpriced_rewards == 0
-            {
-                Ok(figure)
-            } else {
-                Ok(figure.degraded(
-                    Exactness::Estimated,
-                    Reasons::from([Reason::UnpricedLeg {
-                        position: position.id,
-                    }]),
-                ))
-            }
-        };
         let flow = |amount| {
             let figure = value(amount)?;
             if position.unpriced_rebalances == 0 {
@@ -128,7 +121,7 @@ impl OpenValuation {
                 ))
             }
         };
-        let mut rewards = value_current(position.rewards, pool, rates)?;
+        let mut rewards = value_current(Figure::Complete(position.rewards), pool, rates)?;
         if position.unpriced_rewards > 0 {
             rewards = rewards.degraded(
                 Exactness::Partial,
@@ -152,33 +145,14 @@ impl OpenValuation {
             net_invested,
             claimed_fees: value(position.claimed_fees)?,
             rewards,
-            value: value_current(position.value, pool, rates)?,
-            unclaimed_fees: value_current(position.unclaimed_fees, pool, rates)?,
-            fees: value(native_sum(
-                &[position.claimed_fees, position.unclaimed_fees],
-                &[],
-            )?)?,
-            pnl: signed(open_pnl(position)?)?,
-            range: range_status(position),
-            composition: composition(position),
+            value: value_current(position.value.clone(), pool, rates)?,
+            unclaimed_fees: value_current(position.unclaimed_fees.clone(), pool, rates)?,
+            fees: value_current(native_fees(position)?, pool, rates)?,
+            pnl: value_current(open_pnl(position)?, pool, rates)?,
+            range: range_status(position, pool),
+            composition: composition(position, pool),
         })
     }
-}
-
-/// withdrawn + claimed fees + rewards + value + unclaimed fees − invested, in the quote token.
-///
-/// # Errors
-///
-/// Returns [`AmountError::Overflow`] when the sum overflows.
-pub fn open_pnl(position: &OpenPositionFacts) -> Result<QuoteUnits, AmountError> {
-    let returned = [
-        position.withdrawn,
-        position.claimed_fees,
-        position.rewards,
-        position.value,
-        position.unclaimed_fees,
-    ];
-    native_sum(&returned, &[position.invested])
 }
 
 /// How far the price can fall to the bottom of the range, and rise to its top, as percentages
@@ -200,32 +174,31 @@ pub fn range_margins(
 }
 
 /// Where the active bin stands against the range.
-fn range_status(position: &OpenPositionFacts) -> RangeStatus {
-    if position.active_bin_id > position.upper_bin_id {
+fn range_status(position: &OpenPositionFacts, pool: &PoolFacts) -> RangeStatus {
+    let is_inverse = pool
+        .quote_convention()
+        .is_some_and(|quote| quote.side() == PhysicalSide::X);
+    if (!is_inverse && position.active_bin_id > position.upper_bin_id)
+        || (is_inverse && position.active_bin_id < position.lower_bin_id)
+    {
         RangeStatus::Above
-    } else if position.active_bin_id < position.lower_bin_id {
+    } else if (!is_inverse && position.active_bin_id < position.lower_bin_id)
+        || (is_inverse && position.active_bin_id > position.upper_bin_id)
+    {
         RangeStatus::Below
     } else {
         RangeStatus::InRange
     }
 }
 
-/// `Σ added − Σ removed`, in the quote token.
-fn native_sum(added: &[QuoteUnits], removed: &[QuoteUnits]) -> Result<QuoteUnits, AmountError> {
-    let mut total: i128 = 0;
-    for amount in added {
-        total = total.checked_add(amount.0).ok_or(AmountError::Overflow)?;
-    }
-    for amount in removed {
-        total = total.checked_sub(amount.0).ok_or(AmountError::Overflow)?;
-    }
-    Ok(QuoteUnits(total))
-}
-
 /// What the position's bins hold.
-fn composition(position: &OpenPositionFacts) -> Composition {
-    let has_base = position.bins.iter().any(|bin| bin.base.0 > 0);
-    let has_quote = position.bins.iter().any(|bin| bin.quote.0 > 0);
+fn composition(position: &OpenPositionFacts, pool: &PoolFacts) -> Composition {
+    let has_x = position.bins.iter().any(|bin| bin.base.0 > 0);
+    let has_y = position.bins.iter().any(|bin| bin.quote.0 > 0);
+    let (has_base, has_quote) = match pool.quote_convention().map(QuoteConvention::side) {
+        Some(PhysicalSide::X) => (has_y, has_x),
+        Some(PhysicalSide::Y) | None => (has_x, has_y),
+    };
     match (has_base, has_quote) {
         (true, false) => Composition::AllBase,
         (false, true) => Composition::AllQuote,
@@ -241,7 +214,7 @@ fn value_leaf(
     pool: &PoolFacts,
     rates: &SolUsdRates,
 ) -> Result<Figure<Valued>, AmountError> {
-    let figure = value_current(amount, pool, rates)?;
+    let figure = value_current(Figure::Complete(amount), pool, rates)?;
     if position.unpriced_movements == 0 {
         return Ok(figure);
     }
@@ -252,16 +225,19 @@ fn value_leaf(
 }
 
 fn value_current(
-    amount: QuoteUnits,
+    amount: Figure<QuoteUnits>,
     pool: &PoolFacts,
     rates: &SolUsdRates,
 ) -> Result<Figure<Valued>, AmountError> {
-    let Some(asset) = pool.quote_asset() else {
-        return Ok(Figure::unavailable(Reason::UnsupportedQuote {
-            pool: pool.address,
-        }));
+    let (amount, exactness, mut reasons) = amount.into_parts();
+    let Some(asset) = pool.quote_convention().map(QuoteConvention::asset) else {
+        reasons.insert(Reason::UnsupportedQuote { pool: pool.address });
+        return Ok(Figure::Unavailable { reasons });
     };
-    value_quote(amount, asset, rates.spot)
+    let Some(amount) = amount else {
+        return Ok(Figure::Unavailable { reasons });
+    };
+    Ok(value_quote(amount, asset, rates.spot)?.degraded(exactness, reasons))
 }
 
 #[cfg(test)]

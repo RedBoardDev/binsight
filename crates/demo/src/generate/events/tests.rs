@@ -5,7 +5,7 @@
     reason = "the tests add amounts far below the integer limits"
 )]
 
-use binsight_dlmm::math::{mul_shr_64, price_from_bin};
+use binsight_dlmm::math::price_from_bin;
 use binsight_engine::portfolio::{Scope, Snapshot};
 use binsight_ledger::facts::{PositionEventFact, PositionEventKind, PositionId};
 use jiff::Timestamp;
@@ -53,15 +53,18 @@ fn sums(events: &[PositionEventFact]) -> Sums {
 }
 
 fn assert_valued_at_their_bin(snapshot: &Snapshot, pool: binsight_solana::Address, id: PositionId) {
-    let bin_step = snapshot.pool(pool).unwrap().bin_step;
+    let pool = snapshot.pool(pool).unwrap();
+    let convention = pool.quote_convention().unwrap();
     for event in snapshot.events_of(id) {
         let (Some(flow), Some(bin)) = (event.kind.flow(), event.active_bin_id) else {
             continue;
         };
-        let price = price_from_bin(bin, bin_step).unwrap();
-        let base_value = mul_shr_64(flow.base.0, price).unwrap();
+        let price = price_from_bin(bin, pool.bin_step).unwrap();
+        let native = convention
+            .value_raw(flow.base, flow.quote, Some(price))
+            .unwrap();
         assert_eq!(
-            i128::try_from(base_value + flow.quote.0).unwrap(),
+            i128::try_from(native.amount.0).unwrap(),
             flow.value.0,
             "{id}"
         );
@@ -129,4 +132,49 @@ fn moves_the_range_of_some_positions_and_leaves_some_movements_unpriced() {
             .any(|event| matches!(event.kind, PositionEventKind::RebalanceDeposit { .. }))
     );
     assert!(events.iter().any(|event| event.active_bin_id.is_none()));
+}
+
+#[test]
+fn rebuilds_selected_x_movements_from_their_actual_source_bin() {
+    use super::{Events, Market};
+    use binsight_core::units::{Decimals, RawTokenAmount};
+    use binsight_ledger::facts::TokenKind;
+    let world = world();
+    let position = world
+        .snapshot
+        .open_in(Scope::All)
+        .next()
+        .unwrap()
+        .facts
+        .clone();
+    let mut pool = world.snapshot.pool(position.pool).unwrap().clone();
+    pool.base.kind = TokenKind::Usdc;
+    pool.base.decimals = Decimals(6);
+    pool.quote.kind = TokenKind::Other;
+    let path = &world.paths[&pool.address];
+    let market = Market { pool: &pool, path };
+    let mut events = Events::new(position.id, market);
+    let flow = events.flow(position.valued_at, 1_020_000_001).unwrap();
+    let price = price_from_bin(path.bin_in_minute(position.valued_at), pool.bin_step).unwrap();
+    let native = pool
+        .quote_convention()
+        .unwrap()
+        .value_raw(flow.base, flow.quote, Some(price))
+        .unwrap();
+    assert_eq!(native.amount, RawTokenAmount(1_020_000_001));
+    assert_eq!(flow.value.0, 1_020_000_001);
+    events.push(
+        position.valued_at,
+        "remove",
+        PositionEventKind::Remove(flow),
+    );
+    events.forget_last_price().unwrap();
+    let partial = events.list.last().unwrap();
+    assert_eq!(partial.active_bin_id, None);
+    let flow = partial.kind.flow().unwrap();
+    assert_eq!(flow.base, RawTokenAmount(1_020_000_001));
+    assert_eq!(
+        flow.valuation,
+        binsight_ledger::facts::FlowValuation::QuoteOnly
+    );
 }

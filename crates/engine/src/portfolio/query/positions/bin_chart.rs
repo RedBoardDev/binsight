@@ -5,8 +5,9 @@ use binsight_core::ratio::Ratio;
 use binsight_core::units::RawTokenAmount;
 use binsight_dlmm::math::{mul_shr_64, price_from_bin};
 use binsight_ledger::facts::{BinLiquidity, OpenPositionFacts, PoolFacts};
+use binsight_ledger::report::valued::quote::QuoteMathError;
 
-use crate::portfolio::query::refs::bin_price;
+use crate::portfolio::query::refs::{bin_price, display_amounts};
 use crate::portfolio::read_error::ReadError;
 use crate::portfolio::views::{BinBar, BinChart, MAX_BIN_BARS};
 
@@ -32,11 +33,12 @@ pub(super) fn bin_chart(
         .iter()
         .map(|group| {
             let bin = &group.liquidity;
+            let (base, quote) = display_amounts(pool, bin.base, bin.quote);
             Ok(BinBar {
                 bin_id: bin.bin_id,
                 price: bin_price(pool, bin.bin_id),
-                base: bin.base,
-                quote: bin.quote,
+                base,
+                quote,
                 height: height(group.value, largest)?,
             })
         })
@@ -68,13 +70,25 @@ fn merge(bins: &[BinLiquidity], pool: &PoolFacts) -> Result<BinGroup, ReadError>
     Ok(group)
 }
 
-/// The depth of one physical bin in raw quote units, at that bin's own physical price.
+/// Supported depth uses the selected token; unsupported height remains descriptive physical Y.
 fn value_at_own_price(bin: &BinLiquidity, pool: &PoolFacts) -> Result<RawTokenAmount, ReadError> {
     let price =
         price_from_bin(bin.bin_id, pool.bin_step).map_err(|_| ReadError::BinOutOfRange {
             pool: pool.address,
             bin_id: bin.bin_id,
         })?;
+    if let Some(quote) = pool.quote_convention() {
+        return quote
+            .value_raw(bin.base, bin.quote, Some(price))
+            .map(|value| value.amount)
+            .map_err(|error| match error {
+                QuoteMathError::ZeroPrice => ReadError::BinOutOfRange {
+                    pool: pool.address,
+                    bin_id: bin.bin_id,
+                },
+                QuoteMathError::Overflow => AmountError::Overflow.into(),
+            });
+    }
     let base_value = mul_shr_64(bin.base.0, price).ok_or(AmountError::Overflow)?;
     Ok(RawTokenAmount(base_value).try_add(bin.quote)?)
 }

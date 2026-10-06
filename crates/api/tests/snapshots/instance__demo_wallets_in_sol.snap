@@ -10,7 +10,7 @@ expression: in_sol.json()
       "net_worth": {
         "exactness": "complete",
         "value": {
-          "amount": "142.567784838",
+          "amount": "142.567784931",
           "unit": "sol"
         }
       },
@@ -19,7 +19,7 @@ expression: in_sol.json()
       "real_pnl": {
         "exactness": "complete",
         "value": {
-          "amount": "34.567784838",
+          "amount": "34.567784931",
           "unit": "sol"
         }
       },
@@ -60,7 +60,7 @@ expression: in_sol.json()
           }
         ],
         "value": {
-          "amount": "119.029615617",
+          "amount": "119.029615627",
           "unit": "sol"
         }
       },
@@ -76,7 +76,7 @@ expression: in_sol.json()
           }
         ],
         "value": {
-          "amount": "19.029615617",
+          "amount": "19.029615627",
           "unit": "sol"
         }
       },
@@ -110,7 +110,7 @@ expression: in_sol.json()
       "net_worth": {
         "exactness": "complete",
         "value": {
-          "amount": "119.131993819",
+          "amount": "119.131994264",
           "unit": "sol"
         }
       },
@@ -119,7 +119,7 @@ expression: in_sol.json()
       "real_pnl": {
         "exactness": "complete",
         "value": {
-          "amount": "-0.868006181",
+          "amount": "-0.868005736",
           "unit": "sol"
         }
       },
@@ -161,7 +161,7 @@ expression: in_sol.json()
         }
       ],
       "value": {
-        "amount": "380.729394274",
+        "amount": "380.729394822",
         "unit": "sol"
       }
     },
@@ -177,7 +177,7 @@ expression: in_sol.json()
         }
       ],
       "value": {
-        "amount": "52.729394274",
+        "amount": "52.729394822",
         "unit": "sol"
       }
     }

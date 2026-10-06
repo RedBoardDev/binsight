@@ -27,7 +27,7 @@ test('signs in, finds its way around the shell and signs out', async ({ page }, 
 
   const overviewRead = page.waitForResponse(
     (response) =>
-      new URL(response.url()).pathname === '/api/v1/overview' &&
+      new URL(response.url()).pathname === '/api/v2/overview' &&
       response.request().method() === 'GET',
   );
   const seriesRead = page.waitForResponse(
@@ -38,7 +38,7 @@ test('signs in, finds its way around the shell and signs out', async ({ page }, 
   await signIn(page, E2E_PASSWORD);
   const overviewResponse = await overviewRead;
   expect(overviewResponse.status()).toBe(200);
-  const overview: ApiSchema<'Overview'> = await overviewResponse.json();
+  const overview: ApiSchema<'OverviewV2'> = await overviewResponse.json();
   expect(overview).toMatchObject({
     today: { totals: { pnl: { exactness: expect.any(String) } } },
     net_worth: { total: { exactness: expect.any(String) } },
@@ -125,7 +125,7 @@ test.describe('a fresh chain instance', () => {
           message.text(),
         ) &&
         URL.canParse(location) &&
-        new URL(location).pathname === '/api/v1/overview'
+        new URL(location).pathname === '/api/v2/overview'
       ) {
         expectedOverviewErrors.push(location);
       } else unexpectedErrors.push(`console: ${message.text()} (${location})`);
@@ -135,7 +135,7 @@ test.describe('a fresh chain instance', () => {
     const overviewRead = page.waitForResponse(
       (response) =>
         response.request().method() === 'GET' &&
-        new URL(response.url()).pathname === '/api/v1/overview',
+        new URL(response.url()).pathname === '/api/v2/overview',
     );
     await signIn(page, E2E_PASSWORD);
     const response = await overviewRead;

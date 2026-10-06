@@ -89,7 +89,7 @@ export const describeReason = (i18n: I18n, reason: FigureReason): string => {
       return i18n._(msg`History still importing: ${progress} done.`);
     }
     case 'unpriced_leg':
-      return i18n._(msg`A movement of the position has no price.`);
+      return i18n._(msg`Some amounts of this position could not be priced.`);
     case 'provisional_rate': {
       const day = reason.day;
       return i18n._(msg`Converted with the provisional SOL to dollar rate for ${day}.`);

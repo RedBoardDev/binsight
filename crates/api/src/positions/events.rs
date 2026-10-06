@@ -91,9 +91,9 @@ pub(crate) struct EventRange {
     pub(crate) lower_bin_id: i32,
     /// The highest bin.
     pub(crate) upper_bin_id: i32,
-    /// The price of the lowest bin; `null` when the pool's quote cannot be valued.
+    /// The lower numeric displayed price; physical bin IDs remain unchanged. Null without a supported quote.
     pub(crate) lower: Option<Price>,
-    /// The price of the highest bin; `null` when the pool's quote cannot be valued.
+    /// The upper numeric displayed price; physical bin IDs remain unchanged. Null without a supported quote.
     pub(crate) upper: Option<Price>,
 }
 

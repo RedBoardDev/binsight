@@ -2,7 +2,7 @@ import { ALL_WALLETS, type WalletScope } from '@app/applications/Shared/Scope/Do
 import type { ApiSchema } from '@app/lib/api/apiSchema';
 
 interface TodayHistoryTarget {
-  readonly window: ApiSchema<'Overview'>['today']['window'];
+  readonly window: ApiSchema<'OverviewV2'>['today']['window'];
   readonly wallet: WalletScope;
 }
 

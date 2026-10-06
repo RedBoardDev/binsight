@@ -61,3 +61,14 @@ fn gives_a_negative_margin_outside_the_range() {
     assert_eq!(down.to_decimal_string(), "75");
     assert_eq!(up.to_decimal_string(), "-50");
 }
+
+#[path = "tests/closing_conversion.rs"]
+mod closing_conversion;
+#[path = "tests/display_range.rs"]
+mod display_range;
+#[path = "tests/fixtures.rs"]
+mod fixtures;
+#[path = "tests/native_definition.rs"]
+mod native_definition;
+#[path = "tests/source_quality.rs"]
+mod source_quality;

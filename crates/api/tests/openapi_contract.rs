@@ -111,3 +111,63 @@ fn requires_nullable_import_progress_on_every_public_surface() {
         );
     }
 }
+
+#[test]
+fn keeps_the_v1_fee_count_integer_and_requires_the_v2_nullable_count() {
+    let spec: serde_json::Value =
+        serde_json::from_str(&binsight_api::openapi::spec_json()).unwrap();
+    for (version, operation, response, summary, nullable) in [
+        ("v1", "getOverview", "Overview", "OpenSummary", false),
+        ("v2", "getOverviewV2", "OverviewV2", "OpenSummaryV2", true),
+    ] {
+        let route = spec
+            .get("paths")
+            .unwrap()
+            .get(format!("/api/{version}/overview"))
+            .unwrap()
+            .get("get")
+            .unwrap();
+        assert_eq!(route.get("operationId").unwrap(), operation);
+        assert_eq!(
+            route
+                .pointer("/responses/200/content/application~1json/schema/$ref")
+                .unwrap(),
+            &format!("#/components/schemas/{response}")
+        );
+        let schema = spec
+            .pointer(&format!("/components/schemas/{summary}"))
+            .unwrap();
+        let object = schema.get("allOf").map_or(schema, |parts| {
+            parts
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|part| {
+                    part.pointer("/properties/unclaimed_position_count")
+                        .is_some()
+                })
+                .unwrap()
+        });
+        assert!(
+            object
+                .get("required")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|field| field == "unclaimed_position_count")
+        );
+        let property = object
+            .pointer("/properties/unclaimed_position_count")
+            .unwrap();
+        if nullable {
+            let types = property.get("type").unwrap().as_array().unwrap();
+            assert_eq!(types.len(), 2);
+            assert!(types.iter().any(|kind| kind == "integer"));
+            assert!(types.iter().any(|kind| kind == "null"));
+        } else {
+            assert_eq!(property.get("type").unwrap(), "integer");
+        }
+        assert_eq!(property.get("minimum").unwrap(), 0);
+    }
+}

@@ -15,6 +15,24 @@ const importing = (progress: string) => {
 };
 
 describe('describeReason', () => {
+  it('describes unpriced position quantities beyond movements in every language', () => {
+    const cases = [
+      ['en', englishMessages, 'Some amounts of this position could not be priced.'],
+      ['fr', frenchMessages, 'Certaines quantités de cette position n’ont pas pu être valorisées.'],
+      [
+        'de',
+        germanMessages,
+        'Für einige Mengen dieser Position konnte kein Preis ermittelt werden.',
+      ],
+    ] as const;
+    for (const [locale, messages, expected] of cases) {
+      i18n.loadAndActivate({ locale, messages });
+      expect(describeReason(i18n, { code: 'unpriced_leg', position: 'sample-position' })).toBe(
+        expected,
+      );
+    }
+  });
+
   it('distinguishes an old mark from a missing historical valuation in each language', () => {
     const cases = [
       [

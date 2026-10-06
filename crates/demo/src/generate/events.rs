@@ -8,15 +8,15 @@
 //! falls inside its candle; its tokens are split half base, half quote at that bin's exact price.
 
 use binsight_core::units::RawTokenAmount;
-use binsight_dlmm::math::{div_q64, mul_shr_64};
 use binsight_ledger::facts::{
-    BinRange, ChainOrder, ClosedPositionFacts, OpenPositionFacts, PoolFacts, PositionEventFact,
-    PositionEventKind, PositionId, QuoteUnits, RebalanceFlow, TokenFlow,
+    BinRange, ChainOrder, ClosedPositionFacts, OpenPositionFacts, PhysicalSide, PoolFacts,
+    PositionEventFact, PositionEventKind, PositionId, QuoteUnits, RebalanceFlow, TokenFlow,
 };
 use binsight_solana::Signature;
 use binsight_solana::transaction::InstructionPosition;
 use jiff::{SignedDuration, Timestamp};
 
+use super::liquidity::split_native;
 use super::market::{PricePath, bin_price, minute_start};
 use crate::addresses::signature;
 use crate::error::DemoError;
@@ -204,15 +204,20 @@ impl<'a> Events<'a> {
     fn flow(&self, at: Timestamp, value: i128) -> Result<TokenFlow, DemoError> {
         let bin = self.market.path.bin_in_minute(at);
         let price = bin_price(bin, self.market.pool.bin_step)?;
-        let half = u64::try_from(value.max(0) / 2).map_err(|_| DemoError::OutOfRange)?;
-        let base = div_q64(half, price).ok_or(DemoError::OutOfRange)?;
-        let base_value = mul_shr_64(base, price).ok_or(DemoError::OutOfRange)?;
-        let base_value = i128::try_from(base_value).map_err(|_| DemoError::OutOfRange)?;
-        let quote = value.max(0).saturating_sub(base_value);
+        let selected = self
+            .market
+            .pool
+            .quote_convention()
+            .ok_or(DemoError::UnknownPool)?;
+        let (base, quote) = split_native(
+            RawTokenAmount(u128::try_from(value).map_err(|_| DemoError::OutOfRange)?),
+            selected,
+            price,
+        )?;
         Ok(TokenFlow {
-            base: RawTokenAmount(base),
-            quote: RawTokenAmount(u128::try_from(quote).map_err(|_| DemoError::OutOfRange)?),
-            value: QuoteUnits(value.max(0)),
+            base,
+            quote,
+            value: QuoteUnits(value),
             valuation: binsight_ledger::facts::FlowValuation::Complete,
         })
     }
@@ -246,6 +251,11 @@ impl<'a> Events<'a> {
 
     /// Leaves the last movement without a bin price, as when its transaction does not say it.
     fn forget_last_price(&mut self) -> Result<(), DemoError> {
+        let selected = self
+            .market
+            .pool
+            .quote_convention()
+            .ok_or(DemoError::UnknownPool)?;
         if let Some(last) = self
             .list
             .iter_mut()
@@ -255,9 +265,13 @@ impl<'a> Events<'a> {
             last.active_bin_id = None;
             if let PositionEventKind::Remove(flow) = &mut last.kind {
                 flow.valuation = binsight_ledger::facts::FlowValuation::QuoteOnly;
-                flow.quote = RawTokenAmount(
+                let raw_quote = RawTokenAmount(
                     u128::try_from(flow.value.0).map_err(|_| DemoError::OutOfRange)?,
                 );
+                match selected.side() {
+                    PhysicalSide::X => flow.base = raw_quote,
+                    PhysicalSide::Y => flow.quote = raw_quote,
+                }
             }
         }
         Ok(())

@@ -6,16 +6,20 @@
 //! reports is recomputed from those bins at the active price, so the two always agree to the unit.
 //! Out-of-range positions are placed just beyond their range.
 
+use binsight_core::error::AmountError;
 use binsight_core::units::RawTokenAmount;
-use binsight_dlmm::math::{Q64x64, div_q64, mul_shr_64};
+use binsight_dlmm::math::Q64x64;
 use binsight_ledger::facts::{
-    BinLiquidity, OpenPositionFacts, PositionId, QuoteUnits, SolUsdRates, Strategy,
+    BinLiquidity, OpenPositionFacts, PhysicalSide, PositionId, QuoteConvention, QuoteUnits,
+    SolUsdRates, Strategy,
 };
+use binsight_ledger::report::figure::Figure;
 use binsight_solana::Address;
 use jiff::Timestamp;
 
 use super::Timeline;
 use super::closed::{in_quote, share};
+use super::liquidity::{allocate_on_side, native_value, split_native};
 use super::market::{CatalogPool, PricePath, bin_price};
 use crate::addresses::{address, signature};
 use crate::error::DemoError;
@@ -55,17 +59,25 @@ pub(crate) fn open_position(
     let opened_at = at(timeline.anchor.as_second().saturating_sub(age))?;
     let active = path.bin_in_minute(timeline.anchor);
     let width = stream.between(WIDTH_BINS.0, WIDTH_BINS.1);
+    let quote = pool
+        .facts
+        .quote_convention()
+        .ok_or(DemoError::UnknownPool)?;
+    let physical_placement = match (quote.side(), spec.placement) {
+        (PhysicalSide::X, Placement::Above) => Placement::Below,
+        (PhysicalSide::X, Placement::Below) => Placement::Above,
+        _ => spec.placement,
+    };
     let (lower, upper) = range(
         &mut stream,
-        spec.placement,
+        physical_placement,
         active,
         width,
         pool.facts.bin_step,
     );
-    let asset = pool.facts.quote_asset().ok_or(DemoError::UnknownPool)?;
     let invested = in_quote(
         i128::from(stream.log_uniform(INVESTED_LAMPORTS.0, INVESTED_LAMPORTS.1)),
-        asset,
+        quote.asset(),
         rates,
         timeline.anchor,
     )?;
@@ -74,15 +86,31 @@ pub(crate) fn open_position(
         Placement::Above => stream.between(100, 500),
         Placement::Below => stream.between(-800, -300),
     };
-    let target = invested.saturating_add(share(invested, move_bps)?);
+    let target = invested
+        .checked_add(share(invested, move_bps)?)
+        .ok_or(AmountError::Overflow)?;
     let strategy = [Strategy::Spot, Strategy::Curve, Strategy::BidAsk]
         .get(usize::try_from(stream.below(3)).unwrap_or(0))
         .copied()
         .unwrap_or(Strategy::Spot);
     let active_price = bin_price(active, pool.facts.bin_step)?;
-    let (bins, value) = spread_liquidity(target, (lower, upper, active), strategy, active_price)?;
+    let (bins, value) = spread_liquidity(
+        QuoteUnits(target),
+        (lower, upper, active),
+        strategy,
+        (quote, active_price),
+    )?;
     let daily_fees = share(invested, stream.between(DAILY_FEES_BPS.0, DAILY_FEES_BPS.1))?;
-    let unclaimed = daily_fees.saturating_mul(i128::from(age)) / SECONDS_PER_DAY;
+    let unclaimed = daily_fees
+        .checked_mul(i128::from(age))
+        .ok_or(AmountError::Overflow)?
+        / SECONDS_PER_DAY;
+    let raw_fees = split_native(
+        RawTokenAmount(u128::try_from(unclaimed).map_err(|_| DemoError::OutOfRange)?),
+        quote,
+        active_price,
+    )?;
+    let unclaimed = native_value(raw_fees, quote, active_price)?;
     let claimed = if i128::from(age) > SECONDS_PER_DAY {
         share(invested, stream.between(5, 50))?
     } else {
@@ -109,8 +137,11 @@ pub(crate) fn open_position(
         claimed_fees: QuoteUnits(claimed),
         rewards: QuoteUnits(0),
         unpriced_rewards: 0,
-        value: QuoteUnits(value),
-        unclaimed_fees: QuoteUnits(unclaimed),
+        value: Figure::Complete(value),
+        unclaimed_fees: Figure::Complete(QuoteUnits(
+            i128::try_from(unclaimed.0).map_err(|_| DemoError::OutOfRange)?,
+        )),
+        unclaimed_fee_presence: Some(raw_fees.0.0 > 0 || raw_fees.1.0 > 0),
         lower_bin_id: lower,
         upper_bin_id: upper,
         active_bin_id: active,
@@ -156,11 +187,11 @@ fn range(
 /// Spreads `value` (quote units) over the bins of `(lower, upper, active)` by `strategy`; returns
 /// the bins and their exact value at the active price.
 fn spread_liquidity(
-    value: i128,
+    value: QuoteUnits,
     (lower, upper, active): (i32, i32, i32),
     strategy: Strategy,
-    price: Q64x64,
-) -> Result<(Vec<BinLiquidity>, i128), DemoError> {
+    (quote, price): (QuoteConvention, Q64x64),
+) -> Result<(Vec<BinLiquidity>, QuoteUnits), DemoError> {
     let center = lower.saturating_add(upper) / 2;
     let weights: Vec<(i32, u64)> = (lower..=upper)
         .map(|bin| {
@@ -174,38 +205,37 @@ fn spread_liquidity(
             (bin, weight)
         })
         .collect();
-    let total_weight: u64 = weights.iter().map(|(_, weight)| *weight).sum();
-    let value = u64::try_from(value.max(0)).map_err(|_| DemoError::OutOfRange)?;
+    let total_weight = weights.iter().try_fold(0_u64, |total, (_, weight)| {
+        total.checked_add(*weight).ok_or(AmountError::Overflow)
+    })?;
+    let value = u128::try_from(value.0).map_err(|_| DemoError::OutOfRange)?;
     let mut bins = Vec::with_capacity(weights.len());
-    let mut exact: u128 = 0;
+    let (mut total_x, mut total_y) = (RawTokenAmount(0), RawTokenAmount(0));
     for (bin_id, weight) in weights {
-        let part = u64::try_from(
-            u128::from(value)
-                .saturating_mul(u128::from(weight))
+        let part = RawTokenAmount(
+            value
+                .checked_mul(u128::from(weight))
+                .ok_or(AmountError::Overflow)?
                 .checked_div(u128::from(total_weight))
-                .unwrap_or(0),
-        )
-        .unwrap_or(0);
-        let (base, quote) = match bin_id.cmp(&active) {
-            std::cmp::Ordering::Less => (0, u128::from(part)),
-            std::cmp::Ordering::Greater => (div_q64(part, price).unwrap_or(0), 0),
-            std::cmp::Ordering::Equal => (
-                div_q64(part / 2, price).unwrap_or(0),
-                u128::from(part.saturating_sub(part / 2)),
-            ),
+                .ok_or(DemoError::OutOfRange)?,
+        );
+        let (x, y) = match bin_id.cmp(&active) {
+            std::cmp::Ordering::Less => allocate_on_side(part, quote, PhysicalSide::Y, price)?,
+            std::cmp::Ordering::Greater => allocate_on_side(part, quote, PhysicalSide::X, price)?,
+            std::cmp::Ordering::Equal => split_native(part, quote, price)?,
         };
-        exact = exact
-            .saturating_add(mul_shr_64(base, price).ok_or(DemoError::OutOfRange)?)
-            .saturating_add(quote);
+        total_x = total_x.try_add(x)?;
+        total_y = total_y.try_add(y)?;
         bins.push(BinLiquidity {
             bin_id,
-            base: RawTokenAmount(base),
-            quote: RawTokenAmount(quote),
+            base: x,
+            quote: y,
         });
     }
+    let exact = native_value((total_x, total_y), quote, price)?;
     Ok((
         bins,
-        i128::try_from(exact).map_err(|_| DemoError::OutOfRange)?,
+        QuoteUnits(i128::try_from(exact.0).map_err(|_| DemoError::OutOfRange)?),
     ))
 }
 
@@ -213,3 +243,6 @@ fn spread_liquidity(
 fn at(second: i64) -> Result<Timestamp, DemoError> {
     Timestamp::from_second(second).map_err(|_| DemoError::OutOfRange)
 }
+
+#[cfg(test)]
+mod tests;

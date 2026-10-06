@@ -222,3 +222,54 @@ fn rejects_a_very_large_window_before_sampling_the_market_path() {
     ));
     assert_eq!(unavailable.candles, Vec::<CandleView>::new());
 }
+
+#[test]
+fn selected_x_candles_invert_bounds_at_each_proved_minute_price() {
+    let world = world();
+    let mut request = request_of(&world);
+    let physical = request.pool.clone();
+    request.pool.base.kind = binsight_ledger::facts::TokenKind::Usdc;
+    request.pool.quote.kind = binsight_ledger::facts::TokenKind::Other;
+    request.pool.base.decimals = binsight_core::units::Decimals(6);
+    request.interval = binsight_engine::portfolio::views::CandleInterval::OneHour;
+    request.from = "2026-10-04T14:00:00Z".parse().unwrap();
+    request.to = "2026-10-04T14:59:00Z".parse().unwrap();
+    let path = &world.paths[&physical.address];
+    let view = candles(&request, Some(path), request.to).unwrap();
+    assert_eq!(view.quote, Some(binsight_ledger::facts::QuoteAsset::Usdc));
+    assert_eq!(view.status, CandleStatus::Fresh);
+    let candle = view.candles.first().unwrap();
+    let mut observed = Vec::new();
+    let mut at = request.from;
+    while at <= request.to {
+        observed.push(price(&request.pool, path.bin_in_minute(at)).unwrap());
+        at = at.checked_add(MINUTE).unwrap();
+    }
+    assert_eq!(candle.open, *observed.first().unwrap());
+    assert_eq!(candle.close, *observed.last().unwrap());
+    assert_eq!(candle.high, *observed.iter().max().unwrap());
+    assert_eq!(candle.low, *observed.iter().min().unwrap());
+}
+
+#[test]
+fn unsupported_quote_with_a_known_path_keeps_descriptive_physical_candles() {
+    let world = world();
+    let mut request = request_of(&world);
+    request.pool.base.kind = binsight_ledger::facts::TokenKind::Other;
+    request.pool.quote.kind = binsight_ledger::facts::TokenKind::Other;
+    let path = &world.paths[&request.pool.address];
+    let view = candles(&request, Some(path), request.to).unwrap();
+    assert_eq!(view.quote, None);
+    assert_eq!(view.status, CandleStatus::Fresh);
+    assert_ne!(view.candles, Vec::<CandleView>::new());
+    for candle in &view.candles {
+        let raw = price_from_bin(path.bin_in_minute(candle.start), request.pool.bin_step).unwrap();
+        assert_eq!(
+            candle.open,
+            unit_price(raw, request.pool.base.decimals, request.pool.quote.decimals).unwrap()
+        );
+        assert!(candle.low <= candle.open && candle.open <= candle.high);
+        assert!(candle.low <= candle.close && candle.close <= candle.high);
+        assert_eq!(candle.volume_usd, None);
+    }
+}

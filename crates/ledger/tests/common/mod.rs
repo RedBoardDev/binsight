@@ -21,6 +21,7 @@ use binsight_ledger::facts::{
     PositionId, QuoteUnits, SolUsdRates, Strategy, TokenFacts, TokenKind, WalletEntry,
     WalletEntryKind, WalletFacts, WalletHoldings,
 };
+use binsight_ledger::report::figure::Figure;
 use binsight_solana::{Address, Signature};
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
@@ -200,8 +201,9 @@ fn open_positions(
         claimed_fees: QuoteUnits(0),
         rewards: QuoteUnits(0),
         unpriced_rewards: 0,
-        value: QuoteUnits(invested + drift),
-        unclaimed_fees: QuoteUnits(unclaimed),
+        value: Figure::Complete(QuoteUnits(invested + drift)),
+        unclaimed_fees: Figure::Complete(QuoteUnits(unclaimed)),
+        unclaimed_fee_presence: Some(true),
         lower_bin_id: -10,
         upper_bin_id: 10,
         active_bin_id: 0,
@@ -268,7 +270,16 @@ fn balancing_holdings(
     let realized = closed.iter().map(position_pnl).sum::<i128>() + sum_entries(false);
     let in_positions: i128 = open
         .iter()
-        .map(|position| position.value.0 + position.unclaimed_fees.0)
+        .map(|position| {
+            let known = |figure: &Figure<QuoteUnits>| {
+                assert_eq!(
+                    figure.exactness(),
+                    binsight_core::exactness::Exactness::Complete
+                );
+                figure.value().unwrap().0
+            };
+            known(&position.value) + known(&position.unclaimed_fees)
+        })
         .sum();
     let idle = sum_entries(true) + realized + open_pnl_now - in_positions;
     WalletHoldings {

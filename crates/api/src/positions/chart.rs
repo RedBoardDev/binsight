@@ -60,9 +60,9 @@ pub(crate) struct RangeSpan {
     pub(crate) from: Timestamp,
     /// When it changed or the position closed; `null` while it holds.
     pub(crate) to: Option<Timestamp>,
-    /// The price of its lowest bin; `null` when the pool's quote cannot be valued.
+    /// The lower numeric displayed price bound; `null` when the quote cannot be valued.
     pub(crate) lower: Option<Price>,
-    /// The price of its highest bin; `null` when the pool's quote cannot be valued.
+    /// The upper numeric displayed price bound; `null` when the quote cannot be valued.
     pub(crate) upper: Option<Price>,
 }
 

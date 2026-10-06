@@ -4,7 +4,7 @@ import type { ApiSchema } from '@app/lib/api/apiSchema';
 import { useLingui } from '@lingui/react/macro';
 
 interface ImportHistoryLabelProps {
-  readonly importing: ApiSchema<'Overview'>['sync']['importing'];
+  readonly importing: ApiSchema<'OverviewV2'>['sync']['importing'];
 }
 
 export const ImportHistoryLabel = ({ importing }: ImportHistoryLabelProps) => {

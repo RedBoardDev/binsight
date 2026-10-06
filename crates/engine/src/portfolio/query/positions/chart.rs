@@ -4,7 +4,7 @@
 use binsight_ledger::facts::{BinRange, PoolFacts, PositionEventFact};
 use jiff::{SignedDuration, Timestamp};
 
-use crate::portfolio::query::refs::{bin_price, token_ref};
+use crate::portfolio::query::refs::{bin_price, display_tokens, range_prices, token_ref};
 use crate::portfolio::snapshot::{PositionRow, Snapshot};
 use crate::portfolio::views::{
     CANDLE_INTERVALS, CandleInterval, ChartMarker, ChartView, MovementKind, RangeSpan,
@@ -53,7 +53,7 @@ pub(super) fn chart(
     let intervals = fitting_intervals(&window);
     let events = snapshot.events_of(position.id());
     ChartView {
-        quote: token_ref(snapshot, &pool.quote),
+        quote: token_ref(snapshot, display_tokens(pool).1),
         from: window.from,
         to: window.to,
         default_interval: auto_interval(&window),
@@ -173,11 +173,14 @@ fn range_spans(
     changes
         .iter()
         .zip(ends)
-        .map(|((from, range), to)| RangeSpan {
-            from: *from,
-            to,
-            lower: bin_price(pool, range.lower_bin_id),
-            upper: bin_price(pool, range.upper_bin_id),
+        .map(|((from, range), to)| {
+            let (lower, upper) = range_prices(pool, range.lower_bin_id, range.upper_bin_id);
+            RangeSpan {
+                from: *from,
+                to,
+                lower,
+                upper,
+            }
         })
         .collect()
 }

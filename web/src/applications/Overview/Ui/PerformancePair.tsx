@@ -5,7 +5,7 @@ import { ImportHistoryLabel } from './PerformancePair/ImportHistoryLabel';
 import { PerformanceFigure } from './PerformancePair/PerformanceFigure';
 
 interface PerformancePairProps {
-  readonly overview: Pick<ApiSchema<'Overview'>, 'open' | 'gain' | 'sync'>;
+  readonly overview: Pick<ApiSchema<'OverviewV2'>, 'open' | 'gain' | 'sync'>;
   readonly period: Period;
   readonly layout: 'stocks' | 'compact';
 }

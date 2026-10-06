@@ -11,7 +11,7 @@ use binsight_solana::Address;
 
 use super::bin_chart::bin_chart;
 use super::sort::{OpenSort, SortOrder, compare_rows};
-use crate::portfolio::query::refs::{bin_price, pool_ref, wallet_ref};
+use crate::portfolio::query::refs::{bin_price, pool_ref, range_prices, wallet_ref};
 use crate::portfolio::query::scope_figures::net_worth;
 use crate::portfolio::read_error::ReadError;
 use crate::portfolio::scope::{ReadContext, Scope};
@@ -84,8 +84,7 @@ pub(super) fn open_row(
     let (facts, valuation) = (&row.facts, &row.valuation);
     let pool = snapshot.pool(facts.pool).ok_or(ReadError::MissingFact)?;
     let price = bin_price(pool, facts.active_bin_id);
-    let lower = bin_price(pool, facts.lower_bin_id);
-    let upper = bin_price(pool, facts.upper_bin_id);
+    let (lower, upper) = range_prices(pool, facts.lower_bin_id, facts.upper_bin_id);
     let held = context.now.duration_since(facts.opened_at).as_secs();
     let (margin_down, margin_up) = margins(price, lower, upper, facts.pool);
     Ok(OpenPositionRow {

@@ -34,7 +34,7 @@ pub(crate) enum Reason {
         #[schema(required = true)]
         progress: Option<DecimalString>,
     },
-    /// A position movement or reward could not be fully valued at its own token price.
+    /// A position movement, reward, liquidity or fee observation has an unpriced token quantity.
     UnpricedLeg {
         /// The position id.
         position: String,

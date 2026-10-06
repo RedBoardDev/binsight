@@ -13,7 +13,9 @@ use jiff::Timestamp;
 
 use super::figure::{Figure, Reason, Reasons};
 use super::valued::{Valued, value_quote_at};
-use crate::facts::{ClosedPositionFacts, PnlMethod, PoolFacts, QuoteUnits, SolUsdRates};
+use crate::facts::{
+    ClosedPositionFacts, PnlMethod, PoolFacts, QuoteConvention, QuoteUnits, SolUsdRates,
+};
 
 /// How a closed position ended, read on the exact sign of its PnL in the pool's quote token.
 /// Every screen and count uses this one outcome.
@@ -202,7 +204,7 @@ fn value_known(
     pool: &PoolFacts,
     rates: &SolUsdRates,
 ) -> Result<Figure<Valued>, AmountError> {
-    let Some(asset) = pool.quote_asset() else {
+    let Some(asset) = pool.quote_convention().map(QuoteConvention::asset) else {
         return Ok(Figure::unavailable(Reason::UnsupportedQuote {
             pool: pool.address,
         }));

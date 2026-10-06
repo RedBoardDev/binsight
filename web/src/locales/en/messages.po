@@ -71,10 +71,6 @@ msgstr "3M"
 msgid "7d"
 msgstr "7d"
 
-#: src/applications/Shared/Figure/Ui/figureSpeech.ts
-msgid "A movement of the position has no price."
-msgstr "A movement of the position has no price."
-
 #: src/core/pwa/UpdatePrompt.tsx
 msgid "A new version of binsight is available."
 msgstr "A new version of binsight is available."
@@ -581,6 +577,10 @@ msgstr "since 00:00"
 #: src/core/Layout/AppShell/SkipLink.tsx
 msgid "Skip to content"
 msgstr "Skip to content"
+
+#: src/applications/Shared/Figure/Ui/figureSpeech.ts
+msgid "Some amounts of this position could not be priced."
+msgstr "Some amounts of this position could not be priced."
 
 #: src/core/ShellErrorScreen.tsx
 msgid "Something went wrong"

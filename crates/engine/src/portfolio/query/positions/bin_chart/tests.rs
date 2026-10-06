@@ -4,6 +4,7 @@ use binsight_core::ratio::RatioError;
 use binsight_core::units::Decimals;
 use binsight_ledger::facts::{PositionId, QuoteUnits, TokenFacts, TokenKind};
 use binsight_ledger::report::ReadRuleError;
+use binsight_ledger::report::figure::Figure;
 use binsight_solana::{Address, Signature};
 use jiff::Timestamp;
 
@@ -45,8 +46,9 @@ fn position(bins: Vec<BinLiquidity>) -> OpenPositionFacts {
         claimed_fees: QuoteUnits(0),
         rewards: QuoteUnits(0),
         unpriced_rewards: 0,
-        value: QuoteUnits(0),
-        unclaimed_fees: QuoteUnits(0),
+        value: Figure::Complete(QuoteUnits(0)),
+        unclaimed_fees: Figure::Complete(QuoteUnits(0)),
+        unclaimed_fee_presence: Some(false),
         lower_bin_id: 0,
         upper_bin_id: 1,
         active_bin_id: 0,
@@ -64,6 +66,53 @@ fn bin(bin_id: i32, base: u128, quote: u128) -> BinLiquidity {
         base: RawTokenAmount(base),
         quote: RawTokenAmount(quote),
     }
+}
+
+#[test]
+fn values_real_bin_zero_depth_in_stable_native_units_with_both_physical_orientations() {
+    for (x_kind, y_kind, x, y) in [
+        (TokenKind::Sol, TokenKind::Usdc, 1_000_000_000, 20_000_000),
+        (TokenKind::Usdc, TokenKind::Sol, 20_000_000, 1_000_000_000),
+    ] {
+        let mut pool = pool();
+        pool.base.kind = x_kind;
+        pool.quote.kind = y_kind;
+        pool.base.decimals = Decimals(if x_kind == TokenKind::Sol { 9 } else { 6 });
+        pool.quote.decimals = Decimals(if y_kind == TokenKind::Sol { 9 } else { 6 });
+        let mut position = position(vec![bin(0, x, y)]);
+        position.value = Figure::Complete(QuoteUnits(1_020_000_000));
+        let original = position.bins.clone();
+        assert_eq!(
+            value_at_own_price(&position.bins[0], &pool).unwrap(),
+            RawTokenAmount(1_020_000_000)
+        );
+        let chart = bin_chart(&position, &pool).unwrap();
+        assert_eq!(chart.bars[0].base, RawTokenAmount(1_000_000_000));
+        assert_eq!(chart.bars[0].quote, RawTokenAmount(20_000_000));
+        assert_eq!(chart.bars[0].bin_id, 0);
+        assert_eq!(chart.bars[0].height, Ratio(1_000_000));
+        assert_eq!(position.bins, original);
+    }
+}
+
+#[test]
+fn keeps_unsupported_depth_descriptive_with_physical_quantities_and_no_financial_price() {
+    let mut pool = pool();
+    pool.quote.kind = TokenKind::Other;
+    let position = position(vec![bin(0, 100, 3), bin(1, 100, 7)]);
+    let chart = bin_chart(&position, &pool).unwrap();
+    assert_eq!(chart.bars[0].base, RawTokenAmount(100));
+    assert_eq!(chart.bars[0].quote, RawTokenAmount(3));
+    assert!(chart.bars.iter().all(|bar| bar.price.is_none()));
+    assert_eq!(
+        value_at_own_price(&position.bins[0], &pool).unwrap(),
+        RawTokenAmount(103)
+    );
+    assert_eq!(
+        value_at_own_price(&position.bins[1], &pool).unwrap(),
+        RawTokenAmount(207)
+    );
+    assert_eq!(chart.bars[1].height, Ratio(1_000_000));
 }
 
 fn assert_amount_overflow<T>(result: &Result<T, ReadError>) {

@@ -406,7 +406,7 @@ test('preserves the original USD chart readings and percentages after a failed r
   ]) {
     if (figure.exactness !== 'unavailable') figure.value.unit = 'usd';
   }
-  await page.route('**/api/v1/overview?*', (route) => route.fulfill({ json: overview }));
+  await page.route('**/api/v2/overview?*', (route) => route.fulfill({ json: overview }));
   await page.addInitScript('localStorage.setItem("binsight.currency", "usd")');
   let phase: 'initial' | 'failed' | 'recovered' = 'initial';
   await page.route('**/api/v1/stats/series?*', (route) => {

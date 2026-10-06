@@ -137,7 +137,9 @@ pub(crate) struct BinBar {
     pub(crate) base: DecimalString,
     /// Its quote token, in whole tokens.
     pub(crate) quote: DecimalString,
-    /// Its height: its value as a share of the largest bar, from `0` to `1`.
+    /// Relative depth at each bin’s own price, from `0` to `1` of the largest bar.
+    /// Supported pools use the selected native token; unsupported pools retain descriptive
+    /// physical Y depth, which never enters a financial figure.
     pub(crate) height: DecimalString,
 }
 

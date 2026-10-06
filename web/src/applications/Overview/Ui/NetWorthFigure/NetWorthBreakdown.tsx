@@ -6,7 +6,7 @@ import type { ApiSchema } from '@app/lib/api/apiSchema';
 import { useLingui } from '@lingui/react/macro';
 
 interface NetWorthBreakdownProps {
-  readonly netWorth: ApiSchema<'Overview'>['net_worth'];
+  readonly netWorth: ApiSchema<'OverviewV2'>['net_worth'];
 }
 
 export const NetWorthBreakdown = ({ netWorth }: NetWorthBreakdownProps) => {

@@ -5,7 +5,7 @@ import { watchConsole } from './watchConsole';
 
 export const test = base.extend<{ browserErrors: readonly string[] }>({
   page: async ({ page }, use) => {
-    await page.route('**/api/v1/overview?*', (route) => route.fulfill({ json: overviewFixture() }));
+    await page.route('**/api/v2/overview?*', (route) => route.fulfill({ json: overviewFixture() }));
     await page.route('**/api/v1/stats/series?*', (route) => {
       const currency = new URL(route.request().url()).searchParams.get('currency');
       return route.fulfill({ json: statsSeriesFixture(currency === 'usd' ? 'usd' : 'sol') });

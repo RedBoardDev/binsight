@@ -65,9 +65,9 @@ pub struct OpenPositionRow {
     pub opened_at: Timestamp,
     /// The current price (the active bin); `None` when the pool's quote cannot be valued.
     pub price: Option<PriceView>,
-    /// The price of the lowest bin of its range.
+    /// The lower numeric displayed price bound; physical range IDs stay unchanged.
     pub lower: Option<PriceView>,
-    /// The price of the highest bin of its range.
+    /// The upper numeric displayed price bound; physical range IDs stay unchanged.
     pub upper: Option<PriceView>,
     /// Where the price stands against the range.
     pub range: RangeView,
@@ -139,10 +139,11 @@ pub struct BinBar {
     pub bin_id: i32,
     /// The price of that bin; `None` when the pool's quote cannot be valued.
     pub price: Option<PriceView>,
-    /// Its base token, in raw units.
+    /// Its displayed base token, in raw units; physical source X/Y remains unchanged.
     pub base: RawTokenAmount,
-    /// Its quote token, in raw units.
+    /// Its displayed quote token, in raw units; physical source X/Y remains unchanged.
     pub quote: RawTokenAmount,
-    /// Its height: the sum of its bins’ depths at their own prices, relative to the largest bar.
+    /// Relative depth at each bin's own price, in the selected token; unsupported pools use
+    /// descriptive physical Y depth, which never enters a financial figure.
     pub height: binsight_core::ratio::Ratio,
 }

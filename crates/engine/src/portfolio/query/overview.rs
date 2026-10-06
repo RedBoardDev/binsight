@@ -3,6 +3,9 @@
 
 mod watch;
 
+#[cfg(test)]
+mod tests;
+
 use binsight_ledger::report::open::RangeStatus;
 use binsight_ledger::report::period::{Period, Window};
 use binsight_ledger::report::real_pnl::PnlTimeline;
@@ -121,10 +124,11 @@ fn open_summary(
         pnl_pct: percent_of(&pnl, &net_invested, currency)?,
         pnl: resolve(&pnl, currency),
         unclaimed_fees: resolve(&unclaimed, currency),
-        unclaimed_position_count: rows
-            .iter()
-            .filter(|row| row.facts.unclaimed_fees.0 > 0)
-            .count(),
+        unclaimed_position_count: rows.iter().try_fold(0, |count, row| {
+            row.facts
+                .unclaimed_fee_presence
+                .map(|has_fees| count + usize::from(has_fees))
+        }),
     })
 }
 

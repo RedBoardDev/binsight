@@ -1,7 +1,8 @@
 //! The OpenAPI contract of the API, generated from the code.
 //!
 //! Routes are registered together with their documentation (see `router`), so the contract
-//! cannot drift from the code. The contract is committed as `openapi/v1.json` and a test fails
+//! cannot drift from the code. The unified contract contains the v1 routes and the alongside
+//! v2 Overview. Its historical committed filename is `openapi/v1.json`; a test fails
 //! when it is stale (`just openapi` regenerates it); it is also served at
 //! `GET /api/v1/openapi.json`. Its version is the version of the contract, not of the binary.
 
@@ -16,7 +17,7 @@ use crate::error::{ErrorBody, ErrorCode, ErrorDetail};
 
 /// The version of the API contract. A compatible addition bumps the minor version; a breaking
 /// change gets a new `/api/v2` instead.
-pub const API_CONTRACT_VERSION: &str = "1.4.0";
+pub const API_CONTRACT_VERSION: &str = "1.5.0";
 
 /// The parts of the contract that are not routes: metadata and shared schemas.
 #[derive(OpenApi)]

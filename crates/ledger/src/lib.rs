@@ -20,6 +20,7 @@
 
 /// Typed accounting of each wallet transaction.
 pub mod book;
+pub mod calc_version;
 pub mod facts;
 pub mod positions;
 pub mod report;

@@ -88,9 +88,9 @@ fn selects_display_tokens_without_swapping_physical_pool_tokens() {
 }
 
 #[test]
-fn leaves_the_existing_y_only_consumer_convention_unchanged_until_migration() {
+fn values_prices_and_reports_with_the_same_selected_asset() {
     let pool = pool(TokenKind::Usdc, TokenKind::Sol);
-    assert_eq!(pool.quote_asset(), Some(QuoteAsset::Sol));
+    assert_eq!(pool.quote_asset(), Some(QuoteAsset::Usdc));
     assert_eq!(pool.quote_convention().unwrap().asset(), QuoteAsset::Usdc);
 }
 

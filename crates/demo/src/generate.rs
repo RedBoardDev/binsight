@@ -8,6 +8,7 @@ mod closed;
 mod entries;
 mod events;
 mod instance;
+mod liquidity;
 mod market;
 mod marks;
 mod open;

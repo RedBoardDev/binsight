@@ -31,7 +31,8 @@ pub enum Reason {
         /// How far the import is, when its total is known.
         progress: Option<Percent>,
     },
-    /// A position movement or reward could not be fully valued at its own token price.
+    /// A position's movement, reward, liquidity or fees could not be fully valued at the
+    /// applicable token price.
     UnpricedLeg {
         /// The position.
         position: PositionId,

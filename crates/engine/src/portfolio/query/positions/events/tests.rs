@@ -372,3 +372,68 @@ fn follows_flow_quality_instead_of_inferring_it_from_missing_bin_metadata() {
         Exactness::Complete
     );
 }
+
+#[test]
+fn maps_selected_x_event_quantities_and_prices_once_without_changing_paged_totals() {
+    use binsight_core::money::SolUsdRate;
+    use binsight_core::price::Price;
+    use binsight_ledger::facts::BinRange;
+    let mut first = movement(1, 1);
+    first.active_bin_id = Some(0);
+    first.kind = PositionEventKind::Add(TokenFlow {
+        base: RawTokenAmount(10_000_000),
+        quote: RawTokenAmount(500_000_000),
+        value: QuoteUnits(510_000_000),
+        valuation: binsight_ledger::facts::FlowValuation::Complete,
+    });
+    let mut second = first.clone();
+    second.order.event_index = 2;
+    let mut created = movement(1, 0);
+    created.kind = PositionEventKind::Created {
+        range: Some(BinRange {
+            lower_bin_id: -1,
+            upper_bin_id: 1,
+        }),
+    };
+    let mut facts = snapshot_facts(vec![created, first, second]);
+    facts.pools[0].base.kind = TokenKind::Usdc;
+    facts.pools[0].base.decimals = Decimals(6);
+    facts.closed[0].invested = QuoteUnits(1_020_000_000);
+    facts.rates.daily.insert(
+        jiff::civil::date(1970, 1, 1),
+        SolUsdRate::new(2_000_000_000).unwrap(),
+    );
+    let snapshot = Snapshot::new(facts).unwrap();
+    let row = snapshot
+        .closed_in(crate::portfolio::Scope::All)
+        .next()
+        .unwrap();
+    for currency in [Currency::Sol, Currency::Usd] {
+        let whole = read_every_movement(&snapshot, 200, currency);
+        assert_eq!(read_every_movement(&snapshot, 1, currency), whole);
+        let mut total = 0_i128;
+        for event in whole.iter().filter(|event| event.kind == MovementKind::Add) {
+            assert_eq!(event.base.unwrap().amount, RawTokenAmount(500_000_000));
+            assert_eq!(event.base.unwrap().decimals, Decimals::SOL);
+            assert_eq!(event.quote.unwrap().amount, RawTokenAmount(10_000_000));
+            assert_eq!(event.quote.unwrap().decimals, Decimals(6));
+            assert_eq!(
+                event.price.unwrap().value,
+                Price(1_000_000_000_000_000_000_000)
+            );
+            total = total
+                .checked_add(event.value.as_ref().unwrap().value().unwrap().raw)
+                .unwrap();
+        }
+        assert_eq!(
+            total,
+            resolve(&row.valuation.invested, currency)
+                .value()
+                .unwrap()
+                .raw
+        );
+        let range = whole.last().unwrap().range.as_ref().unwrap();
+        assert_eq!((range.lower_bin_id, range.upper_bin_id), (-1, 1));
+        assert!(range.lower.unwrap().value < range.upper.unwrap().value);
+    }
+}

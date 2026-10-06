@@ -10,7 +10,7 @@ use binsight_ledger::report::figure::{Figure, Reason};
 use binsight_ledger::report::movements::value_movements;
 use binsight_ledger::report::valued::{Currency, Valued, resolve};
 
-use crate::portfolio::query::refs::bin_price;
+use crate::portfolio::query::refs::{bin_price, display_amounts, display_tokens, range_prices};
 use crate::portfolio::read_error::ReadError;
 use crate::portfolio::snapshot::{PositionRow, Snapshot};
 use crate::portfolio::views::{
@@ -102,17 +102,19 @@ fn event_view(
     currency: Currency,
 ) -> PositionEventView {
     let flow = event.kind.flow();
+    let (base_token, quote_token) = display_tokens(pool);
+    let quantities = flow.map(|flow| display_amounts(pool, flow.base, flow.quote));
     PositionEventView {
         order: event.sort_key(),
         signature: event.signature,
         kind: MovementKind::from(&event.kind),
-        base: flow.map(|flow| TokenQuantity {
-            amount: flow.base,
-            decimals: pool.base.decimals,
+        base: quantities.map(|(base, _)| TokenQuantity {
+            amount: base,
+            decimals: base_token.decimals,
         }),
-        quote: flow.map(|flow| TokenQuantity {
-            amount: flow.quote,
-            decimals: pool.quote.decimals,
+        quote: quantities.map(|(_, quote)| TokenQuantity {
+            amount: quote,
+            decimals: quote_token.decimals,
         }),
         reward: match event.kind {
             PositionEventKind::RewardClaim(reward) => Some(RewardMovement {
@@ -124,11 +126,14 @@ fn event_view(
         },
         value: value.map(|figure| resolve(figure, currency)),
         price: event.active_bin_id.and_then(|bin| bin_price(pool, bin)),
-        range: event.kind.range().map(|range| RangeBounds {
-            lower_bin_id: range.lower_bin_id,
-            upper_bin_id: range.upper_bin_id,
-            lower: bin_price(pool, range.lower_bin_id),
-            upper: bin_price(pool, range.upper_bin_id),
+        range: event.kind.range().map(|range| {
+            let (lower, upper) = range_prices(pool, range.lower_bin_id, range.upper_bin_id);
+            RangeBounds {
+                lower_bin_id: range.lower_bin_id,
+                upper_bin_id: range.upper_bin_id,
+                lower,
+                upper,
+            }
         }),
     }
 }

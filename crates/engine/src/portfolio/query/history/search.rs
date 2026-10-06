@@ -6,6 +6,8 @@
 
 use binsight_ledger::facts::{PoolFacts, PositionId, TokenFacts};
 
+use crate::portfolio::query::refs::display_tokens;
+
 /// The longest search text, in characters.
 pub const MAX_SEARCH_CHARS: usize = 64;
 
@@ -84,7 +86,8 @@ impl SearchText {
                 .as_ref()
                 .is_some_and(|symbol| symbol.to_lowercase().starts_with(prefix.trim()))
         };
-        starts(&pool.base, base) && starts(&pool.quote, quote)
+        let (base_token, quote_token) = display_tokens(pool);
+        starts(base_token, base) && starts(quote_token, quote)
     }
 
     /// Whether the text names the token: its symbol by prefix, its name anywhere, or its mint.

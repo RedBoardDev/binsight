@@ -6,7 +6,7 @@ pub use quote::{PhysicalSide, QuoteConvention};
 
 use binsight_solana::Address;
 
-use super::token::{TokenFacts, TokenKind};
+use super::token::TokenFacts;
 
 /// A DLMM pool, oriented as base (token X) and quote (token Y).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,20 +35,14 @@ pub enum QuoteAsset {
 impl PoolFacts {
     /// Selects USDC, then USDT, then SOL, on either physical side.
     ///
-    /// Token kinds and decimals must already come from verified mint facts. This factory
-    /// does not activate a display or valuation migration for existing Y-only consumers.
+    /// Token kinds and decimals must already come from verified mint facts. Physical X/Y
+    /// tokens and bin IDs remain unchanged; consumers apply this same display convention.
     pub fn quote_convention(&self) -> Option<QuoteConvention> {
         QuoteConvention::of(self)
     }
 
-    /// The quote asset of the pool, or `None` when its quote token is neither SOL nor a dollar
-    /// stablecoin (binsight cannot value its positions then).
+    /// The selected native valuation asset, using the same convention as prices and amounts.
     pub fn quote_asset(&self) -> Option<QuoteAsset> {
-        match self.quote.kind {
-            TokenKind::Sol => Some(QuoteAsset::Sol),
-            TokenKind::Usdc => Some(QuoteAsset::Usdc),
-            TokenKind::Usdt => Some(QuoteAsset::Usdt),
-            TokenKind::Other => None,
-        }
+        self.quote_convention().map(QuoteConvention::asset)
     }
 }

@@ -1,7 +1,7 @@
 //! The demo's market data: the candles of a chart, drawn from the pool's price path.
 //!
 //! Each candle reads the bin of every minute it covers (up to now): it opens on the first, closes
-//! on the last, and its high and low are the highest and lowest bins. Movements run at the bin of
+//! on the last, and its high and low follow the displayed quote orientation. Movements run at the bin of
 //! their minute, so each one falls inside its candle, and the last candle of an open position
 //! holds its active bin. Prices are exact bin prices; the demo reports no volume.
 
@@ -12,7 +12,7 @@ use binsight_engine::portfolio::query::{CandleRequest, MAX_CANDLES};
 use binsight_engine::portfolio::views::{
     CandleSource, CandleStatus, CandleView, CandlesUnavailable, CandlesView,
 };
-use binsight_ledger::facts::PoolFacts;
+use binsight_ledger::facts::{PhysicalSide, PoolFacts, QuoteConvention};
 use binsight_ledger::report::period::WindowError;
 use jiff::{SignedDuration, Timestamp};
 
@@ -81,6 +81,10 @@ fn candle(
         close = bin;
         minute = minute.checked_add(MINUTE).map_err(|_| WindowError)?;
     }
+    let (high, low) = match pool.quote_convention().map(QuoteConvention::side) {
+        Some(PhysicalSide::X) => (low, high),
+        Some(PhysicalSide::Y) | None => (high, low),
+    };
     Ok(CandleView {
         start,
         open: price(pool, open)?,
@@ -124,14 +128,19 @@ fn validate_count(
     Ok(())
 }
 
-/// The unit price of `bin_id` in `pool`.
+/// Displayed prices follow the selected token. Unsupported pools keep descriptive physical Y/X
+/// OHLC with `quote: None`; these candles never enter a financial figure.
 fn price(pool: &PoolFacts, bin_id: i32) -> Result<Price, ReadError> {
     let out_of_range = || ReadError::BinOutOfRange {
         pool: pool.address,
         bin_id,
     };
     let raw = price_from_bin(bin_id, pool.bin_step).map_err(|_| out_of_range())?;
-    unit_price(raw, pool.base.decimals, pool.quote.decimals).map_err(|_| out_of_range())
+    match pool.quote_convention() {
+        Some(quote) => quote.unit_price(raw, pool.base.decimals, pool.quote.decimals),
+        None => unit_price(raw, pool.base.decimals, pool.quote.decimals),
+    }
+    .map_err(|_| out_of_range())
 }
 
 #[cfg(test)]

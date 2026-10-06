@@ -71,10 +71,6 @@ msgstr "3 M"
 msgid "7d"
 msgstr "7 T"
 
-#: src/applications/Shared/Figure/Ui/figureSpeech.ts
-msgid "A movement of the position has no price."
-msgstr "Eine Bewegung der Position hat keinen Preis."
-
 #: src/core/pwa/UpdatePrompt.tsx
 msgid "A new version of binsight is available."
 msgstr "Eine neue Version von binsight ist verfügbar."
@@ -581,6 +577,10 @@ msgstr "seit 00:00"
 #: src/core/Layout/AppShell/SkipLink.tsx
 msgid "Skip to content"
 msgstr "Zum Inhalt springen"
+
+#: src/applications/Shared/Figure/Ui/figureSpeech.ts
+msgid "Some amounts of this position could not be priced."
+msgstr "Für einige Mengen dieser Position konnte kein Preis ermittelt werden."
 
 #: src/core/ShellErrorScreen.tsx
 msgid "Something went wrong"
