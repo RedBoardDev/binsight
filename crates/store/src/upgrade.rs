@@ -167,7 +167,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(report.from_version, 0);
-        assert_eq!(report.to_version, 13);
+        assert_eq!(report.to_version, 14);
         assert_eq!(
             report.applied,
             vec![
@@ -183,7 +183,8 @@ mod tests {
                 "wallet_listed_count",
                 "raw_tx_never_deleted",
                 "decode_reader_version",
-                "decode_transaction_index"
+                "decode_transaction_index",
+                "wallet_repair"
             ]
         );
         store.ping().await.unwrap();
@@ -288,9 +289,9 @@ mod tests {
 
         assert_eq!(
             path.file_name().unwrap(),
-            "binsight-19700101T000000Z-v0.1.0-schema13.db"
+            "binsight-19700101T000000Z-v0.1.0-schema14.db"
         );
         let copy = Store::open_existing(&path).await.unwrap();
-        assert_eq!(copy.schema_status().await.unwrap().current_version, 13);
+        assert_eq!(copy.schema_status().await.unwrap().current_version, 14);
     }
 }

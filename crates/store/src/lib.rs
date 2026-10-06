@@ -44,8 +44,9 @@ pub use decoded::{
 pub use error::StoreError;
 pub use ingestion::{
     DetectedSignature, FetchCounts, FetchFailure, FetchQueueRepo, FetchSetback, FetchTask,
-    FetchedTx, ListedSignature, ListedTop, ListingPage, RetryState, SignaturesRepo, TrackedWallet,
-    WalletBacklog, WalletCursor, WalletListing, WalletProgress, WalletsRepo,
+    FetchedTx, ListedSignature, ListedTop, ListingPage, RepairFindings, RepairPage, RepairsRepo,
+    RetryState, SignaturesRepo, TrackedWallet, WalletBacklog, WalletCursor, WalletListing,
+    WalletProgress, WalletRepair, WalletsRepo,
 };
 pub use meta::{MetaKey, MetaRepo};
 pub use projections::{ProjectionMetaRepo, ProjectionState, ProjectionStatus};

@@ -83,6 +83,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "decode_transaction_index",
         sql: include_str!("../../migrations/0013_decode_transaction_index.sql"),
     },
+    Migration {
+        version: 14,
+        name: "wallet_repair",
+        sql: include_str!("../../migrations/0014_wallet_repair.sql"),
+    },
 ];
 
 #[cfg(test)]

@@ -22,16 +22,20 @@ pub enum Purpose {
     LiveCheck,
     /// The live stream itself: opening it and the data it delivers.
     LiveStream,
+    /// Listing a wallet's signatures again down to the last point a repair verified, to find
+    /// and refill what an earlier listing missed.
+    Repair,
 }
 
 impl Purpose {
     /// Every purpose.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::HistoryListing,
         Self::TransactionFetch,
         Self::TopUp,
         Self::LiveCheck,
         Self::LiveStream,
+        Self::Repair,
     ];
 
     /// The stable `snake_case` name, as stored and shown.
@@ -42,6 +46,7 @@ impl Purpose {
             Self::TopUp => "top_up",
             Self::LiveCheck => "live_check",
             Self::LiveStream => "live_stream",
+            Self::Repair => "repair",
         }
     }
 }

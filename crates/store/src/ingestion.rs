@@ -4,7 +4,8 @@
 //! Listing and fetching are kept apart. A listed page is written in one transaction with its
 //! fetch tasks and the cursor move, so a cursor never passes a signature that was not written;
 //! a fetch completes in one transaction with its `raw_tx` row, so "fetched" always means "in the
-//! registry". This module stores what the engine decided; it decides nothing.
+//! registry". A repair lists a wallet again and fills the gaps it finds without moving the
+//! cursor (`repair`). This module stores what the engine decided; it decides nothing.
 
 mod cursor;
 mod detected;
@@ -13,6 +14,7 @@ mod fetch_queue;
 mod fetch_results;
 mod fetch_task;
 mod listing_page;
+mod repair;
 mod signatures;
 #[cfg(test)]
 pub(crate) mod test_pages;
@@ -25,6 +27,7 @@ pub use fetch_counts::{FetchCounts, WalletBacklog};
 pub use fetch_queue::FetchQueueRepo;
 pub use fetch_task::{FetchFailure, FetchSetback, FetchTask, FetchedTx, RetryState};
 pub use listing_page::ListingPage;
+pub use repair::{RepairFindings, RepairPage, RepairsRepo, WalletRepair};
 pub use signatures::{ListedSignature, SignaturesRepo};
 pub use wallet_progress::{WalletListing, WalletProgress};
 pub use wallets::{TrackedWallet, WalletsRepo};

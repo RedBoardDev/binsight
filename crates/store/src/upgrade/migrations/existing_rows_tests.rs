@@ -37,3 +37,27 @@ fn decodes_every_existing_result_again_to_learn_its_transaction_index() {
     let negative = connection.execute("UPDATE tx_decode SET transaction_index = -1", []);
     assert!(negative.is_err());
 }
+
+#[test]
+fn keeps_the_credits_spent_when_the_repair_gets_a_purpose_of_its_own() {
+    let connection = migrated_to(13);
+    connection
+        .execute_batch(
+            "INSERT INTO credit_daily VALUES
+             ('2026-09-21', 'getTransaction', 'history', 'transaction_fetch', '', 'ok', 7, 7);",
+        )
+        .unwrap();
+
+    connection.execute_batch(MIGRATIONS[13].sql).unwrap();
+
+    let kept: i64 = connection
+        .query_row("SELECT credits FROM credit_daily", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(kept, 7);
+    connection
+        .execute_batch(
+            "INSERT INTO credit_daily VALUES
+             ('2026-09-21', 'getSignaturesForAddress', 'history', 'repair', '', 'ok', 1, 1);",
+        )
+        .unwrap();
+}
