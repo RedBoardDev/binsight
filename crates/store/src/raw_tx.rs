@@ -66,11 +66,13 @@ impl Store {
 
 impl RawTxRepo {
     /// Stores a transaction unless its signature is already there; the first copy always wins.
-    /// Returns whether it was stored.
+    /// Returns whether it was stored. Production code stores a transaction only when its fetch
+    /// completes (`FetchQueueRepo::complete`); this plants a row for a test.
     ///
     /// # Errors
     ///
     /// Returns an error if a value does not fit its column or the database cannot be written.
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn insert_if_absent(&self, record: RawTxRecord) -> Result<bool, StoreError> {
         self.database
             .write(move |connection| insert_record(connection, &record))

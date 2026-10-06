@@ -174,16 +174,16 @@ async fn keeps_execution_and_events_in_one_snapshot_during_a_concurrent_replacem
     let reading = tokio::spawn(async move {
         reader
             .read(move |connection| {
-                super::statements::read_snapshot(connection, |snapshot| {
+                super::read::read_snapshot(connection, |snapshot| {
                     // Pause after metadata so a writer commits before the events are read.
                     let _: i64 = snapshot.query_row(
-                        super::statements::SELECT_DECODE,
+                        super::read::SELECT_DECODE,
                         rusqlite::params![signature.to_string(), "dlmm"],
                         |row| row.get(0),
                     )?;
                     started.send(()).unwrap();
                     proceed.blocking_recv().unwrap();
-                    super::statements::read_record(snapshot, signature, "dlmm".to_owned())
+                    super::read::read_record(snapshot, signature, "dlmm".to_owned())
                 })
             })
             .await

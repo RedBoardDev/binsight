@@ -8,6 +8,8 @@
 //! can find what it has to re-decode. This module stores results; it does not decode anything.
 
 mod pending;
+#[cfg(any(test, feature = "test-support"))]
+mod read;
 mod statements;
 
 #[cfg(test)]
@@ -21,7 +23,7 @@ use crate::database::Database;
 use crate::error::StoreError;
 use crate::store::Store;
 pub use pending::DecodeScan;
-use statements::{read_record, read_snapshot, replace_record};
+use statements::replace_record;
 
 /// One event a decoder found in a transaction.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,32 +99,12 @@ impl DecodedRepo {
             })
             .await
     }
-
-    /// The latest result of `decoder` on `signature`, if it ran.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the database cannot be read or holds an invalid row.
-    pub async fn get(
-        &self,
-        signature: Signature,
-        decoder: String,
-    ) -> Result<Option<DecodeRecord>, StoreError> {
-        self.database
-            .read(move |connection| {
-                read_snapshot(connection, |snapshot| {
-                    read_record(snapshot, signature, decoder)
-                })
-            })
-            .await
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::statements::{
-        DELETE_DECODE, INSERT_DECODE, INSERT_EVENT, SELECT_DECODE, SELECT_EVENTS,
-    };
+    use super::read::{SELECT_DECODE, SELECT_EVENTS};
+    use super::statements::{DELETE_DECODE, INSERT_DECODE, INSERT_EVENT};
     use super::*;
     use crate::database::test_database::{assert_queries_prepare, migrated_store};
     use crate::raw_tx::tests::sample_record;

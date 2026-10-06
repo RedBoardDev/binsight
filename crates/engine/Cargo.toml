@@ -34,6 +34,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 binsight-chain = { workspace = true, features = ["test-support"] }
+binsight-store = { workspace = true, features = ["test-support"] }
 jiff = { workspace = true, features = ["tzdb-bundle-always"] }
 serde_json.workspace = true
 tempfile.workspace = true

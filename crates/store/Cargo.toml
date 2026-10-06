@@ -11,6 +11,11 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Reads and writes only tests need: planting a registry row directly (a damaged one, for
+# instance) and reading a decoding result back. Production code never calls them.
+test-support = []
+
 [dependencies]
 binsight-core.workspace = true
 binsight-solana.workspace = true
