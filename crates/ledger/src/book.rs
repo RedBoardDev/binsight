@@ -130,6 +130,7 @@ pub fn book_transaction(
         if !matches!(kind, TxKind::Bridge(_)) {
             instructions::book_burns(&instructions, &deltas, &mut sheet)?;
         }
+        residue::book_tracked_transfers(late, &mut sheet)?;
         swap::book(late, &mut sheet)?;
         residue::book(late, &mut sheet)?;
     } else {

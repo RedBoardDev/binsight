@@ -60,7 +60,13 @@ pub(super) fn book(sources: RentSources<'_>, sheet: &mut Worksheet) -> Result<()
                 decoded,
                 kind: tx_kind,
             };
-            let capital = super::residue::classify(late, (Asset::Rent, rent.change), counterparty);
+            // Rent another tracked wallet funded or received is capital, whatever the program.
+            let capital = match counterparty {
+                Counterparty::TrackedWallet(_) => {
+                    super::residue::capital(rent.change, counterparty)
+                }
+                _ => super::residue::classify(late, (Asset::Rent, rent.change), counterparty),
+            };
             sheet.book(Asset::Rent, rent.change, capital)?;
             continue;
         }

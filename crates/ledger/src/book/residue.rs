@@ -6,8 +6,11 @@
 //!    change is a capital deposit or withdrawal through that bridge.
 //! 2. A direct transaction (only native and token programs at top level) moves capital: each
 //!    transfer is booked with its counterparty.
-//! 3. In a transaction of another protocol, what remains is the protocol's activity.
+//! 3. In a transaction of another protocol, the transfers with another tracked wallet are still
+//!    capital, with that wallet as counterparty; what remains is the protocol's activity.
 mod direct;
+
+use direct::TransferScope;
 
 use super::instructions::{Decoded, native_transfer, token_transfer};
 use super::worksheet::Worksheet;
@@ -77,6 +80,19 @@ fn is_neutral_program(program: Address) -> bool {
     .contains(&program)
 }
 
+/// Books the transfers between the wallet and another tracked wallet in a transaction of a
+/// protocol as capital (rule 3), before swaps are looked for: a payment to another wallet of the
+/// owner is never a swap leg.
+pub(super) fn book_tracked_transfers(
+    sources: TxSources<'_>,
+    sheet: &mut Worksheet,
+) -> Result<(), BookError> {
+    if !matches!(sources.kind, TxKind::Protocol { .. }) {
+        return Ok(());
+    }
+    direct::book(sources, TransferScope::TrackedWalletsOnly, sheet)
+}
+
 pub(super) fn book(sources: TxSources<'_>, sheet: &mut Worksheet) -> Result<(), BookError> {
     let TxSources {
         wallet,
@@ -85,7 +101,7 @@ pub(super) fn book(sources: TxSources<'_>, sheet: &mut Worksheet) -> Result<(), 
         kind,
     } = sources;
     if kind == TxKind::Direct {
-        direct::book(wallet, tx, decoded, sheet)?;
+        direct::book(sources, TransferScope::AnyCounterparty, sheet)?;
     }
     for (asset, amount) in sheet.residues() {
         let counterparty = capital_counterparty(wallet, tx, decoded, asset);
@@ -126,7 +142,7 @@ pub(super) fn classify(
     }
 }
 
-fn capital(amount: i128, counterparty: Counterparty) -> EntryKind {
+pub(super) fn capital(amount: i128, counterparty: Counterparty) -> EntryKind {
     if amount > 0 {
         EntryKind::CapitalDeposit { counterparty }
     } else {

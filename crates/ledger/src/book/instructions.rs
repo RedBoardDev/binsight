@@ -22,6 +22,31 @@ pub(super) fn decode(tx: &TransactionView) -> Result<Decoded, BookError> {
         .collect()
 }
 
+/// The token accounts `wallet` owns in `tx`: those its balances show owned by the wallet before
+/// or after, and those an instruction initialises for it (an account created and closed within
+/// the transaction has no balance). A malformed instruction names none here; booking decodes
+/// every instruction again and reports it.
+pub(crate) fn wallet_token_accounts(wallet: Address, tx: &TransactionView) -> Vec<Address> {
+    let mut accounts: Vec<Address> = tx
+        .token_balances
+        .iter()
+        .filter(|balance| balance.owner_pre == Some(wallet) || balance.owner_post == Some(wallet))
+        .map(|balance| balance.account)
+        .collect();
+    for node in &tx.instructions {
+        if let Ok(Some(ProgramInstruction::Token {
+            instruction: TokenInstruction::InitializeAccount { account, owner, .. },
+            ..
+        })) = programs::decode(node)
+            && owner == wallet
+            && !accounts.contains(&account)
+        {
+            accounts.push(account);
+        }
+    }
+    accounts
+}
+
 pub(super) fn native_transfer(
     instruction: &ProgramInstruction,
 ) -> Option<(Address, Address, i128)> {

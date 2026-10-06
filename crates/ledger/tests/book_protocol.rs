@@ -4,6 +4,7 @@ mod common;
 use binsight_dlmm::activity::TxActivity;
 use binsight_ledger::book::{Asset, Counterparty, EntryKind, WalletContext, book_transaction};
 use binsight_ledger::counterparties::BridgeId;
+use binsight_solana::Address;
 use common::*;
 
 /// Mayan's Swift program.
@@ -13,9 +14,7 @@ fn protocol_transaction() -> binsight_solana::transaction::TransactionView {
     protocol_transaction_of(address(42))
 }
 
-fn protocol_transaction_of(
-    program: binsight_solana::Address,
-) -> binsight_solana::transaction::TransactionView {
+fn protocol_transaction_of(program: Address) -> binsight_solana::transaction::TransactionView {
     let mut tx = transaction(200_000, 95_000);
     tx.instructions.push(instruction(program, vec![], vec![]));
     tx.token_balances
@@ -185,4 +184,182 @@ fn a_delegated_burn_of_owned_tokens_remains_a_burn() {
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].amount, -100);
     assert_eq!(entries[0].kind, EntryKind::Burn);
+}
+
+/// A protocol transaction of wallet 1 pays it 50 tokens and sends 1 SOL to wallet 4, which this
+/// instance also tracks: the SOL is capital moved between the two wallets on both sides, and only
+/// the tokens are the protocol's.
+#[test]
+fn books_a_transfer_to_a_tracked_wallet_inside_a_protocol_transaction_as_capital() {
+    let (a, b) = (address(1), address(4));
+    let mut tx = transaction(2_000_000_000, 999_995_000);
+    tx.native_balances.push(native(b, 0, 1_000_000_000));
+    tx.instructions
+        .push(instruction(address(42), vec![], vec![]));
+    tx.instructions.push(transfer(a, b, 1_000_000_000));
+    tx.token_balances
+        .push(token(address(3), a, address(9), 0, 50));
+    tx.native_balances.push(native(address(3), 200, 200));
+    let mut wallet_a = WalletContext::new(a);
+    wallet_a.tracked_wallets.insert(b);
+    let mut wallet_b = WalletContext::new(b);
+    wallet_b.tracked_wallets.insert(a);
+    let of = |wallet: &WalletContext| {
+        book_transaction(wallet, &tx, &TxActivity::default())
+            .unwrap()
+            .into_iter()
+            .map(|entry| (entry.asset, entry.amount, entry.kind))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        of(&wallet_a),
+        [
+            (Asset::Sol, -5_000, EntryKind::NetworkFee),
+            (
+                Asset::Sol,
+                -1_000_000_000,
+                EntryKind::CapitalWithdrawal {
+                    counterparty: Counterparty::TrackedWallet(b)
+                }
+            ),
+            (
+                Asset::Token { mint: address(9) },
+                50,
+                EntryKind::ProtocolActivity {
+                    program: address(42)
+                }
+            ),
+        ]
+    );
+    assert_eq!(
+        of(&wallet_b),
+        [(
+            Asset::Sol,
+            1_000_000_000,
+            EntryKind::CapitalDeposit {
+                counterparty: Counterparty::TrackedWallet(a)
+            }
+        )]
+    );
+}
+
+/// A `TransferCheckedWithFee` of `amount` with `fee` withheld, as an inner instruction.
+fn taxed_transfer(
+    (source, mint, destination): (Address, Address, Address),
+    amount: u64,
+    fee: u64,
+    inner: u16,
+) -> binsight_solana::transaction::InstructionNode {
+    let mut data = vec![26, 1];
+    data.extend(amount.to_le_bytes());
+    data.push(6);
+    data.extend(fee.to_le_bytes());
+    let mut node = instruction(
+        binsight_solana::well_known::TOKEN_2022_PROGRAM,
+        vec![source, mint, destination, source],
+        data,
+    );
+    node.position.inner = Some(inner);
+    node.stack_height = Some(2);
+    node
+}
+
+/// Wallet 4, also tracked, sends 100 taxed tokens to wallet 1's account, whose transfer hook
+/// calls another program. Only native programs run at top level, so the transaction is direct:
+/// the receipt is booked once, as capital from wallet 4, with its tax of 2.
+#[test]
+fn books_a_hooked_transfer_from_a_tracked_wallet_once() {
+    let (a, b, mint) = (address(1), address(4), address(9));
+    let mut tx = transaction(100_000, 95_000);
+    let mut source = token(address(5), b, mint, 100, 0);
+    let mut destination = token(address(3), a, mint, 0, 98);
+    source.program = binsight_solana::programs::TokenProgram::Token2022;
+    destination.program = binsight_solana::programs::TokenProgram::Token2022;
+    tx.token_balances.extend([source, destination]);
+    tx.native_balances.push(native(address(3), 200, 200));
+    tx.instructions.push(instruction(
+        binsight_solana::well_known::MEMO_PROGRAM,
+        vec![],
+        b"gift".to_vec(),
+    ));
+    tx.instructions
+        .push(taxed_transfer((address(5), mint, address(3)), 100, 2, 0));
+    let mut hook = instruction(address(42), vec![], vec![]);
+    hook.position.inner = Some(1);
+    hook.stack_height = Some(2);
+    tx.instructions.push(hook);
+    let mut wallet = WalletContext::new(a);
+    wallet.tracked_wallets.insert(b);
+    let entries: Vec<_> = book_transaction(&wallet, &tx, &TxActivity::default())
+        .unwrap()
+        .into_iter()
+        .map(|entry| (entry.asset, entry.amount, entry.kind))
+        .collect();
+    assert_eq!(
+        entries,
+        [
+            (Asset::Sol, -5_000, EntryKind::NetworkFee),
+            (
+                Asset::Token { mint },
+                100,
+                EntryKind::CapitalDeposit {
+                    counterparty: Counterparty::TrackedWallet(b)
+                }
+            ),
+            (Asset::Token { mint }, -2, EntryKind::TransferFee),
+        ]
+    );
+}
+
+/// In a protocol transaction, wallet 1's account receives 100 taxed tokens (tax 2) from tracked
+/// wallet 4 and 50 (tax 1) from the protocol. Only the tracked receipt's tax is booked with it;
+/// the protocol's 49 net tokens stay the protocol's.
+#[test]
+fn books_only_the_tax_of_a_tracked_receipt_in_a_protocol_transaction() {
+    let (a, b, mint) = (address(1), address(4), address(9));
+    let mut tx = transaction(100_000, 95_000);
+    let mut balances = [
+        token(address(5), b, mint, 100, 0),
+        token(address(6), address(25), mint, 50, 0),
+        token(address(3), a, mint, 0, 147),
+    ];
+    for balance in &mut balances {
+        balance.program = binsight_solana::programs::TokenProgram::Token2022;
+    }
+    tx.token_balances.extend(balances);
+    tx.native_balances.push(native(address(3), 200, 200));
+    tx.instructions
+        .push(instruction(address(42), vec![], vec![]));
+    tx.instructions
+        .push(taxed_transfer((address(5), mint, address(3)), 100, 2, 0));
+    tx.instructions
+        .push(taxed_transfer((address(6), mint, address(3)), 50, 1, 1));
+    let mut wallet = WalletContext::new(a);
+    wallet.tracked_wallets.insert(b);
+    let entries: Vec<_> = book_transaction(&wallet, &tx, &TxActivity::default())
+        .unwrap()
+        .into_iter()
+        .map(|entry| (entry.asset, entry.amount, entry.kind))
+        .collect();
+    assert_eq!(
+        entries,
+        [
+            (Asset::Sol, -5_000, EntryKind::NetworkFee),
+            (
+                Asset::Token { mint },
+                100,
+                EntryKind::CapitalDeposit {
+                    counterparty: Counterparty::TrackedWallet(b)
+                }
+            ),
+            (Asset::Token { mint }, -2, EntryKind::TransferFee),
+            (
+                Asset::Token { mint },
+                49,
+                EntryKind::ProtocolActivity {
+                    program: address(42)
+                }
+            ),
+        ]
+    );
 }
