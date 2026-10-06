@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use binsight_solana::Address;
 
-use crate::events::EngineEvent;
+use crate::engine::events::EngineEvent;
 use crate::portfolio::scope::Scope;
 use crate::portfolio::views::{InstanceSettings, SyncState};
 use crate::portfolio::{ReadError, ReadModel};

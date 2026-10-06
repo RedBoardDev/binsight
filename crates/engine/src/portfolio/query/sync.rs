@@ -107,10 +107,10 @@ mod tests {
     use binsight_solana::Address;
 
     use super::*;
+    use crate::engine::status::EngineStatus;
     use crate::portfolio::snapshot::{SnapshotFacts, TrackedWallet};
     use crate::portfolio::views::{ChainTip, WalletColor, WalletSync};
     use crate::portfolio::wallet_label::WalletLabel;
-    use crate::status::EngineStatus;
 
     fn wallet(byte: u8, state: SyncState) -> TrackedWallet {
         let address = Address::from_bytes([byte; 32]);

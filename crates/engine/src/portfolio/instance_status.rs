@@ -4,7 +4,7 @@
 use jiff::Timestamp;
 
 use super::views::{BillingCycle, ChainTip};
-use crate::status::EngineStatus;
+use crate::engine::status::EngineStatus;
 
 /// The state of the instance, as its source last saw it.
 #[derive(Debug, Clone, PartialEq, Eq)]

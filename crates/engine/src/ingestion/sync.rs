@@ -25,7 +25,7 @@ use tracing::{debug, error};
 
 use super::Ingestion;
 use super::refusal::time_until;
-use crate::events::EngineEvent;
+use crate::engine::events::EngineEvent;
 use sync_state::{Stop, SyncFacts, next_change, sync_state};
 
 /// How long a reported change waits for the rest of its burst before the states are decided.

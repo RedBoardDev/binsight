@@ -5,7 +5,12 @@
 //! for a version it now reads; then it reports that it is running and runs ingestion and the
 //! live stream until the shutdown signal, persisting the credit counts as it goes and once more
 //! after both have stopped. Every status change is published both as the current status and as an event. This
-//! module owns the lifecycle; what the work is belongs to other modules.
+//! module owns the lifecycle, with its status (`status`), its events (`events`) and its health
+//! (`health`); what the work is belongs to other modules.
+
+pub(crate) mod events;
+pub(crate) mod health;
+pub(crate) mod status;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -20,14 +25,14 @@ use tracing::info;
 
 use crate::credit_usage::{restore_spending, run_credit_usage};
 use crate::error::EngineError;
-use crate::events::EngineEvent;
 use crate::handle::EngineHandle;
 use crate::ingestion::{
     Ingestion, IngestionParts, SyncPublisher, SyncState, requeue_readable_versions,
 };
 use crate::portfolio::EngineState;
 use crate::projections::{REGISTRY, reconcile_projections};
-use crate::status::EngineStatus;
+use events::EngineEvent;
+use status::EngineStatus;
 
 /// How many events a slow subscriber may fall behind before it starts losing the oldest ones.
 const EVENT_BUFFER_SIZE: usize = 256;
@@ -136,7 +141,7 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::health::ComponentHealth;
+    use crate::engine::health::ComponentHealth;
     use binsight_chain::SIGNATURE_PAGE_LIMIT;
     use binsight_chain::test_support::ScriptedReply;
     use serde_json::json;

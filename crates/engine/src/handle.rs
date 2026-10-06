@@ -15,11 +15,11 @@ use binsight_solana::Address;
 use binsight_store::Store;
 use tokio::sync::{broadcast, watch};
 
-use crate::events::EngineEvent;
-use crate::health::{EngineHealth, check_database};
+use crate::engine::events::EngineEvent;
+use crate::engine::health::{EngineHealth, check_database};
+use crate::engine::status::EngineStatus;
 use crate::ingestion::SyncState;
 use crate::portfolio::{ChainPortfolio, DataSourceKind, EngineState, ReadModel};
-use crate::status::EngineStatus;
 
 /// A shared, read-only view of a running engine.
 #[derive(Clone)]
@@ -123,7 +123,7 @@ impl EngineHandle {
 
 #[cfg(test)]
 mod tests {
-    use crate::health::{RpcHealth, StreamHealth};
+    use crate::engine::health::{RpcHealth, StreamHealth};
     use crate::test_support::{
         RunningEngine, TEST_START, signature_page, temporary_engine, transaction_reply,
     };

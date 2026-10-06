@@ -17,21 +17,18 @@ mod clock;
 mod credit_usage;
 mod engine;
 mod error;
-mod events;
 mod handle;
-mod health;
 mod ingestion;
 pub mod portfolio;
 pub mod projections;
-mod status;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 
 pub use clock::SystemClock;
 pub use engine::Engine;
+pub use engine::events::EngineEvent;
+pub use engine::health::{ComponentHealth, EngineHealth, RpcHealth, StreamHealth};
+pub use engine::status::EngineStatus;
 pub use error::EngineError;
-pub use events::EngineEvent;
 pub use handle::EngineHandle;
-pub use health::{ComponentHealth, EngineHealth, RpcHealth, StreamHealth};
 pub use ingestion::SyncState;
-pub use status::EngineStatus;

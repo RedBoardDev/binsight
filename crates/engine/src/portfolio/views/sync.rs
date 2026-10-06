@@ -5,7 +5,7 @@ use binsight_ledger::report::figure::Figure;
 use jiff::Timestamp;
 
 use super::refs::WalletRef;
-use crate::status::EngineStatus;
+use crate::engine::status::EngineStatus;
 
 /// How a wallet (or the whole instance) keeps up with the chain, from the best to the worst.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

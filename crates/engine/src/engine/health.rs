@@ -13,7 +13,7 @@ use binsight_core::credits::CallOutcome;
 use binsight_store::{Store, StoreError};
 use tracing::warn;
 
-use crate::status::EngineStatus;
+use crate::engine::status::EngineStatus;
 
 /// How long the database may take to answer a health check.
 const DATABASE_CHECK_TIMEOUT_SECS: u64 = 2;

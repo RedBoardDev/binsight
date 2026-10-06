@@ -30,8 +30,8 @@ use super::read_model::{InstanceReads, WalletReads};
 use super::views::{
     BillingCycle, ChainTip, InstanceSettings, SyncReport, SyncState, WalletSyncLine, WalletsView,
 };
+use crate::engine::status::EngineStatus;
 use crate::ingestion;
-use crate::status::EngineStatus;
 use wallet_lines::{WalletFacts, summary, sync_line, total};
 
 /// What the engine knows, as the API reads it.
