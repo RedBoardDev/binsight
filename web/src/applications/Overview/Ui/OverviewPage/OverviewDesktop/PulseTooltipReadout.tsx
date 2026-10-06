@@ -1,16 +1,16 @@
-import { usePulseReadoutFigures } from '@app/applications/Overview/Ui/RealPnlPulse/PulseReadoutFigures';
+import { usePulseReadoutFigures } from '@app/applications/Overview/Ui/OverviewPage/usePulseReadoutFigures';
 import { useDateFormatters } from '@app/applications/Shared/Time/Ui/useDateFormatters';
 import type { ApiSchema } from '@app/lib/api/apiSchema';
 import { useLingui } from '@lingui/react/macro';
 
-interface PulseReadoutProps {
+interface PulseTooltipReadoutProps {
   readonly point: ApiSchema<'SeriesPoint'>;
   readonly timeZone: string;
 }
 
 // The desktop tooltip: the day with its weekday, then profit and cumulative, each followed by its
 // share of net worth, indented under it.
-export const PulseReadout = ({ point, timeZone }: PulseReadoutProps) => {
+export const PulseTooltipReadout = ({ point, timeZone }: PulseTooltipReadoutProps) => {
   const { t } = useLingui();
   const { formatDay } = useDateFormatters(timeZone);
   const figures = usePulseReadoutFigures(point, 'static');

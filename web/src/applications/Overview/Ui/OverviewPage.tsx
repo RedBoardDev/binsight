@@ -1,5 +1,4 @@
 import { useOverview } from '@app/applications/Overview/Api/useOverview.api';
-import { RealPnlPulse } from '@app/applications/Overview/Ui/RealPnlPulse';
 import { SectionError } from '@app/applications/Shared/Layout/Ui/SectionError';
 import { useIsDesktop } from '@app/applications/Shared/Layout/Ui/useIsDesktop';
 import { useDisplayPreferences } from '@app/applications/Shared/Preference/Ui/useDisplayPreferences';
@@ -39,7 +38,6 @@ export const OverviewPage = () => {
       : overview.error instanceof TypeError
         ? i18n._(NETWORK_ERROR_MESSAGE)
         : i18n._(apiErrorMessage(null));
-  const graph = <RealPnlPulse layout={isDesktop ? 'desktop' : 'mobile'} />;
 
   return (
     <>
@@ -60,12 +58,11 @@ export const OverviewPage = () => {
           {isDesktop ? (
             <OverviewDesktop
               overview={overview.data}
-              graph={graph}
               period={period}
               historyHref={buildTodayHistoryHref({ window: overview.data.today.window, wallet })}
             />
           ) : (
-            <OverviewMobile overview={overview.data} graph={graph} />
+            <OverviewMobile overview={overview.data} />
           )}
         </div>
       )}

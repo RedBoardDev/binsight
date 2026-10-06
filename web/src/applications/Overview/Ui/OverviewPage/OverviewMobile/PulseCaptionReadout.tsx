@@ -1,4 +1,4 @@
-import { usePulseReadoutFigures } from '@app/applications/Overview/Ui/RealPnlPulse/PulseReadoutFigures';
+import { usePulseReadoutFigures } from '@app/applications/Overview/Ui/OverviewPage/usePulseReadoutFigures';
 import { useDateFormatters } from '@app/applications/Shared/Time/Ui/useDateFormatters';
 import type { ApiSchema } from '@app/lib/api/apiSchema';
 import { useLingui } from '@lingui/react/macro';

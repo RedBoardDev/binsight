@@ -184,9 +184,9 @@ msgstr "Kopieren fehlgeschlagen: Markieren Sie den Text und kopieren Sie ihn."
 msgid "Could not sign out."
 msgstr "Abmelden fehlgeschlagen."
 
-#: src/applications/Overview/Ui/RealPnlPulse/PulseCaptionReadout.tsx
-#: src/applications/Overview/Ui/RealPnlPulse/PulseReadout.tsx
-#: src/applications/Overview/Ui/RealPnlPulse/usePulseReadings.ts
+#: src/applications/Overview/Ui/OverviewPage/OverviewDesktop/PulseTooltipReadout.tsx
+#: src/applications/Overview/Ui/OverviewPage/OverviewMobile/PulseCaptionReadout.tsx
+#: src/applications/Overview/Ui/OverviewPage/usePulseReadings.ts
 #: src/applications/Shared/Chart/Ui/PulseChart/PulseLegend.tsx
 msgid "Cumulative"
 msgstr "Kumuliert"
@@ -195,7 +195,7 @@ msgstr "Kumuliert"
 msgid "Currency"
 msgstr "Währung"
 
-#: src/applications/Overview/Ui/RealPnlPulse/PulseCaptionReadout.tsx
+#: src/applications/Overview/Ui/OverviewPage/OverviewMobile/PulseCaptionReadout.tsx
 #: src/applications/Shared/Chart/Ui/PulseChart/PulseLegend.tsx
 msgid "Daily"
 msgstr "Täglich"
@@ -335,7 +335,7 @@ msgstr "Live-Aktualisierungen:"
 msgid "Loading overview"
 msgstr "Übersicht wird geladen"
 
-#: src/applications/Overview/Ui/RealPnlPulse.tsx
+#: src/applications/Overview/Ui/OverviewPage/RealPnlPulseFrame.tsx
 msgid "Loading real PnL"
 msgstr "Realer PnL wird geladen"
 
@@ -378,7 +378,7 @@ msgstr "Mehr"
 msgid "Net worth"
 msgstr "Nettovermögen"
 
-#: src/applications/Overview/Ui/RealPnlPulse/usePulseReadings.ts
+#: src/applications/Overview/Ui/OverviewPage/usePulseReadings.ts
 #: src/applications/Shared/Chart/Ui/LineSeriesChart.tsx
 #: src/applications/Shared/Chart/Ui/PulseChart.tsx
 #: src/applications/Shared/Chart/Ui/StackedBarChart.tsx
@@ -407,7 +407,7 @@ msgid "not available"
 msgstr "nicht verfügbar"
 
 #: src/applications/Overview/Ui/OverviewPage/OverviewDesktop/TodayHero/TodaySummary.tsx
-#: src/applications/Overview/Ui/RealPnlPulse/PulseReadoutFigures.tsx
+#: src/applications/Overview/Ui/OverviewPage/usePulseReadoutFigures.tsx
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "Not available"
 msgstr "Nicht verfügbar"
@@ -474,13 +474,15 @@ msgstr "Für diesen Pool ist noch kein Preisverlauf verfügbar"
 msgid "Price interval"
 msgstr "Preisintervall"
 
-#: src/applications/Overview/Ui/RealPnlPulse/PulseReadout.tsx
-#: src/applications/Overview/Ui/RealPnlPulse/usePulseReadings.ts
+#: src/applications/Overview/Ui/OverviewPage/OverviewDesktop/PulseTooltipReadout.tsx
+#: src/applications/Overview/Ui/OverviewPage/usePulseReadings.ts
 msgid "Profit"
 msgstr "Gewinn"
 
-#: src/applications/Overview/Ui/RealPnlPulse.tsx
-#: src/applications/Overview/Ui/RealPnlPulse/usePulseReadings.ts
+#: src/applications/Overview/Ui/OverviewPage/OverviewDesktop/RealPnlPulseDesktop.tsx
+#: src/applications/Overview/Ui/OverviewPage/OverviewMobile/RealPnlPulseMobile.tsx
+#: src/applications/Overview/Ui/OverviewPage/RealPnlPulseFrame.tsx
+#: src/applications/Overview/Ui/OverviewPage/usePulseReadings.ts
 msgid "Real PnL"
 msgstr "Realer PnL"
 
@@ -535,7 +537,7 @@ msgstr "Einstellungen und Sitzung"
 msgid "Show the tabs"
 msgstr "Tabs anzeigen"
 
-#: src/applications/Overview/Ui/RealPnlPulse.tsx
+#: src/applications/Overview/Ui/OverviewPage/RealPnlPulseFrame.tsx
 msgid "Showing previous readings."
 msgstr "Vorherige Werte werden angezeigt."
 
@@ -716,8 +718,8 @@ msgstr "Version"
 msgid "View"
 msgstr "Ansicht"
 
-#: src/applications/Overview/Ui/RealPnlPulse/PulseReadout.tsx
-#: src/applications/Overview/Ui/RealPnlPulse/usePulseReadings.ts
+#: src/applications/Overview/Ui/OverviewPage/OverviewDesktop/PulseTooltipReadout.tsx
+#: src/applications/Overview/Ui/OverviewPage/usePulseReadings.ts
 msgid "vs net worth"
 msgstr "vs Nettovermögen"
 
