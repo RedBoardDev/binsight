@@ -44,7 +44,10 @@ struct KnownPosition {
 /// Replay known creations and closures before accounting for a wallet transaction.
 ///
 /// `apply` commits only a fully validated delta. Missing evidence is retained separately from
-/// contradictions; unresolved ownership refuses a book context instead of pretending foreign.
+/// contradictions. A position touched without a known creation does not stop the transaction:
+/// it counts as the wallet's when its movement moved the wallet's own tokens, without an
+/// identity, and a diagnostic says its history is missing. Non-contiguous sources still refuse
+/// a book context instead of pretending foreign.
 #[derive(Debug)]
 pub struct PositionLifetimes {
     context: PositionReplayContext,
@@ -78,8 +81,8 @@ impl PositionLifetimes {
     ///
     /// # Errors
     /// Returns [`LifetimeError`] for contradictory identity, order, owner, pool or lifecycle
-    /// evidence. No replay state changes on an error. Missing creations return diagnostics and
-    /// a [`TransactionOwnership`] whose book-context accessor refuses unresolved ownership.
+    /// evidence. No replay state changes on an error. Missing creations return diagnostics, and
+    /// non-contiguous sources a [`TransactionOwnership`] whose book-context accessor refuses.
     pub fn apply(
         &mut self,
         source: &PositionTransaction,

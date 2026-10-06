@@ -30,6 +30,7 @@ pub struct TransactionOwnership {
     pub(super) lifecycle_sources: Vec<(usize, InstructionPosition, PositionId)>,
     pub(super) diagnostics: Vec<LifetimeDiagnostic>,
     pub(super) unresolved: bool,
+    pub(super) unknown_creations: BTreeSet<Address>,
 }
 
 impl TransactionOwnership {
@@ -97,5 +98,12 @@ impl TransactionOwnership {
     /// Missing ownership or date/order evidence which must remain visible to downstream facts.
     pub fn diagnostics(&self) -> &[LifetimeDiagnostic] {
         &self.diagnostics
+    }
+
+    /// Positions whose creation is unknown but whose movements moved the wallet's own tokens in
+    /// this transaction. They are booked as the wallet's, without a position identity, so their
+    /// position figures stay partial.
+    pub fn unknown_creations(&self) -> &BTreeSet<Address> {
+        &self.unknown_creations
     }
 }

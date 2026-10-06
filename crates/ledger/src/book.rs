@@ -17,6 +17,7 @@ mod wsol;
 
 pub use context::WalletContext;
 pub use entry::{Asset, Counterparty, EntryKind, LedgerEntry, PositionActivitySource, RentPurpose};
+pub(crate) use positions::moves_wallet_tokens;
 
 use binsight_dlmm::activity::TxActivity;
 use binsight_solana::transaction::{TransactionView, TxOutcome};

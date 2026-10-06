@@ -8,7 +8,8 @@ use crate::facts::PositionId;
 /// Evidence required for a life or its facts is unavailable, while other sources remain usable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LifetimeDiagnostic {
-    /// A position is touched without a known creation; its owner and identity are unresolved.
+    /// A position is touched without a known creation: it has no identity, and it counts as the
+    /// wallet's only where its movement moved the wallet's own tokens.
     MissingCreation {
         /// The position account.
         position: Address,

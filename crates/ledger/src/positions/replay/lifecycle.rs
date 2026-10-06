@@ -69,6 +69,12 @@ pub(super) fn apply(
         } => {
             let Some(mut known) = delta.known_position(replay, position) else {
                 delta.missing_creation(source, position);
+                // The close event names the owner, so a close the wallet owns is the wallet's
+                // even without its creation.
+                if owner == replay.context.wallet {
+                    delta.ownership.positions.insert(position);
+                    delta.ownership.unknown_creations.insert(position);
+                }
                 return Ok(());
             };
             if known.owner != owner {

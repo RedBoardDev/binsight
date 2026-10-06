@@ -6,7 +6,7 @@ use binsight_dlmm::activity::LifecycleFact;
 use binsight_ledger::book::{BookError, EntryKind, WalletContext};
 use binsight_ledger::facts::PositionId;
 use binsight_ledger::positions::{
-    LifetimeDiagnostic, LifetimeError, NormalizationError, PositionLifetimes, TransactionOrderProof,
+    LifetimeDiagnostic, NormalizationError, PositionLifetimes, TransactionOrderProof,
 };
 use binsight_solana::{Signature, transaction::TxOutcome};
 use common::*;
@@ -195,14 +195,15 @@ fn preserves_a_known_lifecycle_identity_with_missing_time_and_wallet_ordinal_ord
 }
 
 #[test]
-fn retains_unknown_creation_diagnostics_instead_of_associating_a_close() {
+fn takes_the_owner_of_a_close_whose_creation_is_unknown_from_its_event() {
     let mut replay = PositionLifetimes::new(context());
     let ownership = replay.apply(&closing(1, 10)).unwrap();
     assert_eq!(ownership.position_for_lifecycle(0, at(0)), None);
     assert_eq!(
         ownership.positions(),
-        Err(LifetimeError::UnresolvedOwnership)
+        Ok(&std::collections::BTreeSet::from([POSITION]))
     );
+    assert!(ownership.unknown_creations().contains(&POSITION));
     assert!(ownership.diagnostics().iter().any(|diagnostic| matches!(diagnostic, LifetimeDiagnostic::MissingCreation { position, .. } if *position == POSITION)));
     assert_eq!(replay.finish().lifetimes, []);
 }

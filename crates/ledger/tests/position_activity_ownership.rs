@@ -137,7 +137,7 @@ fn classifies_reward_rows_by_vector_index_rather_than_program_reward_index() {
 }
 
 #[test]
-fn refuses_to_classify_missing_creation_as_a_foreign_owner() {
+fn never_classifies_a_missing_creation_as_a_foreign_owner() {
     let mut replay = PositionLifetimes::new(context());
     let mut source = source(1, 10);
     source.activity.movements.push(movement(0, 7, 0));
@@ -146,10 +146,7 @@ fn refuses_to_classify_missing_creation_as_a_foreign_owner() {
         index: 0,
         at: at(0),
     };
-    assert_eq!(
-        ownership.source_ownership(row),
-        Err(LifetimeError::UnresolvedOwnership)
-    );
+    assert_eq!(ownership.source_ownership(row), Ok(None));
     assert_eq!(ownership.position_for(row), None);
     assert_ne!(ownership.diagnostics(), []);
 }

@@ -8,7 +8,7 @@ use binsight_solana::transaction::InstructionPosition;
 
 use super::actions::{self, Action};
 use super::{KnownPosition, PositionLifetimes};
-use crate::book::PositionActivitySource;
+use crate::book::{PositionActivitySource, moves_wallet_tokens};
 use crate::facts::PositionId;
 use crate::positions::{
     LifecycleSource, LifetimeDiagnostic, LifetimeError, PositionActivityOwnership,
@@ -117,6 +117,10 @@ impl TransactionDelta {
     ) -> Result<(), LifetimeError> {
         let Some(known) = self.known_position(replay, activity.position) else {
             self.missing_creation(source, activity.position);
+            if moves_wallet_tokens(replay.context.wallet, &source.transaction, activity.at()) {
+                self.ownership.positions.insert(activity.position);
+                self.ownership.unknown_creations.insert(activity.position);
+            }
             return Ok(());
         };
         if !known.is_open {
@@ -194,8 +198,9 @@ impl TransactionDelta {
         }
     }
 
+    /// Records that `position` moved without a known creation. The transaction still books:
+    /// the position is only left without an identity, and its figures without this history.
     pub(super) fn missing_creation(&mut self, source: &PositionTransaction, position: Address) {
-        self.ownership.unresolved = true;
         self.diagnose(LifetimeDiagnostic::MissingCreation {
             position,
             signature: source.transaction.signature,
@@ -223,6 +228,16 @@ struct ActivityObservation {
     position: Address,
     pool: Address,
     has_nonzero: bool,
+}
+
+impl ActivityObservation {
+    /// The event that reported the activity.
+    fn at(self) -> InstructionPosition {
+        match self.origin {
+            PositionActivitySource::Movement { at, .. }
+            | PositionActivitySource::RewardClaim { at, .. } => at,
+        }
+    }
 }
 
 pub(super) fn lifecycle_source(

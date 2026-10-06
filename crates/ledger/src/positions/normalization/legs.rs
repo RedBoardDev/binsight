@@ -110,6 +110,11 @@ fn collect_legs(
             return Err(NormalizationError::InvalidLeg);
         };
         if ownership.position_for(origin).is_none() {
+            if position_of(entry.kind)
+                .is_some_and(|position| ownership.unknown_creations().contains(&position))
+            {
+                continue;
+            }
             return Err(NormalizationError::InvalidLeg);
         }
         if legs.insert(key(origin, mint), *entry).is_some() {
@@ -186,11 +191,16 @@ fn movement_kind(kind: MovementKind, position: Address) -> EntryKind {
 }
 
 fn is_position(kind: EntryKind) -> bool {
-    matches!(
-        kind,
-        EntryKind::PositionDeposit { .. }
-            | EntryKind::PositionWithdrawal { .. }
-            | EntryKind::FeeClaim { .. }
-            | EntryKind::RewardClaim { .. }
-    )
+    position_of(kind).is_some()
+}
+
+/// The position a position leg moved, if `kind` is one.
+fn position_of(kind: EntryKind) -> Option<Address> {
+    match kind {
+        EntryKind::PositionDeposit { position }
+        | EntryKind::PositionWithdrawal { position }
+        | EntryKind::FeeClaim { position }
+        | EntryKind::RewardClaim { position } => Some(position),
+        _ => None,
+    }
 }

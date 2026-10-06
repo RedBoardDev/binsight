@@ -12,15 +12,16 @@ use binsight_ledger::positions::{
 use common::*;
 
 #[test]
-fn refuses_a_book_context_for_missing_creation_without_inventing_a_foreign_owner_or_identity() {
+fn keeps_a_missing_creation_as_a_diagnostic_without_inventing_an_owner_or_identity() {
     let mut replay = PositionLifetimes::new(context());
     let mut source = source(1, 10);
     source.activity.movements.push(movement(0, 20, 30));
     let ownership = replay.apply(&source).unwrap();
     assert_eq!(
         ownership.positions(),
-        Err(LifetimeError::UnresolvedOwnership)
+        Ok(&std::collections::BTreeSet::new())
     );
+    assert!(ownership.unknown_creations().is_empty());
     assert_eq!(
         ownership.diagnostics(),
         &[LifetimeDiagnostic::MissingCreation {

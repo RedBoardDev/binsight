@@ -8,7 +8,7 @@ use binsight_core::units::RawTokenAmount;
 use binsight_dlmm::activity::MovementKind;
 use binsight_ledger::book::{BookError, Counterparty, EntryKind, WalletContext};
 use binsight_ledger::positions::{
-    LifetimeError, NormalizationError, NormalizedPositionActivity, PositionLifetimes,
+    LifetimeDiagnostic, NormalizationError, NormalizedPositionActivity, PositionLifetimes,
     RawActivityEvidence, TransactionOrderProof,
 };
 use binsight_solana::{Signature, programs::TokenProgram};
@@ -115,15 +115,28 @@ fn leaves_replay_unchanged_after_booking_failure_and_accepts_the_corrected_signa
 }
 
 #[test]
-fn refuses_unresolved_ownership_without_using_the_callers_permanent_position_set() {
+fn ignores_the_callers_permanent_position_set_for_a_missing_creation() {
     let mut replay = PositionLifetimes::new(context());
     let mut context = WalletContext::new(WALLET);
     context.positions.insert(POSITION);
-    assert_eq!(
-        replay.book_and_apply(deposit(), context),
-        Err(NormalizationError::Lifetime(
-            LifetimeError::UnresolvedOwnership
-        ))
+    let bundle = replay.book_and_apply(deposit(), context).unwrap();
+    assert!(
+        bundle
+            .entries()
+            .iter()
+            .all(|entry| !matches!(entry.kind, EntryKind::PositionDeposit { .. }))
+    );
+    assert_eq!(bundle.activities(), []);
+    assert!(
+        bundle
+            .ownership()
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| matches!(
+                diagnostic,
+                LifetimeDiagnostic::MissingCreation { position, .. }
+                    if *position == POSITION
+            ))
     );
     assert_eq!(replay.finish().lifetimes, Vec::new());
 }
