@@ -1,14 +1,16 @@
 //! `binsight admin sync-status`: how far each wallet is imported, and the credits spent.
 //!
-//! For each tracked wallet: where its history listing stands and how its transactions stand in
-//! the fetch queue. Then how many transactions could not be decoded, and the credits spent today
-//! (UTC, the provider's day), request kind by request kind, against the daily limit, and the
-//! current billing cycle's total against the plan. It only reads, so it works while the server
-//! runs.
+//! For each tracked wallet: where its history listing stands, how its transactions stand in the
+//! fetch queue and where its repair stands. Then how many transactions could not be decoded, what
+//! the registry's facts disagree on (the startup check's reading, made again here without
+//! restoring anything), and the credits spent today (UTC, the provider's day), request kind by
+//! request kind, against the daily limit, and the current billing cycle's total against the
+//! plan. It only reads, so it works while the server runs.
 
 use binsight_core::clock::{Clock, utc_day};
-use binsight_engine::SystemClock;
-use binsight_store::{CreditTotal, FetchCounts, Store, TrackedWallet, WalletCursor};
+use binsight_engine::portfolio::views::{RegistryFinding, RegistryFindingKind};
+use binsight_engine::{SystemClock, read_registry_findings};
+use binsight_store::{CreditTotal, FetchCounts, Store, TrackedWallet, WalletCursor, WalletRepair};
 
 use crate::config::Config;
 use crate::data_dir::database_path;
@@ -22,14 +24,22 @@ pub(super) async fn show_sync_status(config: &Config) -> Result<(), Failure> {
     if wallets.is_empty() {
         print_line("No wallet is tracked; add one with `binsight admin wallet-add <ADDRESS>`.");
     }
+    let repairs = store.repairs().list().await?;
     for wallet in &wallets {
         let counts = store.fetch_queue().counts(wallet.address).await?;
+        let repair = repairs
+            .iter()
+            .find(|repair| repair.wallet == wallet.address);
         for line in describe_wallet(wallet, &counts) {
             print_line(&line);
         }
+        print_line(&format!("  repair: {}", describe_repair(wallet, repair)));
     }
     let failed = store.decoded().failed_count().await?;
     print_line(&format!("Transactions that could not be decoded: {failed}"));
+    for line in describe_findings(&read_registry_findings(&store).await?) {
+        print_line(&line);
+    }
     let today = utc_day(SystemClock.now());
     let totals = store.credits().totals_between(today, today).await?;
     let budget = config.credit_budget;
@@ -91,6 +101,79 @@ fn describe_wallet(wallet: &TrackedWallet, counts: &FetchCounts) -> Vec<String> 
     lines
 }
 
+/// Where `wallet`'s repair stands.
+fn describe_repair(wallet: &TrackedWallet, repair: Option<&WalletRepair>) -> String {
+    let is_listed = matches!(
+        wallet.cursor,
+        WalletCursor::HistoryComplete { top: Some(_) }
+    );
+    match repair {
+        None if is_listed => {
+            "none yet; the first, in full, comes six hours after the wallet was added".to_owned()
+        }
+        None => "none until its history is listed".to_owned(),
+        Some(WalletRepair {
+            repaired_at: None, ..
+        }) => "a full repair is due".to_owned(),
+        Some(WalletRepair {
+            repaired_at: Some(at),
+            verified: Some(point),
+            ..
+        }) => format!("last at {at}, verified down to slot {}", point.slot),
+        Some(WalletRepair {
+            repaired_at: Some(at),
+            verified: None,
+            ..
+        }) => format!("last at {at}, nothing old enough to verify yet"),
+    }
+}
+
+/// The lines for what the registry's facts disagree on.
+fn describe_findings(findings: &[RegistryFinding]) -> Vec<String> {
+    if findings.is_empty() {
+        return vec!["Registry check: every fact agrees".to_owned()];
+    }
+    let mut lines = vec!["Registry check:".to_owned()];
+    for finding in findings {
+        lines.push(format!(
+            "  {} {}",
+            finding.count,
+            describe_finding_kind(finding.kind)
+        ));
+    }
+    lines
+}
+
+/// What a kind of finding means, and what binsight does about it.
+fn describe_finding_kind(kind: RegistryFindingKind) -> &'static str {
+    match kind {
+        RegistryFindingKind::WrongListedCounts => {
+            "wallets with a wrong count of listed signatures (counted again at the next start)"
+        }
+        RegistryFindingKind::UnlistedCursorPoints => {
+            "wallets whose cursor names a signature they do not list (repaired in full)"
+        }
+        RegistryFindingKind::UnqueuedSignatures => {
+            "listed signatures without a fetch task (queued at the next start)"
+        }
+        RegistryFindingKind::FetchedWithoutPayload => {
+            "transactions marked fetched but missing from the registry (fetched again at the next start)"
+        }
+        RegistryFindingKind::StoredButQueued => {
+            "stored transactions still queued (marked fetched at the next start, never fetched again)"
+        }
+        RegistryFindingKind::UnreturnedTransactions => {
+            "listed transactions the node has not returned yet (tried again)"
+        }
+        RegistryFindingKind::OutdatedDecodes => {
+            "transactions to decode at the current versions (decoded from the registry)"
+        }
+        RegistryFindingKind::UnorderedTransactions => {
+            "transactions without an index in their block (they cannot be ordered exactly)"
+        }
+    }
+}
+
 /// One line for a kind of request.
 fn describe_total(total: &CreditTotal) -> String {
     format!(
@@ -140,6 +223,59 @@ mod tests {
         };
         let lines = describe_wallet(&wallet, &parked);
         assert!(lines[3].starts_with("  incomplete: 2 transactions of a version"));
+    }
+
+    #[test]
+    fn describes_where_a_repair_stands() {
+        let top = ListedTop {
+            signature: Signature::from_bytes([2; 64]),
+            slot: 300,
+        };
+        let wallet = TrackedWallet {
+            address: Address::from_bytes([1; 32]),
+            added_at: Timestamp::UNIX_EPOCH,
+            cursor: WalletCursor::HistoryComplete { top: Some(top) },
+        };
+        let repaired = WalletRepair {
+            wallet: wallet.address,
+            verified: Some(top),
+            repaired_at: Some(Timestamp::UNIX_EPOCH),
+        };
+        let asked = WalletRepair {
+            verified: None,
+            repaired_at: None,
+            ..repaired
+        };
+
+        assert!(describe_repair(&wallet, None).starts_with("none yet"));
+        assert_eq!(
+            describe_repair(&wallet, Some(&repaired)),
+            "last at 1970-01-01T00:00:00Z, verified down to slot 300"
+        );
+        assert_eq!(
+            describe_repair(&wallet, Some(&asked)),
+            "a full repair is due"
+        );
+    }
+
+    #[test]
+    fn describes_what_the_registry_disagrees_on() {
+        let findings = [RegistryFinding {
+            kind: RegistryFindingKind::UnqueuedSignatures,
+            count: 3,
+        }];
+
+        assert_eq!(
+            describe_findings(&[]),
+            ["Registry check: every fact agrees"]
+        );
+        assert_eq!(
+            describe_findings(&findings),
+            [
+                "Registry check:",
+                "  3 listed signatures without a fetch task (queued at the next start)"
+            ]
+        );
     }
 
     #[test]

@@ -148,6 +148,14 @@ async fn tracks_a_wallet_and_reports_its_import_once_stopped() {
         shown.contains("Transactions that could not be decoded: 0"),
         "{shown}"
     );
+    assert!(
+        shown.contains("  repair: none until its history is listed"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("Registry check: every fact agrees"),
+        "{shown}"
+    );
     assert_eq!(export.status.code(), Some(64));
 }
 
