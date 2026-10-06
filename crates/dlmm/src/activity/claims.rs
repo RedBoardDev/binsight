@@ -74,7 +74,7 @@ impl RewardIdentity {
 
 /// The claim events of one transaction, and the claims already counted.
 pub(super) struct ClaimBook<'a> {
-    tx: &'a TransactionView,
+    pub(super) tx: &'a TransactionView,
     events: &'a [LocatedEvent],
     reported_fees: Vec<(FeeIdentity, EventForm)>,
     reported_rewards: Vec<(RewardIdentity, EventForm)>,

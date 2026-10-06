@@ -75,6 +75,10 @@ const SCENARIOS: &[(&str, Build)] = &[
         rebalances::claim_of_other_amounts,
     ),
     ("rebalance-rewards", rebalances::rewards),
+    (
+        "rebalance-rewards-with-transfers",
+        rebalances::rewards_with_transfers,
+    ),
 ];
 
 /// The scenario named `name`.

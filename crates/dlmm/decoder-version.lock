@@ -1,6 +1,6 @@
 # Written by the corpus test of binsight-dlmm (BINSIGHT_UPDATE_DECODER_LOCK=1); do not edit.
 # The SHA-256 of the decoder's output on each fixture, under the version that produced it.
-version = 2
+version = 3
 
 [outputs]
 "claim-fee-v1-alone-tx-1" = "155bb133e7fc3fd96898425dd843280d00dc6ac487ec2ece53a216ba0a16da80"
@@ -37,6 +37,7 @@ version = 2
 "scenario-rebalance-harvest" = "e8b8a2797f095f9ccb237bec4d5c82303f8ff64243f804fcab1dbc83b09eb16b"
 "scenario-rebalance-harvest-then-claim" = "d7bd2119386578fb737a76a2afeb160aca25aa6c290e9aea6b00aecdf8a71b12"
 "scenario-rebalance-rewards" = "d235ad72ce780dd4d1be2204f551a3a3ad599c06a0b412dead9d4a1c98ad368b"
+"scenario-rebalance-rewards-with-transfers" = "b2b6449072292e568e7d439512a7f9289273b08dbc0cb4005470b9400eeb00b7"
 "scenario-reward-mint-from-instruction" = "9137d4a862752c9d180d43929e748cc71c7f0dd823fe0a2272cb1639d9ccb9c7"
 "scenario-swap-both-forms-one-call" = "376f6a1261039e74c907e9f0f60064b3ba9a4f701437dd1ed957bffc81628e32"
 "scenario-swap-second-form-only" = "2b9f6ca98a0f57224233c27b9886f718853880117432cfe1d5db0227389d3564"

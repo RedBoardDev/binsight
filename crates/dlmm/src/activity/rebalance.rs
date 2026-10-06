@@ -12,6 +12,7 @@ use binsight_core::units::RawTokenAmount;
 use binsight_solana::transaction::InstructionPosition;
 
 use super::claims::{ClaimBook, FeeIdentity, RewardIdentity};
+use super::transfers::harvested_reward_mint;
 use super::{MovementKind, PositionMovement, RewardClaim, TxActivity};
 use crate::event::Rebalanced;
 
@@ -78,7 +79,7 @@ pub(super) fn record(
                 position: rebalance.position,
                 pool: rebalance.lb_pair,
                 reward_index,
-                mint: None,
+                mint: harvested_reward_mint(claims.tx, at, amount),
                 amount,
             });
         }

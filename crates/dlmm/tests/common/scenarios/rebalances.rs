@@ -3,10 +3,17 @@
 use binsight_dlmm::event::DlmmEvent;
 
 use super::Scenario;
+use binsight_solana::Address;
+use binsight_solana::transaction::{InstructionData, InstructionNode};
+use binsight_solana::well_known::TOKEN_PROGRAM;
+
 use crate::common::{
-    address, dlmm_instruction, empty_transaction, event_call, fee_claim, located, rebalance,
+    address, at, dlmm_instruction, empty_transaction, event_call, fee_claim, located, rebalance,
     reward_claim, transaction,
 };
+
+/// The SPL Token instruction tag of `TransferChecked`.
+const TRANSFER_CHECKED: u8 = 12;
 
 pub(super) fn harvest() -> Scenario {
     let rebalanced = rebalance([5, 7, 4, 6, 2, 3], [0, 0], -410);
@@ -81,5 +88,46 @@ pub(super) fn rewards() -> Scenario {
             located(0, 0, DlmmEvent::Rebalancing(rebalanced)),
             located(0, 1, DlmmEvent::ClaimReward(reward_claim(1, 22))),
         ],
+    }
+}
+
+/// A rebalance that adds 11 X, harvests fees of (11, 0) and rewards of 11 and 22, with the
+/// transfers it made: the fee of 11 out of reserve X (account 5), the deposit of 11 into it,
+/// then each reward from its vault (70 and 80) in its mint (71 and 81). Only the rewards neither
+/// leave nor enter a reserve, and the rebalance names neither reward mint among its accounts.
+pub(super) fn rewards_with_transfers() -> Scenario {
+    let accounts: Vec<_> = (0..17).map(|index| address(30 + index)).collect();
+    let reserve_x = accounts[5];
+    let rebalanced = rebalance([0, 0, 11, 0, 11, 0], [11, 22], -3);
+    let instructions = vec![
+        dlmm_instruction(0, "rebalance_liquidity", accounts),
+        token_transfer_checked((0, 0), (reserve_x, address(90), address(91)), 11),
+        token_transfer_checked((0, 1), (address(91), address(90), reserve_x), 11),
+        token_transfer_checked((0, 2), (address(70), address(71), address(72)), 11),
+        token_transfer_checked((0, 3), (address(80), address(81), address(82)), 22),
+        event_call(0, 4, 2),
+    ];
+    Scenario {
+        tx: transaction(instructions, Vec::new()),
+        events: vec![located(0, 4, DlmmEvent::Rebalancing(rebalanced))],
+    }
+}
+
+/// A `TransferChecked` of `amount` by the token program, as the inner instruction `(top, inner)`
+/// at stack height 2: `accounts` are the source, the mint and the destination.
+pub(crate) fn token_transfer_checked(
+    (top, inner): (u16, u16),
+    (source, mint, destination): (Address, Address, Address),
+    amount: u64,
+) -> InstructionNode {
+    let mut data = vec![TRANSFER_CHECKED];
+    data.extend_from_slice(&amount.to_le_bytes());
+    data.push(6);
+    InstructionNode {
+        position: at(top, inner),
+        stack_height: Some(2),
+        program: TOKEN_PROGRAM,
+        accounts: vec![source, mint, destination, address(100)],
+        data: InstructionData(data),
     }
 }

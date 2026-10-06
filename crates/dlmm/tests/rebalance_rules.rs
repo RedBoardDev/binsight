@@ -10,6 +10,7 @@
 mod common;
 
 use binsight_dlmm::activity::MovementKind;
+use binsight_solana::Address;
 use common::scenarios::{activity_of, movement_summary};
 
 #[test]
@@ -69,4 +70,21 @@ fn books_rewards_harvested_by_a_rebalance_unless_a_reward_claim_reports_them() {
         .collect();
     assert_eq!(claims, [(0, 11, None), (1, 22, None)]);
     assert_eq!(activity.movements, []);
+}
+
+#[test]
+fn reads_the_mint_of_a_harvested_reward_from_the_transfer_that_paid_it() {
+    let activity = activity_of("rebalance-rewards-with-transfers").unwrap();
+    let claims: Vec<_> = activity
+        .reward_claims
+        .iter()
+        .map(|claim| (claim.reward_index, claim.amount.0, claim.mint))
+        .collect();
+    assert_eq!(
+        claims,
+        [
+            (0, 11, Some(Address::from_bytes([71; 32]))),
+            (1, 22, Some(Address::from_bytes([81; 32]))),
+        ]
+    );
 }

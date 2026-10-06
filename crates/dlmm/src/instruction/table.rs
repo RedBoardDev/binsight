@@ -40,6 +40,10 @@ pub(crate) const CLAIM_REWARD_MINT_ACCOUNT: usize = 6;
 /// The position of the reward mint among the accounts of `claim_reward2`.
 pub(crate) const CLAIM_REWARD2_MINT_ACCOUNT: usize = 4;
 
+/// The positions of the pool's two reserves (X, then Y) among the accounts of
+/// `rebalance_liquidity`. A harvested reward is paid from the reward vault, never from them.
+pub(crate) const REBALANCE_RESERVE_ACCOUNTS: [usize; 2] = [5, 6];
+
 /// Every instruction of the program, grouped by kind: its IDL name and its discriminator, written
 /// as the big-endian number of its 8 bytes (as explorers show it).
 pub(super) const INSTRUCTIONS: [(InstructionKind, &[(&str, u64)]); 12] = [

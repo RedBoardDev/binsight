@@ -100,8 +100,9 @@ pub struct RewardClaim {
     pub pool: Address,
     /// Which of the pool's rewards (0 or 1).
     pub reward_index: u64,
-    /// The token paid, when the paying instruction names it. A rebalance that harvests a reward
-    /// does not name it: the pool's own reward list does, for whoever reads the pool account.
+    /// The token paid: named by a `claim_reward` instruction, or read from the transfer a
+    /// harvesting rebalance made. `None` when neither tells it (a transaction without stack
+    /// heights).
     pub mint: Option<Address>,
     /// The amount paid.
     pub amount: RawTokenAmount,

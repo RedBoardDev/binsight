@@ -14,7 +14,8 @@
 //!    claims.
 //! 5. A claim of the first form, which has no bin, borrows the bin of the first event of the
 //!    **same pool** in the transaction, or has none.
-//! 6. The mint of a claimed reward is read from the accounts of the instruction that paid it.
+//! 6. The mint of a claimed reward is read from the accounts of the instruction that paid it,
+//!    or, for a reward a rebalance harvested, from the transfer of that reward's amount.
 //! 7. A closed position account (no lamports left) must come with a `PositionClose` event, and
 //!    a position account created and still funded with a `PositionCreate`: otherwise the
 //!    transaction is refused rather than read with a position wrongly open or missing.
@@ -31,12 +32,14 @@ mod facts;
 mod lifecycle_guard;
 mod rebalance;
 mod swaps;
+mod transfers;
 
 use binsight_solana::transaction::{InstructionPosition, TransactionView, TxOutcome};
 
 pub use facts::{
     ActivityError, LifecycleFact, MovementKind, PoolSwap, PositionMovement, RewardClaim, TxActivity,
 };
+pub use transfers::{TokenTransfer, emitter_transfers};
 
 use crate::event::{DlmmEvent, LiquidityChanged, LocatedEvent};
 use crate::instruction::{InstructionKind, classify};
