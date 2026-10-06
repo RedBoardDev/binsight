@@ -16,6 +16,8 @@ pub enum Setting {
     Demo,
     /// `BINSIGHT_DEMO_NOW`: the instant a demo's clock is frozen at (demo mode only).
     DemoNow,
+    /// `BINSIGHT_DEMO_WORLD`: which demo world, `showcase` or `nominal` (demo mode only).
+    DemoWorld,
     /// `BINSIGHT_HELIUS_API_KEY`: the Helius API key.
     HeliusApiKey,
     /// `BINSIGHT_HELIUS_PLAN`: the Helius plan the key belongs to.
@@ -44,10 +46,11 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting, in the order they are reported.
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::Password,
         Self::Demo,
         Self::DemoNow,
+        Self::DemoWorld,
         Self::HeliusApiKey,
         Self::HeliusPlan,
         Self::MonthlyCredits,
@@ -68,6 +71,7 @@ impl Setting {
             Self::Password => "BINSIGHT_PASSWORD",
             Self::Demo => "BINSIGHT_DEMO",
             Self::DemoNow => "BINSIGHT_DEMO_NOW",
+            Self::DemoWorld => "BINSIGHT_DEMO_WORLD",
             Self::HeliusApiKey => "BINSIGHT_HELIUS_API_KEY",
             Self::HeliusPlan => "BINSIGHT_HELIUS_PLAN",
             Self::MonthlyCredits => "BINSIGHT_MONTHLY_CREDITS",

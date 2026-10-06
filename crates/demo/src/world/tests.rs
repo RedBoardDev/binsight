@@ -26,6 +26,7 @@ fn world_at(seed: u64, anchor: Timestamp, zone: &str) -> World {
         anchor,
         timezone: TimeZone::get(zone).unwrap(),
         importing_wallet: None,
+        profile: WorldProfile::Showcase,
     };
     World::generate(&spec).unwrap()
 }

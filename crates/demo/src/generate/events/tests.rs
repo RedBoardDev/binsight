@@ -28,6 +28,7 @@ fn world() -> World {
         anchor: "2026-10-04T15:30:00Z".parse::<Timestamp>().unwrap(),
         timezone: TimeZone::get("Europe/Paris").unwrap(),
         importing_wallet: None,
+        profile: crate::world::WorldProfile::Showcase,
     };
     World::generate(&spec).unwrap()
 }

@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use binsight_chain::HeliusApiKey;
 use binsight_core::clock::{Clock, FixedClock};
+use binsight_demo::WorldProfile;
 use binsight_engine::SystemClock;
 use jiff::Timestamp;
 
@@ -28,6 +29,8 @@ pub enum DataSourceConfig {
         /// forgotten, so a frozen demo that reaches the sign-in throttle stays throttled until it
         /// restarts.
         frozen_at: Option<Timestamp>,
+        /// Which world: the showcase of every state, or the nominal instance.
+        world: WorldProfile,
     },
 }
 
@@ -37,8 +40,12 @@ impl DataSourceConfig {
         match self {
             Self::Demo {
                 frozen_at: Some(instant),
+                ..
             } => Arc::new(FixedClock::new(*instant)),
-            Self::Demo { frozen_at: None } | Self::Chain { .. } => Arc::new(SystemClock),
+            Self::Demo {
+                frozen_at: None, ..
+            }
+            | Self::Chain { .. } => Arc::new(SystemClock),
         }
     }
 }
@@ -56,6 +63,19 @@ pub(super) fn parse_switch(text: &str) -> Result<bool, &'static str> {
     }
 }
 
+/// Reads a demo world: `showcase` or `nominal`.
+///
+/// # Errors
+///
+/// Returns a message when the text is anything else.
+pub(super) fn parse_world(text: &str) -> Result<WorldProfile, &'static str> {
+    match text {
+        "showcase" => Ok(WorldProfile::Showcase),
+        "nominal" => Ok(WorldProfile::Nominal),
+        _ => Err("expected showcase or nominal"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -65,6 +85,7 @@ mod tests {
         let instant: Timestamp = "2026-10-06T14:30:00Z".parse().unwrap();
         let demo = DataSourceConfig::Demo {
             frozen_at: Some(instant),
+            world: WorldProfile::Showcase,
         };
 
         assert_eq!(demo.clock().now(), instant);
@@ -74,7 +95,12 @@ mod tests {
     fn reads_the_wall_clock_when_the_demo_is_not_frozen() {
         let before = SystemClock.now();
 
-        let now = DataSourceConfig::Demo { frozen_at: None }.clock().now();
+        let now = DataSourceConfig::Demo {
+            frozen_at: None,
+            world: WorldProfile::Showcase,
+        }
+        .clock()
+        .now();
 
         assert!(now >= before);
     }

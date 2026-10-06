@@ -96,6 +96,20 @@ pub(crate) struct WalletProfile {
     pub(crate) sync: SyncProfile,
 }
 
+impl WalletProfile {
+    /// The wallet as the nominal world has it: live, and tracked since its first activity.
+    pub(crate) const fn nominal(self) -> Self {
+        Self {
+            added_days_ago: None,
+            sync: SyncProfile {
+                state: SyncState::Live,
+                lag_seconds: None,
+            },
+            ..self
+        }
+    }
+}
+
 /// The wallets of the default world.
 pub(crate) const WALLETS: [WalletProfile; 3] = [
     WalletProfile {

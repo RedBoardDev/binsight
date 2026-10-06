@@ -36,9 +36,10 @@ pub(super) fn engine(
             let (engine, handle) = Engine::new(store.clone(), rpc, stream, Arc::clone(clock));
             Ok((Some(engine), handle))
         }
-        DataSourceConfig::Demo { .. } => {
+        DataSourceConfig::Demo { world, .. } => {
             warn!("demo mode: serving generated figures; nothing is tracked or sent");
-            let spec = WorldSpec::new(clock.now(), TimeZone::UTC);
+            let mut spec = WorldSpec::new(clock.now(), TimeZone::UTC);
+            spec.profile = *world;
             let portfolio =
                 DemoPortfolio::new(&spec).map_err(|error| Failure::Unexpected(error.into()))?;
             Ok((

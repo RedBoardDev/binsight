@@ -25,6 +25,21 @@ pub struct WorldSpec {
     pub timezone: TimeZone,
     /// An optional synthetic wallet whose history is still being indexed.
     pub importing_wallet: Option<ImportingWalletSpec>,
+    /// Which variant of the world: the showcase of every state, or the nominal one.
+    pub profile: WorldProfile,
+}
+
+/// The variant of the demo world.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum WorldProfile {
+    /// Every state a screen must handle: a wallet lagging behind the chain, wallets added after
+    /// their first activity (their earlier history is reconstructed, hence estimated).
+    #[default]
+    Showcase,
+    /// The calm, nominal instance a screen is compared against: every wallet live and tracked
+    /// since its first activity. The same trades, prices and holdings as the showcase (the
+    /// unpriced token is still held, so a lower bound remains where it is genuine).
+    Nominal,
 }
 
 impl WorldSpec {
@@ -35,6 +50,7 @@ impl WorldSpec {
             anchor,
             timezone,
             importing_wallet: None,
+            profile: WorldProfile::Showcase,
         }
     }
 }

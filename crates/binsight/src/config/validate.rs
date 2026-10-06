@@ -15,7 +15,7 @@ use binsight_chain::HeliusApiKey;
 use jiff::Timestamp;
 
 use super::credit_budget::CreditBudget;
-use super::data_source::{DataSourceConfig, parse_switch};
+use super::data_source::{DataSourceConfig, parse_switch, parse_world};
 use super::paths::{DEMO_FOLDER, default_data_dir, expand_home};
 use super::problems::{ConfigError, ConfigProblem, ConfigWarning, Setting, Source};
 use super::sources::{ConfigSources, VARIABLE_PREFIX};
@@ -190,12 +190,22 @@ impl<'sources> SettingReader<'sources> {
     fn data_source(&mut self) -> Option<DataSourceConfig> {
         if self.with_default(Setting::Demo, "false", parse_switch)? {
             let frozen_at = self.optional(Setting::DemoNow, str::parse::<Timestamp>);
-            return Some(DataSourceConfig::Demo { frozen_at });
+            let world = self.with_default(Setting::DemoWorld, "showcase", parse_world)?;
+            return Some(DataSourceConfig::Demo { frozen_at, world });
         }
-        if self.find(Setting::DemoNow).is_some() {
-            let message = "only a demo can freeze its clock; set BINSIGHT_DEMO=true or remove it";
-            self.problems
-                .push(ConfigProblem::new(Setting::DemoNow, message));
+        for (setting, message) in [
+            (
+                Setting::DemoNow,
+                "only a demo can freeze its clock; set BINSIGHT_DEMO=true or remove it",
+            ),
+            (
+                Setting::DemoWorld,
+                "only a demo has a world to choose; set BINSIGHT_DEMO=true or remove it",
+            ),
+        ] {
+            if self.find(setting).is_some() {
+                self.problems.push(ConfigProblem::new(setting, message));
+            }
         }
         let helius_api_key = self.required(Setting::HeliusApiKey, HeliusApiKey::parse)?;
         Some(DataSourceConfig::Chain { helius_api_key })

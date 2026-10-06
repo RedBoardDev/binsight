@@ -3,6 +3,8 @@
 //! Each line names the variable, its value (or `(set)` for a secret, `(not set)` when absent) and
 //! where the value came from. This module only formats.
 
+use binsight_demo::WorldProfile;
+
 use crate::config::{Config, DataSourceConfig, Setting};
 use crate::logging::LogFormat;
 
@@ -31,10 +33,23 @@ fn displayed_value(config: &Config, setting: Setting) -> String {
         Setting::DemoNow => match config.data_source {
             DataSourceConfig::Demo {
                 frozen_at: Some(instant),
+                ..
             } => instant.to_string(),
-            DataSourceConfig::Demo { frozen_at: None } | DataSourceConfig::Chain { .. } => {
-                "(not set)".to_owned()
+            DataSourceConfig::Demo {
+                frozen_at: None, ..
             }
+            | DataSourceConfig::Chain { .. } => "(not set)".to_owned(),
+        },
+        Setting::DemoWorld => match config.data_source {
+            DataSourceConfig::Demo {
+                world: WorldProfile::Showcase,
+                ..
+            } => "showcase".to_owned(),
+            DataSourceConfig::Demo {
+                world: WorldProfile::Nominal,
+                ..
+            } => "nominal".to_owned(),
+            DataSourceConfig::Chain { .. } => "(not set)".to_owned(),
         },
         Setting::HeliusApiKey => match config.data_source {
             DataSourceConfig::Chain { .. } => "(set)".to_owned(),
@@ -95,6 +110,7 @@ mod tests {
             "BINSIGHT_PASSWORD=(set) (from the environment)\n\
              BINSIGHT_DEMO=false (from the default)\n\
              BINSIGHT_DEMO_NOW=(not set)\n\
+             BINSIGHT_DEMO_WORLD=(not set)\n\
              BINSIGHT_HELIUS_API_KEY=(set) (from the environment)\n\
              BINSIGHT_HELIUS_PLAN=free (from the default)\n\
              BINSIGHT_MONTHLY_CREDITS=1000000 (from the default)\n\

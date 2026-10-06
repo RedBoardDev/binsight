@@ -25,7 +25,7 @@ use jiff::{SignedDuration, Timestamp, ToSpan};
 
 use crate::error::DemoError;
 use crate::scenario::{HISTORY_DAYS, WALLETS, WalletProfile};
-use crate::world::WorldSpec;
+use crate::world::{WorldProfile, WorldSpec};
 use events::{Market, closed_events, open_events};
 pub(crate) use market::PricePath;
 use market::{
@@ -80,7 +80,11 @@ pub(crate) fn generate(spec: &WorldSpec) -> Result<Generated, DemoError> {
         rates,
         ..SnapshotFacts::default()
     };
-    for profile in &WALLETS {
+    for showcase in &WALLETS {
+        let profile = &match spec.profile {
+            WorldProfile::Showcase => *showcase,
+            WorldProfile::Nominal => showcase.nominal(),
+        };
         let tail = long_tail.get(profile.label).cloned().unwrap_or_default();
         let context = wallet::WalletContext {
             seed: spec.seed,

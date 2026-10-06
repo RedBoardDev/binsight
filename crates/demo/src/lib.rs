@@ -35,4 +35,4 @@ mod world;
 pub use error::DemoError;
 pub use portfolio::DemoPortfolio;
 pub use scenario::DEMO_SEED;
-pub use world::{ImportingWalletSpec, WorldSpec};
+pub use world::{ImportingWalletSpec, WorldProfile, WorldSpec};

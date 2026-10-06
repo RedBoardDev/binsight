@@ -30,7 +30,10 @@ fn starts_in_demo_mode_without_a_helius_key() {
 
     assert!(matches!(
         loaded.config.data_source,
-        binsight::config::DataSourceConfig::Demo { frozen_at: None }
+        binsight::config::DataSourceConfig::Demo {
+            frozen_at: None,
+            world: binsight_demo::WorldProfile::Showcase,
+        }
     ));
     assert_eq!(loaded.warnings, Vec::new());
 }
@@ -112,7 +115,8 @@ fn freezes_the_demo_clock_at_the_given_instant() {
     ]))
     .unwrap();
 
-    let binsight::config::DataSourceConfig::Demo { frozen_at } = loaded.config.data_source else {
+    let binsight::config::DataSourceConfig::Demo { frozen_at, .. } = loaded.config.data_source
+    else {
         panic!("expected demo mode");
     };
     assert_eq!(frozen_at, Some("2026-10-06T14:30:00Z".parse().unwrap()));
@@ -149,4 +153,48 @@ fn refuses_a_demo_instant_that_is_not_rfc_3339() {
         error.problems[0].setting,
         binsight::config::Setting::DemoNow
     );
+}
+
+#[test]
+fn serves_the_nominal_world_when_asked() {
+    let loaded = validate(&environment(&[
+        ("HOME", "/home/owner"),
+        ("BINSIGHT_PASSWORD", PASSWORD),
+        ("BINSIGHT_DEMO", "true"),
+        ("BINSIGHT_DEMO_WORLD", "nominal"),
+    ]))
+    .unwrap();
+
+    assert!(matches!(
+        loaded.config.data_source,
+        binsight::config::DataSourceConfig::Demo {
+            world: binsight_demo::WorldProfile::Nominal,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn refuses_a_demo_world_outside_demo_mode_or_with_an_unknown_name() {
+    let outside = validate(&environment(&[
+        ("HOME", "/home/owner"),
+        ("BINSIGHT_PASSWORD", PASSWORD),
+        ("BINSIGHT_HELIUS_API_KEY", KEY),
+        ("BINSIGHT_DEMO_WORLD", "nominal"),
+    ]))
+    .unwrap_err();
+    let unknown = validate(&environment(&[
+        ("HOME", "/home/owner"),
+        ("BINSIGHT_PASSWORD", PASSWORD),
+        ("BINSIGHT_DEMO", "true"),
+        ("BINSIGHT_DEMO_WORLD", "calm"),
+    ]))
+    .unwrap_err();
+
+    insta::assert_snapshot!(format!("{outside}\n{unknown}"), @r"
+    the configuration is invalid:
+      - BINSIGHT_DEMO_WORLD: only a demo has a world to choose; set BINSIGHT_DEMO=true or remove it
+    the configuration is invalid:
+      - BINSIGHT_DEMO_WORLD: expected showcase or nominal (set in the environment)
+    ");
 }
