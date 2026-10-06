@@ -25,17 +25,25 @@ pub enum Purpose {
     /// Listing a wallet's signatures again down to the last point a repair verified, to find
     /// and refill what an earlier listing missed.
     Repair,
+    /// Reading the wallets' token accounts on chain, to compare their balances with the
+    /// registry.
+    BalanceCheck,
+    /// Listing the signatures of a token account whose balance disagrees with the registry, to
+    /// find the transactions that moved its tokens without naming its wallet.
+    TokenAccountListing,
 }
 
 impl Purpose {
     /// Every purpose.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 8] = [
         Self::HistoryListing,
         Self::TransactionFetch,
         Self::TopUp,
         Self::LiveCheck,
         Self::LiveStream,
         Self::Repair,
+        Self::BalanceCheck,
+        Self::TokenAccountListing,
     ];
 
     /// The stable `snake_case` name, as stored and shown.
@@ -47,6 +55,8 @@ impl Purpose {
             Self::LiveCheck => "live_check",
             Self::LiveStream => "live_stream",
             Self::Repair => "repair",
+            Self::BalanceCheck => "balance_check",
+            Self::TokenAccountListing => "token_account_listing",
         }
     }
 }

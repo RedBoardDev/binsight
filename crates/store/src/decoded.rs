@@ -12,6 +12,7 @@ mod pending;
 #[cfg(any(test, feature = "test-support"))]
 mod read;
 mod statements;
+mod token_accounts;
 
 #[cfg(test)]
 mod execution_tests;
@@ -25,6 +26,7 @@ use crate::error::StoreError;
 use crate::store::Store;
 pub use pending::{DecodeBacklog, DecodeScan, RegistryPosition};
 use statements::replace_record;
+pub use token_accounts::{TokenAccountBalance, TokenAccountsRepo};
 
 /// What a decoder concluded about a transaction.
 #[derive(Debug, Clone, PartialEq, Eq)]

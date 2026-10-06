@@ -40,6 +40,7 @@ pub use consistency::{ConsistencyRepo, CurrentDecoder, RegistryInspection, Walle
 pub use credits::{CreditTotal, CreditUsage, CreditsRepo};
 pub use decoded::{
     DecodeBacklog, DecodeOutcome, DecodeRecord, DecodeScan, DecodedRepo, RegistryPosition,
+    TokenAccountBalance, TokenAccountsRepo,
 };
 pub use error::StoreError;
 pub use ingestion::{

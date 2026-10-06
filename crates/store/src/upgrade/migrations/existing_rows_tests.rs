@@ -61,3 +61,29 @@ fn keeps_the_credits_spent_when_the_repair_gets_a_purpose_of_its_own() {
         )
         .unwrap();
 }
+
+#[test]
+fn keeps_the_credits_spent_when_the_balance_checks_get_purposes_of_their_own() {
+    let connection = migrated_to(14);
+    connection
+        .execute_batch(
+            "INSERT INTO credit_daily VALUES
+             ('2026-09-21', 'getSignaturesForAddress', 'history', 'repair', '', 'ok', 2, 2);",
+        )
+        .unwrap();
+
+    connection.execute_batch(MIGRATIONS[14].sql).unwrap();
+
+    let kept: i64 = connection
+        .query_row("SELECT credits FROM credit_daily", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(kept, 2);
+    connection
+        .execute_batch(
+            "INSERT INTO credit_daily VALUES
+             ('2026-09-21', 'getMultipleAccounts', 'history', 'balance_check', '', 'ok', 1, 1),
+             ('2026-09-21', 'getSignaturesForAddress', 'catch_up', 'token_account_listing', '',
+              'ok', 1, 1);",
+        )
+        .unwrap();
+}

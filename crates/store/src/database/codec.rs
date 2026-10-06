@@ -80,8 +80,7 @@ pub(crate) fn flag_to_sql(flag: bool) -> i64 {
     i64::from(flag)
 }
 
-/// Reads back a flag written by [`flag_to_sql`]; no production query reads a flag back yet.
-#[cfg(test)]
+/// Reads back a flag written by [`flag_to_sql`].
 pub(crate) fn flag_from_sql(stored: i64, what: &'static str) -> Result<bool, StoreError> {
     match stored {
         0 => Ok(false),
