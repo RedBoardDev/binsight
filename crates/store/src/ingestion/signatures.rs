@@ -1,4 +1,4 @@
-//! The signatures listed for each wallet, read individually or in bounded metadata pages.
+//! The signatures listed for each wallet.
 //!
 //! A signature is written with its listed page (`listing_page`), in one transaction with its fetch
 //! task and the cursor move. This module names and reads listed signatures; which page to
@@ -9,16 +9,9 @@ use jiff::Timestamp;
 use rusqlite::{OptionalExtension, Row, params};
 
 use crate::database::Database;
-use crate::database::codec::{
-    flag_from_sql, parse_from_sql, timestamp_from_sql, u32_from_sql, unsigned_from_sql,
-};
+use crate::database::codec::{flag_from_sql, timestamp_from_sql, u32_from_sql, unsigned_from_sql};
 use crate::error::StoreError;
 use crate::store::Store;
-
-mod scan;
-mod snapshot;
-
-pub use scan::WalletSignatureScan;
 
 const SELECT_SIGNATURE: &str = "
     SELECT slot, slot_order, block_time, is_failed FROM wallet_signature
@@ -96,11 +89,6 @@ fn signature_from_row(signature: Signature, row: &Row<'_>) -> Result<ListedSigna
             .transpose()?,
         is_failed: flag_from_sql(row.get(3)?, "failure flag")?,
     })
-}
-
-fn listed_from_row(row: &Row<'_>) -> Result<ListedSignature, StoreError> {
-    let signature = parse_from_sql(&row.get::<_, String>(4)?, "listed signature")?;
-    signature_from_row(signature, row)
 }
 
 #[cfg(test)]

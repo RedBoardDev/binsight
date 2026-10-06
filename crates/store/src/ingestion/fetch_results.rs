@@ -148,7 +148,7 @@ mod tests {
         assert_eq!(
             store
                 .fetch_queue()
-                .next_attempt_at(Priority::History)
+                .next_attempt_excluding(Priority::History, Vec::new())
                 .await
                 .unwrap(),
             None
@@ -192,7 +192,7 @@ mod tests {
         assert_eq!(
             store
                 .fetch_queue()
-                .next_attempt_at(Priority::History)
+                .next_attempt_excluding(Priority::History, Vec::new())
                 .await
                 .unwrap(),
             Some(later(30))
@@ -219,7 +219,10 @@ mod tests {
         let queue = store.fetch_queue();
         assert_eq!(queue.counts(WALLET).await.unwrap().unsupported_version, 1);
         assert_eq!(
-            queue.next_attempt_at(Priority::History).await.unwrap(),
+            queue
+                .next_attempt_excluding(Priority::History, Vec::new())
+                .await
+                .unwrap(),
             None
         );
         assert_eq!(

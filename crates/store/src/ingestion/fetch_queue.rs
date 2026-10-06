@@ -79,29 +79,9 @@ impl FetchQueueRepo {
             .await
     }
 
-    /// When the next task of `least_urgent` or a more urgent class falls due, if any waits.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the database cannot be read.
-    pub async fn next_attempt_at(
-        &self,
-        least_urgent: Priority,
-    ) -> Result<Option<Timestamp>, StoreError> {
-        self.database
-            .read(move |connection| {
-                let next: Option<i64> = connection.query_row(
-                    SELECT_NEXT_ATTEMPT,
-                    [urgency_rank(least_urgent)],
-                    |row| row.get(0),
-                )?;
-                next.map(timestamp_from_sql).transpose()
-            })
-            .await
-    }
-
-    /// The next task deadline, excluding requests already in flight. This keeps a pending
-    /// response from turning the worker's idle timer into a busy loop.
+    /// When the next task of `least_urgent` or a more urgent class falls due, if any waits,
+    /// leaving out the requests already in flight (`excluded`). This keeps a pending response
+    /// from turning the worker's idle timer into a busy loop.
     ///
     /// # Errors
     ///
@@ -274,12 +254,18 @@ mod tests {
         let queue = store.fetch_queue();
 
         let due = queue.due(later(60), 10, Priority::Realtime).await.unwrap();
-        let next = queue.next_attempt_at(Priority::Realtime).await.unwrap();
+        let next = queue
+            .next_attempt_excluding(Priority::Realtime, Vec::new())
+            .await
+            .unwrap();
 
         let order: Vec<u64> = due.iter().map(|task| task.slot).collect();
         assert_eq!(order, vec![20]);
         assert_eq!(next, Some(later(60)));
-        let every_class = queue.next_attempt_at(Priority::History).await.unwrap();
+        let every_class = queue
+            .next_attempt_excluding(Priority::History, Vec::new())
+            .await
+            .unwrap();
         assert_eq!(every_class, Some(listed_at()));
     }
 }
