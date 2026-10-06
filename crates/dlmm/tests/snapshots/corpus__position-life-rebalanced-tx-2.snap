@@ -1,0 +1,35 @@
+---
+source: crates/dlmm/tests/corpus.rs
+expression: rendering(&tx)
+---
+InstructionPosition { top: 2, inner: Some(1) } dlmm.rebalancing {"lb_pair":"AG1EhPjsBrkxQWkViuLXF6pQnHwfr9f9sdNneeoykcEJ","position":"3AcfUtyjm4wuwKV3KtEnnt2rQgcXJDdScjm6BNphRocu","owner":"GymS3jpXvCLPSnMQrdFDJYqoU7SiLUH3D625i1QzZfJY","active_bin_id":-117,"x_withdrawn_amount":"19799999996","x_added_amount":"0","y_withdrawn_amount":"0","y_added_amount":"0","x_fee_amount":"0","y_fee_amount":"0","rewards":["0","0"]}
+Ok(
+    TxActivity {
+        lifecycle: [],
+        movements: [
+            PositionMovement {
+                at: InstructionPosition {
+                    top: 2,
+                    inner: Some(
+                        1,
+                    ),
+                },
+                position: Address(3AcfUtyjm4wuwKV3KtEnnt2rQgcXJDdScjm6BNphRocu),
+                pool: Address(AG1EhPjsBrkxQWkViuLXF6pQnHwfr9f9sdNneeoykcEJ),
+                kind: RebalanceWithdrawal,
+                x: RawTokenAmount(
+                    19799999996,
+                ),
+                y: RawTokenAmount(
+                    0,
+                ),
+                price_bin: Some(
+                    -117,
+                ),
+            },
+        ],
+        reward_claims: [],
+        pool_swaps: [],
+        has_unknown_program_activity: false,
+    },
+)

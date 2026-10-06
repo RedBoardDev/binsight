@@ -1,0 +1,38 @@
+# Captured by `cargo xtask fixture capture` (finalized commitment). Each JSON file is the
+# node's `result`, byte for byte; do not edit them by hand.
+
+name = "position-life-rebalanced"
+why = "A wallet opens a position in a pool whose token charges a Token-2022 transfer fee, rebalances it over two transactions, claims its fees, then withdraws and closes it."
+perspective = "GymS3jpXvCLPSnMQrdFDJYqoU7SiLUH3D625i1QzZfJY"
+oracles = []
+captured_at = "2026-10-06"
+
+[[transaction]]
+file = "tx-1.json"
+signature = "2kSigjYvk8NjZPMBfFXB2cDaLYkJz3Ttrjz7UVY8mFpZwaWPZgSDkETHQbSg5pEv7kL6ZQJjWzmSoQBtF9XfsVhL"
+slot = 453174885
+
+[[transaction]]
+file = "tx-2.json"
+signature = "ie3m2Zox1RUu2Pi15n6pTWj9Hm7ioUkrG7kXLoNChRzcWjz1xdNaAnwJbahELrFgYp8LJwM4jNqyGJoLWJxfCSF"
+slot = 453174966
+
+[[transaction]]
+file = "tx-3.json"
+signature = "5E75jwHodoguhxV3AV133Bu9xtWNqiTgXWF552oKVi4BvvSUXzmeAt561guzHMkjkcTnga25r5c1b9bmpMXmnuap"
+slot = 453174966
+
+[[transaction]]
+file = "tx-4.json"
+signature = "21SpcFQxNZYiGzWJWJVxpW2cfKSvtqs3eZ2GEDUHYuz6UCwytX69naaRGFiPhjVCDccDe9bcL7hak8HFLxK28ks8"
+slot = 453202146
+
+[[transaction]]
+file = "tx-5.json"
+signature = "4bhmJEeV1EK9MJjarRwCv6h4iSXcqheugK18uew7VeKn4SRWHW11GzpL37sqd7s7X3EccQfTQvFWtbsNi5oXuYsN"
+slot = 453252783
+
+[[account]]
+file = "accounts/AG1EhPjsBrkxQWkViuLXF6pQnHwfr9f9sdNneeoykcEJ.json"
+address = "AG1EhPjsBrkxQWkViuLXF6pQnHwfr9f9sdNneeoykcEJ"
+slot = 453951137

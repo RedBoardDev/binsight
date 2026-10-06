@@ -1,0 +1,26 @@
+---
+source: crates/dlmm/tests/corpus.rs
+expression: rendering(&tx)
+---
+InstructionPosition { top: 0, inner: Some(1) } dlmm.position_create {"lb_pair":"FJrBQtXFT57xLSyiVrhqg6fKz52ghqtV7Fjg1utG9v9","position":"2yVmeEM1xUEr575N8pkCTmBrgBVq3yLRcKLNdHzH3VJY","owner":"5TUvWjeid81ivRQTWSQ6ibfst4x6XGinMWW3J4EkGoug"}
+Ok(
+    TxActivity {
+        lifecycle: [
+            Created {
+                at: InstructionPosition {
+                    top: 0,
+                    inner: Some(
+                        1,
+                    ),
+                },
+                position: Address(2yVmeEM1xUEr575N8pkCTmBrgBVq3yLRcKLNdHzH3VJY),
+                pool: Address(FJrBQtXFT57xLSyiVrhqg6fKz52ghqtV7Fjg1utG9v9),
+                owner: Address(5TUvWjeid81ivRQTWSQ6ibfst4x6XGinMWW3J4EkGoug),
+            },
+        ],
+        movements: [],
+        reward_claims: [],
+        pool_swaps: [],
+        has_unknown_program_activity: false,
+    },
+)

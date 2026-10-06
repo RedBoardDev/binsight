@@ -1,0 +1,35 @@
+---
+source: crates/dlmm/tests/corpus.rs
+expression: rendering(&tx)
+---
+InstructionPosition { top: 1, inner: Some(1) } dlmm.add_liquidity {"lb_pair":"FJrBQtXFT57xLSyiVrhqg6fKz52ghqtV7Fjg1utG9v9","from":"5TUvWjeid81ivRQTWSQ6ibfst4x6XGinMWW3J4EkGoug","position":"2yVmeEM1xUEr575N8pkCTmBrgBVq3yLRcKLNdHzH3VJY","amount_x":"0","amount_y":"2100276886","active_bin_id":-520}
+Ok(
+    TxActivity {
+        lifecycle: [],
+        movements: [
+            PositionMovement {
+                at: InstructionPosition {
+                    top: 1,
+                    inner: Some(
+                        1,
+                    ),
+                },
+                position: Address(2yVmeEM1xUEr575N8pkCTmBrgBVq3yLRcKLNdHzH3VJY),
+                pool: Address(FJrBQtXFT57xLSyiVrhqg6fKz52ghqtV7Fjg1utG9v9),
+                kind: Deposit,
+                x: RawTokenAmount(
+                    0,
+                ),
+                y: RawTokenAmount(
+                    2100276886,
+                ),
+                price_bin: Some(
+                    -520,
+                ),
+            },
+        ],
+        reward_claims: [],
+        pool_swaps: [],
+        has_unknown_program_activity: false,
+    },
+)

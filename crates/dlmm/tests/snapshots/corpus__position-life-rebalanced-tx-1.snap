@@ -1,0 +1,48 @@
+---
+source: crates/dlmm/tests/corpus.rs
+expression: rendering(&tx)
+---
+InstructionPosition { top: 1, inner: Some(1) } dlmm.position_create {"lb_pair":"AG1EhPjsBrkxQWkViuLXF6pQnHwfr9f9sdNneeoykcEJ","position":"3AcfUtyjm4wuwKV3KtEnnt2rQgcXJDdScjm6BNphRocu","owner":"GymS3jpXvCLPSnMQrdFDJYqoU7SiLUH3D625i1QzZfJY"}
+InstructionPosition { top: 3, inner: Some(2) } dlmm.add_liquidity {"lb_pair":"AG1EhPjsBrkxQWkViuLXF6pQnHwfr9f9sdNneeoykcEJ","from":"GymS3jpXvCLPSnMQrdFDJYqoU7SiLUH3D625i1QzZfJY","position":"3AcfUtyjm4wuwKV3KtEnnt2rQgcXJDdScjm6BNphRocu","amount_x":"19999999999","amount_y":"0","active_bin_id":-117}
+Ok(
+    TxActivity {
+        lifecycle: [
+            Created {
+                at: InstructionPosition {
+                    top: 1,
+                    inner: Some(
+                        1,
+                    ),
+                },
+                position: Address(3AcfUtyjm4wuwKV3KtEnnt2rQgcXJDdScjm6BNphRocu),
+                pool: Address(AG1EhPjsBrkxQWkViuLXF6pQnHwfr9f9sdNneeoykcEJ),
+                owner: Address(GymS3jpXvCLPSnMQrdFDJYqoU7SiLUH3D625i1QzZfJY),
+            },
+        ],
+        movements: [
+            PositionMovement {
+                at: InstructionPosition {
+                    top: 3,
+                    inner: Some(
+                        2,
+                    ),
+                },
+                position: Address(3AcfUtyjm4wuwKV3KtEnnt2rQgcXJDdScjm6BNphRocu),
+                pool: Address(AG1EhPjsBrkxQWkViuLXF6pQnHwfr9f9sdNneeoykcEJ),
+                kind: Deposit,
+                x: RawTokenAmount(
+                    19999999999,
+                ),
+                y: RawTokenAmount(
+                    0,
+                ),
+                price_bin: Some(
+                    -117,
+                ),
+            },
+        ],
+        reward_claims: [],
+        pool_swaps: [],
+        has_unknown_program_activity: false,
+    },
+)

@@ -1,0 +1,27 @@
+---
+source: crates/dlmm/tests/corpus.rs
+expression: rendering(&tx)
+---
+InstructionPosition { top: 2, inner: Some(3) } dlmm.position_create {"lb_pair":"B8BH6ZKr64agqNWG51CQWUKrLZZw5L31u2K6hubsZfyf","position":"F9z5eQUGeNS8APGtukY2J2VbKA2bgxdiXSoRuKBX6SxB","owner":"EXfj6MFEr5pGu8C5KNBEo4U9L4BPkSuXEWG7PKbe2eZa"}
+InstructionPosition { top: 3, inner: Some(3) } dlmm.increase_position_length {"lb_pair":"B8BH6ZKr64agqNWG51CQWUKrLZZw5L31u2K6hubsZfyf","position":"F9z5eQUGeNS8APGtukY2J2VbKA2bgxdiXSoRuKBX6SxB","owner":"EXfj6MFEr5pGu8C5KNBEo4U9L4BPkSuXEWG7PKbe2eZa","length":50,"side":1}
+Ok(
+    TxActivity {
+        lifecycle: [
+            Created {
+                at: InstructionPosition {
+                    top: 2,
+                    inner: Some(
+                        3,
+                    ),
+                },
+                position: Address(F9z5eQUGeNS8APGtukY2J2VbKA2bgxdiXSoRuKBX6SxB),
+                pool: Address(B8BH6ZKr64agqNWG51CQWUKrLZZw5L31u2K6hubsZfyf),
+                owner: Address(EXfj6MFEr5pGu8C5KNBEo4U9L4BPkSuXEWG7PKbe2eZa),
+            },
+        ],
+        movements: [],
+        reward_claims: [],
+        pool_swaps: [],
+        has_unknown_program_activity: false,
+    },
+)

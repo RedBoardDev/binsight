@@ -1,0 +1,36 @@
+---
+source: crates/dlmm/tests/corpus.rs
+expression: rendering(&tx)
+---
+InstructionPosition { top: 4, inner: Some(3) } dlmm.composition_fee {"from":"GymS3jpXvCLPSnMQrdFDJYqoU7SiLUH3D625i1QzZfJY","bin_id":-117,"token_x_fee_amount":"0","token_y_fee_amount":"611"}
+InstructionPosition { top: 4, inner: Some(4) } dlmm.rebalancing {"lb_pair":"AG1EhPjsBrkxQWkViuLXF6pQnHwfr9f9sdNneeoykcEJ","position":"3AcfUtyjm4wuwKV3KtEnnt2rQgcXJDdScjm6BNphRocu","owner":"GymS3jpXvCLPSnMQrdFDJYqoU7SiLUH3D625i1QzZfJY","active_bin_id":-117,"x_withdrawn_amount":"0","x_added_amount":"9609765636","y_withdrawn_amount":"0","y_added_amount":"3107167893","x_fee_amount":"0","y_fee_amount":"0","rewards":["0","0"]}
+Ok(
+    TxActivity {
+        lifecycle: [],
+        movements: [
+            PositionMovement {
+                at: InstructionPosition {
+                    top: 4,
+                    inner: Some(
+                        4,
+                    ),
+                },
+                position: Address(3AcfUtyjm4wuwKV3KtEnnt2rQgcXJDdScjm6BNphRocu),
+                pool: Address(AG1EhPjsBrkxQWkViuLXF6pQnHwfr9f9sdNneeoykcEJ),
+                kind: RebalanceDeposit,
+                x: RawTokenAmount(
+                    9609765636,
+                ),
+                y: RawTokenAmount(
+                    3107167893,
+                ),
+                price_bin: Some(
+                    -117,
+                ),
+            },
+        ],
+        reward_claims: [],
+        pool_swaps: [],
+        has_unknown_program_activity: false,
+    },
+)

@@ -1,0 +1,33 @@
+# Captured by `cargo xtask fixture capture` (finalized commitment). Each JSON file is the
+# node's `result`, byte for byte; do not edit them by hand.
+
+name = "position-life-operator"
+why = "An automation opens, funds, claims and closes a position it operates for another owner: the position is the owner's, not the signer's."
+perspective = "EXfj6MFEr5pGu8C5KNBEo4U9L4BPkSuXEWG7PKbe2eZa"
+oracles = ["X-6"]
+captured_at = "2026-10-06"
+
+[[transaction]]
+file = "tx-1.json"
+signature = "3hbPgNddZne6P7NHFk8bQ5FYEewiMraxDfvqMw5yLnNNXodiBiGD5qDxCbJAK54mQEMvPrXh4m37eYzJiGfV84N1"
+slot = 453344635
+
+[[transaction]]
+file = "tx-2.json"
+signature = "ogAuysunPVLPkkDbFsi85j3ZMxZuLAW3NiG6c1WSm9oXXPwKFHufR6MbRLLRyJPgUzQDEs8EytLqPQne79eSgFm"
+slot = 453344635
+
+[[transaction]]
+file = "tx-3.json"
+signature = "4mRbfguVsYfNSSVZkqSg3n4CcC9hwL3f7MtNai65dRxp6MButDPPDqxR8Tft9Z8GtBsKDKAgu27JKJhw2Ch1XPcN"
+slot = 453348020
+
+[[transaction]]
+file = "tx-4.json"
+signature = "dy2dMYAhjGKHnHkKgdwrKFVHmUyMWZ78ihYrGaMhb1yaYGs2Wx7xjmfPNESQxHLv9hi9D77heH3gpdbTA2cUhrC"
+slot = 453348026
+
+[[account]]
+file = "accounts/B8BH6ZKr64agqNWG51CQWUKrLZZw5L31u2K6hubsZfyf.json"
+address = "B8BH6ZKr64agqNWG51CQWUKrLZZw5L31u2K6hubsZfyf"
+slot = 453951142

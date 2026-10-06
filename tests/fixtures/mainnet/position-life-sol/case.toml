@@ -1,0 +1,28 @@
+# Captured by `cargo xtask fixture capture` (finalized commitment). Each JSON file is the
+# node's `result`, byte for byte; do not edit them by hand.
+
+name = "position-life-sol"
+why = "A wallet creates a position, deposits SOL into it, then withdraws, claims its fees and closes it: one whole life of a position in a SOL pool."
+perspective = "5TUvWjeid81ivRQTWSQ6ibfst4x6XGinMWW3J4EkGoug"
+oracles = ["X-8", "X-10"]
+captured_at = "2026-10-06"
+
+[[transaction]]
+file = "tx-1.json"
+signature = "7MBppyXPpt3Cr6bkNYq57dtSdehUbqKLpRPmvJhHo3eNNPYiTCMtkjxe5TaVCWp5z2Vu2KD5yPYt3G1ymGER6dz"
+slot = 453240838
+
+[[transaction]]
+file = "tx-2.json"
+signature = "27kncrqSSSKDE7EGKBM7gi5a6K1rUkKgFXChD1Bje3Y6dxVP2y3J1Lo84nx2TwPtcxqqZWjcXqkMhQVasMLa28zE"
+slot = 453240840
+
+[[transaction]]
+file = "tx-3.json"
+signature = "2hKtyXRs5CJcBrUKbAvCWuEFrpuk6UNh95ATH8Nso6qa1yXSRbNtFB4G1MZCMJGAXWRkPN6eckrLshSYSYLsDEEW"
+slot = 453243985
+
+[[account]]
+file = "accounts/FJrBQtXFT57xLSyiVrhqg6fKz52ghqtV7Fjg1utG9v9.json"
+address = "FJrBQtXFT57xLSyiVrhqg6fKz52ghqtV7Fjg1utG9v9"
+slot = 453951089
