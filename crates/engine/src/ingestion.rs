@@ -5,13 +5,16 @@
 //! wallet's signatures (its whole history page by page, then again from its newest on a
 //! schedule) and writes every page with its fetch tasks and the cursor move in one transaction;
 //! every six hours it also repairs each listing, listing it again down to the last verified point
-//! and filling the gaps it finds. The live listener turns what the stream
-//! reports into fetches and into checks for the listing worker. The fetch worker reads the queue
-//! of tasks the database holds and fetches what is due. The database is the only source of truth:
+//! and filling the gaps it finds. Once a day the balance check compares the wallets' token
+//! accounts with the chain and lists those that disagree, to find the transfers that did not
+//! name their wallet. The live listener turns what the stream reports into fetches and into
+//! checks for the listing worker. The fetch worker reads the queue of tasks the database holds
+//! and fetches what is due. The database is the only source of truth:
 //! the in-memory wake-ups only save a wait. Every worker stops as soon as shutdown is requested;
 //! everything they write is transactional, so stopping in the middle of a page loses nothing.
 //! With no wallet tracked, nothing is ever sent, not even a stream opened.
 
+mod balances;
 mod decoding;
 mod failure_backoff;
 mod fetching;
@@ -120,6 +123,7 @@ impl Ingestion {
             run_live_listener(self, events, shutdown),
             run_sync_monitor(self, shutdown),
             decoding::run_decoder(self, shutdown),
+            balances::run_balance_check(self, shutdown),
         );
     }
 

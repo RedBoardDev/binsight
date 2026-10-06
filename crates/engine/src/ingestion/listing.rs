@@ -23,7 +23,9 @@ mod top_up_rules;
 
 use tokio_util::sync::CancellationToken;
 
+pub(super) use page_listing::{PageError, list_page, listed_signatures, page_error_of};
 pub use repair_rules::{RepairEstimate, estimate_full_repair};
+pub(super) use top_up_rules::read_top_up_page;
 
 use super::Ingestion;
 use listing_step::{ListingWorker, Progress};

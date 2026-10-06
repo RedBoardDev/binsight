@@ -16,7 +16,7 @@ use crate::ingestion::refusal::{Refusal, refusal_of};
 
 /// Why a listing step did not complete.
 #[derive(Debug, thiserror::Error)]
-pub(super) enum PageError {
+pub(in crate::ingestion) enum PageError {
     /// The credit budget holds this class of listing back until this instant.
     #[error("listing deferred by the credit budget until {until}")]
     Deferred {
@@ -44,27 +44,33 @@ pub(super) enum PageError {
 }
 
 /// Lists the page `request` asks for, as `context` says.
-pub(super) async fn list_page(
+pub(in crate::ingestion) async fn list_page(
     ingestion: &Ingestion,
     request: SignaturesRequest,
     context: CallContext,
 ) -> Result<Vec<SignatureInfo>, PageError> {
-    let error = match ingestion.rpc.signatures_for_address(request, context).await {
-        Ok(page) => return Ok(page),
-        Err(error) => error,
-    };
-    Err(match refusal_of(&error, ingestion.clock.now()) {
+    ingestion
+        .rpc
+        .signatures_for_address(request, context)
+        .await
+        .map_err(|error| page_error_of(error, ingestion.clock.now()))
+}
+
+/// What `error`, met at `now`, means for the step that met it: the same rules govern every
+/// listing, and the other reads made like one.
+pub(in crate::ingestion) fn page_error_of(error: RpcError, now: Timestamp) -> PageError {
+    match refusal_of(&error, now) {
         Some(Refusal::Deferred(until)) => PageError::Deferred { until },
         Some(Refusal::Paused(until)) => PageError::Paused {
             until,
             reason: error,
         },
         None => PageError::Rpc(error),
-    })
+    }
 }
 
 /// The signatures of a listed page, as they are written.
-pub(super) fn listed_signatures(page: &[SignatureInfo]) -> Vec<ListedSignature> {
+pub(in crate::ingestion) fn listed_signatures(page: &[SignatureInfo]) -> Vec<ListedSignature> {
     page.iter()
         .map(|entry| ListedSignature {
             signature: entry.signature,

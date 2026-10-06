@@ -13,15 +13,18 @@ use binsight_store::{ListedTop, WalletCursor};
 
 /// What a top-up page holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct TopUpPage {
+pub(in crate::ingestion) struct TopUpPage {
     /// The page's signatures newer than the top, newest first.
-    pub(super) newer: Vec<SignatureInfo>,
+    pub(in crate::ingestion) newer: Vec<SignatureInfo>,
     /// Whether the page reached the top: the top-up ends with it.
-    pub(super) reached_top: bool,
+    pub(in crate::ingestion) reached_top: bool,
 }
 
 /// Reads `page`, listed for a top-up above `top` (`None` for a wallet without any signature).
-pub(super) fn read_top_up_page(top: Option<ListedTop>, page: &[SignatureInfo]) -> TopUpPage {
+pub(in crate::ingestion) fn read_top_up_page(
+    top: Option<ListedTop>,
+    page: &[SignatureInfo],
+) -> TopUpPage {
     let newer: Vec<SignatureInfo> = page
         .iter()
         .take_while(|entry| top.is_none_or(|top| entry.slot >= top.slot))
