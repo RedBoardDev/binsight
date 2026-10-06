@@ -2,53 +2,10 @@
  * The app's only stylesheet. HeroUI's styles bring Tailwind with them; every file after them must
  * stay after them (see midnight.css).
  *
- * HeroUI is imported piece by piece, in the order of its own index.css, with only the components
- * the app uses. A component used without its stylesheet renders unstyled:
- * test/herouiStylesheets.spec.ts names the missing one.
+ * HeroUI is imported whole: a component whose stylesheet is missing renders unstyled with no
+ * error, and the few kilobytes a partial import saves are not worth that trap.
  */
-@layer theme, base, components, utilities;
-@import "tailwindcss";
-@import "tw-animate-css";
-@import "@heroui/styles/base/base.css" layer(base);
-@import "@heroui/styles/base/scrollbar.css" layer(base);
-@import "@heroui/styles/components/close-button.css" layer(components);
-@import "@heroui/styles/components/description.css" layer(components);
-@import "@heroui/styles/components/field-error.css" layer(components);
-@import "@heroui/styles/components/label.css" layer(components);
-@import "@heroui/styles/components/link.css" layer(components);
-@import "@heroui/styles/components/tabs.css" layer(components);
-@import "@heroui/styles/components/button.css" layer(components);
-@import "@heroui/styles/components/button-group.css" layer(components);
-@import "@heroui/styles/components/toggle-button.css" layer(components);
-@import "@heroui/styles/components/toggle-button-group.css" layer(components);
-@import "@heroui/styles/components/dropdown.css" layer(components);
-@import "@heroui/styles/components/menu-item.css" layer(components);
-@import "@heroui/styles/components/menu-section.css" layer(components);
-@import "@heroui/styles/components/switch.css" layer(components);
-@import "@heroui/styles/components/chip.css" layer(components);
-@import "@heroui/styles/components/alert.css" layer(components);
-@import "@heroui/styles/components/empty-state.css" layer(components);
-@import "@heroui/styles/components/skeleton.css" layer(components);
-@import "@heroui/styles/components/spinner.css" layer(components);
-@import "@heroui/styles/components/toast.css" layer(components);
-@import "@heroui/styles/components/input.css" layer(components);
-@import "@heroui/styles/components/card.css" layer(components);
-@import "@heroui/styles/components/separator.css" layer(components);
-@import "@heroui/styles/components/surface.css" layer(components);
-@import "@heroui/styles/components/avatar.css" layer(components);
-@import "@heroui/styles/components/avatar-group.css" layer(components);
-@import "@heroui/styles/components/alert-dialog.css" layer(components);
-@import "@heroui/styles/components/drawer.css" layer(components);
-@import "@heroui/styles/components/modal.css" layer(components);
-@import "@heroui/styles/components/popover.css" layer(components);
-@import "@heroui/styles/components/tooltip.css" layer(components);
-@import "@heroui/styles/components/combo-box.css" layer(components);
-@import "@heroui/styles/components/select.css" layer(components);
-@import "@heroui/styles/components/scroll-shadow.css" layer(components);
-@import "@heroui/styles/themes/shared/theme.css";
-@import "@heroui/styles/themes/default/variables.css" layer(theme);
-@import "@heroui/styles/utilities";
-@import "@heroui/styles/variants";
+@import "@heroui/styles";
 @import "./typography.css";
 @import "./midnight.css";
 @import "./heroui-bridge.css";
