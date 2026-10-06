@@ -34,6 +34,20 @@ pub(crate) enum Outcome {
     Loss,
     /// It ended exactly even, or never moved (an empty shell).
     Flat,
+    /// Its sign is still open: an unpriced movement or reward hides it.
+    Unknown,
+}
+
+impl Outcome {
+    /// The outcome as the query string and the contract name it.
+    pub(crate) const fn name(self) -> &'static str {
+        match self {
+            Self::Win => "win",
+            Self::Loss => "loss",
+            Self::Flat => "flat",
+            Self::Unknown => "unknown",
+        }
+    }
 }
 
 /// How a position's PnL was measured.
@@ -87,8 +101,8 @@ pub(crate) struct ClosedPositionRow {
     pub(crate) market_pnl: Option<Figure>,
     /// How its PnL was measured.
     pub(crate) method: PnlMethod,
-    /// Its proved native PnL sign; `null` when unpriced movements or rewards prevent proving it.
-    pub(crate) outcome: Option<Outcome>,
+    /// How it ended; `unknown` while an unpriced movement or reward hides the sign.
+    pub(crate) outcome: Outcome,
     /// Its PnL per day held (holdings under an hour count as an hour), in percent.
     pub(crate) dpr: PercentFigure,
     /// Whether nothing ever moved: an empty shell (its outcome is `flat`).
@@ -149,12 +163,24 @@ impl From<LedgerStrategy> for Strategy {
     }
 }
 
+impl From<LedgerOutcome> for Outcome {
+    fn from(outcome: LedgerOutcome) -> Self {
+        match outcome {
+            LedgerOutcome::Win => Self::Win,
+            LedgerOutcome::Loss => Self::Loss,
+            LedgerOutcome::Flat => Self::Flat,
+            LedgerOutcome::Unknown => Self::Unknown,
+        }
+    }
+}
+
 impl From<Outcome> for LedgerOutcome {
     fn from(outcome: Outcome) -> Self {
         match outcome {
             Outcome::Win => Self::Win,
             Outcome::Loss => Self::Loss,
             Outcome::Flat => Self::Flat,
+            Outcome::Unknown => Self::Unknown,
         }
     }
 }
@@ -184,12 +210,7 @@ impl From<&views::ClosedPositionRow> for ClosedPositionRow {
                 views::PnlMethodView::Fifo => PnlMethod::Fifo,
                 views::PnlMethodView::Pool => PnlMethod::Pool,
             },
-            outcome: match row.outcome {
-                LedgerOutcome::Win => Some(Outcome::Win),
-                LedgerOutcome::Loss => Some(Outcome::Loss),
-                LedgerOutcome::Flat => Some(Outcome::Flat),
-                LedgerOutcome::Unknown => None,
-            },
+            outcome: row.outcome.into(),
             dpr: (&row.dpr).into(),
             is_shell: row.is_shell,
         }

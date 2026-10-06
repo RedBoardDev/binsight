@@ -6,6 +6,7 @@ use std::collections::BTreeSet;
 use binsight_engine::portfolio::Scope;
 use binsight_engine::portfolio::query::{ClosedQuery, ClosedSort, SearchText};
 use binsight_ledger::facts::Strategy as LedgerStrategy;
+use binsight_ledger::report::closed::Outcome as LedgerOutcome;
 use binsight_ledger::report::valued;
 use binsight_solana::Address;
 use jiff::civil::Date;
@@ -31,9 +32,8 @@ pub(crate) struct HistoryFilters {
     /// A symbol (by prefix), a pair (`BONK/SOL`), a token name, or a mint, pool, position address
     /// or position id (by prefix, from 4 characters); 1 to 64 characters.
     pub(crate) search: Option<String>,
-    /// Comma-separated outcomes: `win`, `loss`, `flat` (exactly even, or an empty shell).
-    /// Explicit outcomes include only proved signs. Absent: every closed life, including
-    /// those with an indeterminate outcome.
+    /// Comma-separated outcomes: `win`, `loss`, `flat` (exactly even, or an empty shell),
+    /// `unknown` (the sign is still open). Absent: every closed position.
     #[serde(default, deserialize_with = "comma_list")]
     #[param(value_type = Option<String>)]
     pub(crate) outcome: Vec<Outcome>,
@@ -93,7 +93,7 @@ impl HistoryFilters {
             outcomes: self
                 .outcome
                 .iter()
-                .map(|outcome| (*outcome).into())
+                .map(|outcome| LedgerOutcome::from(*outcome))
                 .collect(),
             strategies: self
                 .strategy
@@ -138,12 +138,7 @@ pub(crate) fn fingerprint(query: &ClosedQuery) -> Result<String, ApiError> {
     let mut outcomes: Vec<_> = query
         .outcomes
         .iter()
-        .map(|outcome| match outcome {
-            binsight_ledger::report::closed::Outcome::Win => "win",
-            binsight_ledger::report::closed::Outcome::Loss => "loss",
-            binsight_ledger::report::closed::Outcome::Flat => "flat",
-            binsight_ledger::report::closed::Outcome::Unknown => "unknown",
-        })
+        .map(|outcome| Outcome::from(*outcome).name())
         .collect();
     let mut strategies: Vec<_> = query
         .strategies

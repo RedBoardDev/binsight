@@ -482,7 +482,7 @@
           {
             "name": "outcome",
             "in": "query",
-            "description": "Comma-separated outcomes: `win`, `loss`, `flat` (exactly even, or an empty shell).\nExplicit outcomes include only proved signs. Absent: every closed life, including\nthose with an indeterminate outcome.",
+            "description": "Comma-separated outcomes: `win`, `loss`, `flat` (exactly even, or an empty shell),\n`unknown` (the sign is still open). Absent: every closed position.",
             "required": false,
             "schema": {
               "type": "string"
@@ -1995,6 +1995,7 @@
           "pnl_pct",
           "lp_pnl",
           "method",
+          "outcome",
           "dpr",
           "is_shell"
         ],
@@ -2066,15 +2067,8 @@
             "description": "When it opened."
           },
           "outcome": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Outcome",
-                "description": "Its proved native PnL sign; `null` when unpriced movements or rewards prevent proving it."
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "$ref": "#/components/schemas/Outcome",
+            "description": "How it ended; `unknown` while an unpriced movement or reward hides the sign."
           },
           "pnl": {
             "$ref": "#/components/schemas/Figure",
@@ -3509,7 +3503,8 @@
         "enum": [
           "win",
           "loss",
-          "flat"
+          "flat",
+          "unknown"
         ]
       },
       "Overview": {

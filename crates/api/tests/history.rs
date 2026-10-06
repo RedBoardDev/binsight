@@ -164,6 +164,8 @@ async fn keeps_only_what_the_filters_name() {
 
     let (flat, _) = all_pages(&app, "outcome=flat", 200).await;
     let (clear, _) = all_pages(&app, "outcome=win,loss", 200).await;
+    let (unknown, _) = all_pages(&app, "outcome=unknown", 200).await;
+    let (all_but_flat, _) = all_pages(&app, "outcome=win,loss,unknown", 200).await;
     let (spot, _) = all_pages(&app, "strategy=spot", 200).await;
     let (all, _) = all_pages(&app, "", 200).await;
 
@@ -178,8 +180,11 @@ async fn keeps_only_what_the_filters_name() {
             .all(|row| row["outcome"] == "win" || row["outcome"] == "loss")
     );
     assert!(flat.iter().any(|row| row["is_shell"] == true));
-    let unclassified = all.iter().filter(|row| row["outcome"].is_null()).count();
+    let unclassified = all.iter().filter(|row| row["outcome"] == "unknown").count();
     assert!(unclassified > 0);
+    assert_eq!(unknown.len(), unclassified);
+    assert!(unknown.iter().all(|row| row["outcome"] == "unknown"));
+    assert_eq!(all_but_flat.len(), clear.len() + unknown.len());
     assert_eq!(flat.len() + clear.len() + unclassified, all.len());
     assert!(spot.iter().all(|row| row["strategy"] == "spot"));
 }
@@ -202,9 +207,7 @@ async fn counts_closes_alike_in_the_wallets_and_history() {
 
     assert_eq!(
         per_wallet,
-        wallets["total"]["positions"]["closed"]
-            .as_u64()
-            .unwrap()
+        wallets["total"]["positions"]["closed"].as_u64().unwrap()
     );
     assert_eq!(history["total_count"].as_u64().unwrap(), per_wallet);
     assert_eq!(history["matched_count"], history["total_count"]);

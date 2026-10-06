@@ -568,7 +568,8 @@ export interface components {
              * @description When it opened.
              */
             opened_at: string;
-            outcome?: components["schemas"]["Outcome"] | null;
+            /** @description How it ended; `unknown` while an unpriced movement or reward hides the sign. */
+            outcome: components["schemas"]["Outcome"];
             /** @description Its PnL. */
             pnl: components["schemas"]["Figure"];
             /** @description Its PnL as a percentage of what it invested. */
@@ -1122,7 +1123,7 @@ export interface components {
          * @description How a closed position ended, read on the sign of its PnL in the pool's quote token.
          * @enum {string}
          */
-        Outcome: "win" | "loss" | "flat";
+        Outcome: "win" | "loss" | "flat" | "unknown";
         /** @description Everything the overview shows. */
         Overview: {
             /** @description How fresh its figures are. */
@@ -2152,9 +2153,8 @@ export interface operations {
                  */
                 search?: string;
                 /**
-                 * @description Comma-separated outcomes: `win`, `loss`, `flat` (exactly even, or an empty shell).
-                 *     Explicit outcomes include only proved signs. Absent: every closed life, including
-                 *     those with an indeterminate outcome.
+                 * @description Comma-separated outcomes: `win`, `loss`, `flat` (exactly even, or an empty shell),
+                 *     `unknown` (the sign is still open). Absent: every closed position.
                  */
                 outcome?: string;
                 /** @description Comma-separated strategies: `spot`, `curve`, `bid_ask`. Absent: every strategy. */
