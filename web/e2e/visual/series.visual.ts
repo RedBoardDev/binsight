@@ -54,6 +54,9 @@ test('draws neutral billing-cycle days across months and keeps credit readings v
   await page.goto('/design');
   const figure = page.getByRole('figure', { name: 'Billing cycle credits sample' });
   const slider = page.getByRole('slider', { name: 'Billing cycle credits sample' });
+  await page.evaluate('document.fonts.ready');
+  await slider.scrollIntoViewIfNeeded();
+  await expect(slider).toBeInViewport();
   await slider.focus();
   await page.keyboard.press('Home');
   await expect(slider).toHaveAttribute('aria-valuetext', /Oct 17: 230 credits; daily budget 650/);
@@ -72,6 +75,8 @@ test('draws neutral billing-cycle days across months and keeps credit readings v
   );
   await expect(bars.last()).not.toHaveCSS('fill', mutedFill);
   await expect(figure.locator('svg line[stroke-dasharray]')).not.toHaveCSS('stroke', 'none');
+  await bars.nth(8).scrollIntoViewIfNeeded();
+  await expect(bars.nth(8)).toBeInViewport();
   const november = await bars.nth(8).boundingBox();
   if (november === null) throw new Error('The November day has no pointer bounds');
   await page.mouse.move(november.x + november.width / 2, november.y + november.height / 2);
