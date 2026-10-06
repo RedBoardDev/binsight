@@ -1,6 +1,6 @@
 import { axisLabels } from '@app/applications/Shared/Chart/Domain/axisLabels';
+import { lineSeriesGeometry } from '@app/applications/Shared/Chart/Domain/lineSeriesGeometry';
 import type { PulsePoint } from '@app/applications/Shared/Chart/Domain/pulseGeometry';
-import { sparklineGeometry } from '@app/applications/Shared/Chart/Domain/sparklineGeometry';
 import { ChartReadings } from '@app/applications/Shared/Chart/Ui/ChartReadings';
 import { useElementWidth } from '@app/applications/Shared/Chart/Ui/useElementWidth';
 import { useScrubIndex } from '@app/applications/Shared/Chart/Ui/useScrubIndex';
@@ -46,7 +46,7 @@ export const LineSeriesChart = ({
   const plotHeight = height - DATE_BOTTOM_PADDING_PX;
   const geometry = useMemo(
     () =>
-      sparklineGeometry(
+      lineSeriesGeometry(
         points.map((point) => point.line),
         plotHeight,
         width,

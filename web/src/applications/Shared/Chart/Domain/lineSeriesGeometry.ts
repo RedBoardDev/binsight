@@ -8,29 +8,29 @@ import type { ChartPoint } from '@app/applications/Shared/Chart/Domain/monotoneP
 import { plotValue } from '@app/applications/Shared/Chart/Domain/plotValue';
 import type { Figure } from '@app/applications/Shared/Figure/Domain/figure';
 
-const SPARKLINE_PADDING_PX = 3;
-const SPARKLINE_WIDTH_UNITS = 100;
+const LINE_PADDING_PX = 3;
+const LINE_WIDTH_UNITS = 100;
 
-interface SparklineGeometry {
+interface LineSeriesGeometry {
   readonly strokes: readonly ChartStroke[];
   readonly lastPoint: ChartPoint | null;
   readonly points: readonly ExactChartPoint[];
   readonly positions: readonly number[];
 }
 
-export const sparklineGeometry = (
+export const lineSeriesGeometry = (
   values: readonly Figure[],
   height: number,
-  width = SPARKLINE_WIDTH_UNITS,
-  padding = SPARKLINE_PADDING_PX,
-): SparklineGeometry => {
+  width = LINE_WIDTH_UNITS,
+  padding = LINE_PADDING_PX,
+): LineSeriesGeometry => {
   if (
     !Number.isFinite(padding) ||
     padding <= 0 ||
     !Number.isFinite(height) ||
     height <= padding * 2
   )
-    throw new RangeError('A sparkline needs room for its stroke and point');
+    throw new RangeError('A line series needs room for its stroke and point');
   if (!Number.isFinite(width) || width <= padding * 2)
     throw new RangeError('A line needs room for its horizontal padding');
   const plotted = values.map((figure) =>
