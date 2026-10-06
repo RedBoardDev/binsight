@@ -7,14 +7,21 @@
 //! 2. A direct transaction (only native and token programs at top level) moves capital: each
 //!    transfer is booked with its counterparty.
 //! 3. In a transaction of another protocol, the transfers with another tracked wallet are still
-//!    capital, with that wallet as counterparty; what remains is the protocol's activity.
+//!    capital, with that wallet as counterparty.
+//! 4. A transaction of another protocol that the wallet did not sign, that changes none of its
+//!    token accounts and moves none of its positions, and that only gives it native SOL, all of
+//!    it sent by plain SOL transfers from other accounts, is someone paying the wallet (a bridge
+//!    solver delivering through an aggregator, for example): that SOL is a capital deposit from
+//!    its sender. SOL that also comes back from an account of the wallet's in the protocol (the
+//!    rent of a listing an item sale closes) is the protocol's: rule 5.
+//! 5. What remains of a transaction of another protocol is the protocol's activity.
 mod counterparty;
 mod direct;
 
 use counterparty::{account_owner, capital_counterparty, native_funding};
 use direct::TransferScope;
 
-use super::instructions::Decoded;
+use super::instructions::{Decoded, native_transfer};
 use super::worksheet::Worksheet;
 use super::{Asset, BookError, Counterparty, EntryKind, WalletContext};
 use crate::counterparties::{BridgeId, bridge_called_by};
@@ -102,12 +109,45 @@ pub(super) fn book(sources: TxSources<'_>, sheet: &mut Worksheet) -> Result<(), 
     if kind == TxKind::Direct {
         direct::book(sources, TransferScope::AnyCounterparty, sheet)?;
     }
+    if let [(Asset::Sol, amount)] = sheet.residues().as_slice()
+        && *amount > 0
+        && is_payment_to_the_wallet(sources, sheet, *amount)
+    {
+        let counterparty = capital_counterparty(wallet, tx, decoded, Asset::Sol);
+        return sheet.book(Asset::Sol, *amount, capital(*amount, counterparty));
+    }
     for (asset, amount) in sheet.residues() {
         let counterparty = capital_counterparty(wallet, tx, decoded, asset);
         let entry_kind = classify(sources, (asset, amount), counterparty);
         sheet.book(asset, amount, entry_kind)?;
     }
     Ok(())
+}
+
+/// Whether the `received` SOL left in a protocol transaction is a payment to the wallet (rule
+/// 4): the wallet did not sign, nothing else of it changed, and plain SOL transfers from other
+/// accounts sent it exactly that much.
+fn is_payment_to_the_wallet(sources: TxSources<'_>, sheet: &Worksheet, received: i128) -> bool {
+    let TxSources {
+        wallet,
+        tx,
+        decoded,
+        ..
+    } = sources;
+    let changes_a_token_account = tx.token_balances.iter().any(|balance| {
+        (balance.owner_pre == Some(wallet.wallet) || balance.owner_post == Some(wallet.wallet))
+            && balance.pre != balance.post
+    });
+    let sent_to_the_wallet = decoded
+        .iter()
+        .filter_map(|(_, instruction)| native_transfer(instruction))
+        .filter(|&(from, to, _)| to == wallet.wallet && from != wallet.wallet)
+        .try_fold(0_i128, |total, (_, _, amount)| total.checked_add(amount));
+    matches!(sources.kind, TxKind::Protocol { .. })
+        && !is_wallet_signer(wallet.wallet, tx)
+        && !changes_a_token_account
+        && !sheet.has_position_legs()
+        && sent_to_the_wallet == Some(received)
 }
 
 pub(super) fn classify(

@@ -89,6 +89,11 @@ impl Worksheet {
             .collect()
     }
 
+    /// Whether a position leg is booked: a movement of one of the wallet's positions.
+    pub(super) fn has_position_legs(&self) -> bool {
+        self.entries.iter().any(|entry| entry.source.is_some())
+    }
+
     /// The entries booked.
     pub(super) fn into_entries(self) -> Vec<LedgerEntry> {
         self.entries

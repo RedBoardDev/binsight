@@ -363,3 +363,105 @@ fn books_only_the_tax_of_a_tracked_receipt_in_a_protocol_transaction() {
         ]
     );
 }
+
+/// Another party's transaction calls an aggregator that pays wallet 1 6,767,083,096 lamports,
+/// as a bridge solver delivering through Jupiter does. Wallet 1 signs nothing and no token of it
+/// moves: the SOL is capital it receives, not a gain.
+#[test]
+fn books_sol_delivered_through_an_aggregator_as_a_capital_deposit() {
+    let solver = address(60);
+    let mut tx = transaction(9_981_751, 6_777_064_847);
+    tx.fee_payer = solver;
+    tx.accounts = vec![binsight_solana::transaction::AccountKey {
+        address: solver,
+        is_signer: true,
+        is_writable: true,
+        source: binsight_solana::transaction::AccountSource::Message,
+    }];
+    tx.instructions
+        .push(instruction(address(22), vec![], vec![1]));
+    let mut delivery = transfer(solver, address(1), 6_767_083_096);
+    delivery.position.inner = Some(0);
+    delivery.stack_height = Some(2);
+    tx.instructions.push(delivery);
+    let entries: Vec<_> =
+        book_transaction(&WalletContext::new(address(1)), &tx, &TxActivity::default())
+            .unwrap()
+            .into_iter()
+            .map(|entry| (entry.asset, entry.amount, entry.kind))
+            .collect();
+    assert_eq!(
+        entries,
+        [(
+            Asset::Sol,
+            6_767_083_096,
+            EntryKind::CapitalDeposit {
+                counterparty: Counterparty::External {
+                    address: Some(solver)
+                }
+            }
+        )]
+    );
+}
+
+/// The same payment in a transaction wallet 1 signed is the protocol's activity; with one of
+/// its items leaving it is a sale (a swap); and when 5,136,480 lamports of rent also come back
+/// from its listing account, unsigned, it is the sale of a listed item, the protocol's too. None
+/// of them is capital.
+#[test]
+fn keeps_sol_the_wallet_received_by_its_own_action_out_of_capital() {
+    let mut signed = transaction(1_000_000, 2_000_000);
+    signed.fee_payer = address(60);
+    signed
+        .instructions
+        .push(instruction(address(22), vec![], vec![1]));
+    let mut sold = signed.clone();
+    sold.accounts[0].is_signer = false;
+    sold.token_balances
+        .push(token(address(3), address(1), address(9), 1, 0));
+    sold.native_balances.push(native(address(3), 200, 200));
+    let book = |tx: &binsight_solana::transaction::TransactionView| {
+        book_transaction(&WalletContext::new(address(1)), tx, &TxActivity::default())
+            .unwrap()
+            .into_iter()
+            .map(|entry| (entry.asset, entry.amount, entry.kind))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        book(&signed),
+        [(
+            Asset::Sol,
+            1_000_000,
+            EntryKind::ProtocolActivity {
+                program: address(22)
+            }
+        )]
+    );
+    let mut listed = transaction(1_000_000, 756_136_480);
+    listed.fee_payer = address(60);
+    listed.accounts[0].is_signer = false;
+    listed
+        .instructions
+        .push(instruction(address(22), vec![], vec![1]));
+    let mut payment = transfer(address(60), address(1), 750_000_000);
+    payment.position.inner = Some(0);
+    payment.stack_height = Some(2);
+    listed.instructions.push(payment);
+    assert_eq!(
+        book(&listed),
+        [(
+            Asset::Sol,
+            755_136_480,
+            EntryKind::ProtocolActivity {
+                program: address(22)
+            }
+        )]
+    );
+    assert_eq!(
+        book(&sold),
+        [
+            (Asset::Sol, 1_000_000, EntryKind::SwapIn),
+            (Asset::Token { mint: address(9) }, -1, EntryKind::SwapOut),
+        ]
+    );
+}
