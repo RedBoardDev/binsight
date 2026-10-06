@@ -18,6 +18,8 @@ const INSERT_DETECTED: &str = "
     INSERT INTO wallet_signature (wallet, signature, slot, block_time, is_failed, listed_at)
     VALUES (?1, ?2, ?3, NULL, ?4, ?5)
     ON CONFLICT (wallet, signature) DO NOTHING";
+const COUNT_DETECTED: &str =
+    "UPDATE wallet_cursor SET listed_count = listed_count + 1 WHERE wallet = ?1";
 const QUEUE_LIVE_FETCH: &str = "
     INSERT INTO tx_fetch (signature, state, priority, slot, attempts, next_attempt_at,
                           last_error, updated_at)
@@ -69,6 +71,9 @@ impl SignaturesRepo {
                         detected_at,
                     ],
                 )?;
+                if inserted == 1 {
+                    transaction.execute(COUNT_DETECTED, [detected.wallet.to_string()])?;
+                }
                 transaction.execute(
                     QUEUE_LIVE_FETCH,
                     params![
@@ -108,7 +113,7 @@ mod tests {
 
     #[tokio::test]
     async fn prepares_every_query_against_the_schema() {
-        assert_queries_prepare(&[INSERT_DETECTED, QUEUE_LIVE_FETCH]).await;
+        assert_queries_prepare(&[INSERT_DETECTED, COUNT_DETECTED, QUEUE_LIVE_FETCH]).await;
     }
 
     #[tokio::test]
@@ -195,6 +200,7 @@ mod tests {
 
         let backlog = store.fetch_queue().backlogs().await.unwrap()[&WALLET];
 
+        assert_eq!(backlog.unfetched, 3);
         assert_eq!(backlog.history_unfetched, 2);
         assert_eq!(backlog.failed, 0);
         assert_eq!(backlog.oldest_live_due_at, Some(later(13)));

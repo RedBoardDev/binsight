@@ -167,7 +167,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(report.from_version, 0);
-        assert_eq!(report.to_version, 9);
+        assert_eq!(report.to_version, 10);
         assert_eq!(
             report.applied,
             vec![
@@ -179,7 +179,8 @@ mod tests {
                 "decoded_execution",
                 "drop_listing_rank",
                 "drop_decoded_events",
-                "open_fetch_tasks"
+                "open_fetch_tasks",
+                "wallet_listed_count"
             ]
         );
         store.ping().await.unwrap();
@@ -284,9 +285,9 @@ mod tests {
 
         assert_eq!(
             path.file_name().unwrap(),
-            "binsight-19700101T000000Z-v0.1.0-schema9.db"
+            "binsight-19700101T000000Z-v0.1.0-schema10.db"
         );
         let copy = Store::open_existing(&path).await.unwrap();
-        assert_eq!(copy.schema_status().await.unwrap().current_version, 9);
+        assert_eq!(copy.schema_status().await.unwrap().current_version, 10);
     }
 }

@@ -31,7 +31,8 @@ const INSERT_FETCH_TASK: &str = "
     WHERE tx_fetch.slot != excluded.slot";
 const UPDATE_CURSOR: &str = "
     UPDATE wallet_cursor
-    SET top_signature = ?2, top_slot = ?3, history_before = ?4, history_state = ?5
+    SET top_signature = ?2, top_slot = ?3, history_before = ?4, history_state = ?5,
+        listed_count = listed_count + ?10
     WHERE wallet = ?1 AND top_signature IS ?6 AND top_slot IS ?7 AND history_before IS ?8
           AND history_state = ?9";
 const SELECT_WALLET: &str = "SELECT count(*) FROM wallet WHERE address = ?1";
@@ -118,7 +119,8 @@ fn write_page(connection: &Connection, page: &ListingPage) -> Result<u64, StoreE
             was_top_signature,
             was_top_slot,
             was_before,
-            was_state
+            was_state,
+            unsigned_to_sql(new_signatures, "listed count")?
         ],
     )?;
     if updated != 1 {

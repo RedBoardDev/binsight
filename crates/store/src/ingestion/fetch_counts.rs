@@ -26,6 +26,7 @@ const COUNT_BY_STATE: &str = "
 const SELECT_BACKLOGS: &str = "
     SELECT
         s.wallet,
+        count(*),
         sum(f.priority = 'history' AND f.state IN ('pending', 'empty_retry')),
         sum(f.state = 'failed'),
         sum(f.state = 'unsupported_version'),
@@ -56,6 +57,8 @@ pub struct FetchCounts {
 /// What keeps a wallet's registry behind.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct WalletBacklog {
+    /// Transactions listed but not in the registry yet, whatever keeps them out.
+    pub unfetched: u64,
     /// Transactions of the history import not fetched yet.
     pub history_unfetched: u64,
     /// Transactions whose attempts ran out (still tried again daily).
@@ -75,11 +78,12 @@ pub(super) fn read_backlogs(
     let mut backlogs = BTreeMap::new();
     while let Some(row) = rows.next()? {
         let wallet = parse_from_sql(&row.get::<_, String>(0)?, "wallet address")?;
-        let oldest: Option<i64> = row.get(4)?;
+        let oldest: Option<i64> = row.get(5)?;
         let backlog = WalletBacklog {
-            history_unfetched: unsigned_from_sql(row.get(1)?, "count")?,
-            failed: unsigned_from_sql(row.get(2)?, "count")?,
-            unsupported_version: unsigned_from_sql(row.get(3)?, "count")?,
+            unfetched: unsigned_from_sql(row.get(1)?, "count")?,
+            history_unfetched: unsigned_from_sql(row.get(2)?, "count")?,
+            failed: unsigned_from_sql(row.get(3)?, "count")?,
+            unsupported_version: unsigned_from_sql(row.get(4)?, "count")?,
             oldest_live_due_at: oldest.map(timestamp_from_sql).transpose()?,
         };
         backlogs.insert(wallet, backlog);

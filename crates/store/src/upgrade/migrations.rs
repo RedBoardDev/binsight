@@ -63,6 +63,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "open_fetch_tasks",
         sql: include_str!("../../migrations/0009_open_fetch_tasks.sql"),
     },
+    Migration {
+        version: 10,
+        name: "wallet_listed_count",
+        sql: include_str!("../../migrations/0010_wallet_listed_count.sql"),
+    },
 ];
 
 #[cfg(test)]
@@ -155,6 +160,33 @@ mod tests {
             .query_row("SELECT payload FROM decoded_event", [], |row| row.get(0))
             .unwrap();
         assert_eq!(payload, "{\"amount\":\"1\"}");
+    }
+
+    #[test]
+    fn starts_each_wallet_listed_count_from_its_listed_signatures() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        let (before, added) = MIGRATIONS.split_at(9);
+        for migration in before {
+            connection.execute_batch(migration.sql).unwrap();
+        }
+        connection
+            .execute_batch(
+                "INSERT INTO wallet VALUES ('a', 0), ('b', 0);
+                 INSERT INTO wallet_cursor (wallet, history_state) VALUES
+                     ('a', 'not_started'), ('b', 'not_started');
+                 INSERT INTO wallet_signature VALUES
+                     ('a', 's1', 1, NULL, 0, 0), ('a', 's2', 2, NULL, 0, 0);",
+            )
+            .unwrap();
+        connection.execute_batch(added[0].sql).unwrap();
+        let counts: Vec<(String, i64)> = connection
+            .prepare("SELECT wallet, listed_count FROM wallet_cursor ORDER BY wallet")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(counts, [("a".to_owned(), 2), ("b".to_owned(), 0)]);
     }
 
     #[test]

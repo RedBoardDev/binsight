@@ -1,7 +1,9 @@
-//! The tracked wallets, each with its listing cursor.
+//! The tracked wallets, each with its listing cursor and how much of it is listed.
 //!
 //! Adding a wallet creates its cursor in the same transaction, so a tracked wallet always has
 //! one. This module stores and lists wallets; what to do with them is the engine's job.
+
+use std::collections::BTreeMap;
 
 use binsight_solana::Address;
 use jiff::Timestamp;
@@ -9,7 +11,9 @@ use rusqlite::{Row, params};
 
 use super::cursor::{WalletCursor, cursor_from_row, cursor_to_sql};
 use crate::database::Database;
-use crate::database::codec::{parse_from_sql, timestamp_from_sql, timestamp_to_sql};
+use crate::database::codec::{
+    parse_from_sql, timestamp_from_sql, timestamp_to_sql, unsigned_from_sql,
+};
 use crate::error::StoreError;
 use crate::store::Store;
 
@@ -22,6 +26,21 @@ const SELECT_ALL: &str = "
     SELECT w.address, w.added_at, c.top_signature, c.top_slot, c.history_before, c.history_state
     FROM wallet w JOIN wallet_cursor c ON c.wallet = w.address
     ORDER BY w.added_at, w.address";
+
+// The newest listed signature is the cursor's top: one lookup per wallet, whatever its history.
+const SELECT_LISTINGS: &str = "
+    SELECT c.wallet, c.listed_count, s.block_time
+    FROM wallet_cursor AS c
+    LEFT JOIN wallet_signature AS s ON s.wallet = c.wallet AND s.signature = c.top_signature";
+
+/// How much of a wallet's history is listed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WalletListing {
+    /// How many signatures are listed for it.
+    pub listed: u64,
+    /// When the block of its newest listed signature was produced, if known.
+    pub newest_block_time: Option<Timestamp>,
+}
 
 /// A tracked wallet and how far its signatures are listed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,6 +112,34 @@ impl WalletsRepo {
     }
 }
 
+impl WalletsRepo {
+    /// How much of each tracked wallet's history is listed; read from counters, whatever the
+    /// size of the histories.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database cannot be read or holds an invalid row.
+    pub async fn listings(&self) -> Result<BTreeMap<Address, WalletListing>, StoreError> {
+        self.database
+            .read(|connection| {
+                let mut query = connection.prepare(SELECT_LISTINGS)?;
+                let mut rows = query.query([])?;
+                let mut listings = BTreeMap::new();
+                while let Some(row) = rows.next()? {
+                    let wallet = parse_from_sql(&row.get::<_, String>(0)?, "wallet address")?;
+                    let newest: Option<i64> = row.get(2)?;
+                    let listing = WalletListing {
+                        listed: unsigned_from_sql(row.get(1)?, "listed count")?,
+                        newest_block_time: newest.map(timestamp_from_sql).transpose()?,
+                    };
+                    listings.insert(wallet, listing);
+                }
+                Ok(listings)
+            })
+            .await
+    }
+}
+
 fn wallet_from_row(row: &Row<'_>) -> Result<TrackedWallet, StoreError> {
     Ok(TrackedWallet {
         address: parse_from_sql(&row.get::<_, String>(0)?, "wallet address")?,
@@ -111,7 +158,46 @@ mod tests {
 
     #[tokio::test]
     async fn prepares_every_query_against_the_schema() {
-        assert_queries_prepare(&[INSERT_WALLET, INSERT_CURSOR, SELECT_ALL]).await;
+        assert_queries_prepare(&[INSERT_WALLET, INSERT_CURSOR, SELECT_ALL, SELECT_LISTINGS]).await;
+    }
+
+    #[tokio::test]
+    async fn counts_each_signature_listed_or_streamed_once() {
+        use crate::ingestion::test_pages::{WALLET, history_page, listed, listed_at, page_after};
+
+        let (_folder, store) = migrated_store().await;
+        store.wallets().add(WALLET, listed_at()).await.unwrap();
+        let first = history_page(WALLET, vec![listed(2, 30), listed(3, 20)]);
+        let overlapping = page_after(&first, vec![listed(3, 20), listed(4, 10)]);
+        store.signatures().record_listing(first).await.unwrap();
+        store
+            .signatures()
+            .record_listing(overlapping)
+            .await
+            .unwrap();
+        for _seen_twice in 0..2 {
+            store
+                .signatures()
+                .record_detected(crate::DetectedSignature {
+                    wallet: WALLET,
+                    signature: Signature::from_bytes([9; 64]),
+                    slot: 40,
+                    is_failed: false,
+                    detected_at: listed_at(),
+                    fetch_at: listed_at(),
+                })
+                .await
+                .unwrap();
+        }
+
+        let listing = store.wallets().listings().await.unwrap()[&WALLET];
+
+        assert_eq!(listing.listed, 4);
+        assert_eq!(
+            listing.listed,
+            store.fetch_queue().counts(WALLET).await.unwrap().listed
+        );
+        assert_eq!(listing.newest_block_time, Some(listed_at()));
     }
 
     #[tokio::test]
