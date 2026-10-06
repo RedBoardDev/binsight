@@ -10,6 +10,8 @@ pub(crate) struct WalletRef {
     /// The wallet address (base58).
     pub(crate) address: String,
     /// Its label: never empty, at most 10 characters (the short address when the owner gave none).
+    // Utoipa requires literal bounds; keep this aligned with MAX_WALLET_LABEL_CHARS.
+    #[schema(min_length = 1, max_length = 10)]
     pub(crate) label: String,
     /// Its color in charts and legends.
     pub(crate) color: WalletColor,

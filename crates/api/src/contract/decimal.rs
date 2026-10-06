@@ -7,7 +7,7 @@ use utoipa::ToSchema;
 /// An exact decimal number written as text: no exponent, no `+`, no leading zero, no trailing
 /// zero after the point, never `-0`. For example `"61.541203117"`, `"-0.949"`, `"0"`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
-#[schema(value_type = String, pattern = r"^-?(0|[1-9][0-9]*)(\.[0-9]*[1-9])?$", example = "-1.25")]
+#[schema(value_type = String, pattern = r"^(0|-?([1-9][0-9]*(\.[0-9]*[1-9])?|0\.[0-9]*[1-9]))$", example = "-1.25")]
 pub(crate) struct DecimalString(String);
 
 impl DecimalString {
