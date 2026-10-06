@@ -68,6 +68,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "wallet_listed_count",
         sql: include_str!("../../migrations/0010_wallet_listed_count.sql"),
     },
+    Migration {
+        version: 11,
+        name: "raw_tx_never_deleted",
+        sql: include_str!("../../migrations/0011_raw_tx_never_deleted.sql"),
+    },
 ];
 
 #[cfg(test)]
@@ -187,6 +192,30 @@ mod tests {
             .collect::<Result<_, _>>()
             .unwrap();
         assert_eq!(counts, [("a".to_owned(), 2), ("b".to_owned(), 0)]);
+    }
+
+    #[test]
+    fn refuses_to_delete_a_raw_transaction_already_stored() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        let (before, added) = MIGRATIONS.split_at(10);
+        for migration in before {
+            connection.execute_batch(migration.sql).unwrap();
+        }
+        connection
+            .execute_batch(
+                "INSERT INTO raw_tx VALUES
+                 ('kept', 1, NULL, '0', 'finalized', 'base64', 'none', x'00', zeroblob(32), 0);",
+            )
+            .unwrap();
+        connection.execute_batch(added[0].sql).unwrap();
+
+        let deleted = connection.execute("DELETE FROM raw_tx", []);
+
+        assert!(deleted.is_err());
+        let kept: i64 = connection
+            .query_row("SELECT count(*) FROM raw_tx", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(kept, 1);
     }
 
     #[test]

@@ -229,6 +229,27 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn refuses_to_delete_a_stored_transaction() {
+        let (_folder, store) = migrated_store().await;
+        store
+            .raw_tx()
+            .insert_if_absent(sample_record(3))
+            .await
+            .unwrap();
+
+        let attempt = store
+            .database()
+            .write(|connection| Ok(connection.execute("DELETE FROM raw_tx", [])?))
+            .await;
+
+        let Err(StoreError::Sqlite(error)) = attempt else {
+            panic!("the delete was not refused: {attempt:?}");
+        };
+        assert!(error.to_string().contains("raw_tx rows are never deleted"));
+        assert_eq!(store.raw_tx().count().await.unwrap(), 1);
+    }
+
+    #[tokio::test]
     async fn refuses_a_floating_point_value_in_an_integer_column() {
         let (_folder, store) = migrated_store().await;
 
