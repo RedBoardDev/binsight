@@ -1,25 +1,39 @@
-//! Replay proved position lifetimes and ownership before booking each wallet transaction.
+//! The PnL of each liquidity position of a wallet, folded from its transactions.
 //!
-//! Sources retain the raw transaction, original activity and explicit ordering provenance.
-//! Raw quotations require injected pool facts and keep their selected convention explicit.
-//! This module reads neither storage, the network nor a clock. Missing creation or dates
-//! remain visible diagnostics; no position identity is reconstructed.
+//! [`PositionFold`] reads one wallet's transactions oldest first. For each one it decides which
+//! positions are the wallet's, books the transaction with them, then adds each of their
+//! movements to the life of its position. The rules:
+//!
+//! 0. Transactions come in chain order, `(slot, index in the block)`, each once. A transaction
+//!    without its index in the block is refused: no listing rank or block time replaces it.
+//! 1. A life is one position account from its `PositionCreate` to its `PositionClose`. Its
+//!    identity is the account and the creating signature; its owner is the one the creation
+//!    names, whoever signed.
+//! 2. A position moved without a known creation (a history that starts in the middle of its
+//!    life) is the wallet's when its movement moved the wallet's own tokens; its life starts at
+//!    that transaction, with only the movements seen.
+//! 3. Every movement is valued in its own pool's quote token (SOL, then USDC, then USDT) at the
+//!    active bin of its own transaction, in exact integers. A deposit counts what reached the
+//!    position (its booked amount, net of a Token-2022 transfer fee); a withdrawal or a claim
+//!    counts what was paid.
+//! 4. The two halves of a rebalance count like any withdrawal and deposit.
+//! 5. A movement without a bin counts its quote side only and is unpriced, and so is every
+//!    movement in a pool without a supported quote token.
+//! 6. A farming reward paid in the pool's quote token counts at its amount; a reward in any
+//!    other token is unpriced, since no reward price is known yet.
+//!
+//! A life's liquidity PnL (withdrawn + claimed fees + rewards − invested), its quality and its
+//! outcome are read rules of [`crate::report::closed`]. This module reads no storage, network
+//! or clock: the caller supplies the pools' facts.
 
-mod diagnostic;
-mod lifetime;
-mod normalization;
+mod error;
+mod flows;
+mod fold;
+mod life;
 mod ownership;
-mod replay;
-mod source;
+mod valuation;
 
-pub use diagnostic::{LifetimeDiagnostic, LifetimeError};
-pub use lifetime::{
-    LifecycleSource, PositionLifetime, PositionLifetimeHistory, RawActivityEvidence,
-};
-pub use normalization::{
-    BookedPositionTransaction, NormalizationError, NormalizedPositionActivity,
-    QuotedPositionTransaction, SelectedPoolMovement, ValuationError,
-};
-pub use ownership::{PositionActivityOwnership, TransactionOwnership};
-pub use replay::{PositionLifetimes, PositionReplayContext};
-pub use source::{PositionTransaction, TransactionOrderProof};
+pub use error::FoldError;
+pub use flows::PositionFlows;
+pub use fold::{FoldDiagnostics, FoldedTransaction, PositionFold};
+pub use life::{LiveValuation, OpenLife};

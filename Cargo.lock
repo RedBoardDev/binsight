@@ -343,11 +343,13 @@ dependencies = [
 name = "binsight-ledger"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "binsight-core",
  "binsight-dlmm",
  "binsight-solana",
  "jiff",
  "proptest",
+ "serde_json",
  "thiserror",
 ]
 
