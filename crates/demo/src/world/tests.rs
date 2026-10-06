@@ -63,7 +63,7 @@ fn generates_the_planned_world() {
     assert_eq!(closed_today.len(), 8);
     let losses = closed_today
         .iter()
-        .filter(|row| row.valuation.outcome == Some(binsight_ledger::report::closed::Outcome::Loss))
+        .filter(|row| row.valuation.outcome == binsight_ledger::report::closed::Outcome::Loss)
         .count();
     assert!(losses >= 2, "{losses} losses today");
     assert!(

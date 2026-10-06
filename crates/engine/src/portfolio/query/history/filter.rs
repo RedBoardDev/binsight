@@ -68,11 +68,8 @@ impl ClosedQuery {
     ) -> bool {
         let facts = &row.facts;
         let in_day = day.is_none_or(|window| window.contains(facts.closed_at));
-        let in_outcomes = self.outcomes.is_empty()
-            || row
-                .valuation
-                .outcome
-                .is_some_and(|outcome| self.outcomes.contains(&outcome));
+        let in_outcomes =
+            self.outcomes.is_empty() || self.outcomes.contains(&row.valuation.outcome);
         let in_strategies = self.strategies.is_empty()
             || facts
                 .strategy

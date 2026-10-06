@@ -1,10 +1,11 @@
 //! The totals of a set of closed positions: counts, win rate, sums and holding times.
 //!
 //! One rule serves every place that totals closed positions (today's figures, the recent closes,
-//! history, stats, the calendar), so they always agree. The win rate leaves flat positions out:
-//! `wins / (wins + losses)`. The PnL percentage is `Σ PnL / Σ invested`. Every closed position
-//! counts, empty shells included (they are flat): the caller only decides which positions are in
-//! the set by its filters, never by a rule of its own.
+//! history, stats, the calendar), so they always agree. The win rate leaves flat and unknown
+//! positions out: `wins / (wins + losses)`. The PnL percentage is `Σ PnL / Σ invested`. Every
+//! closed position counts, empty shells included (they are flat) and unknown outcomes included
+//! (they are counted apart): the caller only decides which positions are in the set by its
+//! filters, never by a rule of its own.
 
 use binsight_core::error::AmountError;
 use binsight_core::exactness::Exactness;
@@ -25,8 +26,8 @@ pub struct ClosedTotals {
     pub losses: usize,
     /// How many ended flat: exactly even, or empty shells.
     pub flat: usize,
-    /// Closed lives whose native PnL sign is not proved yet.
-    pub unclassified_count: usize,
+    /// How many have an unknown outcome (an unpriced movement or reward hides its sign).
+    pub unknown: usize,
     /// `wins / (wins + losses)`; unavailable without a win or a loss.
     pub win_rate: Figure<Percent>,
     /// The sum of the PnL.
@@ -58,7 +59,7 @@ impl ClosedTotals {
         let count_of = |outcome: Outcome| {
             positions
                 .iter()
-                .filter(|position| position.outcome == Some(outcome))
+                .filter(|position| position.outcome == outcome)
                 .count()
         };
         let (wins, losses) = (count_of(Outcome::Win), count_of(Outcome::Loss));
@@ -70,28 +71,13 @@ impl ClosedTotals {
             .map(|position| position.held_seconds)
             .collect();
         held.sort_unstable();
-        let unclassified_count = positions
-            .iter()
-            .filter(|position| position.outcome.is_none())
-            .count();
-        let unknown_reasons = positions
-            .iter()
-            .filter(|position| position.outcome.is_none())
-            .flat_map(|position| position.pnl.reasons())
-            .filter(|reason| matches!(reason, Reason::UnpricedLeg { .. }))
-            .collect::<Reasons>();
-        let rate_accuracy = if unclassified_count == 0 {
-            Exactness::Complete
-        } else {
-            Exactness::Estimated
-        };
         Ok(Self {
             count: positions.len(),
             wins,
             losses,
             flat: count_of(Outcome::Flat),
-            unclassified_count,
-            win_rate: win_rate(wins, losses).degraded(rate_accuracy, unknown_reasons),
+            unknown: count_of(Outcome::Unknown),
+            win_rate: win_rate(wins, losses),
             pnl: sum(|position| &position.pnl)?,
             fees: sum(|position| &position.claimed_fees)?,
             rewards: sum(|position| &position.rewards)?,
@@ -187,7 +173,7 @@ mod tests {
                 raw: pnl,
                 unit: super::super::valued::MoneyUnit::Sol,
             }),
-            outcome: Some(Outcome::of(crate::facts::QuoteUnits(pnl))),
+            outcome: Outcome::of(crate::facts::QuoteUnits(pnl)),
             held_seconds,
             is_shell: false,
         }
@@ -211,6 +197,20 @@ mod tests {
             totals.pnl_percent(Currency::Sol).unwrap(),
             Figure::Complete(Percent(1_000_000))
         );
+    }
+
+    #[test]
+    fn counts_unknown_outcomes_apart_and_leaves_them_out_of_the_win_rate() {
+        let mut unknown = position(-40, 50);
+        unknown.outcome = Outcome::Unknown;
+        let positions = [position(5, 10), position(-3, 20), unknown];
+        let totals = ClosedTotals::of(&positions).unwrap();
+        assert_eq!(
+            (totals.count, totals.wins, totals.losses, totals.unknown),
+            (3, 1, 1, 1)
+        );
+        assert_eq!(totals.win_rate, Figure::Complete(Percent(50_000_000)));
+        assert_eq!(totals.pnl.value().unwrap().sol, Some(SignedLamports(-38)));
     }
 
     #[test]

@@ -255,7 +255,7 @@ fn includes_unknown_strategy_without_a_filter_but_never_claims_it_is_spot() {
 }
 
 #[test]
-fn pages_unclassified_lives_without_including_them_in_explicit_outcomes() {
+fn pages_unknown_outcomes_without_including_them_in_explicit_outcomes() {
     use binsight_ledger::report::closed::Outcome;
     let snapshot = snapshot_with_facts(3, Some(Strategy::Spot), true);
     let context = ReadContext {
@@ -279,7 +279,7 @@ fn pages_unclassified_lives_without_including_them_in_explicit_outcomes() {
         .unwrap();
         assert_eq!(page.matched_count, 3);
         assert_eq!(page.day_groups.as_ref().unwrap()[0].unclassified_count, 3);
-        assert_eq!(page.items[0].outcome, None);
+        assert_eq!(page.items[0].outcome, Outcome::Unknown);
         assert!(ids.insert(page.items[0].id));
         after = page.next;
         if after.is_none() {
@@ -304,4 +304,17 @@ fn pages_unclassified_lives_without_including_them_in_explicit_outcomes() {
         assert_eq!(page.total_count, 3);
         assert_eq!(page.items, Vec::new());
     }
+    query.outcomes = BTreeSet::from([Outcome::Unknown]);
+    let page = closed_page(
+        &snapshot,
+        &query,
+        ClosedPageRequest {
+            as_of: None,
+            after: None,
+            limit: 3,
+        },
+        &context,
+    )
+    .unwrap();
+    assert_eq!(page.matched_count, 3);
 }

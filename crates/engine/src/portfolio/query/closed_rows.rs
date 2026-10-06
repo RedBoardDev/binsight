@@ -59,7 +59,7 @@ pub(super) fn closed_totals(
         wins: totals.wins,
         losses: totals.losses,
         flat: totals.flat,
-        unclassified_count: totals.unclassified_count,
+        unclassified_count: totals.unknown,
         pnl_pct: totals.pnl_percent(currency)?,
         win_rate: totals.win_rate,
         pnl: resolve(&totals.pnl, currency),

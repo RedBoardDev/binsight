@@ -142,6 +142,7 @@ pub(crate) fn fingerprint(query: &ClosedQuery) -> Result<String, ApiError> {
             binsight_ledger::report::closed::Outcome::Win => "win",
             binsight_ledger::report::closed::Outcome::Loss => "loss",
             binsight_ledger::report::closed::Outcome::Flat => "flat",
+            binsight_ledger::report::closed::Outcome::Unknown => "unknown",
         })
         .collect();
     let mut strategies: Vec<_> = query

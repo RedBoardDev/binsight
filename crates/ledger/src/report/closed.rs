@@ -4,8 +4,10 @@
 //! Every amount of a closed position is valued at the SOL/USD rate of its closing day. The
 //! outcome (win, loss, flat) is read on the exact sign of the PnL in the pool's own quote token,
 //! so a dollar-quoted position that gained dollars is a win even if SOL rose more, and an empty
-//! shell (nothing ever moved) is flat like a position that ended exactly even. A position with a
-//! unpriced movement has partial positive flow subtotals and estimated signed PnL.
+//! shell (nothing ever moved) is flat like a position that ended exactly even. When an unpriced
+//! movement or reward hides that sign, the outcome is unknown: the position stays visible with
+//! that outcome instead of a guessed one. A position with an unpriced movement has partial
+//! positive flow subtotals and estimated signed PnL.
 
 use binsight_core::error::AmountError;
 use binsight_core::exactness::Exactness;
@@ -27,6 +29,8 @@ pub enum Outcome {
     Loss,
     /// It ended exactly even, or never moved (an empty shell).
     Flat,
+    /// Its sign cannot be told: a movement or a reward has no price.
+    Unknown,
 }
 
 /// The valued figures of a closed position.
@@ -48,8 +52,8 @@ pub struct ClosedValuation {
     pub pnl: Figure<Valued>,
     /// The same chosen PnL in its selected pool token, before currency conversion.
     pub native_pnl: Figure<Money>,
-    /// Its proved native PnL sign; `None` when unpriced movements or rewards prevent proving it.
-    pub outcome: Option<Outcome>,
+    /// The sign of its native PnL, or `Unknown` when unpriced movements or rewards hide it.
+    pub outcome: Outcome,
     /// How long it was held, in seconds.
     pub held_seconds: i64,
     /// Whether nothing was ever deposited, withdrawn or claimed (an empty shell).
@@ -116,7 +120,7 @@ impl ClosedValuation {
             native_pnl: native_money(pnl, pool),
             lp_pnl: signed(native_signed(lp_pnl, position))?,
             market_pnl,
-            outcome: proven_outcome(position, native_pnl),
+            outcome: outcome_of(position, native_pnl),
             held_seconds: held_seconds(position.opened_at, position.closed_at),
             is_shell: is_shell(position),
         })
@@ -202,15 +206,16 @@ fn value_known(
     value_quote_at(amount, asset, rates.on(position.closed_at))
 }
 
-/// Keeps the sole outcome enum, while refusing to invent the sign of an unpriced native PnL.
-fn proven_outcome(position: &ClosedPositionFacts, native_pnl: QuoteUnits) -> Option<Outcome> {
+/// The outcome of `position`: unknown when an unpriced movement hides the sign, or when an
+/// unpriced reward could still turn a loss or an even result into a gain.
+fn outcome_of(position: &ClosedPositionFacts, native_pnl: QuoteUnits) -> Outcome {
     if position.unpriced_movements > 0 || position.unpriced_rebalances > 0 {
-        return None;
+        return Outcome::Unknown;
     }
     if position.unpriced_rewards > 0 && native_pnl.0 <= 0 {
-        return None;
+        return Outcome::Unknown;
     }
-    Some(Outcome::of(native_pnl))
+    Outcome::of(native_pnl)
 }
 
 /// The signed source quality shared by native PnL and its eventual FX conversion.

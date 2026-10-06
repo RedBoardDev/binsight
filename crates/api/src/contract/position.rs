@@ -184,11 +184,12 @@ impl From<&views::ClosedPositionRow> for ClosedPositionRow {
                 views::PnlMethodView::Fifo => PnlMethod::Fifo,
                 views::PnlMethodView::Pool => PnlMethod::Pool,
             },
-            outcome: row.outcome.map(|outcome| match outcome {
-                LedgerOutcome::Win => Outcome::Win,
-                LedgerOutcome::Loss => Outcome::Loss,
-                LedgerOutcome::Flat => Outcome::Flat,
-            }),
+            outcome: match row.outcome {
+                LedgerOutcome::Win => Some(Outcome::Win),
+                LedgerOutcome::Loss => Some(Outcome::Loss),
+                LedgerOutcome::Flat => Some(Outcome::Flat),
+                LedgerOutcome::Unknown => None,
+            },
             dpr: (&row.dpr).into(),
             is_shell: row.is_shell,
         }

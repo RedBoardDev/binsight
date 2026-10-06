@@ -57,8 +57,8 @@ pub struct ClosedPositionRow {
     pub market_pnl: Option<Figure<Money>>,
     /// How its PnL was measured.
     pub method: PnlMethodView,
-    /// Its proved native PnL sign; `None` when unpriced movements or rewards prevent proving it.
-    pub outcome: Option<Outcome>,
+    /// The sign of its native PnL, or `Unknown` when unpriced movements or rewards hide it.
+    pub outcome: Outcome,
     /// Its PnL per day held, as a percentage of what it invested.
     pub dpr: Figure<Percent>,
     /// Whether nothing ever moved (an empty shell).
