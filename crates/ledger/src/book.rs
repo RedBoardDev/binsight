@@ -131,7 +131,9 @@ pub fn book_transaction(
             instructions::book_burns(&instructions, &deltas, &mut sheet)?;
         }
         residue::book_tracked_transfers(late, &mut sheet)?;
-        swap::book(late, &mut sheet)?;
+        if !positions::moves_tokens_of_unowned_position(wallet.wallet, tx, activity, &owned) {
+            swap::book(late, &mut sheet)?;
+        }
         residue::book(late, &mut sheet)?;
     } else {
         fees::failed(wallet.wallet, tx, &mut sheet)?;

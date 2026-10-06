@@ -4,9 +4,10 @@ use super::worksheet::Worksheet;
 use super::{Asset, BookError, EntryKind, PositionActivitySource};
 mod transfer_fee;
 
-use super::instructions::Decoded;
-use binsight_dlmm::activity::{MovementKind, TxActivity};
+use super::instructions::{Decoded, wallet_token_accounts};
+use binsight_dlmm::activity::{MovementKind, TxActivity, emitter_transfers};
 use binsight_dlmm::pool_tokens::PoolTokens;
+use binsight_solana::transaction::InstructionPosition;
 use binsight_solana::{Address, transaction::TransactionView};
 
 #[derive(Clone, Copy)]
@@ -116,6 +117,40 @@ pub(super) fn book(
         }
     }
     fees.book(sheet)
+}
+
+/// Whether the DLMM instruction that emitted the event at `at` moved tokens from or to a token
+/// account of `wallet`: the movement it reports paid or took the wallet's own tokens.
+pub(crate) fn moves_wallet_tokens(
+    wallet: Address,
+    tx: &TransactionView,
+    at: InstructionPosition,
+) -> bool {
+    let accounts = wallet_token_accounts(wallet, tx);
+    emitter_transfers(tx, at).iter().any(|transfer| {
+        accounts.contains(&transfer.source) || accounts.contains(&transfer.destination)
+    })
+}
+
+/// Whether a movement or reward of a position the wallet does not own moved the wallet's own
+/// tokens. Such a transaction is not a swap: its tokens came from a position, not a market.
+pub(super) fn moves_tokens_of_unowned_position(
+    wallet: Address,
+    tx: &TransactionView,
+    activity: &TxActivity,
+    owned: &OwnedPositions<'_>,
+) -> bool {
+    let movements = activity
+        .movements
+        .iter()
+        .map(|movement| (movement.position, movement.at));
+    let rewards = activity
+        .reward_claims
+        .iter()
+        .map(|reward| (reward.position, reward.at));
+    movements
+        .chain(rewards)
+        .any(|(position, at)| !owned.owns(position) && moves_wallet_tokens(wallet, tx, at))
 }
 
 #[derive(Clone, Copy)]

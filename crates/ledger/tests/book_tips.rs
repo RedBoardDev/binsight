@@ -7,7 +7,7 @@ use binsight_ledger::book::{Asset, EntryKind, LedgerEntry, WalletContext, book_t
 use binsight_ledger::counterparties::LandingService;
 use binsight_solana::Address;
 use binsight_solana::transaction::TransactionView;
-use binsight_solana::well_known::WSOL_MINT;
+use binsight_solana::well_known::{TOKEN_PROGRAM, WSOL_MINT};
 use common::*;
 
 /// One tip account of each landing service, as its documentation writes it.
@@ -102,7 +102,7 @@ fn books_a_tip_to_each_landing_service_as_a_tip() {
     }
 }
 
-/// The wallet swaps 100,000 lamports of wrapped SOL for 20 tokens and tips Helius Sender
+/// The wallet pays 100,000 lamports of wrapped SOL into a pool for 20 tokens and tips Helius Sender
 /// 1,000,000 lamports in the same transaction: the tip is a cost, not a third swap leg.
 #[test]
 fn keeps_a_tip_inside_a_swap_out_of_the_swap_legs() {
@@ -112,6 +112,7 @@ fn keeps_a_tip_inside_a_swap_out_of_the_swap_legs() {
     tx.token_balances = vec![
         token(wsol_account, wallet, WSOL_MINT, 100_000, 0),
         token(token_account, wallet, mint, 0, 20),
+        token(address(30), address(25), WSOL_MINT, 0, 100_000),
     ];
     tx.native_balances.extend([
         native(wsol_account, 2_139_280, 2_039_280),
@@ -119,6 +120,13 @@ fn keeps_a_tip_inside_a_swap_out_of_the_swap_legs() {
     ]);
     tx.instructions
         .push(instruction(address(22), vec![], vec![1]));
+    let mut pay = vec![3];
+    pay.extend(100_000_u64.to_le_bytes());
+    tx.instructions.push(instruction(
+        TOKEN_PROGRAM,
+        vec![wsol_account, address(30), wallet],
+        pay,
+    ));
     let sender: Address = ONE_TIP_ACCOUNT_PER_SERVICE[1].1.parse().unwrap();
     tx.instructions.push(transfer(wallet, sender, 1_000_000));
     assert_same_entries(
