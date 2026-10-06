@@ -1,4 +1,5 @@
 import { expect, type Page } from '@playwright/test';
+import type { ApiSchema } from '../src/lib/api/apiSchema';
 import { E2E_PASSWORD } from './binsightServer';
 import { expectNoA11yViolations } from './expectNoA11yViolations';
 import { test } from './fixtures';
@@ -29,13 +30,35 @@ test('signs in, finds its way around the shell and signs out', async ({ page }, 
       new URL(response.url()).pathname === '/api/v1/overview' &&
       response.request().method() === 'GET',
   );
+  const seriesRead = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/stats/series' &&
+      response.request().method() === 'GET',
+  );
   await signIn(page, E2E_PASSWORD);
   const overviewResponse = await overviewRead;
   expect(overviewResponse.status()).toBe(200);
-  expect(await overviewResponse.json()).toMatchObject({
+  const overview: ApiSchema<'Overview'> = await overviewResponse.json();
+  expect(overview).toMatchObject({
     today: { totals: { pnl: { exactness: expect.any(String) } } },
     net_worth: { total: { exactness: expect.any(String) } },
   });
+  const seriesResponse = await seriesRead;
+  expect(seriesResponse.status()).toBe(200);
+  const series: ApiSchema<'StatsSeries'> = await seriesResponse.json();
+  expect(series.series).toBe('real_pnl');
+  expect(series.bucket).toBe('day');
+  expect(series.window).toEqual(overview.gain.window);
+  expect(series.header.value).toEqual(overview.gain.value);
+  expect(series.points.at(-1)?.line).toEqual(overview.gain.value);
+  expect(series.points.at(-1)?.line_share_of_net_worth).toEqual(overview.gain.pct);
+  const chart = page.getByRole('slider', { name: 'Real PnL', exact: true });
+  await expect(chart).toBeVisible();
+  await chart.focus();
+  await page.keyboard.press('End');
+  await expect(chart).toHaveAttribute('aria-valuenow', String(series.points.length - 1));
+  await expectNoA11yViolations(page);
+  await page.keyboard.press('Escape');
   await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Show net worth breakdown' })).toBeVisible();
   await expect(page.getByRole('status').filter({ hasText: 'Live updates:' })).toHaveText(
@@ -45,6 +68,10 @@ test('signs in, finds its way around the shell and signs out', async ({ page }, 
     },
   );
   await expectNoA11yViolations(page);
+  await page.screenshot({
+    path: `test-results/actual-demo/overview-${testInfo.project.name}.png`,
+    fullPage: testInfo.project.name === 'desktop',
+  });
 
   // includeHidden: the navigation of the other size is display:none, which getByRole skips.
   const navigations = page.getByRole('navigation', { name: 'Main', includeHidden: true });

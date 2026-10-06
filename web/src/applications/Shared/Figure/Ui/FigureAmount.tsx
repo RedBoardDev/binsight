@@ -5,7 +5,11 @@ import type {
   FigureTone,
 } from '@app/applications/Shared/Figure/Domain/formattedNumber';
 import { MASKED_DIGITS } from '@app/applications/Shared/Figure/Domain/maskedDigits';
-import { ExactnessMark, type FigureLayout } from '@app/applications/Shared/Figure/Ui/ExactnessMark';
+import {
+  ExactnessMark,
+  type FigureLayout,
+  type FigureReasonDisplay,
+} from '@app/applications/Shared/Figure/Ui/ExactnessMark';
 import { speakFigure } from '@app/applications/Shared/Figure/Ui/figureSpeech';
 import { useFigureFormatter } from '@app/applications/Shared/Figure/Ui/useFigureFormatter';
 import { UnitMark } from '@app/applications/Shared/Unit/Ui/UnitMark';
@@ -22,6 +26,7 @@ interface FigureAmountProps {
   placement: AmountPlacement;
   signing: FigureSigning;
   layout?: FigureLayout;
+  reasonDisplay?: FigureReasonDisplay;
   // "hidden" in a table cell, whose column header already names the unit.
   unit?: 'shown' | 'hidden';
 }
@@ -31,12 +36,20 @@ export const FigureAmount = ({
   placement,
   signing,
   layout = 'inline',
+  reasonDisplay = 'popover',
   unit = 'shown',
 }: FigureAmountProps) => {
   const { i18n } = useLingui();
   const format = useFigureFormatter();
   const reasons = figure.exactness === 'complete' ? [] : figure.reasons;
-  const mark = <ExactnessMark exactness={figure.exactness} reasons={reasons} layout={layout} />;
+  const mark = (
+    <ExactnessMark
+      exactness={figure.exactness}
+      reasons={reasons}
+      layout={layout}
+      reasonDisplay={reasonDisplay}
+    />
+  );
 
   if (figure.exactness === 'unavailable') {
     return <span className="num inline-flex items-baseline whitespace-nowrap">{mark}</span>;

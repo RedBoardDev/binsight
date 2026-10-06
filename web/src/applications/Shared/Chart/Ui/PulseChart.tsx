@@ -3,14 +3,20 @@ import {
   pulseGeometry,
 } from '@app/applications/Shared/Chart/Domain/pulseGeometry';
 import { useElementWidth } from '@app/applications/Shared/Chart/Ui/useElementWidth';
-import { useScrubIndex } from '@app/applications/Shared/Chart/Ui/useScrubIndex';
+import {
+  type ScrubRetention,
+  useScrubIndex,
+} from '@app/applications/Shared/Chart/Ui/useScrubIndex';
 import { useDateFormatters } from '@app/applications/Shared/Time/Ui/useDateFormatters';
+import { Button } from '@heroui/react';
 import { useLingui } from '@lingui/react/macro';
-import { type ReactNode, useId, useMemo } from 'react';
+import { X } from 'lucide-react';
+import { type ReactNode, useId, useMemo, useRef } from 'react';
 import { PulseBars } from './PulseChart/PulseBars';
 import { PulseCurve } from './PulseChart/PulseCurve';
 import { PulseLegend } from './PulseChart/PulseLegend';
 import { PulseTable } from './PulseChart/PulseTable';
+import { PulseTooltip } from './PulseChart/PulseTooltip';
 
 const DEFAULT_PULSE_HEIGHT_PX = 236;
 const DATE_LABEL_EDGE_PADDING_PX = 24;
@@ -25,6 +31,10 @@ interface PulseChartProps {
   readonly renderReadout: (index: number) => ReactNode;
   readonly describePoint: (index: number) => string;
   readonly height?: number;
+  readonly timeZone?: string;
+  readonly headerEnd?: ReactNode;
+  readonly readoutPlacement?: 'caption' | 'tooltip';
+  readonly readoutRetention?: ScrubRetention;
 }
 
 // The caller formats all four server figures, including hidden mode, in both callbacks.
@@ -38,11 +48,27 @@ export const PulseChart = ({
   renderReadout,
   describePoint,
   height = DEFAULT_PULSE_HEIGHT_PX,
+  timeZone,
+  headerEnd,
+  readoutPlacement = 'caption',
+  readoutRetention = 'gesture',
 }: PulseChartProps) => {
   const { t } = useLingui();
   const { ref, width } = useElementWidth();
-  const { formatShortDate } = useDateFormatters();
+  const { formatShortDate } = useDateFormatters(timeZone);
   const instructionsId = useId();
+  const captionRef = useRef<HTMLElement>(null);
+  const controlsRef = useRef<HTMLDivElement>(null);
+  const closeReadout = () => {
+    onScrub(null);
+    requestAnimationFrame(() => {
+      const controls = controlsRef.current;
+      const target =
+        controls?.querySelector<HTMLElement>('[aria-checked="true"]') ??
+        controls?.querySelector<HTMLElement>('[tabindex="0"]');
+      target?.focus();
+    });
+  };
   const geometry = useMemo(() => pulseGeometry(points, { width, height }), [points, width, height]);
   const selectedIndex =
     activeIndex !== null && points[activeIndex] !== undefined ? activeIndex : null;
@@ -52,11 +78,42 @@ export const PulseChart = ({
     width,
     activeIndex: selectedIndex,
     onScrub,
+    readoutRetention,
   });
   return (
-    <figure className="flex w-full flex-col gap-2" aria-label={label}>
-      <figcaption className="flex min-h-14 items-center">
-        {selectedIndex === null ? <PulseLegend /> : renderReadout(selectedIndex)}
+    <figure
+      className="flex w-full flex-col gap-2"
+      aria-label={label}
+      onKeyDown={(event) => {
+        if (readoutRetention === 'reading' && event.key === 'Escape' && !event.defaultPrevented) {
+          event.preventDefault();
+          closeReadout();
+        }
+      }}
+    >
+      <figcaption
+        ref={captionRef}
+        className={`relative flex flex-wrap items-center justify-between gap-x-4 gap-y-2 ${readoutRetention === 'reading' ? 'min-h-34' : 'min-h-14'}`}
+      >
+        {selectedIndex !== null && readoutPlacement === 'caption' ? (
+          renderReadout(selectedIndex)
+        ) : (
+          <PulseLegend />
+        )}
+        {(selectedIndex === null || readoutPlacement === 'tooltip') && (
+          <div ref={controlsRef}>{headerEnd}</div>
+        )}
+        {selectedIndex !== null && readoutRetention === 'reading' && (
+          <Button
+            isIconOnly
+            variant="ghost"
+            aria-label={t`Close chart reading`}
+            onPress={closeReadout}
+            className="absolute top-0 right-0 size-11"
+          >
+            <X aria-hidden className="size-4" />
+          </Button>
+        )}
       </figcaption>
       <div ref={ref} className="relative w-full">
         <svg
@@ -97,6 +154,14 @@ export const PulseChart = ({
         </svg>
         <div
           {...events}
+          onBlur={(event) => {
+            if (
+              event.relatedTarget instanceof Node &&
+              captionRef.current?.contains(event.relatedTarget)
+            )
+              return;
+            events.onBlur(event);
+          }}
           role="slider"
           tabIndex={points.length === 0 ? -1 : 0}
           aria-label={label}
@@ -109,6 +174,11 @@ export const PulseChart = ({
           aria-disabled={points.length === 0}
           className="absolute inset-0 cursor-crosshair touch-pan-y"
         />
+        {readoutPlacement === 'tooltip' && selectedIndex !== null && (
+          <PulseTooltip x={geometry.positions[selectedIndex] ?? 0} width={width}>
+            {renderReadout(selectedIndex)}
+          </PulseTooltip>
+        )}
       </div>
       <p
         id={instructionsId}

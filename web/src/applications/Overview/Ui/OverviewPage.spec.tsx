@@ -1,4 +1,5 @@
 import { overviewFixture } from '@test/fixtures/overview';
+import { statsSeriesFixture } from '@test/fixtures/statsSeries';
 import { renderAppAt } from '@test/renderAppAt';
 import { errorResponse, jsonResponse, signedInSession, stubApi } from '@test/stubApi';
 import { act, screen, waitFor } from '@testing-library/react';
@@ -10,6 +11,7 @@ describe('OverviewPage', () => {
     const fixture = overviewFixture();
     const fetchStub = stubApi({
       'GET /api/v1/auth/session': signedInSession,
+      'GET /api/v1/stats/series': () => jsonResponse(200, statsSeriesFixture()),
       'GET /api/v1/overview': () => jsonResponse(200, fixture),
     });
     renderAppAt('/?period=3m');
@@ -35,6 +37,7 @@ describe('OverviewPage', () => {
     let attempts = 0;
     stubApi({
       'GET /api/v1/auth/session': signedInSession,
+      'GET /api/v1/stats/series': () => jsonResponse(200, statsSeriesFixture()),
       'GET /api/v1/overview': () =>
         ++attempts === 1
           ? errorResponse(503, 'data_not_ready')
@@ -52,6 +55,7 @@ describe('OverviewPage', () => {
     let hasFailed = false;
     stubApi({
       'GET /api/v1/auth/session': signedInSession,
+      'GET /api/v1/stats/series': () => jsonResponse(200, statsSeriesFixture()),
       'GET /api/v1/overview': () =>
         hasFailed ? errorResponse(503, 'data_not_ready') : jsonResponse(200, overviewFixture()),
     });
@@ -69,6 +73,7 @@ describe('OverviewPage', () => {
     let finish: ((response: Response) => void) | undefined;
     stubApi({
       'GET /api/v1/auth/session': signedInSession,
+      'GET /api/v1/stats/series': () => jsonResponse(200, statsSeriesFixture()),
       'GET /api/v1/overview': () =>
         new Promise<Response>((resolve) => {
           finish = resolve;

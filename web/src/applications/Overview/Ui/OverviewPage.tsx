@@ -1,4 +1,5 @@
 import { useOverview } from '@app/applications/Overview/Api/useOverview.api';
+import { RealPnlPulse } from '@app/applications/Overview/Ui/RealPnlPulse';
 import { PageHeader } from '@app/applications/Shared/Layout/Ui/PageHeader';
 import { SectionError } from '@app/applications/Shared/Layout/Ui/SectionError';
 import { useIsDesktop } from '@app/applications/Shared/Layout/Ui/useIsDesktop';
@@ -50,6 +51,7 @@ export const OverviewPage = () => {
             <div data-freshness={overview.isRefetchError ? 'error' : overview.data.freshness.state}>
               <PageFigures
                 overview={overview.data}
+                graph={<RealPnlPulse layout={isDesktop ? 'desktop' : 'mobile'} />}
                 period={period}
                 historyHref={buildTodayHistoryHref({ window: overview.data.today.window, wallet })}
               />

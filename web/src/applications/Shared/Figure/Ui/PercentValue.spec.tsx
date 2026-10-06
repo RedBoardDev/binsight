@@ -16,6 +16,19 @@ describe('PercentValue', () => {
     expect(screen.getByText('−2.41%')).not.toHaveClass('text-loss');
   });
 
+  it('announces unavailable quality without a button in a static percent reading', () => {
+    renderWithProviders(
+      <PercentValue
+        figure={{ exactness: 'unavailable', reasons: [{ code: 'zero_denominator' }] }}
+        placement="cell"
+        signing="always"
+        reasonDisplay="static"
+      />,
+    );
+    expect(screen.getByText('Not available')).toHaveClass('sr-only');
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
   it('keeps the signed tone when no neutral presentation is requested', () => {
     renderWithProviders(<PercentValue figure={figure} placement="cell" signing="always" />);
     expect(screen.getByText('−2.41%')).toHaveClass('text-loss');

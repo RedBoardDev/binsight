@@ -63,6 +63,40 @@ describe('FigureAmount', () => {
     expect(screen.getByRole('button', { name: 'Why not available?' })).toHaveTextContent('—');
   });
 
+  it('keeps unavailable quality explicit without an interactive trigger in a static reading', () => {
+    renderWithProviders(
+      <FigureAmount
+        figure={{ exactness: 'unavailable', reasons: [{ code: 'zero_denominator' }] }}
+        placement="body"
+        signing="always"
+        reasonDisplay="static"
+      />,
+    );
+    expect(screen.getByText('Not available')).toHaveClass('sr-only');
+    expect(screen.getByText('—')).toHaveAttribute('aria-hidden');
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('keeps the estimate and its amount accessible without a static tab stop', () => {
+    renderWithProviders(
+      <FigureAmount
+        figure={{
+          exactness: 'estimated',
+          value: money('1.5'),
+          reasons: [
+            { code: 'reconstructed_history', wallet: 'test-wallet', until: '2026-10-01T00:00:00Z' },
+          ],
+        }}
+        placement="body"
+        signing="always"
+        reasonDisplay="static"
+      />,
+    );
+    expect(screen.getByText('Estimated')).toBeInTheDocument();
+    expect(screen.getByText('plus 1.500 SOL, estimated')).toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
   it('hides the digits but keeps the sign and the tone', () => {
     displayPreferenceStore.setAmountsHidden(true);
     renderWithProviders(

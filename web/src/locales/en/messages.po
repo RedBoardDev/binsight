@@ -159,6 +159,10 @@ msgstr "Chart readings"
 msgid "Close"
 msgstr "Close"
 
+#: src/applications/Shared/Chart/Ui/PulseChart.tsx
+msgid "Close chart reading"
+msgstr "Close chart reading"
+
 #: src/applications/Shared/Chart/Ui/PriceChart/useCandleReadings.tsx
 msgid "Closing price"
 msgstr "Closing price"
@@ -189,6 +193,8 @@ msgstr "Could not sign out."
 
 #: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/SampleReadout.tsx
 #: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/useSampleReadings.ts
+#: src/applications/Overview/Ui/RealPnlPulse/PulseReadout.tsx
+#: src/applications/Overview/Ui/RealPnlPulse/usePulseReadings.ts
 #: src/applications/Shared/Chart/Ui/PulseChart/PulseLegend.tsx
 msgid "Cumulative"
 msgstr "Cumulative"
@@ -338,6 +344,10 @@ msgstr "Live updates:"
 msgid "Loading overview"
 msgstr "Loading overview"
 
+#: src/applications/Overview/Ui/RealPnlPulse.tsx
+msgid "Loading real PnL"
+msgstr "Loading real PnL"
+
 #: src/applications/Shared/Chart/Ui/PriceChart/useCandleReadings.tsx
 msgid "Low"
 msgstr "Low"
@@ -378,6 +388,7 @@ msgid "Net worth breakdown"
 msgstr "Net worth breakdown"
 
 #: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/useSampleReadings.ts
+#: src/applications/Overview/Ui/RealPnlPulse/usePulseReadings.ts
 #: src/applications/Shared/Chart/Ui/LineSeriesChart.tsx
 #: src/applications/Shared/Chart/Ui/PulseChart.tsx
 #: src/applications/Shared/Chart/Ui/StackedBarChart.tsx
@@ -404,6 +415,7 @@ msgstr "No valuation is available for the positions open at this point."
 msgid "not available"
 msgstr "not available"
 
+#: src/applications/Overview/Ui/RealPnlPulse/PulseReadout.tsx
 #: src/applications/Overview/Ui/TodayHero.tsx
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "Not available"
@@ -472,8 +484,15 @@ msgstr "Price interval"
 
 #: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/SampleReadout.tsx
 #: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/useSampleReadings.ts
+#: src/applications/Overview/Ui/RealPnlPulse/PulseReadout.tsx
+#: src/applications/Overview/Ui/RealPnlPulse/usePulseReadings.ts
 msgid "Profit"
 msgstr "Profit"
+
+#: src/applications/Overview/Ui/RealPnlPulse.tsx
+#: src/applications/Overview/Ui/RealPnlPulse/usePulseReadings.ts
+msgid "Real PnL"
+msgstr "Real PnL"
 
 #: src/applications/Overview/Ui/TodayHero.tsx
 msgid "realized"
@@ -533,6 +552,10 @@ msgstr "Show net worth breakdown"
 #: src/core/Layout/AppShell/FloatingTabBar.tsx
 msgid "Show the tabs"
 msgstr "Show the tabs"
+
+#: src/applications/Overview/Ui/RealPnlPulse.tsx
+msgid "Showing previous readings."
+msgstr "Showing previous readings."
 
 #: src/applications/Auth/Ui/LoginForm.tsx
 msgid "Sign in"
@@ -716,6 +739,8 @@ msgstr "View"
 
 #: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/SampleReadout.tsx
 #: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/useSampleReadings.ts
+#: src/applications/Overview/Ui/RealPnlPulse/PulseReadout.tsx
+#: src/applications/Overview/Ui/RealPnlPulse/usePulseReadings.ts
 msgid "vs net worth"
 msgstr "vs net worth"
 

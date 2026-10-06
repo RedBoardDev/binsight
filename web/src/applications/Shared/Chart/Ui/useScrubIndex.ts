@@ -8,12 +8,14 @@ import {
 } from 'react';
 
 export const TOUCH_SCRUB_THRESHOLD_PX = 10;
+export type ScrubRetention = 'gesture' | 'reading';
 
 interface ScrubOptions {
   readonly positions: readonly number[];
   readonly width: number;
   readonly activeIndex: number | null;
   readonly onScrub: (index: number | null) => void;
+  readonly readoutRetention?: ScrubRetention;
 }
 
 interface ScrubGesture {
@@ -46,6 +48,7 @@ export const useScrubIndex = ({
   width,
   activeIndex,
   onScrub,
+  readoutRetention = 'gesture',
 }: ScrubOptions): ScrubEvents => {
   const gesture = useRef<ScrubGesture | null>(null);
   const choosePoint = (event: PointerEvent<HTMLDivElement>) => {
@@ -100,10 +103,23 @@ export const useScrubIndex = ({
       choosePoint(event);
     },
     onPointerUp: (event) => {
-      if (event.pointerType === 'touch') cancel(event);
+      if (event.pointerType !== 'touch') return;
+      if (readoutRetention === 'reading' && gesture.current?.direction === 'horizontal') {
+        gesture.current = null;
+        if (event.currentTarget.hasPointerCapture?.(event.pointerId))
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        return;
+      }
+      cancel(event);
     },
     onPointerCancel: cancel,
     onPointerLeave: (event) => {
+      if (
+        event.pointerType === 'touch' &&
+        readoutRetention === 'reading' &&
+        gesture.current === null
+      )
+        return;
       if (event.pointerType !== 'touch' || gesture.current?.direction !== 'horizontal')
         cancel(event);
     },
