@@ -14,7 +14,7 @@ describe('Overview real pnl pulse', () => {
     const fixture = statsSeriesFixture();
     const fetchStub = stubApi({
       'GET /api/v1/auth/session': signedInSession,
-      'GET /api/v2/overview': () => jsonResponse(200, overviewFixture()),
+      'GET /api/v1/overview': () => jsonResponse(200, overviewFixture()),
       'GET /api/v1/stats/series': () => jsonResponse(200, fixture),
     });
     renderAppAt('/?period=7d');
@@ -50,7 +50,7 @@ describe('Overview real pnl pulse', () => {
     displayPreferenceStore.setAmountsHidden(true);
     stubApi({
       'GET /api/v1/auth/session': signedInSession,
-      'GET /api/v2/overview': () => jsonResponse(200, overviewFixture()),
+      'GET /api/v1/overview': () => jsonResponse(200, overviewFixture()),
       'GET /api/v1/stats/series': () => jsonResponse(200, statsSeriesFixture()),
     });
     renderAppAt('/');
@@ -81,7 +81,7 @@ describe('Overview real pnl pulse', () => {
     first.line_share_of_net_worth = unavailable;
     stubApi({
       'GET /api/v1/auth/session': signedInSession,
-      'GET /api/v2/overview': () => jsonResponse(200, overviewFixture()),
+      'GET /api/v1/overview': () => jsonResponse(200, overviewFixture()),
       'GET /api/v1/stats/series': () => jsonResponse(200, fixture),
     });
     renderAppAt('/');
@@ -114,7 +114,7 @@ describe('Overview real pnl pulse', () => {
     let attempts = 0;
     const fetchStub = stubApi({
       'GET /api/v1/auth/session': signedInSession,
-      'GET /api/v2/overview': () => jsonResponse(200, overviewFixture()),
+      'GET /api/v1/overview': () => jsonResponse(200, overviewFixture()),
       'GET /api/v1/stats/series': () =>
         ++attempts === 1
           ? errorResponse(400, 'invalid_request')
@@ -144,7 +144,7 @@ describe('Overview real pnl pulse', () => {
     let hasFailed = false;
     stubApi({
       'GET /api/v1/auth/session': signedInSession,
-      'GET /api/v2/overview': () => jsonResponse(200, overviewFixture()),
+      'GET /api/v1/overview': () => jsonResponse(200, overviewFixture()),
       'GET /api/v1/stats/series': () =>
         hasFailed ? errorResponse(503, 'data_not_ready') : jsonResponse(200, statsSeriesFixture()),
     });
@@ -166,7 +166,7 @@ describe('Overview real pnl pulse', () => {
     };
     stubApi({
       'GET /api/v1/auth/session': signedInSession,
-      'GET /api/v2/overview': () => jsonResponse(200, overviewFixture()),
+      'GET /api/v1/overview': () => jsonResponse(200, overviewFixture()),
       'GET /api/v1/stats/series': () => jsonResponse(200, fixture),
     });
     renderAppAt('/');
@@ -183,7 +183,7 @@ describe('Overview real pnl pulse', () => {
   it('clears a selected reading when the URL period changes', async () => {
     stubApi({
       'GET /api/v1/auth/session': signedInSession,
-      'GET /api/v2/overview': () => jsonResponse(200, overviewFixture()),
+      'GET /api/v1/overview': () => jsonResponse(200, overviewFixture()),
       'GET /api/v1/stats/series': () => jsonResponse(200, statsSeriesFixture()),
     });
     const { router } = renderAppAt('/');
@@ -202,7 +202,7 @@ describe('Overview real pnl pulse', () => {
     let finish: ((response: Response) => void) | undefined;
     stubApi({
       'GET /api/v1/auth/session': signedInSession,
-      'GET /api/v2/overview': () => jsonResponse(200, overviewFixture()),
+      'GET /api/v1/overview': () => jsonResponse(200, overviewFixture()),
       'GET /api/v1/stats/series': () =>
         new Promise<Response>((resolve) => {
           finish = resolve;

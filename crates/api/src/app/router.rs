@@ -64,7 +64,6 @@ impl DocumentedRoutes {
             .routes(routes!(settings::get_settings))
             .routes(routes!(wallets::list_wallets))
             .routes(routes!(summary::get_overview))
-            .routes(routes!(summary::get_overview_v2))
             .routes(routes!(open_positions::list_open_positions))
             .routes(routes!(recent_closes::get_recent_closes))
             .routes(routes!(series::get_stats_series))

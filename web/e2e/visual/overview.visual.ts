@@ -13,7 +13,7 @@ const expectPopoverSettled = async (dialog: Locator): Promise<void> => {
 test('shows the overview server readings and opens its breakdown with the keyboard', async ({
   page,
 }, testInfo) => {
-  await page.route('**/api/v2/overview?*', (route) => route.fulfill({ json: overviewFixture() }));
+  await page.route('**/api/v1/overview?*', (route) => route.fulfill({ json: overviewFixture() }));
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible();
   await expect(page.getByText('+1.000', { exact: true })).toBeVisible();
@@ -127,7 +127,7 @@ test('keeps unknown import progress unavailable and dates stale readings in the 
       },
     ],
   };
-  await page.route('**/api/v2/overview?*', (route) => route.fulfill({ json: fixture }));
+  await page.route('**/api/v1/overview?*', (route) => route.fulfill({ json: fixture }));
   await page.goto('/');
   await expect(page.getByText('Cold is importing history', { exact: true })).toBeVisible();
   await expect(page.getByText('Data from 12:30:00 AM', { exact: true })).toBeVisible();
@@ -175,7 +175,7 @@ test('keeps USD figures and an explicit stale date after a failed refresh, then 
   let phase: 'initial' | 'failed' | 'recovered' = 'initial';
   let overviewReads = 0;
   await page.addInitScript('localStorage.setItem("binsight.currency", "usd")');
-  await page.route('**/api/v2/overview?*', (route) => {
+  await page.route('**/api/v1/overview?*', (route) => {
     overviewReads += 1;
     expect(new URL(route.request().url()).searchParams.get('currency')).toBe('usd');
     return phase === 'failed'

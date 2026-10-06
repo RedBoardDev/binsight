@@ -344,23 +344,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v2/overview": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Reads the overview of every wallet, or of one. */
-        get: operations["getOverviewV2"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1093,13 +1076,8 @@ export interface components {
          * @enum {string}
          */
         OpenSharePnlKind: "open";
-        /** @description V1 only emits this response when all raw fee presences are classified. */
-        OpenSummary: components["schemas"]["OpenSummaryFields"] & {
-            /** @description How many have observed raw fees to claim. */
-            unclaimed_position_count: number;
-        };
         /** @description The open positions together. */
-        OpenSummaryFields: {
+        OpenSummary: {
             /** @description How many. */
             count: number;
             /** @description How many are out of range. */
@@ -1110,10 +1088,7 @@ export interface components {
             pnl_pct: components["schemas"]["PercentFigure"];
             /** @description The fees they could claim (the same as the net worth's part). */
             unclaimed_fees: components["schemas"]["Figure"];
-        };
-        /** @description V2 explicitly carries the absence of a complete raw fee classification. */
-        OpenSummaryV2: components["schemas"]["OpenSummaryFields"] & {
-            /** @description How many have observed raw fees to claim; null if any position's presence is unknown. */
+            /** @description How many have fees to claim; null while the fees of one of them are not known yet. */
             unclaimed_position_count: number | null;
         };
         /** @description The totals of the open positions. */
@@ -1148,19 +1123,16 @@ export interface components {
          * @enum {string}
          */
         Outcome: "win" | "loss" | "flat";
-        /** @description The v1 overview; every successful response contains a proved integer fee count. */
-        Overview: components["schemas"]["OverviewFields"] & {
-            /** @description The open positions together. */
-            open: components["schemas"]["OpenSummary"];
-        };
         /** @description Everything the overview shows. */
-        OverviewFields: {
+        Overview: {
             /** @description How fresh its figures are. */
             freshness: components["schemas"]["Freshness"];
             /** @description The real PnL gained over the period. */
             gain: components["schemas"]["Gain"];
             /** @description The net worth now: `total` is the sum of the four parts. */
             net_worth: components["schemas"]["NetWorth"];
+            /** @description The open positions together. */
+            open: components["schemas"]["OpenSummary"];
             /** @description Which wallets lag behind the chain or import their history. */
             sync: components["schemas"]["OverviewSync"];
             /**
@@ -1180,11 +1152,6 @@ export interface components {
             lagging: components["schemas"]["WalletRef"][];
             /** @description The worst state. */
             state: components["schemas"]["SyncState"];
-        };
-        /** @description The v2 overview retains all other figures when a scoped fee presence is unknown. */
-        OverviewV2: components["schemas"]["OverviewFields"] & {
-            /** @description The open positions together. */
-            open: components["schemas"]["OpenSummaryV2"];
         };
         /** @description A percentage (`"2.56"` is 2.56 %) and how far it can be trusted, shaped like [`Figure`]. */
         PercentFigure: {
@@ -2091,7 +2058,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description The engine does not serve figures yet, or the raw fee position count is not completely classified (`data_not_ready`). */
+            /** @description The engine does not serve figures yet (`data_not_ready`). */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -2874,69 +2841,6 @@ export interface operations {
             };
             /** @description Not signed in (`unauthenticated`). */
             401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description The engine does not serve figures yet (`data_not_ready`). */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-        };
-    };
-    getOverviewV2: {
-        parameters: {
-            query?: {
-                /** @description `all` (the default) or the address of a tracked wallet. */
-                wallet?: string;
-                /** @description `today`, `7d`, `1m` (the default), `3m`, `1y` or `all`. */
-                period?: "today" | "7d" | "1m" | "3m" | "1y" | "all";
-                /** @description The currency of the figures (`sol` by default). */
-                currency?: components["schemas"]["Currency"];
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The overview. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OverviewV2"];
-                };
-            };
-            /** @description A query parameter is invalid (`invalid_request`). */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description Not signed in (`unauthenticated`). */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description The wallet is not tracked (`wallet_not_found`). */
-            404: {
                 headers: {
                     [name: string]: unknown;
                 };

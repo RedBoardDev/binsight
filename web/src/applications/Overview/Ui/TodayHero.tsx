@@ -7,8 +7,8 @@ import { Link } from '@heroui/react';
 import { Plural, useLingui } from '@lingui/react/macro';
 
 interface TodayHeroProps {
-  readonly today: ApiSchema<'OverviewV2'>['today'];
-  readonly freshness: ApiSchema<'OverviewV2'>['freshness'];
+  readonly today: ApiSchema<'Overview'>['today'];
+  readonly freshness: ApiSchema<'Overview'>['freshness'];
   readonly historyHref: string;
 }
 

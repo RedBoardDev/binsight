@@ -1,5 +1,4 @@
-//! Both Overview wire versions share one formatter. V1 keeps its integer fee count; V2 can
-//! preserve the other figures when raw fee presence is not yet known for every position.
+//! The Overview on the wire, converted explicitly from the engine's view.
 
 use binsight_engine::portfolio::views;
 use serde::Serialize;
@@ -8,49 +7,11 @@ use utoipa::ToSchema;
 use crate::contract::{
     ClosedTotals, DecimalString, Figure, Freshness, PercentFigure, SyncState, WalletRef, Window,
 };
-use crate::error::{ApiError, ErrorCode};
 use crate::overview::watch::{UnpricedHolding, WatchItem};
-
-/// The v1 overview; every successful response contains a proved integer fee count.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
-pub(crate) struct Overview {
-    #[serde(flatten)]
-    pub(crate) fields: OverviewFields,
-    /// The open positions together.
-    pub(crate) open: OpenSummary,
-}
-
-/// The v2 overview retains all other figures when a scoped fee presence is unknown.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
-pub(crate) struct OverviewV2 {
-    #[serde(flatten)]
-    pub(crate) fields: OverviewFields,
-    /// The open positions together.
-    pub(crate) open: OpenSummaryV2,
-}
-
-/// V1 only emits this response when all raw fee presences are classified.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
-pub(crate) struct OpenSummary {
-    #[serde(flatten)]
-    pub(crate) fields: OpenSummaryFields,
-    /// How many have observed raw fees to claim.
-    pub(crate) unclaimed_position_count: usize,
-}
-
-/// V2 explicitly carries the absence of a complete raw fee classification.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
-pub(crate) struct OpenSummaryV2 {
-    #[serde(flatten)]
-    pub(crate) fields: OpenSummaryFields,
-    /// How many have observed raw fees to claim; null if any position's presence is unknown.
-    #[schema(required = true)]
-    pub(crate) unclaimed_position_count: Option<usize>,
-}
 
 /// Everything the overview shows.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
-pub(crate) struct OverviewFields {
+pub(crate) struct Overview {
     /// The wallet it is about; `null` for every wallet.
     pub(crate) wallet: Option<WalletRef>,
     /// How fresh its figures are.
@@ -66,6 +27,8 @@ pub(crate) struct OverviewFields {
     pub(crate) gain: Gain,
     /// What deserves attention, most urgent first.
     pub(crate) watch: Vec<WatchItem>,
+    /// The open positions together.
+    pub(crate) open: OpenSummary,
 }
 
 /// The synchronization of the wallets the overview covers.
@@ -117,7 +80,7 @@ pub(crate) struct NetWorth {
 
 /// The open positions together.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
-pub(crate) struct OpenSummaryFields {
+pub(crate) struct OpenSummary {
     /// How many.
     pub(crate) count: usize,
     /// How many are out of range.
@@ -128,6 +91,9 @@ pub(crate) struct OpenSummaryFields {
     pub(crate) pnl_pct: PercentFigure,
     /// The fees they could claim (the same as the net worth's part).
     pub(crate) unclaimed_fees: Figure,
+    /// How many have fees to claim; null while the fees of one of them are not known yet.
+    #[schema(required = true)]
+    pub(crate) unclaimed_position_count: Option<usize>,
 }
 
 /// The real PnL gained over a period.
@@ -141,7 +107,7 @@ pub(crate) struct Gain {
     pub(crate) pct: PercentFigure,
 }
 
-impl From<views::OverviewView> for OverviewFields {
+impl From<views::OverviewView> for Overview {
     fn from(view: views::OverviewView) -> Self {
         Self {
             wallet: view.wallet.as_ref().map(WalletRef::from),
@@ -182,11 +148,12 @@ impl From<views::OverviewView> for OverviewFields {
                 pct: (&view.gain.pct).into(),
             },
             watch: view.watch.iter().map(WatchItem::from).collect(),
+            open: (&view.open).into(),
         }
     }
 }
 
-impl From<&views::OpenSummary> for OpenSummaryFields {
+impl From<&views::OpenSummary> for OpenSummary {
     fn from(view: &views::OpenSummary) -> Self {
         Self {
             count: view.count,
@@ -194,40 +161,7 @@ impl From<&views::OpenSummary> for OpenSummaryFields {
             pnl: (&view.pnl).into(),
             pnl_pct: (&view.pnl_pct).into(),
             unclaimed_fees: (&view.unclaimed_fees).into(),
+            unclaimed_position_count: view.unclaimed_position_count,
         }
-    }
-}
-
-impl From<views::OverviewView> for OverviewV2 {
-    fn from(view: views::OverviewView) -> Self {
-        let open = OpenSummaryV2 {
-            fields: (&view.open).into(),
-            unclaimed_position_count: view.open.unclaimed_position_count,
-        };
-        Self {
-            fields: view.into(),
-            open,
-        }
-    }
-}
-
-impl TryFrom<views::OverviewView> for Overview {
-    type Error = ApiError;
-
-    fn try_from(view: views::OverviewView) -> Result<Self, Self::Error> {
-        let count = view.open.unclaimed_position_count.ok_or_else(|| {
-            ApiError::new(
-                ErrorCode::DataNotReady,
-                "the unclaimed fee position count is not known",
-            )
-        })?;
-        let overview = OverviewV2::from(view);
-        Ok(Self {
-            fields: overview.fields,
-            open: OpenSummary {
-                fields: overview.open.fields,
-                unclaimed_position_count: count,
-            },
-        })
     }
 }

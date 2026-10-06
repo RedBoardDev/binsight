@@ -13,7 +13,7 @@ describe('OverviewPage', () => {
     stubApi({
       'GET /api/v1/auth/session': signedInSession,
       'GET /api/v1/stats/series': () => jsonResponse(200, statsSeriesFixture()),
-      'GET /api/v2/overview': () => jsonResponse(200, fixture),
+      'GET /api/v1/overview': () => jsonResponse(200, fixture),
     });
     const { queryClient } = renderAppAt('/');
     expect(await screen.findByText('+1.000')).toBeInTheDocument();
@@ -37,7 +37,7 @@ describe('OverviewPage', () => {
     const fetchStub = stubApi({
       'GET /api/v1/auth/session': signedInSession,
       'GET /api/v1/stats/series': () => jsonResponse(200, statsSeriesFixture()),
-      'GET /api/v2/overview': () => jsonResponse(200, fixture),
+      'GET /api/v1/overview': () => jsonResponse(200, fixture),
     });
     renderAppAt('/?period=3m');
     expect(await screen.findByText('+1.000')).toBeInTheDocument();
@@ -47,7 +47,7 @@ describe('OverviewPage', () => {
       '/history?day=2026-10-06&period=3m',
     );
     const requests = fetchStub.mock.calls.flatMap(([request]) =>
-      request instanceof Request && new URL(request.url).pathname === '/api/v2/overview'
+      request instanceof Request && new URL(request.url).pathname === '/api/v1/overview'
         ? [new URL(request.url)]
         : [],
     );
@@ -63,7 +63,7 @@ describe('OverviewPage', () => {
     stubApi({
       'GET /api/v1/auth/session': signedInSession,
       'GET /api/v1/stats/series': () => jsonResponse(200, statsSeriesFixture()),
-      'GET /api/v2/overview': () =>
+      'GET /api/v1/overview': () =>
         ++attempts === 1
           ? errorResponse(503, 'data_not_ready')
           : jsonResponse(200, overviewFixture()),
@@ -81,7 +81,7 @@ describe('OverviewPage', () => {
     stubApi({
       'GET /api/v1/auth/session': signedInSession,
       'GET /api/v1/stats/series': () => jsonResponse(200, statsSeriesFixture()),
-      'GET /api/v2/overview': () =>
+      'GET /api/v1/overview': () =>
         hasFailed ? errorResponse(503, 'data_not_ready') : jsonResponse(200, overviewFixture()),
     });
     const { queryClient } = renderAppAt('/');
@@ -99,7 +99,7 @@ describe('OverviewPage', () => {
     stubApi({
       'GET /api/v1/auth/session': signedInSession,
       'GET /api/v1/stats/series': () => jsonResponse(200, statsSeriesFixture()),
-      'GET /api/v2/overview': () =>
+      'GET /api/v1/overview': () =>
         new Promise<Response>((resolve) => {
           finish = resolve;
         }),

@@ -9,7 +9,7 @@ export const completeOverviewPercent = (value: string): ApiSchema<'PercentFigure
   value,
 });
 
-export const overviewFixture = (): ApiSchema<'OverviewV2'> => ({
+export const overviewFixture = (): ApiSchema<'Overview'> => ({
   wallet: null,
   freshness: { as_of: '2026-10-06T12:00:00Z', state: 'live', lag_seconds: 0 },
   sync: { state: 'live', lagging: [], importing: [] },

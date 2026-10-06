@@ -6,7 +6,7 @@ import type { ApiSchema } from '@app/lib/api/apiSchema';
 import type { ReactNode } from 'react';
 
 interface OverviewDesktopProps {
-  readonly overview: ApiSchema<'OverviewV2'>;
+  readonly overview: ApiSchema<'Overview'>;
   readonly period: Period;
   readonly historyHref: string;
   readonly graph: ReactNode;

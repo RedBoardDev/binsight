@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 describe('overview reads', () => {
   it('sends wallet period and currency without altering the original decimal strings', async () => {
     const fixture = overviewFixture();
-    const fetchStub = stubApi({ 'GET /api/v2/overview': () => jsonResponse(200, fixture) });
+    const fetchStub = stubApi({ 'GET /api/v1/overview': () => jsonResponse(200, fixture) });
     expect(await getOverview({ wallet: 'all', period: '1m', currency: 'sol' })).toEqual(fixture);
     const request: unknown = fetchStub.mock.calls[0]?.[0];
     expect(request).toBeInstanceOf(Request);
@@ -22,7 +22,7 @@ describe('overview reads', () => {
   });
 
   it('reports an unavailable read without turning it into an empty overview', async () => {
-    stubApi({ 'GET /api/v2/overview': () => errorResponse(503, 'data_not_ready') });
+    stubApi({ 'GET /api/v1/overview': () => errorResponse(503, 'data_not_ready') });
     await expect(
       getOverview({ wallet: 'all', period: '1m', currency: 'sol' }),
     ).rejects.toBeInstanceOf(ApiError);
@@ -32,7 +32,7 @@ describe('overview reads', () => {
     for (const count of [null, 0]) {
       const fixture = overviewFixture();
       fixture.open.unclaimed_position_count = count;
-      stubApi({ 'GET /api/v2/overview': () => jsonResponse(200, fixture) });
+      stubApi({ 'GET /api/v1/overview': () => jsonResponse(200, fixture) });
       const overview = await getOverview({ wallet: 'all', period: '1m', currency: 'sol' });
       expect(overview.open.unclaimed_position_count).toBe(count);
       expect(overview).toEqual(fixture);
@@ -44,7 +44,7 @@ describe('overview reads', () => {
     const legacy = overviewFixture();
     const current = overviewFixture();
     current.open.unclaimed_position_count = null;
-    const fetchStub = stubApi({ 'GET /api/v2/overview': () => jsonResponse(200, current) });
+    const fetchStub = stubApi({ 'GET /api/v1/overview': () => jsonResponse(200, current) });
     const client = createTestQueryClient();
     const legacyKey = ['Overview', 'get', request];
     client.setQueryData(legacyKey, legacy);

@@ -7,7 +7,7 @@ import { Button } from 'react-aria-components';
 import { NetWorthBreakdown } from './NetWorthFigure/NetWorthBreakdown';
 
 interface NetWorthFigureProps {
-  readonly netWorth: ApiSchema<'OverviewV2'>['net_worth'];
+  readonly netWorth: ApiSchema<'Overview'>['net_worth'];
   readonly layout: 'stocks' | 'compact';
 }
 

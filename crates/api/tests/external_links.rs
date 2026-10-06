@@ -66,22 +66,20 @@ async fn supplies_the_same_required_links_in_position_rows_and_details() {
 }
 
 #[tokio::test]
-async fn shares_wallet_links_across_wallets_and_both_overview_versions() {
+async fn shares_wallet_links_across_wallets_and_the_overview() {
     let app = TestApp::demo().await;
     let wallets = app.get_signed_in("/api/v1/wallets").await.json();
     for row in wallets["items"].as_array().unwrap() {
         let wallet = &row["wallet"];
         assert_wallet_links(wallet);
         let address = wallet["address"].as_str().unwrap();
-        for version in [1, 2] {
-            let response = app
-                .get_signed_in(&format!("/api/v{version}/overview?wallet={address}"))
-                .await;
-            assert_eq!(response.status, StatusCode::OK);
-            let overview = response.json();
-            assert_wallet_links(&overview["wallet"]);
-            assert_eq!(overview["wallet"]["links"], wallet["links"]);
-        }
+        let response = app
+            .get_signed_in(&format!("/api/v1/overview?wallet={address}"))
+            .await;
+        assert_eq!(response.status, StatusCode::OK);
+        let overview = response.json();
+        assert_wallet_links(&overview["wallet"]);
+        assert_eq!(overview["wallet"]["links"], wallet["links"]);
     }
     assert_eq!((app.network_io)(), (0, 0));
 }
