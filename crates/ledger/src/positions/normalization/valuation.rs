@@ -1,8 +1,9 @@
 //! Bind normalized pool movements to their transaction bin and selected raw quote.
 //!
-//! Injected pool facts come from the adapter; this boundary checks their agreement with the
-//! captured transaction, not the account snapshot's owner or slot. It does not resolve currencies,
-//! date facts, price third-token rewards or activate the existing reports' Y-only convention.
+//! Each movement is valued in its own pool: a transaction that closes positions in two pools
+//! is valued like two transactions. Injected pool facts come from the adapter; this boundary
+//! checks their agreement with the captured transaction, not the account snapshot's owner or
+//! slot. It does not resolve currencies, date facts or price third-token rewards.
 
 use binsight_core::units::Decimals;
 use binsight_dlmm::activity::PositionMovement;
@@ -21,6 +22,7 @@ pub struct SelectedPoolMovement {
     source: PositionActivitySource,
     position: PositionId,
     movement: PositionMovement,
+    convention: QuoteConvention,
     quoted: QuotedAmount,
 }
 
@@ -40,22 +42,24 @@ impl SelectedPoolMovement {
         &self.movement
     }
 
+    /// The quote selected from its own pool; physical X/Y remain unchanged.
+    pub fn convention(&self) -> QuoteConvention {
+        self.convention
+    }
+
     /// Its known selected quote amount and raw pricing coverage, before signed accounting.
     pub fn quoted(&self) -> QuotedAmount {
         self.quoted
     }
 }
 
-/// A captured book and its owned movements valued in one explicitly selected pool quote.
+/// A captured book and its owned movements, each valued in the quote of its own pool.
 ///
 /// Reward claims remain in [`Self::booked`], explicitly unpriced by this boundary. The original
-/// timestamps, ordering tags, gross evidence and independent fees remain there too. These raw
-/// quotations are not compatible with a Y-only report when the convention selects X.
+/// timestamps, ordering tags, gross evidence and independent fees remain there too.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QuotedPositionTransaction {
     booked: BookedPositionTransaction,
-    pool: PoolFacts,
-    convention: QuoteConvention,
     movements: Vec<SelectedPoolMovement>,
 }
 
@@ -65,16 +69,6 @@ impl QuotedPositionTransaction {
         &self.booked
     }
 
-    /// The injected physical pool facts checked against this source's available metadata.
-    pub fn pool(&self) -> &PoolFacts {
-        &self.pool
-    }
-
-    /// The quote selected from this same pool; physical X/Y remain unchanged.
-    pub fn convention(&self) -> QuoteConvention {
-        self.convention
-    }
-
     /// Every owned normalized pool movement, in the original vector order, not chain order.
     pub fn movements(&self) -> &[SelectedPoolMovement] {
         &self.movements
@@ -82,60 +76,60 @@ impl QuotedPositionTransaction {
 }
 
 impl BookedPositionTransaction {
-    /// Consumes this book and values its normalized pool movements at their own bins.
+    /// Consumes this book and values its normalized pool movements at their own bins, each in
+    /// the quote of its own pool among `pools`.
     ///
-    /// All owned normalized movements and rewards must belong to `pool`; rewards remain
-    /// accessible in the sealed book, without a price inferred from the pair. Pool facts must
-    /// come from the adapter's verified account and mint sources. Available transaction balances
-    /// must agree on decimals and token program. Stablecoin kinds are injected facts here, not
-    /// derived from canonical stablecoin mint addresses. No snapshot owner or slot is proved.
-    /// Missing dates and wallet ordinals remain explicit and do not prevent raw quotation.
+    /// Rewards remain accessible in the sealed book, without a price inferred from a pair. Pool
+    /// facts must come from the adapter's verified account and mint sources. Available
+    /// transaction balances must agree on decimals and token program. Stablecoin kinds are
+    /// injected facts here, not derived from canonical stablecoin mint addresses. Missing dates
+    /// and wallet ordinals remain explicit and do not prevent raw quotation.
     ///
     /// # Errors
-    /// Refuses a different activity pool, unresolved original movement mints, inconsistent
-    /// metadata, an unsupported quote, or an invalid or overflowing raw price or amount.
-    pub fn quote_pool(self, pool: PoolFacts) -> Result<QuotedPositionTransaction, ValuationError> {
-        check_metadata(&self, &pool.base)?;
-        check_metadata(&self, &pool.quote)?;
-        let convention = pool
-            .quote_convention()
-            .ok_or(ValuationError::UnsupportedQuote)?;
+    /// Refuses a movement whose pool is not among `pools`, unresolved original movement mints,
+    /// inconsistent metadata, an unsupported quote, or an invalid or overflowing raw price or
+    /// amount.
+    pub fn quote_pools(
+        self,
+        pools: &[PoolFacts],
+    ) -> Result<QuotedPositionTransaction, ValuationError> {
         let tokens = PoolTokens::of(&self.source().transaction);
         let mut movements = Vec::new();
         for activity in self.activities() {
-            let activity_pool = match activity {
-                NormalizedPositionActivity::Movement { movement, .. } => movement.pool,
-                NormalizedPositionActivity::RewardClaim { reward, .. } => reward.pool,
-            };
-            if activity_pool != pool.address {
-                return Err(ValuationError::PoolMismatch {
-                    expected: pool.address,
-                    observed: activity_pool,
-                });
-            }
-            if let NormalizedPositionActivity::Movement {
+            let NormalizedPositionActivity::Movement {
                 source,
                 position,
                 movement,
             } = *activity
-            {
-                check_mints(&self, &tokens, source, &pool)?;
-                let raw = movement
-                    .price_bin
-                    .map(|bin| price_from_bin(bin, pool.bin_step))
-                    .transpose()?;
-                movements.push(SelectedPoolMovement {
-                    source,
-                    position,
-                    movement,
-                    quoted: convention.value_raw(movement.x, movement.y, raw)?,
-                });
-            }
+            else {
+                continue;
+            };
+            let pool = pools
+                .iter()
+                .find(|pool| pool.address == movement.pool)
+                .ok_or(ValuationError::MissingPool {
+                    pool: movement.pool,
+                })?;
+            check_metadata(&self, &pool.base)?;
+            check_metadata(&self, &pool.quote)?;
+            let convention = pool
+                .quote_convention()
+                .ok_or(ValuationError::UnsupportedQuote)?;
+            check_mints(&self, &tokens, source, pool)?;
+            let raw = movement
+                .price_bin
+                .map(|bin| price_from_bin(bin, pool.bin_step))
+                .transpose()?;
+            movements.push(SelectedPoolMovement {
+                source,
+                position,
+                movement,
+                convention,
+                quoted: convention.value_raw(movement.x, movement.y, raw)?,
+            });
         }
         Ok(QuotedPositionTransaction {
             booked: self,
-            pool,
-            convention,
             movements,
         })
     }
@@ -207,13 +201,11 @@ fn check_metadata(
 /// A sealed movement cannot be quoted without inventing metadata or an amount.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ValuationError {
-    /// The bundle contains an owned activity of a different pool.
-    #[error("the activity pool {observed} differs from the quote pool {expected}")]
-    PoolMismatch {
-        /// The supplied physical pool address.
-        expected: Address,
-        /// The activity's original pool address.
-        observed: Address,
+    /// An owned movement's pool has no supplied facts.
+    #[error("no facts were supplied for the pool {pool}")]
+    MissingPool {
+        /// The movement's pool address.
+        pool: Address,
     },
     /// A nonzero gross movement cannot be associated with its original physical mints.
     #[error("the original movement mints are unresolved")]

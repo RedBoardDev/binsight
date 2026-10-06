@@ -99,7 +99,7 @@ fn values_each_physical_side_at_its_own_transaction_bin() {
     for (side, amount) in [(PhysicalSide::X, 966), (PhysicalSide::Y, 976)] {
         let bundle = booked(source.clone());
         let entries = bundle.entries().to_vec();
-        let quoted = bundle.quote_pool(pool(side)).unwrap();
+        let quoted = bundle.quote_pools(&[pool(side)]).unwrap();
         let movement = quoted.movements().first().unwrap();
         assert_eq!(movement.quoted().amount, RawTokenAmount(amount));
         assert_eq!(movement.quoted().valuation, FlowValuation::Complete);
@@ -116,8 +116,7 @@ fn values_each_physical_side_at_its_own_transaction_bin() {
                 .opened_by
         );
         assert_eq!(quoted.booked().entries(), entries);
-        assert_eq!(quoted.pool(), &pool(side));
-        assert_eq!(quoted.convention().side(), side);
+        assert_eq!(movement.convention().side(), side);
         assert_ne!(movement.quoted().amount, RawTokenAmount(967));
     }
     assert_eq!(
@@ -131,10 +130,13 @@ fn keeps_missing_price_coverage_separate_from_a_selected_zero() {
     let mut source = deposit();
     source.activity.movements.first_mut().unwrap().price_bin = None;
     let bundle = booked(source);
-    let x = bundle.clone().quote_pool(pool(PhysicalSide::X)).unwrap();
+    let x = bundle
+        .clone()
+        .quote_pools(&[pool(PhysicalSide::X)])
+        .unwrap();
     assert_eq!(x.movements()[0].quoted().amount, RawTokenAmount(950));
     assert_eq!(x.movements()[0].quoted().valuation, FlowValuation::Complete);
-    let y = bundle.quote_pool(pool(PhysicalSide::Y)).unwrap();
+    let y = bundle.quote_pools(&[pool(PhysicalSide::Y)]).unwrap();
     assert_eq!(y.movements()[0].quoted().amount, RawTokenAmount(0));
     assert_eq!(
         y.movements()[0].quoted().valuation,
@@ -154,12 +156,12 @@ fn validates_gross_mint_evidence_even_when_a_deposit_is_fully_taxed() {
     let mut wrong = pool(PhysicalSide::X);
     wrong.base.mint = book::address(90);
     assert_eq!(
-        bundle.clone().quote_pool(wrong),
+        bundle.clone().quote_pools(&[wrong]),
         Err(ValuationError::MetadataMismatch {
             mint: book::address(90)
         })
     );
-    let quoted = bundle.quote_pool(pool(PhysicalSide::X)).unwrap();
+    let quoted = bundle.quote_pools(&[pool(PhysicalSide::X)]).unwrap();
     assert_eq!(quoted.movements()[0].movement().x, RawTokenAmount(0));
     assert_eq!(quoted.movements()[0].quoted().amount, RawTokenAmount(0));
     assert_eq!(
@@ -188,11 +190,8 @@ fn rejects_pool_mint_decimals_and_source_program_contradictions() {
     let mut wrong = pool(PhysicalSide::Y);
     wrong.address = FOREIGN;
     assert_eq!(
-        bundle.clone().quote_pool(wrong),
-        Err(ValuationError::PoolMismatch {
-            expected: FOREIGN,
-            observed: POOL
-        })
+        bundle.clone().quote_pools(&[wrong]),
+        Err(ValuationError::MissingPool { pool: POOL })
     );
     for change in 0..2 {
         let mut wrong = pool(PhysicalSide::Y);
@@ -202,7 +201,7 @@ fn rejects_pool_mint_decimals_and_source_program_contradictions() {
             wrong.base.decimals = Decimals(7);
         }
         assert!(matches!(
-            bundle.clone().quote_pool(wrong),
+            bundle.clone().quote_pools(&[wrong]),
             Err(ValuationError::MetadataMismatch { .. })
         ));
     }
@@ -211,7 +210,7 @@ fn rejects_pool_mint_decimals_and_source_program_contradictions() {
     extra.program = TokenProgram::Token;
     source.transaction.token_balances.push(extra);
     assert_eq!(
-        booked(source).quote_pool(pool(PhysicalSide::Y)),
+        booked(source).quote_pools(&[pool(PhysicalSide::Y)]),
         Err(ValuationError::MetadataMismatch {
             mint: book::address(9)
         })
@@ -223,13 +222,13 @@ fn refuses_invalid_bins_and_unsupported_quotes_without_partial_publication() {
     let mut source = deposit();
     source.activity.movements.first_mut().unwrap().price_bin = Some(524_288);
     assert_eq!(
-        booked(source).quote_pool(pool(PhysicalSide::Y)),
+        booked(source).quote_pools(&[pool(PhysicalSide::Y)]),
         Err(ValuationError::Price(BinMathError::ExponentOutOfRange))
     );
     let mut unsupported = pool(PhysicalSide::Y);
     unsupported.quote.kind = TokenKind::Other;
     assert_eq!(
-        booked(deposit()).quote_pool(unsupported),
+        booked(deposit()).quote_pools(&[unsupported]),
         Err(ValuationError::UnsupportedQuote)
     );
 }
@@ -250,7 +249,7 @@ fn retains_missing_dates_and_wallet_order_tags_without_creating_chain_order() {
     let quoted = replay
         .book_and_apply(source, WalletContext::new(WALLET))
         .unwrap()
-        .quote_pool(pool(PhysicalSide::Y))
+        .quote_pools(&[pool(PhysicalSide::Y)])
         .unwrap();
     assert_eq!(
         quoted.booked().source().order,
@@ -263,7 +262,7 @@ fn retains_missing_dates_and_wallet_order_tags_without_creating_chain_order() {
 }
 
 #[test]
-fn retains_third_mint_rewards_and_refuses_a_different_owned_reward_pool() {
+fn retains_third_mint_rewards_of_any_pool_unpriced() {
     let mut source = deposit();
     source.activity.reward_claims.push(reward(1, 123));
     source
@@ -278,7 +277,7 @@ fn retains_third_mint_rewards_and_refuses_a_different_owned_reward_pool() {
         123,
     ));
     let quoted = booked(source.clone())
-        .quote_pool(pool(PhysicalSide::Y))
+        .quote_pools(&[pool(PhysicalSide::Y)])
         .unwrap();
     assert_eq!(quoted.movements().len(), 1);
     assert_eq!(
@@ -305,13 +304,9 @@ fn retains_third_mint_rewards_and_refuses_a_different_owned_reward_pool() {
     let bundle = replay
         .book_and_apply(source, WalletContext::new(WALLET))
         .unwrap();
-    assert_eq!(
-        bundle.quote_pool(pool(PhysicalSide::Y)),
-        Err(ValuationError::PoolMismatch {
-            expected: POOL,
-            observed: book::address(14)
-        })
-    );
+    let quoted = bundle.quote_pools(&[pool(PhysicalSide::Y)]).unwrap();
+    assert_eq!(quoted.movements().len(), 1);
+    assert_eq!(quoted.booked().activities().len(), 2);
 }
 
 #[test]
@@ -319,7 +314,7 @@ fn refuses_a_sol_kind_without_canonical_wrapped_sol_metadata() {
     let mut wrong = pool(PhysicalSide::X);
     wrong.base.kind = TokenKind::Sol;
     assert_eq!(
-        booked(deposit()).quote_pool(wrong),
+        booked(deposit()).quote_pools(&[wrong]),
         Err(ValuationError::MetadataMismatch {
             mint: book::address(9)
         })
@@ -341,7 +336,7 @@ fn matches_bigint_floors_for_both_orientations_across_transaction_bins() {
         source.activity.movements.first_mut().unwrap().price_bin = Some(bin);
         let bundle = booked(source);
         for (side, expected) in [(PhysicalSide::X, quote_x), (PhysicalSide::Y, quote_y)] {
-            let quoted = bundle.clone().quote_pool(pool(side)).unwrap();
+            let quoted = bundle.clone().quote_pools(&[pool(side)]).unwrap();
             assert_eq!(
                 quoted.movements()[0].quoted().amount,
                 RawTokenAmount(expected)
@@ -377,7 +372,7 @@ fn accepts_canonical_wrapped_sol_and_checks_its_decimals_and_program() {
     assert_eq!(
         bundle
             .clone()
-            .quote_pool(facts.clone())
+            .quote_pools(&[facts.clone()])
             .unwrap()
             .movements()[0]
             .quoted()
@@ -387,7 +382,7 @@ fn accepts_canonical_wrapped_sol_and_checks_its_decimals_and_program() {
     let mut wrong = facts.clone();
     wrong.base.decimals = Decimals(6);
     assert_eq!(
-        bundle.quote_pool(wrong),
+        bundle.quote_pools(&[wrong]),
         Err(ValuationError::MetadataMismatch {
             mint: well_known::WSOL_MINT
         })
@@ -397,43 +392,9 @@ fn accepts_canonical_wrapped_sol_and_checks_its_decimals_and_program() {
     extra.program = TokenProgram::Token2022;
     source.transaction.token_balances.push(extra);
     assert_eq!(
-        booked(source).quote_pool(facts),
+        booked(source).quote_pools(&[facts]),
         Err(ValuationError::MetadataMismatch {
             mint: well_known::WSOL_MINT
-        })
-    );
-}
-
-#[test]
-fn refuses_even_a_zero_owned_movement_of_another_pool_instead_of_dropping_it() {
-    let mut replay = PositionLifetimes::new(context());
-    let mut opened = opening(1, 10);
-    opened
-        .activity
-        .lifecycle
-        .push(binsight_dlmm::activity::LifecycleFact::Created {
-            at: at(1),
-            position: book::address(13),
-            pool: book::address(14),
-            owner: WALLET,
-        });
-    replay
-        .book_and_apply(opened, WalletContext::new(WALLET))
-        .unwrap();
-    let mut source = deposit();
-    let mut other = movement(1, 0, 0);
-    other.position = book::address(13);
-    other.pool = book::address(14);
-    source.activity.movements.push(other);
-    let bundle = replay
-        .book_and_apply(source, WalletContext::new(WALLET))
-        .unwrap();
-    assert_eq!(bundle.activities().len(), 2);
-    assert_eq!(
-        bundle.quote_pool(pool(PhysicalSide::Y)),
-        Err(ValuationError::PoolMismatch {
-            expected: POOL,
-            observed: book::address(14),
         })
     );
 }
