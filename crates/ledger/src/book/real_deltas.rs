@@ -7,7 +7,7 @@
 //!   accounts of the wallet exchanging tokens change nothing.
 //! - **Rent** is the change of the lamports of the accounts the wallet owns, per account: its
 //!   token accounts (apart from the tokens of a wrapped-SOL account, which are lamports too) and
-//!   its positions.
+//!   its positions, when the wallet paid their rent (see [`super::rent`]).
 //!
 //! The order of the balances in the meta changes nothing. This module measures; it does not
 //! explain.
@@ -109,12 +109,15 @@ pub(super) fn measure(
                 difference(reserved(false)?, reserved(true)?)?,
             )?;
         } else if positions.owns(native.account) {
-            add(
-                &mut deltas.rent,
-                native.account,
-                RentPurpose::Position,
-                signed_change(native.pre, native.post),
-            )?;
+            let change = signed_change(native.pre, native.post);
+            if positions.holds_rent_of(tx, native.account, change)? {
+                add(
+                    &mut deltas.rent,
+                    native.account,
+                    RentPurpose::Position,
+                    change,
+                )?;
+            }
         }
     }
     deltas.rent.retain(|rent| rent.change != 0);

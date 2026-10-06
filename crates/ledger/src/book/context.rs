@@ -6,7 +6,7 @@
 //! earlier transaction may have emitted: the caller collects them. This module holds that context;
 //! it does not read transactions.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use binsight_dlmm::activity::{LifecycleFact, TxActivity};
 use binsight_solana::Address;
@@ -25,12 +25,28 @@ pub struct WalletContext {
     /// Known account-cleaning programs whose payments are service costs.
     /// The caller supplies this registry before computing real portfolio PnL.
     pub services: BTreeSet<Address>,
+    /// Who paid the account rent of positions among [`Self::positions`], in an earlier
+    /// transaction. Rent another account paid for a position of the wallet (an automation
+    /// operating it) is that account's: it is never the wallet's asset. A position left out was
+    /// created outside the history: its rent is the wallet's only when it comes back to it.
+    pub position_rent: BTreeMap<Address, RentPayer>,
+}
+
+/// Who paid the account rent of a position the wallet owns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RentPayer {
+    /// The wallet: the rent is its asset until the account is closed.
+    Wallet,
+    /// Another account: neither its lock nor its release is the wallet's.
+    Other,
 }
 
 /// The positions of the wallet in one transaction: the known ones, plus the ones the transaction
 /// creates or closes with the wallet as owner.
 pub(super) struct OwnedPositions<'a> {
+    wallet: Address,
     known: &'a BTreeSet<Address>,
+    rent_payers: &'a BTreeMap<Address, RentPayer>,
     in_transaction: Vec<Address>,
 }
 
@@ -42,6 +58,7 @@ impl WalletContext {
             tracked_wallets: BTreeSet::new(),
             positions: BTreeSet::new(),
             services: BTreeSet::new(),
+            position_rent: BTreeMap::new(),
         }
     }
 
@@ -60,7 +77,9 @@ impl WalletContext {
             })
             .collect();
         OwnedPositions {
+            wallet: self.wallet,
             known: &self.positions,
+            rent_payers: &self.position_rent,
             in_transaction,
         }
     }
@@ -75,5 +94,16 @@ impl OwnedPositions<'_> {
     /// Whether the wallet owns the position account `position`.
     pub(super) fn owns(&self, position: Address) -> bool {
         self.in_transaction.contains(&position) || self.known.contains(&position)
+    }
+
+    /// The wallet these positions belong to.
+    pub(super) fn wallet(&self) -> Address {
+        self.wallet
+    }
+
+    /// Who paid the rent of the position account `position` in an earlier transaction, when
+    /// the history says.
+    pub(super) fn rent_payer(&self, position: Address) -> Option<RentPayer> {
+        self.rent_payers.get(&position).copied()
     }
 }

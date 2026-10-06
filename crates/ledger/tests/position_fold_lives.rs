@@ -192,3 +192,24 @@ fn closes_no_life_in_a_failed_transaction() {
     assert_eq!(kinds, [EntryKind::FailedTxFee]);
     assert!(folded.iter().all(|step| step.closed.is_empty()));
 }
+
+/// The automation pays the rent of the owner's position account at its creation and takes it
+/// back at the close: neither is the owner's, so no rent entry is booked for the owner, whether
+/// the history holds the creation or starts after it.
+#[test]
+fn books_no_rent_an_automation_paid_for_the_owners_position() {
+    let case = case("position-life-operator");
+    let (_, folded) = fold(&case, case.perspective);
+    let rent: Vec<_> = folded
+        .iter()
+        .flat_map(|step| step.entries.iter())
+        .filter(|entry| entry.asset == Asset::Rent)
+        .collect();
+    assert_eq!(rent, Vec::<&binsight_ledger::book::LedgerEntry>::new());
+
+    let mut without_creation = PositionFold::new(WalletContext::new(case.perspective));
+    for (tx, activity) in case.transactions.iter().skip(1) {
+        let step = without_creation.book(tx, activity, &case.pools).unwrap();
+        assert!(step.entries.iter().all(|entry| entry.asset != Asset::Rent));
+    }
+}

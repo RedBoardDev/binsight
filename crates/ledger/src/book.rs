@@ -15,7 +15,7 @@ mod swap;
 mod worksheet;
 mod wsol;
 
-pub use context::WalletContext;
+pub use context::{RentPayer, WalletContext};
 pub use entry::{Asset, Counterparty, EntryKind, LedgerEntry, PositionActivitySource, RentPurpose};
 pub(crate) use positions::moves_wallet_tokens;
 

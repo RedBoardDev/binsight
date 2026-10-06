@@ -10,7 +10,7 @@ use binsight_solana::transaction::TransactionView;
 
 use super::ownership::owned_positions;
 use super::{FoldError, OpenLife};
-use crate::book::{LedgerEntry, WalletContext, book_transaction};
+use crate::book::{Asset, EntryKind, LedgerEntry, RentPurpose, WalletContext, book_transaction};
 use crate::facts::{ClosedPositionFacts, PoolFacts};
 use step::{Sources, Step};
 
@@ -113,13 +113,21 @@ impl PositionFold {
     ) -> Result<FoldedTransaction, FoldError> {
         let place = self.place_of(tx)?;
         self.context.positions = owned_positions(self, tx, activity);
+        self.context.position_rent = self
+            .open
+            .values()
+            .filter_map(|life| Some((life.id.address, life.rent_payer?)))
+            .collect();
         let booked = book_transaction(&self.context, tx, activity);
         let owned = std::mem::take(&mut self.context.positions);
+        self.context.position_rent.clear();
         let entries = booked?;
+        let funded = rent_paid_by_wallet(&entries);
         let sources = Sources {
             owned: &owned,
             tx,
             activity,
+            funded: &funded,
             pools,
         };
         let (closed, refused) = self.apply(sources, place)?;
@@ -196,4 +204,19 @@ impl PositionFold {
         }
         Ok(place)
     }
+}
+
+/// The positions whose account rent `entries` say the wallet paid.
+fn rent_paid_by_wallet(entries: &[LedgerEntry]) -> BTreeSet<Address> {
+    entries
+        .iter()
+        .filter(|entry| entry.asset == Asset::Rent && entry.amount > 0)
+        .filter_map(|entry| match entry.kind {
+            EntryKind::RentLock {
+                account,
+                purpose: RentPurpose::Position,
+            } => Some(account),
+            _ => None,
+        })
+        .collect()
 }

@@ -8,6 +8,7 @@ use binsight_solana::transaction::{InstructionPosition, TransactionView};
 use jiff::Timestamp;
 
 use super::PositionFold;
+use crate::book::RentPayer;
 use crate::facts::{ClosedPositionFacts, PoolFacts, PositionHistory, PositionId};
 use crate::positions::valuation::{value_movement, value_reward};
 use crate::positions::{FoldError, OpenLife, PositionRefusal};
@@ -21,6 +22,8 @@ pub(super) struct Sources<'a> {
     pub(super) tx: &'a TransactionView,
     /// Its DLMM activity.
     pub(super) activity: &'a TxActivity,
+    /// The positions whose account rent the wallet paid in it.
+    pub(super) funded: &'a BTreeSet<Address>,
     /// The facts of the pools its movements may name.
     pub(super) pools: &'a BTreeMap<Address, PoolFacts>,
 }
@@ -158,7 +161,12 @@ impl<'a> Step<'a> {
                     return Err(FoldError::IdentityCollision { position });
                 }
                 self.outcome.foreign.remove(&position);
-                let life = OpenLife::new(id, pool, self.block_time()?);
+                let mut life = OpenLife::new(id, pool, self.block_time()?);
+                life.rent_payer = Some(if self.sources.funded.contains(&position) {
+                    RentPayer::Wallet
+                } else {
+                    RentPayer::Other
+                });
                 self.outcome.open.insert(position, life);
             }
             LifecycleFact::Closed {

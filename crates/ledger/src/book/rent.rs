@@ -1,5 +1,10 @@
 //! Separate recoverable account rent from token value and irrecoverable bin-array costs.
-use super::instructions::{Decoded, native_transfer};
+//!
+//! A position's rent is the wallet's only when the wallet paid it. An automation that creates
+//! the wallet's position with its own lamports gets them back at the close: neither the lock nor
+//! the release is the wallet's, even when the creation is not in the history.
+use super::context::{OwnedPositions, RentPayer};
+use super::instructions::{Decoded, decode, native_transfer};
 use super::real_deltas::{RealDeltas, lamports_change};
 use super::residue::{TxKind, TxSources};
 use super::worksheet::Worksheet;
@@ -168,4 +173,32 @@ pub(super) fn wallet_exchange_change(
         release_destination(tx, decoded, rent.account).is_some_and(|address| address != wallet)
     };
     if is_external { 0 } else { rent.change }
+}
+
+impl OwnedPositions<'_> {
+    /// Whether the change `change` of the lamports of `position`, a position of the wallet, is
+    /// the wallet's rent: not when another account alone funds it, nor when it is released from
+    /// a position another account paid for, nor when the history does not say who paid and it
+    /// goes back to another account. Rent another account paid that comes back to the wallet
+    /// stays out of the rent, so the lamports the wallet receives are a gain.
+    pub(super) fn holds_rent_of(
+        &self,
+        tx: &TransactionView,
+        position: Address,
+        change: i128,
+    ) -> Result<bool, BookError> {
+        if change == 0 {
+            return Ok(true);
+        }
+        let wallet = self.wallet();
+        let decoded = decode(tx)?;
+        if change > 0 {
+            return Ok(external_funder(wallet, &decoded, position).is_none());
+        }
+        Ok(match self.rent_payer(position) {
+            Some(RentPayer::Wallet) => true,
+            Some(RentPayer::Other) => false,
+            None => release_destination(tx, &decoded, position).is_none_or(|to| to == wallet),
+        })
+    }
 }

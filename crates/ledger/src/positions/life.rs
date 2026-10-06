@@ -4,6 +4,7 @@ use binsight_solana::Address;
 use jiff::Timestamp;
 
 use super::PositionFlows;
+use crate::book::RentPayer;
 use crate::facts::{
     BinLiquidity, ClosedPositionFacts, OpenPositionFacts, PnlMethod, PositionHistory, PositionId,
     QuoteUnits,
@@ -23,6 +24,9 @@ pub struct OpenLife {
     pub flows: PositionFlows,
     /// Whether every transaction of its life so far was counted.
     pub history: PositionHistory,
+    /// Who paid the rent of its account at its creation; `None` when the creation is not in
+    /// the history.
+    pub rent_payer: Option<RentPayer>,
 }
 
 /// What a snapshot of an open position's accounts says about it now, in its pool's quote token.
@@ -57,6 +61,7 @@ impl OpenLife {
             opened_at,
             flows: PositionFlows::default(),
             history: PositionHistory::Whole,
+            rent_payer: None,
         }
     }
 
