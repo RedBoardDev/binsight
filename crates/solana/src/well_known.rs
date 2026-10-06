@@ -1,9 +1,9 @@
 //! The addresses of the Solana programs binsight reads instructions of, and of the few accounts
-//! whose role is fixed (the wrapped SOL mint, the Jito tip accounts).
+//! whose role is fixed (the wrapped SOL and canonical stable mints, the Jito tip accounts).
 //!
 //! Each address is written as its 32 bytes, so it is a constant, and a test checks it against its
-//! base58 form. This module only names the programs; their instructions are decoded in
-//! [`crate::programs`].
+//! base58 form. Mint identities establish no decimals, token program or valuation. Program
+//! instructions are decoded in [`crate::programs`].
 
 use crate::Address;
 
@@ -77,6 +77,20 @@ pub const LIGHTHOUSE_PROGRAM: Address = Address::from_bytes([
 pub const WSOL_MINT: Address = Address::from_bytes([
     6, 155, 136, 87, 254, 171, 129, 132, 251, 104, 127, 99, 70, 24, 192, 53, 218, 196, 57, 220, 26,
     235, 59, 85, 152, 160, 240, 0, 0, 0, 0, 1,
+]);
+
+/// Circle's mainnet Solana USDC mint, as listed in its
+/// [contract addresses](https://developers.circle.com/stablecoins/usdc-contract-addresses).
+pub const USDC_MINT: Address = Address::from_bytes([
+    198, 250, 122, 243, 190, 219, 173, 58, 61, 101, 243, 106, 171, 201, 116, 49, 177, 187, 228,
+    194, 210, 246, 224, 228, 124, 166, 2, 3, 69, 47, 93, 97,
+]);
+
+/// Tether's mainnet Solana USDT mint, as listed in its
+/// [supported protocols](https://tether.to/en/supported-protocols/).
+pub const USDT_MINT: Address = Address::from_bytes([
+    206, 1, 14, 96, 175, 237, 178, 39, 23, 189, 99, 25, 47, 84, 20, 90, 63, 150, 90, 51, 187, 130,
+    210, 199, 2, 158, 178, 206, 30, 32, 130, 100,
 ]);
 
 /// The eight accounts Jito's block engine collects tips on: a transfer to one of them is a tip,
@@ -169,6 +183,14 @@ mod tests {
         assert_eq!(
             WSOL_MINT.to_string(),
             "So11111111111111111111111111111111111111112"
+        );
+        assert_eq!(
+            USDC_MINT.to_string(),
+            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+        );
+        assert_eq!(
+            USDT_MINT.to_string(),
+            "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
         );
         let tips = [
             "96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5",
