@@ -8,6 +8,7 @@ use binsight_solana::{
 };
 use binsight_store::{DecodeOutcome, DecodeRecord, FetchedTx, RawTxRecord, Store};
 use jiff::Timestamp;
+use std::time::Duration;
 
 fn fetched(name: &str) -> FetchedTx {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

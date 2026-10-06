@@ -18,8 +18,6 @@
 
 mod record;
 
-use std::time::Duration;
-
 use binsight_dlmm::{DECODER_NAME, DECODER_VERSION};
 use binsight_solana::Signature;
 use binsight_solana::transaction::READER_VERSION;
@@ -28,10 +26,9 @@ use jiff::Timestamp;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, warn};
 
-use super::Ingestion;
+use super::{Ingestion, STORE_RETRY_DELAY};
 
 const DECODE_BATCH_SIZE: u16 = 500;
-const STORE_RETRY_DELAY: Duration = Duration::from_secs(30);
 
 /// Decodes the registry until `shutdown` is cancelled.
 pub(super) async fn run_decoder(ingestion: &Ingestion, shutdown: &CancellationToken) {

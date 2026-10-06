@@ -22,8 +22,8 @@ use tokio::sync::{broadcast, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
-use super::Ingestion;
 use super::refusal::time_until;
+use super::{Ingestion, STORE_RETRY_DELAY};
 use crate::engine::events::EngineEvent;
 use crate::portfolio::views::SyncState;
 use sync_state::{Stop, SyncFacts, next_change, sync_state};
@@ -33,9 +33,6 @@ const SETTLE_DELAY: Duration = Duration::from_secs(10);
 
 /// The same wait while a wallet imports its history, when every fetch reports a change.
 const IMPORT_SETTLE_DELAY: Duration = Duration::from_secs(30);
-
-/// How long the monitor waits before trying again when it cannot read the facts.
-const STORE_RETRY_DELAY: Duration = Duration::from_secs(30);
 
 /// A wallet's progress as the monitor last read it, and the state it decided from it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

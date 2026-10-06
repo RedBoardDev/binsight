@@ -21,15 +21,13 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 
-use super::Ingestion;
 use super::refusal::{ClassDeferrals, time_until};
+use super::{Ingestion, STORE_RETRY_DELAY};
 use fetch_attempt::Fetched;
 use fetch_schedule::fill_slots;
 
 /// The longest idle wait without reconsidering the queue.
 const IDLE_RECHECK: Duration = Duration::from_secs(60);
-/// Wait after a store operation fails, before issuing another billable fetch.
-const STORE_RETRY_DELAY: Duration = Duration::from_secs(30);
 
 /// Fetches until shutdown, then waits for cancelled requests to record their spending.
 pub(super) async fn run_fetcher(ingestion: &Ingestion, shutdown: &CancellationToken) {

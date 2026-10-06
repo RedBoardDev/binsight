@@ -40,6 +40,10 @@ use listing::run_listing;
 use live::{LiveState, run_live_listener};
 use sync::run_sync_monitor;
 
+/// How long a worker waits after the database failed before it tries again: long enough not
+/// to spin on a broken database, short enough to resume soon after it recovers.
+const STORE_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// What the ingestion workers share: the database, the RPC client, the clock, the stream's watch
 /// list, the live state, the provider's latest refusal, where sync states are published, and the
 /// wake-ups the workers give each other: new fetch tasks, new raw transactions, and a change the

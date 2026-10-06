@@ -21,12 +21,9 @@ use super::history_page::list_and_write;
 use super::history_schedule::{ListingSchedule, NextListing};
 use super::page_listing::PageError;
 use super::top_up::TopUp;
-use crate::ingestion::Ingestion;
 use crate::ingestion::live::{CheckReason, NextCheck};
 use crate::ingestion::refusal::{ClassDeferrals, report_pause, time_until};
-
-/// How long to wait after the tracked wallets could not be read.
-const STORE_RETRY_DELAY: Duration = Duration::from_secs(30);
+use crate::ingestion::{Ingestion, STORE_RETRY_DELAY};
 
 /// From this many failures in a row, a wallet's failing listing is reported as an error: it is
 /// not healing by itself, and a human should look.
