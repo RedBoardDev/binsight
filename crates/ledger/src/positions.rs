@@ -39,5 +39,5 @@ mod valuation;
 
 pub use error::FoldError;
 pub use flows::PositionFlows;
-pub use fold::{FoldDiagnostics, FoldedTransaction, PositionFold};
+pub use fold::{FoldDiagnostics, FoldedTransaction, PositionFold, PositionRefusal};
 pub use life::{LiveValuation, OpenLife};

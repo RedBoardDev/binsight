@@ -6,7 +6,11 @@ use binsight_solana::{Address, Signature};
 use crate::book::BookError;
 use crate::report::valued::quote::QuoteMathError;
 
-/// A transaction the fold refused; the fold is left as it was before it.
+/// Why the fold refused a transaction, or one row of its position activity.
+///
+/// [`PositionFold::book`](super::PositionFold::book) refuses a whole transaction, leaving the
+/// fold as it was, only for its order, its booking, or a diagnostic counter overflow. Every other
+/// error refuses one position row alone (see [`super::PositionRefusal`]).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum FoldError {
     /// The accounting rules refused the transaction.
@@ -48,12 +52,6 @@ pub enum FoldError {
     /// the same identity, the account and the creating signature.
     #[error("the position {position} is created twice by one transaction")]
     IdentityCollision {
-        /// The position.
-        position: Address,
-    },
-    /// A life of the wallet is closed by an event that names another owner.
-    #[error("the position {position} of the wallet is closed for another owner")]
-    ClosedByAnotherOwner {
         /// The position.
         position: Address,
     },

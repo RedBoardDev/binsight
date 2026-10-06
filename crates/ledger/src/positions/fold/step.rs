@@ -10,7 +10,7 @@ use jiff::Timestamp;
 use super::PositionFold;
 use crate::facts::{ClosedPositionFacts, PoolFacts, PositionHistory, PositionId};
 use crate::positions::valuation::{value_movement, value_reward};
-use crate::positions::{FoldError, OpenLife};
+use crate::positions::{FoldError, OpenLife, PositionRefusal};
 
 /// What one transaction brings to the fold.
 #[derive(Clone, Copy)]
@@ -30,6 +30,7 @@ pub(super) struct StepOutcome {
     pub(super) open: BTreeMap<Address, OpenLife>,
     pub(super) foreign: BTreeSet<Address>,
     pub(super) closed: Vec<ClosedPositionFacts>,
+    pub(super) refused: Vec<PositionRefusal>,
     pub(super) missing_creations: u32,
 }
 
@@ -58,6 +59,17 @@ impl Action<'_> {
             Self::Lifecycle(LifecycleFact::Closed { at, .. }) => (*at, 2),
         }
     }
+
+    /// The position the row is about.
+    fn position(self) -> Address {
+        match self {
+            Self::Lifecycle(
+                LifecycleFact::Created { position, .. } | LifecycleFact::Closed { position, .. },
+            ) => *position,
+            Self::Movement(movement) => movement.position,
+            Self::Reward(reward) => reward.position,
+        }
+    }
 }
 
 impl<'a> Step<'a> {
@@ -69,13 +81,16 @@ impl<'a> Step<'a> {
                 open: fold.open.clone(),
                 foreign: fold.foreign.clone(),
                 closed: Vec::new(),
+                refused: Vec::new(),
                 missing_creations: 0,
             },
         }
     }
 
-    /// Applies every activity row of the transaction, in instruction order.
-    pub(super) fn apply(&mut self) -> Result<(), FoldError> {
+    /// Applies every activity row of the transaction, in instruction order. A row that cannot be
+    /// applied is refused alone: its life is marked as missing activity, and the other rows and
+    /// the transaction's entries still count.
+    pub(super) fn apply(&mut self) {
         let activity = self.sources.activity;
         let mut actions: Vec<Action<'a>> = activity
             .lifecycle
@@ -87,14 +102,25 @@ impl<'a> Step<'a> {
         actions.sort_by_key(|action| action.order());
         self.mark_unknown_activity();
         for action in actions {
-            match action {
-                Action::Lifecycle(fact) => self.apply_lifecycle(*fact)?,
-                Action::Movement(movement) => self.apply_movement(movement)?,
-                Action::Reward(reward) => self.apply_reward(reward)?,
+            let applied = match action {
+                Action::Lifecycle(fact) => self.apply_lifecycle(*fact),
+                Action::Movement(movement) => self.apply_movement(movement),
+                Action::Reward(reward) => self.apply_reward(reward),
+            };
+            if let Err(error) = applied {
+                self.refuse(action.position(), error);
             }
         }
         self.mark_unknown_activity();
-        Ok(())
+    }
+
+    fn refuse(&mut self, position: Address, error: FoldError) {
+        if let Some(life) = self.outcome.open.get_mut(&position) {
+            life.mark_gap(PositionHistory::UncountedActivity);
+        }
+        self.outcome
+            .refused
+            .push(PositionRefusal { position, error });
     }
 
     /// An unknown DLMM instruction or event cannot name the positions it changed: every life of
@@ -138,18 +164,20 @@ impl<'a> Step<'a> {
             LifecycleFact::Closed {
                 position, owner, ..
             } => {
-                if owner != self.wallet {
-                    if self.outcome.open.contains_key(&position) {
-                        return Err(FoldError::ClosedByAnotherOwner { position });
-                    }
+                if owner != self.wallet && !self.outcome.open.contains_key(&position) {
                     self.outcome.foreign.remove(&position);
                     return Ok(());
                 }
                 let closed_at = self.block_time()?;
-                let Some(life) = self.outcome.open.remove(&position) else {
+                let Some(mut life) = self.outcome.open.remove(&position) else {
                     // Nothing of this life is in the history: no pool, no figure to show.
                     return self.count_missing_creation();
                 };
+                if owner != self.wallet {
+                    // The account is closed whoever the event names: the life ends, but what
+                    // the other owner did with it is not the wallet's to count.
+                    life.mark_gap(PositionHistory::UncountedActivity);
+                }
                 self.outcome.closed.push(life.close(self.wallet, closed_at));
             }
         }

@@ -35,15 +35,21 @@ pub struct FoldDiagnostics {
     /// Transactions with a DLMM instruction or event this version does not know, folded while
     /// the wallet owned a position: what they did to it is not counted.
     pub unknown_program_activity: u32,
+    /// Position rows refused alone (see [`PositionRefusal`]).
+    pub refused_rows: u32,
 }
 
 impl FoldDiagnostics {
-    /// These diagnostics with `missing_creations` and `unknown_program_activity` more.
-    fn add(self, missing_creations: u32, unknown_program_activity: u32) -> Result<Self, FoldError> {
+    /// These diagnostics and `more`.
+    fn add(self, more: Self) -> Result<Self, FoldError> {
         let sum = |total: u32, more: u32| total.checked_add(more).ok_or(FoldError::Overflow);
         Ok(Self {
-            missing_creations: sum(self.missing_creations, missing_creations)?,
-            unknown_program_activity: sum(self.unknown_program_activity, unknown_program_activity)?,
+            missing_creations: sum(self.missing_creations, more.missing_creations)?,
+            unknown_program_activity: sum(
+                self.unknown_program_activity,
+                more.unknown_program_activity,
+            )?,
+            refused_rows: sum(self.refused_rows, more.refused_rows)?,
         })
     }
 }
@@ -55,6 +61,19 @@ pub struct FoldedTransaction {
     pub entries: Vec<LedgerEntry>,
     /// The lives of the wallet's positions the transaction closed, in instruction order.
     pub closed: Vec<ClosedPositionFacts>,
+    /// The position rows that could not be applied, each refused alone.
+    pub refused: Vec<PositionRefusal>,
+}
+
+/// A row of a transaction's position activity the fold could not apply: a missing pool or
+/// block time, an invalid bin, or a lifecycle the chain should not allow. The row's life, when
+/// open, is marked as missing activity; the transaction's entries and other rows still count.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PositionRefusal {
+    /// The position of the row.
+    pub position: Address,
+    /// Why it was refused.
+    pub error: FoldError,
 }
 
 /// Where a transaction sits in the chain: its slot, then its index in the block. This is the
@@ -83,9 +102,9 @@ impl PositionFold {
     ///
     /// # Errors
     /// Returns a [`FoldError`] when `tx` has no index in its block, does not come after the
-    /// last folded transaction in `(slot, index)` order, cannot be
-    /// booked, lacks a needed block time or pool, or a value overflows. The fold is then left
-    /// unchanged.
+    /// last folded transaction in `(slot, index)` order, cannot be booked, or a diagnostic count
+    /// overflows. The fold is then left unchanged. A position row that cannot be applied is
+    /// refused alone, in [`FoldedTransaction::refused`].
     pub fn book(
         &mut self,
         tx: &TransactionView,
@@ -103,8 +122,12 @@ impl PositionFold {
             activity,
             pools,
         };
-        let closed = self.apply(sources, place)?;
-        Ok(FoldedTransaction { entries, closed })
+        let (closed, refused) = self.apply(sources, place)?;
+        Ok(FoldedTransaction {
+            entries,
+            closed,
+            refused,
+        })
     }
 
     /// Applies the position activity of one booked transaction at `place`, all or nothing, and
@@ -113,7 +136,7 @@ impl PositionFold {
         &mut self,
         sources: Sources<'_>,
         place: ChainPlace,
-    ) -> Result<Vec<ClosedPositionFacts>, FoldError> {
+    ) -> Result<(Vec<ClosedPositionFacts>, Vec<PositionRefusal>), FoldError> {
         let activity = sources.activity;
         let is_quiet = activity.lifecycle.is_empty()
             && activity.movements.is_empty()
@@ -121,18 +144,23 @@ impl PositionFold {
             && !activity.has_unknown_program_activity;
         if is_quiet {
             self.last = Some(place);
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         }
         let mut step = Step::new(self, sources);
-        step.apply()?;
+        step.apply();
         let outcome = step.finish();
         let unknown = u32::from(activity.has_unknown_program_activity && !sources.owned.is_empty());
-        let diagnostics = self.diagnostics.add(outcome.missing_creations, unknown)?;
+        let refused = u32::try_from(outcome.refused.len()).map_err(|_| FoldError::Overflow)?;
+        let diagnostics = self.diagnostics.add(FoldDiagnostics {
+            missing_creations: outcome.missing_creations,
+            unknown_program_activity: unknown,
+            refused_rows: refused,
+        })?;
         self.open = outcome.open;
         self.foreign = outcome.foreign;
         self.last = Some(place);
         self.diagnostics = diagnostics;
-        Ok(outcome.closed)
+        Ok((outcome.closed, outcome.refused))
     }
 
     /// The wallet's open position lives, by position account.
