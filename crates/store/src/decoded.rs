@@ -55,6 +55,9 @@ pub struct DecodeRecord {
     /// `None` means an older record or an unreadable payload did not establish this fact;
     /// it must never be interpreted as a successful transaction.
     pub execution_outcome: Option<TxOutcome>,
+    /// The transaction's index in its block (the node's `transactionIndex`), which orders it
+    /// exactly with its slot; `None` when the payload holds none or could not be read.
+    pub transaction_index: Option<u32>,
     /// What the decoder found. A decoding failure does not imply chain execution failure.
     pub outcome: DecodeOutcome,
     /// When it ran.
@@ -105,6 +108,7 @@ mod tests {
             decoder_version: version,
             reader_version: 1,
             execution_outcome: None,
+            transaction_index: Some(3),
             outcome,
             decoded_at: Timestamp::from_second(1_790_000_200).unwrap(),
         }

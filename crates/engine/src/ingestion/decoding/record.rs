@@ -35,6 +35,7 @@ pub(super) fn decode(raw: &RawTxRecord, payload: &[u8], decoded_at: Timestamp) -
         return record;
     }
     record.execution_outcome = Some(transaction.outcome.clone());
+    record.transaction_index = transaction.transaction_index;
     record.outcome = decode_activity(&transaction).unwrap_or_else(failed);
     record
 }
@@ -51,6 +52,7 @@ pub(super) fn unreadable(
         decoder_version: DECODER_VERSION,
         reader_version: READER_VERSION,
         execution_outcome: None,
+        transaction_index: None,
         outcome: failed(error),
         decoded_at,
     }

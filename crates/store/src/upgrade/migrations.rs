@@ -78,7 +78,16 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "decode_reader_version",
         sql: include_str!("../../migrations/0012_decode_reader_version.sql"),
     },
+    Migration {
+        version: 13,
+        name: "decode_transaction_index",
+        sql: include_str!("../../migrations/0013_decode_transaction_index.sql"),
+    },
 ];
+
+#[cfg(test)]
+#[path = "migrations/existing_rows_tests.rs"]
+mod existing_rows_tests;
 
 #[cfg(test)]
 mod tests {

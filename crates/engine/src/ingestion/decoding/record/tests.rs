@@ -101,3 +101,20 @@ fn does_not_treat_an_unknown_program_instruction_without_events_as_not_applicabl
     let activity = binsight_dlmm::position_activity(&transaction, &[]).unwrap();
     assert!(activity.has_unknown_program_activity);
 }
+
+#[test]
+fn records_where_the_transaction_sits_in_its_block() {
+    let (raw, payload) = fixture("legacy-sol-transfer");
+    let record = decode(&raw, &payload, Timestamp::UNIX_EPOCH);
+    assert_eq!(record.transaction_index, Some(815));
+
+    let mut json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+    json.as_object_mut().unwrap().remove("transactionIndex");
+    let without_index = decode(
+        &raw,
+        &serde_json::to_vec(&json).unwrap(),
+        Timestamp::UNIX_EPOCH,
+    );
+    assert_eq!(without_index.transaction_index, None);
+    assert_eq!(without_index.outcome, DecodeOutcome::NotApplicable);
+}

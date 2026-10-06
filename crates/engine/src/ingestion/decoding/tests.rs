@@ -68,6 +68,7 @@ async fn upgrades_old_and_failed_results_offline_and_keeps_current_results_uncha
             decoder_version: 1,
             reader_version: READER_VERSION,
             execution_outcome: None,
+            transaction_index: None,
             outcome: DecodeOutcome::Failed {
                 error: "old decoder".to_owned(),
             },
@@ -255,6 +256,7 @@ async fn decodes_again_what_an_older_transaction_reader_failed_on() {
         decoder_version: DECODER_VERSION,
         reader_version: READER_VERSION - 1,
         execution_outcome: None,
+        transaction_index: None,
         outcome: DecodeOutcome::Failed {
             error: "the reader did not know this shape".to_owned(),
         },

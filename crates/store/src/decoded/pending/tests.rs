@@ -32,6 +32,7 @@ async fn record(store: &Store, signature: Signature, version: u32, outcome: Deco
             decoder_version: version,
             reader_version: 1,
             execution_outcome: None,
+            transaction_index: None,
             outcome,
             decoded_at: Timestamp::UNIX_EPOCH,
         })

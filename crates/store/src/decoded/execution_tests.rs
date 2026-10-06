@@ -13,6 +13,7 @@ fn record(outcome: DecodeOutcome, execution_outcome: Option<TxOutcome>) -> Decod
         decoder_version: 1,
         reader_version: 1,
         execution_outcome,
+        transaction_index: None,
         outcome,
         decoded_at: jiff::Timestamp::UNIX_EPOCH,
     }
