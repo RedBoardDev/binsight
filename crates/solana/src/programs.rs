@@ -1,4 +1,5 @@
-//! Decoders for the instructions of the native and SPL programs binsight books.
+//! Decoders for the instructions of the native and SPL programs binsight books, and the amount a
+//! token account holds ([`token_account`]).
 //!
 //! An instruction is classified by its program address and the discriminator in its data, never
 //! by a label a node attached to it. [`decode`] dispatches to the decoder of the program; a
@@ -11,6 +12,7 @@ mod compute_budget;
 mod instruction_reader;
 mod system;
 mod token;
+pub mod token_account;
 mod token_program;
 
 pub use associated_token::{AssociatedAccountCreation, AssociatedTokenInstruction};
