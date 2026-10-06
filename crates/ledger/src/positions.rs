@@ -20,6 +20,6 @@ pub use normalization::{
     BookedPositionTransaction, NormalizationError, NormalizedPositionActivity,
     QuotedPositionTransaction, SelectedPoolMovement, ValuationError,
 };
-pub use ownership::TransactionOwnership;
+pub use ownership::{PositionActivityOwnership, TransactionOwnership};
 pub use replay::{PositionLifetimes, PositionReplayContext};
 pub use source::{PositionTransaction, TransactionOrderProof};

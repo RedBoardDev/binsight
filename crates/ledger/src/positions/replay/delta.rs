@@ -11,8 +11,8 @@ use super::{KnownPosition, PositionLifetimes};
 use crate::book::PositionActivitySource;
 use crate::facts::PositionId;
 use crate::positions::{
-    LifecycleSource, LifetimeDiagnostic, LifetimeError, PositionLifetime, PositionTransaction,
-    TransactionOwnership,
+    LifecycleSource, LifetimeDiagnostic, LifetimeError, PositionActivityOwnership,
+    PositionLifetime, PositionTransaction, TransactionOwnership,
 };
 
 pub(super) struct TransactionDelta {
@@ -129,9 +129,14 @@ impl TransactionDelta {
                 position: activity.position,
             });
         }
-        if known.owner == replay.context.wallet {
+        let ownership = if known.owner == replay.context.wallet {
+            PositionActivityOwnership::Owned(known.id)
+        } else {
+            PositionActivityOwnership::Foreign(known.id)
+        };
+        self.ownership.sources.push((activity.origin, ownership));
+        if matches!(ownership, PositionActivityOwnership::Owned(_)) {
             self.ownership.positions.insert(activity.position);
-            self.ownership.sources.push((activity.origin, known.id));
             self.require_time(source);
             self.lifetime(replay, known.id)?.has_nonzero |= activity.has_nonzero;
         }
