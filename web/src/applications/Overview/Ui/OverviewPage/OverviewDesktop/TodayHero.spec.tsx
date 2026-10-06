@@ -1,4 +1,4 @@
-import { TodayHero } from '@app/applications/Overview/Ui/TodayHero';
+import { TodayHero } from '@app/applications/Overview/Ui/OverviewPage/OverviewDesktop/TodayHero';
 import { displayPreferenceStore } from '@app/applications/Shared/Preference/Ui/displayPreferenceStore';
 import { completeOverviewAmount, overviewFixture } from '@test/fixtures/overview';
 import { renderWithProviders } from '@test/renderWithProviders';

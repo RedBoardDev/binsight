@@ -1,9 +1,18 @@
-export const AMOUNT_PLACEMENTS = ['hero', 'key', 'body', 'cell-value', 'cell-pnl', 'axis'] as const;
+export const AMOUNT_PLACEMENTS = [
+  'hero',
+  'key',
+  'body',
+  'cell-value',
+  'cell-pnl',
+  'axis',
+  'compact',
+] as const;
 
 export type AmountPlacement = (typeof AMOUNT_PLACEMENTS)[number];
 
-// An axis is compact ("1.2K"), with no fixed decimals.
-export type DecimalPlacement = Exclude<AmountPlacement, 'axis'>;
+// An axis and a compact subline ("54 LP · 7.1 idle" under a figure on a phone) round to three
+// significant digits ("1.2K"), with no fixed decimals.
+export type DecimalPlacement = Exclude<AmountPlacement, 'axis' | 'compact'>;
 
 const SOL_FRACTION_DIGITS: Record<DecimalPlacement, number> = {
   hero: 3,

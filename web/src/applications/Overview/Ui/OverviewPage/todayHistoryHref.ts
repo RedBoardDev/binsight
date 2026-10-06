@@ -1,8 +1,8 @@
+import type { Overview } from '@app/applications/Overview/Api/getOverview';
 import { ALL_WALLETS, type WalletScope } from '@app/applications/Shared/Scope/Domain/walletScope';
-import type { ApiSchema } from '@app/lib/api/apiSchema';
 
 interface TodayHistoryTarget {
-  readonly window: ApiSchema<'Overview'>['today']['window'];
+  readonly window: Overview['today']['window'];
   readonly wallet: WalletScope;
 }
 

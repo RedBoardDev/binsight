@@ -59,8 +59,8 @@ test('signs in, finds its way around the shell and signs out', async ({ page }, 
   await expect(chart).toHaveAttribute('aria-valuenow', String(series.points.length - 1));
   await expectNoA11yViolations(page);
   await page.keyboard.press('Escape');
-  await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Show net worth breakdown' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Overview' })).toBeAttached();
+  await expect(page.getByRole('region', { name: 'Today' })).toBeVisible();
   await expect(page.getByRole('status').filter({ hasText: 'Live updates:' })).toHaveText(
     'Live updates: Live',
     {
@@ -144,7 +144,7 @@ test.describe('a fresh chain instance', () => {
     const response = await overviewRead;
     expect(response.status()).toBe(503);
     expect(await response.json()).toMatchObject({ error: { code: 'data_not_ready' } });
-    await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1, name: 'Overview' })).toBeAttached();
     await expect(page.getByRole('alert')).toContainText('still preparing your figures');
     await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
     await expect(page.getByText('Nothing closed yet today', { exact: true })).toBeHidden();

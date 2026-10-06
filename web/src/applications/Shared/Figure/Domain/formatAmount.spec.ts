@@ -95,6 +95,13 @@ describe('formatAmount', () => {
     const axis: AmountFormat = { ...SIGNED_EN, placement: 'axis', signing: 'negative-only' };
     expect(shown('12500', 'sol', axis)).toBe('12.5K');
   });
+
+  it('rounds a compact subline to three significant digits', () => {
+    const compact: AmountFormat = { ...SIGNED_EN, placement: 'compact', signing: 'negative-only' };
+    expect(shown('40.024', 'sol', compact)).toBe('40');
+    expect(shown('339.821', 'sol', compact)).toBe('340');
+    expect(shown('7.0712', 'sol', compact)).toBe('7.07');
+  });
 });
 
 // The reference: round half away from zero, on the digits, with BigInt. Intl must agree with it on

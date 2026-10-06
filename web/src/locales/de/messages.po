@@ -12,38 +12,38 @@ msgid "(opens in a new tab)"
 msgstr "(öffnet sich in einem neuen Tab)"
 
 #. placeholder {0}: totals.count
-#: src/applications/Overview/Ui/TodayHero.tsx
+#: src/applications/Overview/Ui/OverviewPage/OverviewDesktop/TodayHero/TodaySummary.tsx
 msgid "{0, plural, one {# close} other {# closes}}"
 msgstr "{0, plural, one {# Schließung} other {# Schließungen}}"
 
 #. placeholder {0}: totals.flat
-#: src/applications/Overview/Ui/TodayHero.tsx
+#: src/applications/Overview/Ui/OverviewPage/OverviewDesktop/TodayHero/TodaySummary.tsx
 msgid "{0, plural, one {# flat} other {# flat}}"
 msgstr "{0, plural, one {# neutral} other {# neutral}}"
 
 #. placeholder {0}: totals.losses
-#: src/applications/Overview/Ui/TodayHero.tsx
+#: src/applications/Overview/Ui/OverviewPage/OverviewDesktop/TodayHero/TodaySummary.tsx
 msgid "{0, plural, one {# loss} other {# losses}}"
 msgstr "{0, plural, one {# Verlust} other {# Verluste}}"
 
 #. placeholder {0}: totals.unknown
-#: src/applications/Overview/Ui/TodayHero.tsx
+#: src/applications/Overview/Ui/OverviewPage/OverviewDesktop/TodayHero/TodaySummary.tsx
 msgid "{0, plural, one {# unknown} other {# unknown}}"
 msgstr "{0, plural, one {# unbekannt} other {# unbekannt}}"
 
 #. placeholder {0}: totals.wins
-#: src/applications/Overview/Ui/TodayHero.tsx
+#: src/applications/Overview/Ui/OverviewPage/OverviewDesktop/TodayHero/TodaySummary.tsx
 msgid "{0, plural, one {# win} other {# wins}}"
 msgstr "{0, plural, one {# Gewinn} other {# Gewinne}}"
 
 #. placeholder {0}: wallet.label
 #. placeholder {1}: formattedText(format.percent(progress, 'hero', 'negative-only'))
-#: src/applications/Overview/Ui/PerformancePair/ImportHistoryLabel.tsx
+#: src/applications/Overview/Ui/OverviewPage/ImportHistoryLabel.tsx
 msgid "{0} history {1}"
 msgstr "Verlauf von {0}: {1}"
 
 #. placeholder {0}: wallet.label
-#: src/applications/Overview/Ui/PerformancePair/ImportHistoryLabel.tsx
+#: src/applications/Overview/Ui/OverviewPage/ImportHistoryLabel.tsx
 msgid "{0} is importing history"
 msgstr "Der Verlauf von {0} wird importiert"
 
@@ -83,7 +83,8 @@ msgstr "Ein Token in der Wallet hat noch keinen Preis."
 msgid "About"
 msgstr "Über"
 
-#: src/applications/Overview/Ui/PerformancePair.tsx
+#: src/applications/Overview/Ui/OverviewPage/OverviewDesktop/KeyFigureList.tsx
+#: src/applications/Overview/Ui/OverviewPage/OverviewMobile/KeyFigureStrip.tsx
 msgid "Active PnL"
 msgstr "Aktiver PnL"
 
@@ -206,7 +207,7 @@ msgstr "Dunkles Design"
 #. placeholder {0}: formatTime(freshness.as_of)
 #. placeholder {0}: formatTime(overview.data.freshness.as_of)
 #: src/applications/Overview/Ui/OverviewPage.tsx
-#: src/applications/Overview/Ui/TodayHero.tsx
+#: src/applications/Overview/Ui/OverviewPage/FreshnessNote.tsx
 msgid "Data from {0}"
 msgstr "Daten von {0}"
 
@@ -238,8 +239,12 @@ msgstr "geschätzt"
 msgid "Estimated"
 msgstr "Geschätzt"
 
+#: src/applications/Overview/Ui/OverviewPage/OverviewMobile/KeyFigureStrip.tsx
+msgid "Gain"
+msgstr "Gewinn"
+
 #. placeholder {0}: i18n._(PERIOD_LABELS[period])
-#: src/applications/Overview/Ui/PerformancePair.tsx
+#: src/applications/Overview/Ui/OverviewPage/OverviewDesktop/KeyFigureList.tsx
 msgid "Gain · {0}"
 msgstr "Gewinn · {0}"
 
@@ -273,17 +278,9 @@ msgstr "Verlauf wird noch importiert: {progress} erledigt."
 msgid "History still importing."
 msgstr "Verlauf wird noch importiert."
 
-#: src/applications/Overview/Ui/NetWorthFigure/NetWorthBreakdown.tsx
-msgid "Holdings without a price"
-msgstr "Bestände ohne Preis"
-
-#: src/applications/Overview/Ui/NetWorthFigure.tsx
+#: src/applications/Overview/Ui/OverviewPage/OverviewMobile/KeyFigureStrip.tsx
 msgid "idle"
 msgstr "frei"
-
-#: src/applications/Overview/Ui/NetWorthFigure/NetWorthBreakdown.tsx
-msgid "Idle"
-msgstr "Frei"
 
 #. placeholder {0}: source.quoteSymbol.toUpperCase()
 #: src/applications/Shared/Chart/Ui/PriceChart/PriceChartHeader.tsx
@@ -298,6 +295,11 @@ msgstr "Falsches Passwort."
 #: src/applications/Shared/Time/Ui/RelativeTime.tsx
 msgid "just now"
 msgstr "gerade eben"
+
+#. Short for losses, after a count: 2 L
+#: src/applications/Overview/Ui/OverviewPage/OverviewDesktop/TodayHero/TodaySummary.tsx
+msgid "L"
+msgstr "V"
 
 #: src/applications/Setting/Ui/SettingsPage.tsx
 #: src/core/i18n/LocaleSwitcher.tsx
@@ -316,10 +318,6 @@ msgstr "Lizenzen"
 msgid "Light theme"
 msgstr "Helles Design"
 
-#: src/applications/Overview/Ui/NetWorthFigure/NetWorthBreakdown.tsx
-msgid "Liquidity"
-msgstr "Liquidität"
-
 #: src/applications/Realtime/Ui/streamStateLabels.ts
 msgid "Live"
 msgstr "Live"
@@ -332,7 +330,8 @@ msgstr "Live-Aktualisierungen"
 msgid "Live updates:"
 msgstr "Live-Aktualisierungen:"
 
-#: src/applications/Overview/Ui/OverviewPage/OverviewSkeleton.tsx
+#: src/applications/Overview/Ui/OverviewPage/OverviewDesktopSkeleton.tsx
+#: src/applications/Overview/Ui/OverviewPage/OverviewMobileSkeleton.tsx
 msgid "Loading overview"
 msgstr "Übersicht wird geladen"
 
@@ -352,9 +351,13 @@ msgstr "Untergrenze"
 msgid "Lower bound"
 msgstr "Untergrenze"
 
-#: src/applications/Overview/Ui/NetWorthFigure.tsx
+#: src/applications/Overview/Ui/OverviewPage/OverviewMobile/KeyFigureStrip.tsx
 msgid "LP"
 msgstr "LP"
+
+#: src/applications/Overview/Ui/OverviewPage/OverviewDesktop/KeyFigureList.tsx
+msgid "LP · idle"
+msgstr "LP · frei"
 
 #: src/core/Layout/AppShell/DesktopNav.tsx
 #: src/core/Layout/AppShell/FloatingTabBar.tsx
@@ -370,14 +373,10 @@ msgstr "minus"
 msgid "More"
 msgstr "Mehr"
 
-#: src/applications/Overview/Ui/NetWorthFigure.tsx
+#: src/applications/Overview/Ui/OverviewPage/OverviewDesktop/KeyFigureList.tsx
+#: src/applications/Overview/Ui/OverviewPage/OverviewMobile/KeyFigureStrip.tsx
 msgid "Net worth"
 msgstr "Nettovermögen"
-
-#: src/applications/Overview/Ui/NetWorthFigure.tsx
-#: src/applications/Overview/Ui/NetWorthFigure/NetWorthBreakdown.tsx
-msgid "Net worth breakdown"
-msgstr "Aufschlüsselung des Nettovermögens"
 
 #: src/applications/Overview/Ui/RealPnlPulse/usePulseReadings.ts
 #: src/applications/Shared/Chart/Ui/LineSeriesChart.tsx
@@ -390,7 +389,8 @@ msgstr "Keine Diagrammwerte"
 msgid "No losing position yet."
 msgstr "Noch keine Verlustposition."
 
-#: src/applications/Overview/Ui/PerformancePair.tsx
+#: src/applications/Overview/Ui/OverviewPage/OverviewDesktop/KeyFigureList.tsx
+#: src/applications/Overview/Ui/OverviewPage/OverviewMobile/KeyFigureStrip.tsx
 msgid "No open positions"
 msgstr "Keine offenen Positionen"
 
@@ -406,13 +406,13 @@ msgstr "Für die zu diesem Zeitpunkt offenen Positionen ist keine Bewertung verf
 msgid "not available"
 msgstr "nicht verfügbar"
 
+#: src/applications/Overview/Ui/OverviewPage/OverviewDesktop/TodayHero/TodaySummary.tsx
 #: src/applications/Overview/Ui/RealPnlPulse/PulseReadoutFigures.tsx
-#: src/applications/Overview/Ui/TodayHero.tsx
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "Not available"
 msgstr "Nicht verfügbar"
 
-#: src/applications/Overview/Ui/TodayHero.tsx
+#: src/applications/Overview/Ui/OverviewPage/OverviewDesktop/TodayHero/TodaySummary.tsx
 msgid "Nothing closed yet today"
 msgstr "Heute wurde noch keine Position geschlossen"
 
@@ -453,6 +453,7 @@ msgstr "Passwort"
 msgid "Paused"
 msgstr "Pausiert"
 
+#: src/applications/Overview/Ui/OverviewPage/OverviewMobile/GainPeriodMenu.tsx
 #: src/applications/Shared/Scope/Ui/PeriodPills.tsx
 msgid "Period"
 msgstr "Zeitraum"
@@ -483,7 +484,7 @@ msgstr "Gewinn"
 msgid "Real PnL"
 msgstr "Realer PnL"
 
-#: src/applications/Overview/Ui/TodayHero.tsx
+#: src/applications/Overview/Ui/OverviewPage/OverviewDesktop/TodayHero/TodaySummary.tsx
 msgid "realized"
 msgstr "realisiert"
 
@@ -494,10 +495,6 @@ msgstr "Verbindet erneut"
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "Reconstructed for the time before the wallet was added."
 msgstr "Rekonstruiert für die Zeit vor dem Hinzufügen der Wallet."
-
-#: src/applications/Overview/Ui/NetWorthFigure/NetWorthBreakdown.tsx
-msgid "Recoverable rent"
-msgstr "Rückforderbare Miete"
 
 #: src/applications/Shared/Motion/Ui/ReduceMotionSwitch.tsx
 msgid "Reduce motion"
@@ -534,10 +531,6 @@ msgstr "Einstellungen"
 msgid "Settings and session"
 msgstr "Einstellungen und Sitzung"
 
-#: src/applications/Overview/Ui/NetWorthFigure.tsx
-msgid "Show net worth breakdown"
-msgstr "Aufschlüsselung des Nettovermögens anzeigen"
-
 #: src/core/Layout/AppShell/FloatingTabBar.tsx
 msgid "Show the tabs"
 msgstr "Tabs anzeigen"
@@ -563,7 +556,7 @@ msgstr "Abmelden"
 msgid "Sign out of this device"
 msgstr "Auf diesem Gerät abmelden"
 
-#: src/applications/Overview/Ui/TodayHero.tsx
+#: src/applications/Overview/Ui/OverviewPage/OverviewDesktop/TodayHero.tsx
 msgid "since 00:00"
 msgstr "seit 00:00"
 
@@ -649,10 +642,6 @@ msgstr "Der Server hat zu lange für die Antwort gebraucht. Versuchen Sie es ern
 msgid "Theme"
 msgstr "Design"
 
-#: src/applications/Overview/Ui/NetWorthFigure/NetWorthBreakdown.tsx
-msgid "These holdings are not included in net worth."
-msgstr "Diese Bestände sind nicht im Nettovermögen enthalten."
-
 #: src/core/NotFoundScreen.tsx
 msgid "This address does not match any page of binsight."
 msgstr "Diese Adresse entspricht keiner Seite von binsight."
@@ -685,11 +674,12 @@ msgstr "Diese Position wird nicht mehr verfolgt."
 msgid "This wallet is no longer tracked."
 msgstr "Diese Wallet wird nicht mehr verfolgt."
 
-#: src/applications/Overview/Ui/TodayHero.tsx
+#: src/applications/Overview/Ui/OverviewPage/OverviewDesktop/TodayHero.tsx
+#: src/applications/Overview/Ui/OverviewPage/OverviewMobile/TodayFigure.tsx
 msgid "Today"
 msgstr "Heute"
 
-#: src/applications/Overview/Ui/TodayHero.tsx
+#: src/applications/Overview/Ui/OverviewPage/OverviewDesktop/TodayHero.tsx
 msgid "Today's closed-position PnL as a share of their invested amount"
 msgstr "PnL der heute geschlossenen Positionen im Verhältnis zu ihrem investierten Betrag"
 
@@ -709,10 +699,6 @@ msgstr "Erneut versuchen"
 #: src/applications/Health/Ui/HealthCard/healthLabels.ts
 msgid "Unavailable"
 msgstr "Nicht verfügbar"
-
-#: src/applications/Overview/Ui/NetWorthFigure/NetWorthBreakdown.tsx
-msgid "Unclaimed fees"
-msgstr "Nicht abgerufene Gebühren"
 
 #: src/applications/Shared/Chart/Ui/BinHistogram.tsx
 #: src/applications/Shared/Chart/Ui/LineSeriesChart.tsx
@@ -734,6 +720,11 @@ msgstr "Ansicht"
 #: src/applications/Overview/Ui/RealPnlPulse/usePulseReadings.ts
 msgid "vs net worth"
 msgstr "vs Nettovermögen"
+
+#. Short for wins, after a count: 3 W
+#: src/applications/Overview/Ui/OverviewPage/OverviewDesktop/TodayHero/TodaySummary.tsx
+msgid "W"
+msgstr "G"
 
 #: src/applications/Wallet/Ui/WalletsPage.tsx
 #: src/core/Layout/AppShell/navItems.ts

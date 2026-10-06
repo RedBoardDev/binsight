@@ -36,7 +36,7 @@ export const AppShell = () => {
       <main
         id={MAIN_CONTENT_ID}
         tabIndex={-1}
-        className="pt-6 pb-(--tab-bar-clearance) outline-none [view-transition-name:page] lg:pt-10 lg:pb-24"
+        className="pt-4 pb-(--tab-bar-clearance) outline-none [view-transition-name:page] lg:pt-10 lg:pb-24"
       >
         <PageColumn>
           <Outlet />

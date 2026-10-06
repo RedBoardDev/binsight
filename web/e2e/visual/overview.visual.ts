@@ -1,82 +1,47 @@
-import { expect, type Locator } from '@playwright/test';
+import { expect } from '@playwright/test';
 import { overviewFixture } from '../../test/fixtures/overview';
 import { expectNoA11yViolations } from '../expectNoA11yViolations';
 import { test } from '../visualTest';
 
-const expectPopoverSettled = async (dialog: Locator): Promise<void> => {
-  // Visibility starts during the enter fade; axe must measure the settled text contrast.
-  const popover = dialog.locator('..');
-  await expect(popover).not.toHaveAttribute('data-entering', 'true');
-  await expect(popover).toHaveCSS('opacity', '1');
-};
-
-test('shows the overview server readings and opens its breakdown with the keyboard', async ({
+test('shows the overview server readings as the key figures of each layout', async ({
   page,
 }, testInfo) => {
+  const isPhone = testInfo.project.name.startsWith('mobile');
   await page.route('**/api/v1/overview?*', (route) => route.fulfill({ json: overviewFixture() }));
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible();
-  await expect(page.getByText('+1.000', { exact: true })).toBeVisible();
-  await expect(page.getByText('100.123', { exact: true })).toBeVisible();
+  const today = page.getByRole('region', { name: 'Today' });
+  await expect(today.getByText('+1.000', { exact: true })).toBeVisible();
+  await expect(page.getByText(isPhone ? '100.12' : '100.123', { exact: true })).toBeVisible();
   await expect(page.getByText('+1.336', { exact: true })).toBeVisible();
-  await expect(page.getByText('+12.553', { exact: true })).toBeVisible();
-  await expect(page.getByRole('link', { name: /5 closes.*realized/ })).toHaveAttribute(
-    'href',
-    /day=2026-10-06/,
-  );
+  await expect(page.getByText(isPhone ? '+12.55' : '+12.553', { exact: true })).toBeVisible();
+  if (!isPhone) {
+    await expect(page.getByRole('link', { name: /5 closes.*realized/ })).toHaveAttribute(
+      'href',
+      /day=2026-10-06/,
+    );
+  }
   await page.evaluate('document.fonts.ready');
   await page.screenshot({
     path: `test-results/visual/${testInfo.project.name}/overview-summary.png`,
-    fullPage: !testInfo.project.name.startsWith('mobile'),
+    fullPage: !isPhone,
   });
-  const trigger = page.getByRole('button', { name: 'Show net worth breakdown' });
-  for (
-    let index = 0;
-    index < 20 &&
-    !(await page.evaluate<boolean>(
-      'document.activeElement?.getAttribute("aria-label") === "Show net worth breakdown"',
-    ));
-    index += 1
-  ) {
-    await page.keyboard.press('Tab');
-  }
-  await expect(trigger).toBeFocused();
-  await expect(trigger).toHaveCSS('box-shadow', /rgb/);
-  await page.keyboard.press('Enter');
-  const breakdown = page.getByRole('dialog', { name: 'Net worth breakdown' });
-  await expect(breakdown).toBeVisible();
-  await expect(breakdown).toContainText('Liquidity');
-  await expect(breakdown).toContainText('Recoverable rent');
-  await expectPopoverSettled(breakdown);
   await expectNoA11yViolations(page);
-  await page.keyboard.press('Escape');
-  await expect(breakdown).toBeHidden();
-  await expect(trigger).toBeFocused();
   await page.getByRole('button', { name: 'Hide amounts' }).click();
-  await expect(page.getByText('+1.000', { exact: true })).toBeHidden();
+  await expect(today.getByText('+1.000', { exact: true })).toBeHidden();
   await expect(page.getByText('+2.6%', { exact: true })).toBeVisible();
-  await trigger.click();
-  await expect(breakdown).not.toContainText('4.000');
-  await expect(breakdown).toContainText('amount hidden SOL');
-  await expectPopoverSettled(breakdown);
-  await expectNoA11yViolations(page);
   await expect
     .poll(() => page.evaluate('document.documentElement.scrollWidth'))
     .toBeLessThanOrEqual(page.viewportSize()?.width ?? 0);
-  if (testInfo.project.name.startsWith('mobile')) {
-    await page.keyboard.press('Escape');
+  if (isPhone) {
     await page.getByRole('button', { name: 'Hide amounts' }).click();
     await page.evaluate('localStorage.setItem("binsight.locale", "de")');
     await page.reload();
-    await expect(page.getByRole('heading', { name: 'Übersicht', exact: true })).toBeVisible();
     await expect(page.getByText('+1,000', { exact: true })).toBeVisible();
-    const netWorthBounds = await page
-      .getByRole('button', { name: 'Aufschlüsselung des Nettovermögens anzeigen' })
-      .boundingBox();
+    const netWorthBounds = await page.getByText('Nettovermögen', { exact: true }).boundingBox();
     const activePnlBounds = await page.getByText('Aktiver PnL', { exact: true }).boundingBox();
     if (netWorthBounds === null || activePnlBounds === null)
       throw new Error('The German summary labels are not visible');
-    expect(activePnlBounds.x - netWorthBounds.x - netWorthBounds.width).toBeGreaterThanOrEqual(16);
+    expect(activePnlBounds.x - netWorthBounds.x - netWorthBounds.width).toBeGreaterThanOrEqual(12);
     await page.evaluate('document.fonts.ready');
     await page.screenshot({
       path: `test-results/visual/${testInfo.project.name}/overview-summary-de.png`,
@@ -202,16 +167,8 @@ test('keeps USD figures and an explicit stale date after a failed refresh, then 
   await page.getByRole('button', { name: 'Hide amounts' }).click();
   await expect(page.getByText('+$1.00', { exact: true })).toBeHidden();
   await expect(page.getByText('+2.6%', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Show net worth breakdown' }).click();
-  await expect(page.getByRole('dialog', { name: 'Net worth breakdown' })).not.toContainText(
-    '$4.00',
-  );
-  await expect(page.getByRole('dialog', { name: 'Net worth breakdown' })).toContainText(
-    'amount hidden USD',
-  );
-  await expectPopoverSettled(page.getByRole('dialog', { name: 'Net worth breakdown' }));
+  await expect(page.getByText('•••••').first()).toBeVisible();
   await expectNoA11yViolations(page);
-  await page.keyboard.press('Escape');
   const readsBeforeRetry = overviewReads;
   phase = 'recovered';
   await page.getByRole('button', { name: 'Retry', exact: true }).click();

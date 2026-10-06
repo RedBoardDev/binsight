@@ -81,6 +81,11 @@
   --text-pair--line-height: 1.5rem;
   --text-pair--letter-spacing: -0.015em;
   --text-pair--font-weight: 600;
+  /* A figure of the desktop key-figure list (Overview): between body text and a pair. */
+  --text-stat: 0.9375rem;
+  --text-stat--line-height: 1.25rem;
+  --text-stat--letter-spacing: -0.01em;
+  --text-stat--font-weight: 600;
   /* A section title. */
   --text-section: 1rem;
   --text-section--line-height: 1.5rem;

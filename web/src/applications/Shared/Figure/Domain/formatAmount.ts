@@ -34,7 +34,7 @@ const precisionOf = (
   placement: AmountPlacement,
   amount: DecimalString,
 ): Intl.NumberFormatOptions => {
-  if (placement === 'axis') {
+  if (placement === 'axis' || placement === 'compact') {
     return AXIS;
   }
   if (money.unit === 'sol') {

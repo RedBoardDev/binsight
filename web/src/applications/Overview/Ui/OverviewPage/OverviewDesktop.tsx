@@ -1,25 +1,22 @@
-import { NetWorthFigure } from '@app/applications/Overview/Ui/NetWorthFigure';
-import { PerformancePair } from '@app/applications/Overview/Ui/PerformancePair';
-import { TodayHero } from '@app/applications/Overview/Ui/TodayHero';
+import type { Overview } from '@app/applications/Overview/Api/getOverview';
 import type { Period } from '@app/applications/Shared/Scope/Domain/period';
-import type { ApiSchema } from '@app/lib/api/apiSchema';
 import type { ReactNode } from 'react';
+import { KeyFigureList } from './OverviewDesktop/KeyFigureList';
+import { TodayHero } from './OverviewDesktop/TodayHero';
 
 interface OverviewDesktopProps {
-  readonly overview: ApiSchema<'Overview'>;
+  readonly overview: Overview;
   readonly period: Period;
   readonly historyHref: string;
   readonly graph: ReactNode;
 }
 
+// The key figures in a 320 px column, the chart beside them; the list ends on the chart's dates.
 export const OverviewDesktop = ({ overview, period, historyHref, graph }: OverviewDesktopProps) => (
-  <div className="grid grid-cols-[20rem_minmax(0,1fr)] items-end gap-10">
-    <div className="flex flex-col gap-6">
+  <div className="grid grid-cols-[20rem_minmax(0,1fr)] gap-x-16">
+    <div className="flex flex-col justify-between gap-6">
       <TodayHero today={overview.today} freshness={overview.freshness} historyHref={historyHref} />
-      <div>
-        <NetWorthFigure netWorth={overview.net_worth} layout="stocks" />
-        <PerformancePair overview={overview} period={period} layout="stocks" />
-      </div>
+      <KeyFigureList overview={overview} period={period} />
     </div>
     {graph}
   </div>

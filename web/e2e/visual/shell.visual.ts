@@ -26,7 +26,7 @@ const shoot = async (page: Page, name: string, testInfo: TestInfo): Promise<void
 };
 
 const PAGES = [
-  { name: 'overview', path: '/', heading: 'Overview' },
+  { name: 'overview', path: '/', heading: 'Today' },
   { name: 'settings', path: '/settings', heading: 'Settings' },
 ] as const;
 

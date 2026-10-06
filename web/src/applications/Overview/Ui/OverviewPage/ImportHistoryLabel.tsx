@@ -1,10 +1,10 @@
+import type { Overview } from '@app/applications/Overview/Api/getOverview';
 import { formattedText } from '@app/applications/Shared/Figure/Domain/formattedNumber';
 import { useFigureFormatter } from '@app/applications/Shared/Figure/Ui/useFigureFormatter';
-import type { ApiSchema } from '@app/lib/api/apiSchema';
 import { useLingui } from '@lingui/react/macro';
 
 interface ImportHistoryLabelProps {
-  readonly importing: ApiSchema<'Overview'>['sync']['importing'];
+  readonly importing: readonly Overview['sync']['importing'][number][];
 }
 
 export const ImportHistoryLabel = ({ importing }: ImportHistoryLabelProps) => {

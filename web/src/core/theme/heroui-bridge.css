@@ -52,6 +52,20 @@
     --wallet-8: oklch(from var(--wallet-hue-8) calc(l * var(--wallet-darkening)) c h);
   }
 
+  /* A signed percent on its soft pill (Today on a phone). The light theme's gain and loss reach
+     4.5:1 on the page, not on their own 13 % tint: on the pill they are darkened just enough. */
+  :root,
+  [data-theme="light"] {
+    --gain-on-soft: color-mix(in srgb, var(--gain) 82%, black);
+    --loss-on-soft: color-mix(in srgb, var(--loss) 82%, black);
+  }
+
+  .dark,
+  [data-theme="dark"] {
+    --gain-on-soft: var(--gain);
+    --loss-on-soft: var(--loss);
+  }
+
   :root {
     --radius: 0.75rem;
     --field-radius: 0.625rem;
@@ -65,8 +79,10 @@
   --color-border-subtle: var(--border-subtle);
   --color-gain: var(--gain);
   --color-gain-soft: var(--gain-soft);
+  --color-gain-on-soft: var(--gain-on-soft);
   --color-loss: var(--loss);
   --color-loss-soft: var(--loss-soft);
+  --color-loss-on-soft: var(--loss-on-soft);
   --color-warning-soft: var(--warning-soft);
   --color-info: var(--info);
   --color-avatar: var(--avatar-background);
