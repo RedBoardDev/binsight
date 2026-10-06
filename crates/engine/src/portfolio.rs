@@ -18,7 +18,7 @@ pub mod views;
 mod wallet_label;
 
 pub use answer::{Answer, answered};
-pub use data_source::{DataSource, DataSourceKind};
+pub use data_source::DataSourceKind;
 pub use instance_status::InstanceStatus;
 pub use not_ready::NotReadyPortfolio;
 pub use read_error::ReadError;

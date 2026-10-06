@@ -21,7 +21,6 @@ use binsight_api::auth::{AuthSettings, ClientIpHeader, OwnerPassword, PublicUrl,
 use binsight_api::{AppState, AppStateParts, WebAsset, WebAssets, router};
 use binsight_core::clock::FixedClock;
 use binsight_demo::{DemoPortfolio, ImportingWalletSpec, WorldSpec};
-use binsight_engine::portfolio::DataSource;
 use binsight_engine::test_support::temporary_engine;
 use binsight_engine::{Engine, EngineHandle};
 use http_body_util::BodyExt;
@@ -157,22 +156,21 @@ impl TestApp {
         let start = Timestamp::from_second(START_SECONDS).unwrap();
         let clock = Arc::new(FixedClock::new(start));
         let shutdown = CancellationToken::new();
-        let data_source = match options.figures {
-            Figures::Chain => DataSource::Chain,
-            Figures::Demo => {
-                let mut spec =
-                    WorldSpec::new(start, jiff::tz::TimeZone::get(TEST_TIMEZONE).unwrap());
-                spec.importing_wallet = options.importing_wallet;
-                DataSource::Demo(Arc::new(DemoPortfolio::new(&spec).unwrap()))
-            }
-        };
-        let data_source = options.read_model.map_or(data_source, DataSource::Demo);
-        let runs_engine = matches!(&data_source, DataSource::Chain);
-        let handle = match data_source {
-            DataSource::Chain => temporary.handle.with_data_source(DataSource::Chain),
-            source @ DataSource::Demo(_) => {
-                EngineHandle::without_engine(temporary.store.clone(), source)
-            }
+        let demo: Option<Arc<dyn binsight_engine::portfolio::ReadModel>> =
+            match (options.read_model, options.figures) {
+                (Some(read_model), _) => Some(read_model),
+                (None, Figures::Chain) => None,
+                (None, Figures::Demo) => {
+                    let mut spec =
+                        WorldSpec::new(start, jiff::tz::TimeZone::get(TEST_TIMEZONE).unwrap());
+                    spec.importing_wallet = options.importing_wallet;
+                    Some(Arc::new(DemoPortfolio::new(&spec).unwrap()))
+                }
+            };
+        let runs_engine = demo.is_none();
+        let handle = match demo {
+            None => temporary.handle,
+            Some(read_model) => EngineHandle::without_engine(temporary.store.clone(), read_model),
         };
         let engine = if runs_engine {
             Some(temporary.engine)

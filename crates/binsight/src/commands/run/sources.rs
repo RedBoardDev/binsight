@@ -14,7 +14,6 @@ use binsight_chain::{
 };
 use binsight_core::clock::Clock;
 use binsight_demo::{DemoPortfolio, WorldSpec};
-use binsight_engine::portfolio::DataSource;
 use binsight_engine::{Engine, EngineHandle};
 use binsight_store::Store;
 use jiff::tz::TimeZone;
@@ -35,15 +34,17 @@ pub(super) fn engine(
             let rpc = rpc_client(helius_api_key, config, Arc::clone(clock))?;
             let stream = stream_connector(helius_api_key)?;
             let (engine, handle) = Engine::new(store.clone(), rpc, stream, Arc::clone(clock));
-            Ok((Some(engine), handle.with_data_source(DataSource::Chain)))
+            Ok((Some(engine), handle))
         }
         DataSourceConfig::Demo => {
             warn!("demo mode: serving generated figures; nothing is tracked or sent");
             let spec = WorldSpec::new(clock.now(), TimeZone::UTC);
             let portfolio =
                 DemoPortfolio::new(&spec).map_err(|error| Failure::Unexpected(error.into()))?;
-            let source = DataSource::Demo(Arc::new(portfolio));
-            Ok((None, EngineHandle::without_engine(store.clone(), source)))
+            Ok((
+                None,
+                EngineHandle::without_engine(store.clone(), Arc::new(portfolio)),
+            ))
         }
     }
 }

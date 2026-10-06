@@ -18,7 +18,7 @@ use tokio::sync::{broadcast, watch};
 use crate::events::EngineEvent;
 use crate::health::{EngineHealth, check_database};
 use crate::ingestion::SyncState;
-use crate::portfolio::{DataSource, DataSourceKind, NotReadyPortfolio, ReadModel};
+use crate::portfolio::{DataSourceKind, NotReadyPortfolio, ReadModel};
 use crate::status::EngineStatus;
 
 /// A shared, read-only view of a running engine.
@@ -65,9 +65,9 @@ impl EngineHandle {
     }
 
     /// A handle for an application that runs no engine (demo mode): it reports the engine as
-    /// running, publishes no event and reads the portfolio from `source`. Nothing ingests, so
-    /// nothing is written to the database or sent to the network.
-    pub fn without_engine(store: Store, source: DataSource) -> Self {
+    /// running, publishes no event and reads the portfolio from `demo`. Nothing ingests, so
+    /// nothing is sent to the network.
+    pub fn without_engine(store: Store, demo: Arc<dyn ReadModel>) -> Self {
         let (_status_sender, status) = watch::channel(EngineStatus::Running);
         let (events, _) = broadcast::channel(1);
         let (_sync_sender, sync_states) = watch::channel(BTreeMap::new());
@@ -77,27 +77,9 @@ impl EngineHandle {
             status,
             sync_states,
             events,
-            data_source: source.kind(),
-            read_model: match source {
-                DataSource::Chain => Arc::new(NotReadyPortfolio),
-                DataSource::Demo(read_model) => read_model,
-            },
+            data_source: DataSourceKind::Demo,
+            read_model: demo,
         }
-    }
-
-    /// The same handle, reading the portfolio from `source`. In chain mode the portfolio is not
-    /// ready until the engine serves figures.
-    #[must_use]
-    pub fn with_data_source(mut self, source: DataSource) -> Self {
-        if matches!(&source, DataSource::Demo(_)) {
-            return Self::without_engine(self.store, source);
-        }
-        self.data_source = source.kind();
-        self.read_model = match source {
-            DataSource::Chain => Arc::new(NotReadyPortfolio),
-            DataSource::Demo(read_model) => read_model,
-        };
-        self
     }
 
     /// Which source serves the figures.
@@ -171,13 +153,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn detaches_real_transport_observations_when_the_handle_serves_demo_figures() {
+    async fn reports_no_transport_observation_when_the_handle_serves_demo_figures() {
         let setup = temporary_engine().await;
-        let handle = setup
-            .handle
-            .with_data_source(DataSource::Demo(std::sync::Arc::new(
-                crate::portfolio::NotReadyPortfolio,
-            )));
+        let handle = super::EngineHandle::without_engine(
+            setup.store.clone(),
+            std::sync::Arc::new(crate::portfolio::NotReadyPortfolio),
+        );
         let health = handle.health().await;
         assert_eq!(health.rpc, None);
         assert_eq!(health.stream, None);
@@ -262,12 +243,12 @@ mod tests {
 
     use binsight_ledger::report::valued::Currency;
 
-    use crate::portfolio::{DataSource, DataSourceKind, ReadError};
+    use crate::portfolio::{DataSourceKind, ReadError};
 
     #[tokio::test]
     async fn answers_not_ready_in_chain_mode() {
         let setup = temporary_engine().await;
-        let handle = setup.handle.with_data_source(DataSource::Chain);
+        let handle = setup.handle;
 
         assert_eq!(handle.data_source(), DataSourceKind::Chain);
         let wallets = handle.read_model().wallets(Currency::Sol).await;
