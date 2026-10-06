@@ -128,12 +128,6 @@ mod tests {
             matches!(cursor, WalletCursor::HistoryComplete { top: Some(top) }
             if top.signature == numbered_signature(5))
         );
-        let listed = engine
-            .store
-            .signatures()
-            .get(WALLET, numbered_signature(5))
-            .await;
-        assert_eq!(listed.unwrap().unwrap().slot_order, Some(0));
         engine.stop().await;
     }
 

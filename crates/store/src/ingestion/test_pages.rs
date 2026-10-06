@@ -23,7 +23,6 @@ pub(super) fn listed(seed: u8, slot: u64) -> ListedSignature {
     ListedSignature {
         signature: Signature::from_bytes([seed; 64]),
         slot,
-        slot_order: Some(0),
         block_time: Some(listed_at()),
         is_failed: false,
     }

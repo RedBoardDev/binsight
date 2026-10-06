@@ -167,7 +167,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(report.from_version, 0);
-        assert_eq!(report.to_version, 6);
+        assert_eq!(report.to_version, 7);
         assert_eq!(
             report.applied,
             vec![
@@ -176,7 +176,8 @@ mod tests {
                 "wallet_ingestion",
                 "live_credit_purposes",
                 "wallet_signature_order",
-                "decoded_execution"
+                "decoded_execution",
+                "drop_listing_rank"
             ]
         );
         store.ping().await.unwrap();
@@ -281,9 +282,9 @@ mod tests {
 
         assert_eq!(
             path.file_name().unwrap(),
-            "binsight-19700101T000000Z-v0.1.0-schema6.db"
+            "binsight-19700101T000000Z-v0.1.0-schema7.db"
         );
         let copy = Store::open_existing(&path).await.unwrap();
-        assert_eq!(copy.schema_status().await.unwrap().current_version, 6);
+        assert_eq!(copy.schema_status().await.unwrap().current_version, 7);
     }
 }

@@ -16,17 +16,13 @@ use super::signatures::{ListedSignature, SignaturesRepo};
 use crate::database::codec::{flag_to_sql, timestamp_to_sql, unsigned_to_sql};
 use crate::error::StoreError;
 
-mod rank_shift;
-
 const INSERT_SIGNATURE: &str = "
-    INSERT INTO wallet_signature (wallet, signature, slot, slot_order, block_time, is_failed,
-                                  listed_at)
-    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+    INSERT INTO wallet_signature (wallet, signature, slot, block_time, is_failed, listed_at)
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6)
     ON CONFLICT (wallet, signature) DO NOTHING";
-const RANK_SIGNATURE: &str = "
-    UPDATE wallet_signature SET slot_order = ?3, block_time = coalesce(?4, block_time),
-                                slot = ?5, is_failed = ?6
-    WHERE wallet = ?1 AND signature = ?2 AND slot_order IS NULL";
+const FINALIZE_SIGNATURE: &str = "
+    UPDATE wallet_signature SET slot = ?3, block_time = coalesce(?4, block_time), is_failed = ?5
+    WHERE wallet = ?1 AND signature = ?2";
 const INSERT_FETCH_TASK: &str = "
     INSERT INTO tx_fetch (signature, state, priority, slot, attempts, next_attempt_at,
                           last_error, updated_at)
@@ -58,17 +54,11 @@ pub struct ListingPage {
     pub listed_at: Timestamp,
 }
 
-#[cfg(test)]
-#[path = "listing_page/order_tests.rs"]
-mod order_tests;
-
 impl SignaturesRepo {
     /// Writes a listed page, its fetch tasks and the cursor move, all or nothing. A signature
-    /// already recorded without its rank (seen first by the live stream) gets the page's rank
-    /// and block time. A newly ranked signature inserts its wallet-local ordinal, shifting
-    /// older ordinals in that slot. These ordinals are not canonical block indices.
-    /// Returns how many of the page's
-    /// signatures were new for the wallet.
+    /// already recorded (seen first by the live stream, at a lower commitment) takes the page's
+    /// slot, block time and outcome. Returns how many of the page's signatures were new for the
+    /// wallet.
     ///
     /// # Errors
     ///
@@ -95,42 +85,19 @@ fn write_page(connection: &Connection, page: &ListingPage) -> Result<u64, StoreE
     for listed in &page.signatures {
         let signature = listed.signature.to_string();
         let slot = unsigned_to_sql(listed.slot, "slot")?;
-        let slot_order = listed.slot_order.map(i64::from);
+        let block_time = listed.block_time.map(timestamp_to_sql);
+        let is_failed = flag_to_sql(listed.is_failed);
         let inserted = connection.execute(
             INSERT_SIGNATURE,
-            params![
-                wallet,
-                signature,
-                slot,
-                slot_order,
-                listed.block_time.map(timestamp_to_sql),
-                flag_to_sql(listed.is_failed),
-                listed_at,
-            ],
+            params![wallet, signature, slot, block_time, is_failed, listed_at],
         )?;
         if inserted == 1 {
             new_signatures = new_signatures.saturating_add(1);
-        }
-        let newly_ranked = if inserted == 1 {
-            slot_order.is_some()
-        } else if slot_order.is_some() {
-            rank_shift::check_listed_slot(connection, &wallet, listed)?;
-            connection.execute(
-                RANK_SIGNATURE,
-                params![
-                    wallet,
-                    signature,
-                    slot_order,
-                    listed.block_time.map(timestamp_to_sql),
-                    slot,
-                    flag_to_sql(listed.is_failed)
-                ],
-            )? == 1
         } else {
-            false
-        };
-        if newly_ranked {
-            rank_shift::reserve_rank(connection, &wallet, listed)?;
+            connection.execute(
+                FINALIZE_SIGNATURE,
+                params![wallet, signature, slot, block_time, is_failed],
+            )?;
         }
         connection.execute(
             INSERT_FETCH_TASK,
@@ -178,7 +145,7 @@ mod tests {
     async fn prepares_every_query_against_the_schema() {
         assert_queries_prepare(&[
             INSERT_SIGNATURE,
-            RANK_SIGNATURE,
+            FINALIZE_SIGNATURE,
             INSERT_FETCH_TASK,
             UPDATE_CURSOR,
             SELECT_WALLET,
@@ -274,27 +241,6 @@ mod tests {
             .await;
 
         assert!(matches!(attempt, Err(StoreError::UnknownWallet { .. })));
-    }
-
-    #[tokio::test]
-    async fn ranks_a_signature_recorded_without_its_rank_and_keeps_an_existing_one() {
-        let (_folder, store) = store_with_wallet().await;
-        let ranked = |seed: u8, slot_order: Option<u32>| ListedSignature {
-            slot_order,
-            ..listed(seed, 20)
-        };
-        let page = history_page(WALLET, vec![ranked(2, None), ranked(3, Some(1))]);
-        let records = store.signatures();
-        records.record_listing(page.clone()).await.unwrap();
-
-        let ranking = page_after(&page, vec![ranked(2, Some(4)), ranked(3, Some(5))]);
-        let new_signatures = records.record_listing(ranking).await.unwrap();
-
-        assert_eq!(new_signatures, 0);
-        for (seed, rank) in [(2, 4), (3, 1)] {
-            let stored = records.get(WALLET, listed(seed, 20).signature).await;
-            assert_eq!(stored.unwrap().unwrap().slot_order, Some(rank));
-        }
     }
 
     #[tokio::test]

@@ -50,7 +50,6 @@ async fn queue(store: &Store, payload: &[u8]) -> FetchTask {
             signatures: vec![ListedSignature {
                 signature: transaction.signature,
                 slot: transaction.slot,
-                slot_order: Some(0),
                 block_time: transaction.block_time,
                 is_failed: true,
             }],

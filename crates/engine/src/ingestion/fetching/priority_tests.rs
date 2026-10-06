@@ -20,7 +20,6 @@ async fn fetches_live_at_finalization_while_history_requests_are_still_silent() 
         .map(|number| ListedSignature {
             signature: numbered_signature(number),
             slot: 100_000 - u64::from(number),
-            slot_order: Some(0),
             block_time: Some(TEST_START),
             is_failed: false,
         })

@@ -2,7 +2,7 @@
 //!
 //! A top-up lists from the newest signature down to the cursor's top. Each page is written as
 //! soon as it is listed, with its fetch tasks, in one transaction, so a crash loses nothing;
-//! signatures the stream already recorded get their rank in their slot. Only the page that
+//! signatures the stream already recorded take the listed, final metadata. Only the page that
 //! reaches the top raises it (`top_up_rules`), to the newest signature the top-up found: the
 //! stream never moves the top, only a listing does. A wallet whose history has not started has
 //! nothing to top up: its first history page starts from the newest signature anyway.
@@ -12,8 +12,7 @@ use binsight_store::{ListedTop, ListingPage, TrackedWallet, WalletCursor};
 use jiff::Timestamp;
 use tracing::debug;
 
-use super::page_listing::{PageError, list_page};
-use super::slot_order::{PageBoundary, rank_in_slots};
+use super::page_listing::{PageError, list_page, listed_signatures};
 use super::top_up_rules::{raise_top, read_top_up_page};
 use crate::ingestion::Ingestion;
 use crate::ingestion::live::CheckReason;
@@ -25,7 +24,6 @@ pub(super) struct TopUp {
     top: Option<ListedTop>,
     cursor: WalletCursor,
     before: Option<binsight_solana::Signature>,
-    boundary: Option<PageBoundary>,
     newest: Option<ListedTop>,
     pub(super) reason: CheckReason,
     pub(super) retry_at: Option<Timestamp>,
@@ -43,7 +41,6 @@ impl TopUp {
             top,
             cursor: wallet.cursor,
             before: None,
-            boundary: None,
             newest: None,
             reason,
             retry_at: None,
@@ -81,17 +78,11 @@ impl TopUp {
             Some(newest) if read.reached_top => raise_top(self.cursor, newest),
             _ => self.cursor,
         };
-        let ranked = rank_in_slots(&read.newer, self.boundary);
-        let boundary = ranked.last().and_then(|last| {
-            last.slot_order.map(|slot_order| PageBoundary {
-                slot: last.slot,
-                slot_order,
-            })
-        });
-        if !ranked.is_empty() || next_cursor != self.cursor {
+        let listed = listed_signatures(&read.newer);
+        if !listed.is_empty() || next_cursor != self.cursor {
             let listing = ListingPage {
                 wallet,
-                signatures: ranked,
+                signatures: listed,
                 previous_cursor: self.cursor,
                 cursor: next_cursor,
                 fetch_priority: self.reason.priority(),
@@ -103,7 +94,6 @@ impl TopUp {
         }
         self.cursor = next_cursor;
         self.newest = newest;
-        self.boundary = boundary;
         self.before = page.last().map(|oldest| oldest.signature);
         Ok(read.reached_top.then_some(self.started_at))
     }

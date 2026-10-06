@@ -1,8 +1,8 @@
 //! Listing one page of a wallet's history and writing it.
 //!
 //! A page is listed at the catch-up priority (one credit lists up to a thousand signatures, and
-//! knowing the whole history first gives an exact progress), then its signatures are ranked in
-//! their slots and written with their fetch tasks and the cursor move, in one transaction. A
+//! knowing the whole history first gives an exact progress), then its signatures are written
+//! with their fetch tasks and the cursor move, in one transaction. A
 //! short page is written too, but leaves the cursor where it was until a second listing confirms
 //! it ends the history. A page that cannot be listed or written changes nothing. Which page comes
 //! next is the listing worker's decision; the cursor rules live in `history_cursor`.
@@ -14,8 +14,7 @@ use tracing::{debug, info};
 
 use super::history_cursor::{HistoryStep, step_after_history_page};
 use super::history_end::ListedEnd;
-use super::page_listing::{PageError, list_page};
-use super::slot_order::{PageBoundary, rank_in_slots};
+use super::page_listing::{PageError, list_page, listed_signatures};
 use crate::ingestion::Ingestion;
 
 /// Lists one page of `wallet`'s history and writes it. `unconfirmed_end` is the short page an
@@ -34,42 +33,28 @@ pub(super) async fn list_and_write(
     };
     let page = list_page(ingestion, request, context).await?;
     let step = step_after_history_page(&wallet.cursor, &request, &page, unconfirmed_end);
-    write_page(ingestion, wallet, request, &page, &step).await?;
+    write_page(ingestion, wallet, &page, &step).await?;
     Ok(match step {
         HistoryStep::MoveTo(_) => None,
         HistoryStep::ConfirmEnd(end) => Some(end),
     })
 }
 
-/// Ranks the page's signatures and writes them with the cursor `step` leads to.
+/// Writes the page's signatures with the cursor `step` leads to.
 async fn write_page(
     ingestion: &Ingestion,
     wallet: &TrackedWallet,
-    request: SignaturesRequest,
     page: &[SignatureInfo],
     step: &HistoryStep,
 ) -> Result<(), StoreError> {
     let store = &ingestion.store;
-    let boundary = match request.before {
-        None => None,
-        Some(before) => store
-            .signatures()
-            .get(wallet.address, before)
-            .await?
-            .and_then(|previous| {
-                previous.slot_order.map(|slot_order| PageBoundary {
-                    slot: previous.slot,
-                    slot_order,
-                })
-            }),
-    };
     let cursor = match step {
         HistoryStep::MoveTo(cursor) => *cursor,
         HistoryStep::ConfirmEnd(_) => wallet.cursor,
     };
     let listing = ListingPage {
         wallet: wallet.address,
-        signatures: rank_in_slots(page, boundary),
+        signatures: listed_signatures(page),
         previous_cursor: wallet.cursor,
         cursor,
         fetch_priority: Priority::History,

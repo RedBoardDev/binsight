@@ -12,7 +12,6 @@ mod history_page;
 mod history_schedule;
 mod listing_step;
 mod page_listing;
-mod slot_order;
 mod top_up;
 mod top_up_rules;
 

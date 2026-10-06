@@ -101,7 +101,6 @@ pub async fn complete_history(wallets: &[Address], newest: u16) -> TemporaryEngi
             signatures: vec![ListedSignature {
                 signature,
                 slot,
-                slot_order: Some(0),
                 block_time: Some(TEST_START),
                 is_failed: false,
             }],

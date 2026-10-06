@@ -44,7 +44,7 @@ pub(crate) fn unsigned_from_sql(stored: i64, what: &'static str) -> Result<u64, 
     })
 }
 
-/// Reads back a small counter (an attempt count, a rank) stored in an `INTEGER` column. `what`
+/// Reads back a small counter (an attempt count, a version) stored in an `INTEGER` column. `what`
 /// names the value in the error.
 pub(crate) fn u32_from_sql(stored: i64, what: &'static str) -> Result<u32, StoreError> {
     u32::try_from(stored).map_err(|_| StoreError::InvalidStoredValue {
@@ -80,7 +80,8 @@ pub(crate) fn flag_to_sql(flag: bool) -> i64 {
     i64::from(flag)
 }
 
-/// Reads back a flag written by [`flag_to_sql`].
+/// Reads back a flag written by [`flag_to_sql`]; no production query reads a flag back yet.
+#[cfg(test)]
 pub(crate) fn flag_from_sql(stored: i64, what: &'static str) -> Result<bool, StoreError> {
     match stored {
         0 => Ok(false),

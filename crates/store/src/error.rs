@@ -130,12 +130,4 @@ pub enum StoreError {
         /// The wallet's address.
         address: Address,
     },
-    /// A finalized listing disagrees with the slot of an already ranked signature.
-    #[error("the listed slot {actual} differs from the recorded finalized slot {expected}")]
-    ListedSlotConflict {
-        /// Previously listed finalized slot.
-        expected: u64,
-        /// Slot of the new listing.
-        actual: u64,
-    },
 }

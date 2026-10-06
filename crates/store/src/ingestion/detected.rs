@@ -1,7 +1,7 @@
-//! Recording a signature the live stream saw, before any listing ranks it.
+//! Recording a signature the live stream saw, before any listing finds it.
 //!
 //! The stream reports a signature seconds after it is confirmed; it is written for its wallet,
-//! without a rank in its slot (a later listing gives it one), and its fetch task is queued as
+//! without a block time (a later listing gives it one), and its fetch task is queued as
 //! live work, due when the transaction should be final. A signature already queued for the
 //! history import is raised to live work and brought forward. This module only stores; the
 //! stream never moves a cursor, so it writes none.
@@ -15,9 +15,8 @@ use crate::database::codec::{flag_to_sql, timestamp_to_sql, unsigned_to_sql};
 use crate::error::StoreError;
 
 const INSERT_DETECTED: &str = "
-    INSERT INTO wallet_signature (wallet, signature, slot, slot_order, block_time, is_failed,
-                                  listed_at)
-    VALUES (?1, ?2, ?3, NULL, NULL, ?4, ?5)
+    INSERT INTO wallet_signature (wallet, signature, slot, block_time, is_failed, listed_at)
+    VALUES (?1, ?2, ?3, NULL, ?4, ?5)
     ON CONFLICT (wallet, signature) DO NOTHING";
 const QUEUE_LIVE_FETCH: &str = "
     INSERT INTO tx_fetch (signature, state, priority, slot, attempts, next_attempt_at,
@@ -113,7 +112,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn queues_a_streamed_signature_as_live_work_without_a_rank() {
+    async fn queues_a_streamed_signature_as_live_work_without_a_block_time() {
         let (_folder, store) = store_with_wallet().await;
 
         let is_new = store
@@ -128,7 +127,7 @@ mod tests {
             .get(WALLET, listed(2, 20).signature)
             .await;
         let stored = stored.unwrap().unwrap();
-        assert_eq!((stored.slot_order, stored.block_time), (None, None));
+        assert_eq!(stored.block_time, None);
         assert!(stored.is_failed);
         let queue = store.fetch_queue();
         assert_eq!(
@@ -163,7 +162,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ranks_a_streamed_signature_once_a_listing_finds_it() {
+    async fn takes_the_finalized_listing_of_a_streamed_signature() {
         let (_folder, store) = store_with_wallet().await;
         let records = store.signatures();
         records
@@ -180,8 +179,7 @@ mod tests {
 
         let stored = records.get(WALLET, listed(2, 20).signature).await.unwrap();
         let stored = stored.unwrap();
-        assert_eq!(stored.slot_order, Some(0));
-        assert_eq!(stored.block_time, Some(listed_at()));
+        assert_eq!(stored, listed(2, 20));
     }
 
     #[tokio::test]
