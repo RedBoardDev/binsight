@@ -197,12 +197,14 @@ async fn counts_closes_alike_in_the_wallets_and_history() {
         .as_array()
         .unwrap()
         .iter()
-        .map(|item| item["closed_count"].as_u64().unwrap())
+        .map(|item| item["positions"]["closed"].as_u64().unwrap())
         .sum();
 
     assert_eq!(
         per_wallet,
-        wallets["total"]["closed_count"].as_u64().unwrap()
+        wallets["total"]["positions"]["closed"]
+            .as_u64()
+            .unwrap()
     );
     assert_eq!(history["total_count"].as_u64().unwrap(), per_wallet);
     assert_eq!(history["matched_count"], history["total_count"]);

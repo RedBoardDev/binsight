@@ -2,13 +2,14 @@
 //!
 //! The API asks through the [`ReadModel`] traits and never sees where the figures come from.
 //! A source of figures builds a [`Snapshot`] of its facts and answers each read by running the
-//! matching query on it, so the demo world and the engine share every rule. In chain mode, until
-//! the engine serves figures, [`NotReadyPortfolio`] answers that nothing is ready.
+//! matching query on it, so the demo world and the engine share every rule. In chain mode the
+//! engine serves what it knows (`chain`): the wallets, their sync and the settings; its figures
+//! answer that they are not ready yet.
 
 mod answer;
+mod chain;
 mod data_source;
 mod instance_status;
-mod not_ready;
 pub mod query;
 mod read_error;
 mod read_model;
@@ -18,9 +19,9 @@ pub mod views;
 mod wallet_label;
 
 pub use answer::{Answer, answered};
+pub(crate) use chain::{ChainPortfolio, EngineState};
 pub use data_source::DataSourceKind;
 pub use instance_status::InstanceStatus;
-pub use not_ready::NotReadyPortfolio;
 pub use read_error::ReadError;
 pub use read_model::{
     HistoryReads, InstanceReads, PortfolioReads, PositionReads, ReadModel, StatsReads, WalletReads,

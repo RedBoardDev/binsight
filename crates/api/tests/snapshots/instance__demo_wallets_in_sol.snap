@@ -6,7 +6,6 @@ expression: in_sol.json()
   "items": [
     {
       "added_at": "2025-03-22T14:13:20Z",
-      "closed_count": 1050,
       "net_worth": {
         "exactness": "complete",
         "value": {
@@ -14,8 +13,11 @@ expression: in_sol.json()
           "unit": "sol"
         }
       },
-      "open_count": 5,
-      "out_of_range_count": 0,
+      "positions": {
+        "closed": 1050,
+        "open": 5,
+        "out_of_range": 0
+      },
       "real_pnl": {
         "exactness": "complete",
         "value": {
@@ -53,7 +55,6 @@ expression: in_sol.json()
     },
     {
       "added_at": "2026-02-20T14:13:20Z",
-      "closed_count": 560,
       "net_worth": {
         "exactness": "partial",
         "reasons": [
@@ -68,8 +69,11 @@ expression: in_sol.json()
           "unit": "sol"
         }
       },
-      "open_count": 2,
-      "out_of_range_count": 1,
+      "positions": {
+        "closed": 560,
+        "open": 2,
+        "out_of_range": 1
+      },
       "real_pnl": {
         "exactness": "partial",
         "reasons": [
@@ -114,7 +118,6 @@ expression: in_sol.json()
     },
     {
       "added_at": "2026-09-08T14:13:20Z",
-      "closed_count": 90,
       "net_worth": {
         "exactness": "complete",
         "value": {
@@ -122,8 +125,11 @@ expression: in_sol.json()
           "unit": "sol"
         }
       },
-      "open_count": 1,
-      "out_of_range_count": 1,
+      "positions": {
+        "closed": 90,
+        "open": 1,
+        "out_of_range": 1
+      },
       "real_pnl": {
         "exactness": "complete",
         "value": {
@@ -162,7 +168,6 @@ expression: in_sol.json()
   ],
   "next_cursor": null,
   "total": {
-    "closed_count": 1700,
     "net_worth": {
       "exactness": "partial",
       "reasons": [
@@ -177,8 +182,11 @@ expression: in_sol.json()
         "unit": "sol"
       }
     },
-    "open_count": 8,
-    "out_of_range_count": 2,
+    "positions": {
+      "closed": 1700,
+      "open": 8,
+      "out_of_range": 2
+    },
     "real_pnl": {
       "exactness": "partial",
       "reasons": [

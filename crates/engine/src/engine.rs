@@ -23,6 +23,7 @@ use crate::error::EngineError;
 use crate::events::EngineEvent;
 use crate::handle::EngineHandle;
 use crate::ingestion::{Ingestion, SyncPublisher, SyncState, requeue_readable_versions};
+use crate::portfolio::EngineState;
 use crate::projections::{REGISTRY, reconcile_projections};
 use crate::status::EngineStatus;
 
@@ -59,12 +60,14 @@ impl Engine {
         let (status, status_receiver) = watch::channel(EngineStatus::Starting);
         let (events, _) = broadcast::channel(EVENT_BUFFER_SIZE);
         let (sync_states, sync_receiver) = watch::channel(BTreeMap::new());
-        let handle = EngineHandle::new(
-            store.clone(),
-            rpc.clone(),
-            (status_receiver, sync_receiver),
-            events.clone(),
-        );
+        let state = EngineState {
+            store: store.clone(),
+            rpc: rpc.clone(),
+            clock: clock.clone(),
+            status: status_receiver,
+            sync_states: sync_receiver,
+        };
+        let handle = EngineHandle::new(state, events.clone());
         (
             Self {
                 store,

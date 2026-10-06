@@ -1268,6 +1268,15 @@ export interface components {
              */
             to: string;
         };
+        /** @description How many positions are open, out of range and closed. */
+        PositionCounts: {
+            /** @description How many were closed (as History counts them). */
+            closed: number;
+            /** @description How many are open. */
+            open: number;
+            /** @description How many of the open ones are out of range. */
+            out_of_range: number;
+        };
         /** @description A position, tagged by `status`. */
         PositionDetail: (components["schemas"]["OpenPositionDetail"] & {
             /** @enum {string} */
@@ -1655,14 +1664,9 @@ export interface components {
              * @description When the owner added it.
              */
             added_at: string;
-            /** @description How many positions it closed (as History counts them). */
-            closed_count: number;
             /** @description Its net worth now. */
             net_worth: components["schemas"]["Figure"];
-            /** @description How many positions it has open. */
-            open_count: number;
-            /** @description How many of them are out of range. */
-            out_of_range_count: number;
+            positions: components["schemas"]["PositionCounts"] | null;
             /** @description Its real PnL since its first activity: net worth − net capital put in. */
             real_pnl: components["schemas"]["Figure"];
             /** @description Its net worth as a share of the total net worth. */
@@ -1700,14 +1704,9 @@ export interface components {
         };
         /** @description The figures of every wallet together. */
         WalletsTotal: {
-            /** @description How many positions were closed. */
-            closed_count: number;
             /** @description The total net worth. */
             net_worth: components["schemas"]["Figure"];
-            /** @description How many positions are open. */
-            open_count: number;
-            /** @description How many of them are out of range. */
-            out_of_range_count: number;
+            positions: components["schemas"]["PositionCounts"] | null;
             /** @description The total real PnL. */
             real_pnl: components["schemas"]["Figure"];
         };
@@ -2572,15 +2571,6 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description The engine does not serve figures yet (`data_not_ready`). */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
         };
     };
     getPositionShareCard: {
@@ -2739,8 +2729,8 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description The engine does not serve figures yet (`data_not_ready`). */
-            503: {
+            /** @description The database could not be read (`internal`). */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2848,8 +2838,8 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description The engine does not serve figures yet (`data_not_ready`). */
-            503: {
+            /** @description The database could not be read (`internal`). */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

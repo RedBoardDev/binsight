@@ -173,7 +173,7 @@ impl PositionReads for DemoPortfolio {
 
 #[cfg(test)]
 mod tests {
-    use binsight_engine::portfolio::views::SyncState;
+    use binsight_engine::portfolio::views::{PositionCounts, SyncState};
     use jiff::Timestamp;
     use jiff::tz::TimeZone;
 
@@ -201,15 +201,17 @@ mod tests {
     async fn counts_every_open_position_in_the_wallets_and_their_total() {
         let wallets = portfolio().wallets(Currency::Sol).await.unwrap();
 
-        let open: usize = wallets.items.iter().map(|wallet| wallet.open_count).sum();
-        let out_of_range: usize = wallets
+        let counts: Vec<PositionCounts> = wallets
             .items
             .iter()
-            .map(|wallet| wallet.out_of_range_count)
-            .sum();
-        assert_eq!((open, wallets.total.open_count), (8, 8));
-        assert_eq!((out_of_range, wallets.total.out_of_range_count), (2, 2));
-        let closed: usize = wallets.items.iter().map(|wallet| wallet.closed_count).sum();
-        assert_eq!(closed, wallets.total.closed_count);
+            .map(|wallet| wallet.positions.unwrap())
+            .collect();
+        let total = wallets.total.positions.unwrap();
+        let open: usize = counts.iter().map(|count| count.open).sum();
+        let out_of_range: usize = counts.iter().map(|count| count.out_of_range).sum();
+        let closed: usize = counts.iter().map(|count| count.closed).sum();
+        assert_eq!((open, total.open), (8, 8));
+        assert_eq!((out_of_range, total.out_of_range), (2, 2));
+        assert_eq!(closed, total.closed);
     }
 }

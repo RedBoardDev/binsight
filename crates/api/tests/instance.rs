@@ -1,5 +1,5 @@
 //! The instance routes: synchronization, settings and wallets, on the demo world and in chain
-//! mode.
+//! mode, where they serve what the engine knows.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, reason = "tests fail loudly")]
 
@@ -11,19 +11,36 @@ use common::TestApp;
 const ROUTES: [&str; 3] = ["/api/v1/sync", "/api/v1/settings", "/api/v1/wallets"];
 
 #[tokio::test]
-async fn answers_data_not_ready_while_the_engine_serves_nothing() {
+async fn serves_what_the_engine_knows_in_chain_mode() {
     let app = TestApp::new().await;
 
-    for route in ROUTES {
-        let response = app.get_signed_in(route).await;
+    let sync = app.get_signed_in("/api/v1/sync").await;
+    let settings = app.get_signed_in("/api/v1/settings").await;
+    let wallets = app.get_signed_in("/api/v1/wallets").await;
 
-        assert_eq!(response.status, StatusCode::SERVICE_UNAVAILABLE, "{route}");
-        assert_eq!(
-            response.json()["error"]["code"],
-            "data_not_ready",
-            "{route}"
-        );
+    for response in [&sync, &settings, &wallets] {
+        assert_eq!(response.status, StatusCode::OK);
     }
+    let sync = sync.json();
+    assert_eq!(sync["state"], "live");
+    assert_eq!(sync["wallets"], serde_json::json!([]));
+    assert_eq!(sync["credits"]["budget"], 1_000_000);
+    assert_eq!(settings.json()["timezone"], "UTC");
+    let wallets = wallets.json();
+    assert_eq!(wallets["items"], serde_json::json!([]));
+    assert_eq!(wallets["total"]["net_worth"]["exactness"], "unavailable");
+    assert_eq!(wallets["total"]["positions"], serde_json::Value::Null);
+    assert_eq!((app.network_io)(), (0, 0));
+}
+
+#[tokio::test]
+async fn answers_data_not_ready_for_figures_the_engine_does_not_compute_yet() {
+    let app = TestApp::new().await;
+
+    let response = app.get_signed_in("/api/v1/overview").await;
+
+    assert_eq!(response.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.json()["error"]["code"], "data_not_ready");
 }
 
 #[tokio::test]

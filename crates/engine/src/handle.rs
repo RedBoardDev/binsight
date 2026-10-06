@@ -18,7 +18,7 @@ use tokio::sync::{broadcast, watch};
 use crate::events::EngineEvent;
 use crate::health::{EngineHealth, check_database};
 use crate::ingestion::SyncState;
-use crate::portfolio::{DataSourceKind, NotReadyPortfolio, ReadModel};
+use crate::portfolio::{ChainPortfolio, DataSourceKind, EngineState, ReadModel};
 use crate::status::EngineStatus;
 
 /// A shared, read-only view of a running engine.
@@ -44,23 +44,15 @@ impl std::fmt::Debug for EngineHandle {
 }
 
 impl EngineHandle {
-    pub(crate) fn new(
-        store: Store,
-        rpc: RpcClient,
-        (status, sync_states): (
-            watch::Receiver<EngineStatus>,
-            watch::Receiver<BTreeMap<Address, SyncState>>,
-        ),
-        events: broadcast::Sender<EngineEvent>,
-    ) -> Self {
+    pub(crate) fn new(state: EngineState, events: broadcast::Sender<EngineEvent>) -> Self {
         Self {
-            store,
-            rpc: Some(rpc),
-            status,
-            sync_states,
+            store: state.store.clone(),
+            rpc: Some(state.rpc.clone()),
+            status: state.status.clone(),
+            sync_states: state.sync_states.clone(),
             events,
             data_source: DataSourceKind::Chain,
-            read_model: Arc::new(NotReadyPortfolio),
+            read_model: Arc::new(ChainPortfolio::new(state)),
         }
     }
 
@@ -153,11 +145,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reports_no_transport_observation_when_the_handle_serves_demo_figures() {
+    async fn reports_no_transport_observation_for_a_handle_without_an_engine() {
         let setup = temporary_engine().await;
+        // Any read model will do: the health of a handle without an engine never reads it.
+        let read_model = crate::portfolio::ChainPortfolio::new(crate::portfolio::EngineState {
+            store: setup.store.clone(),
+            rpc: setup.handle.rpc.clone().unwrap(),
+            clock: std::sync::Arc::new(binsight_core::clock::FixedClock::new(TEST_START)),
+            status: setup.handle.status.clone(),
+            sync_states: setup.handle.sync_states.clone(),
+        });
         let handle = super::EngineHandle::without_engine(
             setup.store.clone(),
-            std::sync::Arc::new(crate::portfolio::NotReadyPortfolio),
+            std::sync::Arc::new(read_model),
         );
         let health = handle.health().await;
         assert_eq!(health.rpc, None);
@@ -239,21 +239,5 @@ mod tests {
         assert_eq!(backlog.unsupported_version, 1);
         assert_eq!(backlog.failed, 0);
         engine.stop().await;
-    }
-
-    use binsight_ledger::report::valued::Currency;
-
-    use crate::portfolio::{DataSourceKind, ReadError};
-
-    #[tokio::test]
-    async fn answers_not_ready_in_chain_mode() {
-        let setup = temporary_engine().await;
-        let handle = setup.handle;
-
-        assert_eq!(handle.data_source(), DataSourceKind::Chain);
-        let wallets = handle.read_model().wallets(Currency::Sol).await;
-        assert_eq!(wallets, Err(ReadError::NotReady));
-        let sync = handle.read_model().sync_report().await;
-        assert_eq!(sync, Err(ReadError::NotReady));
     }
 }

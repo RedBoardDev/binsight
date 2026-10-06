@@ -63,7 +63,6 @@ impl From<views::InstanceSettings> for InstanceSettings {
     responses(
         (status = 200, description = "The settings of the instance.", body = InstanceSettings),
         (status = 401, description = "Not signed in (`unauthenticated`).", body = ErrorBody),
-        (status = 503, description = "The engine does not serve figures yet (`data_not_ready`).", body = ErrorBody),
     ),
 )]
 pub(crate) async fn get_settings(

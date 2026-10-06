@@ -38,12 +38,9 @@ pub(crate) struct WalletSummary {
     pub(crate) real_pnl: Figure,
     /// Its net worth as a share of the total net worth.
     pub(crate) share_of_net_worth: PercentFigure,
-    /// How many positions it has open.
-    pub(crate) open_count: usize,
-    /// How many of them are out of range.
-    pub(crate) out_of_range_count: usize,
-    /// How many positions it closed (as History counts them).
-    pub(crate) closed_count: usize,
+    /// Its positions; null until the engine counts positions.
+    #[schema(required = true)]
+    pub(crate) positions: Option<PositionCounts>,
 }
 
 /// The figures of every wallet together.
@@ -53,12 +50,30 @@ pub(crate) struct WalletsTotal {
     pub(crate) net_worth: Figure,
     /// The total real PnL.
     pub(crate) real_pnl: Figure,
-    /// How many positions are open.
-    pub(crate) open_count: usize,
-    /// How many of them are out of range.
-    pub(crate) out_of_range_count: usize,
-    /// How many positions were closed.
-    pub(crate) closed_count: usize,
+    /// Every wallet's positions; null until the engine counts positions.
+    #[schema(required = true)]
+    pub(crate) positions: Option<PositionCounts>,
+}
+
+/// How many positions are open, out of range and closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+pub(crate) struct PositionCounts {
+    /// How many are open.
+    pub(crate) open: usize,
+    /// How many of the open ones are out of range.
+    pub(crate) out_of_range: usize,
+    /// How many were closed (as History counts them).
+    pub(crate) closed: usize,
+}
+
+impl From<views::PositionCounts> for PositionCounts {
+    fn from(counts: views::PositionCounts) -> Self {
+        Self {
+            open: counts.open,
+            out_of_range: counts.out_of_range,
+            closed: counts.closed,
+        }
+    }
 }
 
 impl From<views::WalletsView> for WalletList {
@@ -69,9 +84,7 @@ impl From<views::WalletsView> for WalletList {
             total: WalletsTotal {
                 net_worth: (&view.total.net_worth).into(),
                 real_pnl: (&view.total.real_pnl).into(),
-                open_count: view.total.open_count,
-                out_of_range_count: view.total.out_of_range_count,
-                closed_count: view.total.closed_count,
+                positions: view.total.positions.map(Into::into),
             },
         }
     }
@@ -86,9 +99,7 @@ impl From<&views::WalletSummary> for WalletSummary {
             net_worth: (&summary.net_worth).into(),
             real_pnl: (&summary.real_pnl).into(),
             share_of_net_worth: (&summary.share_of_net_worth).into(),
-            open_count: summary.open_count,
-            out_of_range_count: summary.out_of_range_count,
-            closed_count: summary.closed_count,
+            positions: summary.positions.map(Into::into),
         }
     }
 }
@@ -105,7 +116,7 @@ impl From<&views::WalletSummary> for WalletSummary {
         (status = 200, description = "The tracked wallets and their total.", body = WalletList),
         (status = 400, description = "A query parameter is invalid (`invalid_request`).", body = ErrorBody),
         (status = 401, description = "Not signed in (`unauthenticated`).", body = ErrorBody),
-        (status = 503, description = "The engine does not serve figures yet (`data_not_ready`).", body = ErrorBody),
+        (status = 500, description = "The database could not be read (`internal`).", body = ErrorBody),
     ),
 )]
 pub(crate) async fn list_wallets(

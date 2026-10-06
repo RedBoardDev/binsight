@@ -43,6 +43,9 @@ pub enum ReadError {
     /// A time window fell outside the supported dates.
     #[error("a time window is out of range")]
     Window(#[from] WindowError),
+    /// The source's database could not be read; the source logs the cause.
+    #[error("the database could not be read")]
+    Database,
 }
 
 impl From<binsight_core::error::AmountError> for ReadError {

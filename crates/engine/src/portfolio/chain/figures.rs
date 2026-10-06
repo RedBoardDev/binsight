@@ -1,46 +1,24 @@
-//! The source of figures while the engine cannot serve any: every read answers "not ready".
+//! The figures the engine does not compute yet: every read of them answers "not ready".
 
 use binsight_ledger::facts::PositionId;
 use binsight_ledger::report::valued::Currency;
 use binsight_solana::Address;
 
-use super::answer::{Answer, answered};
-use super::query::{
+use super::ChainPortfolio;
+use crate::portfolio::answer::{Answer, answered};
+use crate::portfolio::query::{
     ClosedPageRequest, ClosedQuery, EventPageRequest, IntervalChoice, OpenPositionsRequest,
     OverviewRequest, PoolQuery, PositionRequest, SeriesRequest,
 };
-use super::read_error::ReadError;
-use super::read_model::{
-    HistoryReads, InstanceReads, PortfolioReads, PositionReads, StatsReads, WalletReads,
-};
-use super::scope::Scope;
-use super::views::{
-    CandlesView, ClosedPage, EventPage, InstanceSettings, OpenPositionsView, OverviewView,
-    PoolOption, PositionDetailView, RecentClosesView, SeriesView, SyncReport, TokenLogoImage,
-    WalletsView,
+use crate::portfolio::read_error::ReadError;
+use crate::portfolio::read_model::{HistoryReads, PortfolioReads, PositionReads, StatsReads};
+use crate::portfolio::scope::Scope;
+use crate::portfolio::views::{
+    CandlesView, ClosedPage, EventPage, OpenPositionsView, OverviewView, PoolOption,
+    PositionDetailView, RecentClosesView, SeriesView, TokenLogoImage,
 };
 
-/// A source that has no figures yet.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct NotReadyPortfolio;
-
-impl InstanceReads for NotReadyPortfolio {
-    fn sync_report(&self) -> Answer<'_, SyncReport> {
-        answered(Err(ReadError::NotReady))
-    }
-
-    fn settings(&self) -> Answer<'_, InstanceSettings> {
-        answered(Err(ReadError::NotReady))
-    }
-}
-
-impl WalletReads for NotReadyPortfolio {
-    fn wallets(&self, _currency: Currency) -> Answer<'_, WalletsView> {
-        answered(Err(ReadError::NotReady))
-    }
-}
-
-impl PortfolioReads for NotReadyPortfolio {
+impl PortfolioReads for ChainPortfolio {
     fn overview(&self, _request: OverviewRequest) -> Answer<'_, OverviewView> {
         answered(Err(ReadError::NotReady))
     }
@@ -54,13 +32,13 @@ impl PortfolioReads for NotReadyPortfolio {
     }
 }
 
-impl StatsReads for NotReadyPortfolio {
+impl StatsReads for ChainPortfolio {
     fn stats_series(&self, _request: SeriesRequest) -> Answer<'_, SeriesView> {
         answered(Err(ReadError::NotReady))
     }
 }
 
-impl PositionReads for NotReadyPortfolio {
+impl PositionReads for ChainPortfolio {
     fn position(&self, _request: PositionRequest) -> Answer<'_, PositionDetailView> {
         answered(Err(ReadError::NotReady))
     }
@@ -82,7 +60,7 @@ impl PositionReads for NotReadyPortfolio {
     }
 }
 
-impl HistoryReads for NotReadyPortfolio {
+impl HistoryReads for ChainPortfolio {
     fn closed_page(&self, _query: ClosedQuery, _page: ClosedPageRequest) -> Answer<'_, ClosedPage> {
         answered(Err(ReadError::NotReady))
     }

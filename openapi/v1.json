@@ -1148,16 +1148,6 @@
                 }
               }
             }
-          },
-          "503": {
-            "description": "The engine does not serve figures yet (`data_not_ready`).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
           }
         },
         "security": [
@@ -1403,8 +1393,8 @@
               }
             }
           },
-          "503": {
-            "description": "The engine does not serve figures yet (`data_not_ready`).",
+          "500": {
+            "description": "The database could not be read (`internal`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1543,8 +1533,8 @@
               }
             }
           },
-          "503": {
-            "description": "The engine does not serve figures yet (`data_not_ready`).",
+          "500": {
+            "description": "The database could not be read (`internal`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -3925,6 +3915,32 @@
           }
         }
       },
+      "PositionCounts": {
+        "type": "object",
+        "description": "How many positions are open, out of range and closed.",
+        "required": [
+          "open",
+          "out_of_range",
+          "closed"
+        ],
+        "properties": {
+          "closed": {
+            "type": "integer",
+            "description": "How many were closed (as History counts them).",
+            "minimum": 0
+          },
+          "open": {
+            "type": "integer",
+            "description": "How many are open.",
+            "minimum": 0
+          },
+          "out_of_range": {
+            "type": "integer",
+            "description": "How many of the open ones are out of range.",
+            "minimum": 0
+          }
+        }
+      },
       "PositionDetail": {
         "oneOf": [
           {
@@ -5079,9 +5095,7 @@
           "net_worth",
           "real_pnl",
           "share_of_net_worth",
-          "open_count",
-          "out_of_range_count",
-          "closed_count"
+          "positions"
         ],
         "properties": {
           "added_at": {
@@ -5089,24 +5103,20 @@
             "format": "date-time",
             "description": "When the owner added it."
           },
-          "closed_count": {
-            "type": "integer",
-            "description": "How many positions it closed (as History counts them).",
-            "minimum": 0
-          },
           "net_worth": {
             "$ref": "#/components/schemas/Figure",
             "description": "Its net worth now."
           },
-          "open_count": {
-            "type": "integer",
-            "description": "How many positions it has open.",
-            "minimum": 0
-          },
-          "out_of_range_count": {
-            "type": "integer",
-            "description": "How many of them are out of range.",
-            "minimum": 0
+          "positions": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PositionCounts",
+                "description": "Its positions; null until the engine counts positions."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "real_pnl": {
             "$ref": "#/components/schemas/Figure",
@@ -5201,29 +5211,23 @@
         "required": [
           "net_worth",
           "real_pnl",
-          "open_count",
-          "out_of_range_count",
-          "closed_count"
+          "positions"
         ],
         "properties": {
-          "closed_count": {
-            "type": "integer",
-            "description": "How many positions were closed.",
-            "minimum": 0
-          },
           "net_worth": {
             "$ref": "#/components/schemas/Figure",
             "description": "The total net worth."
           },
-          "open_count": {
-            "type": "integer",
-            "description": "How many positions are open.",
-            "minimum": 0
-          },
-          "out_of_range_count": {
-            "type": "integer",
-            "description": "How many of them are out of range.",
-            "minimum": 0
+          "positions": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PositionCounts",
+                "description": "Every wallet's positions; null until the engine counts positions."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "real_pnl": {
             "$ref": "#/components/schemas/Figure",

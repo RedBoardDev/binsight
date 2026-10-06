@@ -15,6 +15,19 @@ pub struct InstanceSettings {
     pub hide_amounts_by_default: bool,
 }
 
+impl Default for InstanceSettings {
+    /// The settings of an instance whose owner changed nothing: UTC days, SOL figures, amounts
+    /// shown.
+    fn default() -> Self {
+        Self {
+            timezone: "UTC".to_owned(),
+            timezone_source: TimezoneSource::Default,
+            default_currency: Currency::Sol,
+            hide_amounts_by_default: false,
+        }
+    }
+}
+
 /// Where the time zone setting comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TimezoneSource {

@@ -51,7 +51,7 @@ pub fn sync_report(
 }
 
 /// Credits of the supplied billing cycle, projected by elapsed UTC seconds.
-pub(super) fn credits(
+pub(crate) fn credits(
     status: &InstanceStatus,
     now: Timestamp,
 ) -> Result<CreditsSummary, ReadError> {

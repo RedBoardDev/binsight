@@ -30,6 +30,7 @@ pub use positions::{
 pub use recent_closes::recent_closes;
 pub use refs::token_logo;
 pub use series::{MAX_SERIES_BUCKETS, SeriesRequest, stats_series};
+pub(crate) use sync::credits;
 pub use sync::sync_report;
 pub use wallets::wallets;
 

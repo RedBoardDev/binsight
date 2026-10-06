@@ -39,5 +39,5 @@ pub use sync::{
     BillingCycle, ChainTip, CreditsSummary, ImportProgress, SyncReport, SyncState, WalletSync,
     WalletSyncLine,
 };
-pub use wallets::{WalletSummary, WalletsTotal, WalletsView};
+pub use wallets::{PositionCounts, WalletSummary, WalletsTotal, WalletsView};
 pub use window::{Freshness, WindowView};

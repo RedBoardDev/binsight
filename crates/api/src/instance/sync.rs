@@ -167,7 +167,7 @@ impl From<views::SyncReport> for SyncReport {
     responses(
         (status = 200, description = "The synchronization of the instance.", body = SyncReport),
         (status = 401, description = "Not signed in (`unauthenticated`).", body = ErrorBody),
-        (status = 503, description = "The engine does not serve figures yet (`data_not_ready`).", body = ErrorBody),
+        (status = 500, description = "The database could not be read (`internal`).", body = ErrorBody),
     ),
 )]
 pub(crate) async fn get_sync_report(

@@ -35,6 +35,7 @@ impl From<ReadError> for ApiError {
             ReadError::Rule(_)
             | ReadError::Window(_)
             | ReadError::MissingFact
+            | ReadError::Database
             | ReadError::BinOutOfRange { .. } => Self::internal(error.to_string()),
         }
     }

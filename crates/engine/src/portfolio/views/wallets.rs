@@ -32,12 +32,8 @@ pub struct WalletSummary {
     pub real_pnl: Figure<Money>,
     /// Its net worth as a share of the total net worth.
     pub share_of_net_worth: Figure<Percent>,
-    /// How many positions it has open.
-    pub open_count: usize,
-    /// How many of them are out of range.
-    pub out_of_range_count: usize,
-    /// How many positions it closed.
-    pub closed_count: usize,
+    /// Its positions; `None` until the source counts positions.
+    pub positions: Option<PositionCounts>,
 }
 
 /// The figures of every wallet together.
@@ -47,10 +43,17 @@ pub struct WalletsTotal {
     pub net_worth: Figure<Money>,
     /// The total real PnL.
     pub real_pnl: Figure<Money>,
-    /// How many positions are open.
-    pub open_count: usize,
-    /// How many of them are out of range.
-    pub out_of_range_count: usize,
-    /// How many positions were closed.
-    pub closed_count: usize,
+    /// Every wallet's positions; `None` until the source counts positions.
+    pub positions: Option<PositionCounts>,
+}
+
+/// How many positions are open, out of range and closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PositionCounts {
+    /// How many are open.
+    pub open: usize,
+    /// How many of the open ones are out of range.
+    pub out_of_range: usize,
+    /// How many were closed.
+    pub closed: usize,
 }
