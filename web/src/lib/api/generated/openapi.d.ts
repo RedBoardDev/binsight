@@ -1457,6 +1457,43 @@ export interface components {
             days: components["schemas"]["ClosedDay"][];
             last_close?: components["schemas"]["ClosedPositionRow"] | null;
         };
+        /**
+         * @description What the startup check of the registry found, before any work started. It reads the database
+         *     only and spends no credit.
+         */
+        RegistryCheck: {
+            /**
+             * Format: date-time
+             * @description When it ran.
+             */
+            checked_at: string;
+            /** @description What it found, one entry per kind; empty when every fact of the registry agrees. */
+            findings: components["schemas"]["RegistryFinding"][];
+        };
+        /** @description One kind of disagreement the check found, and how many. */
+        RegistryFinding: {
+            /**
+             * Format: int64
+             * @description How many wallets (`wrong_listed_counts`, `unlisted_cursor_points`) or transactions (every
+             *     other kind).
+             */
+            count: number;
+            /** @description What disagrees, and what was done about it. */
+            kind: components["schemas"]["RegistryFindingKind"];
+        };
+        /**
+         * @description What the startup check can find, and what was done about it:
+         *     `wrong_listed_counts`, wallets counted again; `unlisted_cursor_points`, wallets whose cursor
+         *     names a signature they do not list, repaired in full through the credit budget;
+         *     `unqueued_signatures`, listed signatures without a fetch task, queued; `fetched_without_payload`,
+         *     transactions marked fetched but missing from the registry, fetched again; `stored_but_queued`,
+         *     stored transactions still queued, marked fetched; `unreturned_transactions`, listed
+         *     transactions the node has not returned yet, tried again; `outdated_decodes`, transactions
+         *     decoded again at the current versions; `unordered_transactions`, transactions whose payload
+         *     holds no index in its block, which cannot be ordered exactly.
+         * @enum {string}
+         */
+        RegistryFindingKind: "wrong_listed_counts" | "unlisted_cursor_points" | "unqueued_signatures" | "fetched_without_payload" | "stored_but_queued" | "unreturned_transactions" | "outdated_decodes" | "unordered_transactions";
         /** @description A reward claim in raw units, without assuming the token's decimals or price. */
         RewardMovement: {
             /** @description The mint paid by the pool's reward program, in base58. */
@@ -1559,6 +1596,7 @@ export interface components {
              *     from the figures until a newer binsight reads them.
              */
             failed_decodes: number;
+            registry_check: components["schemas"]["RegistryCheck"] | null;
             /**
              * Format: date-time
              * @description When the engine started.

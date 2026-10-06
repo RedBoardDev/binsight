@@ -7,7 +7,7 @@
       "name": "MIT",
       "identifier": "MIT"
     },
-    "version": "1.9.0"
+    "version": "1.10.0"
   },
   "paths": {
     "/api/v1/auth/login": {
@@ -4569,6 +4569,62 @@
           }
         }
       },
+      "RegistryCheck": {
+        "type": "object",
+        "description": "What the startup check of the registry found, before any work started. It reads the database\nonly and spends no credit.",
+        "required": [
+          "checked_at",
+          "findings"
+        ],
+        "properties": {
+          "checked_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it ran."
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RegistryFinding"
+            },
+            "description": "What it found, one entry per kind; empty when every fact of the registry agrees."
+          }
+        }
+      },
+      "RegistryFinding": {
+        "type": "object",
+        "description": "One kind of disagreement the check found, and how many.",
+        "required": [
+          "kind",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many wallets (`wrong_listed_counts`, `unlisted_cursor_points`) or transactions (every\nother kind).",
+            "minimum": 0
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RegistryFindingKind",
+            "description": "What disagrees, and what was done about it."
+          }
+        }
+      },
+      "RegistryFindingKind": {
+        "type": "string",
+        "description": "What the startup check can find, and what was done about it:\n`wrong_listed_counts`, wallets counted again; `unlisted_cursor_points`, wallets whose cursor\nnames a signature they do not list, repaired in full through the credit budget;\n`unqueued_signatures`, listed signatures without a fetch task, queued; `fetched_without_payload`,\ntransactions marked fetched but missing from the registry, fetched again; `stored_but_queued`,\nstored transactions still queued, marked fetched; `unreturned_transactions`, listed\ntransactions the node has not returned yet, tried again; `outdated_decodes`, transactions\ndecoded again at the current versions; `unordered_transactions`, transactions whose payload\nholds no index in its block, which cannot be ordered exactly.",
+        "enum": [
+          "wrong_listed_counts",
+          "unlisted_cursor_points",
+          "unqueued_signatures",
+          "fetched_without_payload",
+          "stored_but_queued",
+          "unreturned_transactions",
+          "outdated_decodes",
+          "unordered_transactions"
+        ]
+      },
       "RewardMovement": {
         "type": "object",
         "description": "A reward claim in raw units, without assuming the token's decimals or price.",
@@ -4791,6 +4847,7 @@
           "chain",
           "credits",
           "failed_decodes",
+          "registry_check",
           "wallets"
         ],
         "properties": {
@@ -4816,6 +4873,17 @@
             "format": "int64",
             "description": "How many transactions of the registry could not be decoded; their activity is missing\nfrom the figures until a newer binsight reads them.",
             "minimum": 0
+          },
+          "registry_check": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RegistryCheck",
+                "description": "What the startup check of the registry found; null until it ran."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "started_at": {
             "type": "string",

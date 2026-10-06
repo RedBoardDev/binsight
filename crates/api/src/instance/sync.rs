@@ -1,6 +1,8 @@
 //! `GET /api/v1/sync`: how the instance and each wallet keep up with the chain, and the credits
 //! of the month. One read serves the live badge, its popover and the health page.
 
+mod registry_check;
+
 use axum::Json;
 use axum::extract::State;
 use binsight_engine::portfolio::views;
@@ -12,6 +14,7 @@ use super::health::EngineStatus;
 use crate::app::AppState;
 use crate::contract::{DecimalString, PercentFigure, SyncState, WalletRef};
 use crate::error::{ApiError, ErrorBody};
+use registry_check::RegistryCheck;
 
 /// The synchronization of one wallet.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
@@ -105,6 +108,9 @@ pub(crate) struct SyncReport {
     /// How many transactions of the registry could not be decoded; their activity is missing
     /// from the figures until a newer binsight reads them.
     pub(crate) failed_decodes: u64,
+    /// What the startup check of the registry found; null until it ran.
+    #[schema(required = true)]
+    pub(crate) registry_check: Option<RegistryCheck>,
     /// Each wallet, in the order of the wallet list.
     pub(crate) wallets: Vec<WalletSyncLine>,
 }
@@ -149,6 +155,7 @@ impl From<views::SyncReport> for SyncReport {
                 is_over_budget: credits.is_over_budget,
             },
             failed_decodes: report.failed_decodes,
+            registry_check: report.registry_check.as_ref().map(RegistryCheck::from),
             wallets: report
                 .wallets
                 .iter()
