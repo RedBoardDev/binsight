@@ -65,15 +65,15 @@ pub fn position_events(
         None => events
             .iter()
             .map(|event| {
-                event
-                    .kind
-                    .flow()
-                    .is_some()
-                    .then_some(())
-                    .or_else(|| {
-                        matches!(event.kind, PositionEventKind::RewardClaim(_)).then_some(())
-                    })
-                    .map(|()| Figure::unavailable(Reason::UnsupportedQuote { pool: pool.address }))
+                let moves_value = event.kind.flow().is_some()
+                    || matches!(event.kind, PositionEventKind::RewardClaim(_));
+                if moves_value {
+                    Some(Figure::unavailable(Reason::UnsupportedQuote {
+                        pool: pool.address,
+                    }))
+                } else {
+                    None
+                }
             })
             .collect(),
     };
