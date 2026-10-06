@@ -1,6 +1,7 @@
 //! Separate recoverable account rent from token value and irrecoverable bin-array costs.
 use super::instructions::{Decoded, native_transfer};
 use super::real_deltas::{RealDeltas, lamports_change};
+use super::residue::{TxKind, TxSources};
 use super::worksheet::Worksheet;
 use super::{Asset, BookError, Counterparty, EntryKind, RentPurpose, WalletContext};
 use binsight_dlmm::instruction::{bin_array_funding, position_rent_receiver};
@@ -16,6 +17,7 @@ pub(super) struct RentSources<'a> {
     pub(super) tx: &'a TransactionView,
     pub(super) decoded: &'a Decoded,
     pub(super) deltas: &'a RealDeltas,
+    pub(super) kind: TxKind,
 }
 
 pub(super) fn book(sources: RentSources<'_>, sheet: &mut Worksheet) -> Result<(), BookError> {
@@ -24,6 +26,7 @@ pub(super) fn book(sources: RentSources<'_>, sheet: &mut Worksheet) -> Result<()
         tx,
         decoded,
         deltas,
+        kind: tx_kind,
     } = sources;
     for rent in &deltas.rent {
         let kind = if rent.change > 0 {
@@ -51,8 +54,13 @@ pub(super) fn book(sources: RentSources<'_>, sheet: &mut Worksheet) -> Result<()
                     address: Some(address),
                 }
             };
-            let capital =
-                super::residue::classify(wallet, tx, (Asset::Rent, rent.change), counterparty);
+            let late = TxSources {
+                wallet,
+                tx,
+                decoded,
+                kind: tx_kind,
+            };
+            let capital = super::residue::classify(late, (Asset::Rent, rent.change), counterparty);
             sheet.book(Asset::Rent, rent.change, capital)?;
             continue;
         }

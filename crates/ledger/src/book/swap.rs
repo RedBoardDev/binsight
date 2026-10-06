@@ -1,26 +1,25 @@
 //! Identify exchange legs after position movements, rent and wraps have been removed.
 //!
-//! Only a non-direct program transaction can be a swap. Intermediate mints whose net outflow
-//! is at most one percent of their gross outflow are left as protocol changes.
+//! Only a transaction of a protocol can be a swap: never a direct transfer, a bridge or a known
+//! service. Intermediate mints whose net outflow is at most one percent of their gross outflow
+//! are left as protocol changes.
 use super::instructions::{Decoded, token_transfer};
-use super::residue::is_direct;
+use super::residue::{TxKind, TxSources};
 use super::worksheet::Worksheet;
-use super::{Asset, BookError, EntryKind, WalletContext};
+use super::{Asset, BookError, EntryKind};
 use binsight_solana::{Address, transaction::TransactionView};
 
-pub(super) fn book(
-    wallet: &WalletContext,
-    tx: &TransactionView,
-    decoded: &Decoded,
-    sheet: &mut Worksheet,
-) -> Result<(), BookError> {
-    if is_direct(tx)
-        || tx.instructions.iter().any(|node| {
-            node.position.inner.is_none()
-                && (wallet.bridges.contains_key(&node.program)
-                    || wallet.services.contains(&node.program))
-        })
-    {
+pub(super) fn book(sources: TxSources<'_>, sheet: &mut Worksheet) -> Result<(), BookError> {
+    let TxSources {
+        wallet,
+        tx,
+        decoded,
+        kind,
+    } = sources;
+    let TxKind::Protocol { root } = kind else {
+        return Ok(());
+    };
+    if wallet.services.contains(&root) {
         return Ok(());
     }
     let residues = sheet.residues();

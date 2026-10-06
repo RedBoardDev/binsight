@@ -6,8 +6,7 @@
 //! earlier transaction may have emitted: the caller collects them. This module holds that context;
 //! it does not read transactions.
 
-use super::BridgeId;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use binsight_dlmm::activity::{LifecycleFact, TxActivity};
 use binsight_solana::Address;
@@ -23,9 +22,6 @@ pub struct WalletContext {
     /// The caller replays ownership first: an address closed and recreated for another owner
     /// must not remain here merely because this wallet owned its previous life.
     pub positions: BTreeSet<Address>,
-    /// Bridge programs whose movement across the wallet boundary is external capital.
-    /// The caller supplies its verified, versioned registry; an empty registry makes no guess.
-    pub bridges: BTreeMap<Address, BridgeId>,
     /// Known account-cleaning programs whose payments are service costs.
     /// The caller supplies this registry before computing real portfolio PnL.
     pub services: BTreeSet<Address>,
@@ -45,7 +41,6 @@ impl WalletContext {
             wallet,
             tracked_wallets: BTreeSet::new(),
             positions: BTreeSet::new(),
-            bridges: BTreeMap::new(),
             services: BTreeSet::new(),
         }
     }

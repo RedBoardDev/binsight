@@ -2,15 +2,22 @@
 #[path = "common/book.rs"]
 mod common;
 use binsight_dlmm::activity::TxActivity;
-use binsight_ledger::book::{
-    Asset, BridgeId, Counterparty, EntryKind, WalletContext, book_transaction,
-};
+use binsight_ledger::book::{Asset, Counterparty, EntryKind, WalletContext, book_transaction};
+use binsight_ledger::counterparties::BridgeId;
 use common::*;
 
+/// Mayan's Swift program.
+const MAYAN_SWIFT: &str = "BLZRi6frs4X4DNLw56V4EXai1b6QVESN1BhHBTYM9VcY";
+
 fn protocol_transaction() -> binsight_solana::transaction::TransactionView {
+    protocol_transaction_of(address(42))
+}
+
+fn protocol_transaction_of(
+    program: binsight_solana::Address,
+) -> binsight_solana::transaction::TransactionView {
     let mut tx = transaction(200_000, 95_000);
-    tx.instructions
-        .push(instruction(address(42), vec![], vec![]));
+    tx.instructions.push(instruction(program, vec![], vec![]));
     tx.token_balances
         .push(token(address(3), address(1), address(9), 0, 50));
     tx.native_balances.push(native(address(3), 200, 200));
@@ -19,9 +26,8 @@ fn protocol_transaction() -> binsight_solana::transaction::TransactionView {
 
 #[test]
 fn a_known_bridge_books_both_assets_as_capital_instead_of_a_swap() {
-    let tx = protocol_transaction();
-    let mut wallet = WalletContext::new(address(1));
-    wallet.bridges.insert(address(42), BridgeId::Mayan);
+    let tx = protocol_transaction_of(MAYAN_SWIFT.parse().unwrap());
+    let wallet = WalletContext::new(address(1));
     let entries = book_transaction(&wallet, &tx, &TxActivity::default()).unwrap();
     assert!(entries.iter().any(|entry| entry.asset == Asset::Sol
         && entry.amount == -100_000

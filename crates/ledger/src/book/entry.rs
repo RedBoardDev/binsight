@@ -10,8 +10,7 @@ use std::fmt;
 
 use binsight_solana::{Address, transaction::InstructionPosition};
 
-use super::residue::BridgeId;
-use crate::counterparties::LandingService;
+use crate::counterparties::{BridgeId, LandingService};
 
 /// One part of a wallet's change in one asset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

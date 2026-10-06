@@ -17,11 +17,11 @@ mod wsol;
 
 pub use context::WalletContext;
 pub use entry::{Asset, Counterparty, EntryKind, LedgerEntry, PositionActivitySource, RentPurpose};
-pub use residue::BridgeId;
 
 use binsight_dlmm::activity::TxActivity;
 use binsight_solana::transaction::{TransactionView, TxOutcome};
 use binsight_solana::{Address, programs::InstructionDecodeError};
+use residue::{TxKind, TxSources};
 use worksheet::Worksheet;
 
 /// A transaction that cannot be accounted for without inventing facts.
@@ -90,6 +90,7 @@ pub fn book_transaction(
     let mut sheet = Worksheet::new(deltas.per_asset()?);
     if tx.outcome == TxOutcome::Succeeded {
         let instructions = instructions::decode(tx)?;
+        let kind = TxKind::of(tx);
         fees::successful(wallet.wallet, tx, &instructions, &mut sheet)?;
         rent::book(
             rent::RentSources {
@@ -97,6 +98,7 @@ pub fn book_transaction(
                 tx,
                 decoded: &instructions,
                 deltas: &deltas,
+                kind,
             },
             &mut sheet,
         )?;
@@ -119,9 +121,17 @@ pub fn book_transaction(
             },
             &mut sheet,
         )?;
-        instructions::book_burns(&instructions, &deltas, &mut sheet)?;
-        swap::book(wallet, tx, &instructions, &mut sheet)?;
-        residue::book(wallet, tx, &instructions, &mut sheet)?;
+        let late = TxSources {
+            wallet,
+            tx,
+            decoded: &instructions,
+            kind,
+        };
+        if !matches!(kind, TxKind::Bridge(_)) {
+            instructions::book_burns(&instructions, &deltas, &mut sheet)?;
+        }
+        swap::book(late, &mut sheet)?;
+        residue::book(late, &mut sheet)?;
     } else {
         fees::failed(wallet.wallet, tx, &mut sheet)?;
         if let Some((asset, _)) = sheet.residues().first() {
