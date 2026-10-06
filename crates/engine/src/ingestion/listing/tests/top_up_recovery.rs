@@ -1,7 +1,7 @@
 //! Suspended top-ups preserve their join and yield between pages.
 
 use super::*;
-use crate::ingestion::SyncPublisher;
+use crate::ingestion::{IngestionParts, SyncPublisher};
 use crate::test_support::{TEST_START, complete_history, numbered_signature, signature_page};
 use binsight_chain::test_support::{ScriptedConnector, scripted_client};
 use binsight_chain::{RpcClient, StreamEvent, WalletStream};
@@ -23,12 +23,13 @@ fn ingestion(
     let (_, wallet_watch, _) = WalletStream::new(ScriptedConnector::new(), rpc.clone());
     let (states, _) = watch::channel(BTreeMap::new());
     let (events, _) = broadcast::channel(16);
-    let ingestion = Ingestion::new(
+    let ingestion = Ingestion::new(IngestionParts {
         store,
         rpc,
         clock,
-        (wallet_watch, SyncPublisher { states, events }),
-    );
+        watch: wallet_watch,
+        sync: SyncPublisher { states, events },
+    });
     for wallet in wallets {
         ingestion
             .live

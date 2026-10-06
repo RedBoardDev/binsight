@@ -22,7 +22,9 @@ use crate::credit_usage::{restore_spending, run_credit_usage};
 use crate::error::EngineError;
 use crate::events::EngineEvent;
 use crate::handle::EngineHandle;
-use crate::ingestion::{Ingestion, SyncPublisher, SyncState, requeue_readable_versions};
+use crate::ingestion::{
+    Ingestion, IngestionParts, SyncPublisher, SyncState, requeue_readable_versions,
+};
 use crate::portfolio::EngineState;
 use crate::projections::{REGISTRY, reconcile_projections};
 use crate::status::EngineStatus;
@@ -100,12 +102,13 @@ impl Engine {
             states: self.sync_states.clone(),
             events: self.events.clone(),
         };
-        let ingestion = Ingestion::new(
-            self.store.clone(),
-            self.rpc.clone(),
-            self.clock.clone(),
-            (watch, sync),
-        );
+        let ingestion = Ingestion::new(IngestionParts {
+            store: self.store.clone(),
+            rpc: self.rpc.clone(),
+            clock: self.clock.clone(),
+            watch,
+            sync,
+        });
         let ingestion_stopped = CancellationToken::new();
         tokio::join!(
             async {

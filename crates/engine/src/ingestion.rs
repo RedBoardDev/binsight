@@ -58,13 +58,29 @@ pub(crate) struct Ingestion {
     sync: SyncPublisher,
 }
 
+/// What ingestion is built from.
+pub(crate) struct IngestionParts {
+    /// The database.
+    pub(crate) store: Store,
+    /// The chain client.
+    pub(crate) rpc: RpcClient,
+    /// The clock.
+    pub(crate) clock: Arc<dyn Clock>,
+    /// The stream's watch list.
+    pub(crate) watch: WalletWatch,
+    /// Where sync states are published.
+    pub(crate) sync: SyncPublisher,
+}
+
 impl Ingestion {
-    pub(crate) fn new(
-        store: Store,
-        rpc: RpcClient,
-        clock: Arc<dyn Clock>,
-        (watch, sync): (WalletWatch, SyncPublisher),
-    ) -> Self {
+    pub(crate) fn new(parts: IngestionParts) -> Self {
+        let IngestionParts {
+            store,
+            rpc,
+            clock,
+            watch,
+            sync,
+        } = parts;
         let live = Arc::new(LiveState::new(clock.now()));
         Self {
             store,

@@ -1,7 +1,7 @@
 //! Startup replay, wake-ups after a fetch and isolated failures, without spending RPC credits.
 
 use super::*;
-use crate::ingestion::SyncPublisher;
+use crate::ingestion::{IngestionParts, SyncPublisher};
 use crate::test_support::{TEST_START, temporary_engine};
 use binsight_chain::WalletStream;
 use binsight_chain::test_support::{ScriptedConnector, scripted_client};
@@ -41,12 +41,13 @@ fn ingestion_on(setup: &crate::test_support::TemporaryEngine) -> Ingestion {
     let (_, watch_wallets, _) = WalletStream::new(ScriptedConnector::new(), rpc.clone());
     let (states, _) = watch::channel(BTreeMap::new());
     let (events, _) = broadcast::channel(16);
-    Ingestion::new(
-        setup.store.clone(),
+    Ingestion::new(IngestionParts {
+        store: setup.store.clone(),
         rpc,
         clock,
-        (watch_wallets, SyncPublisher { states, events }),
-    )
+        watch: watch_wallets,
+        sync: SyncPublisher { states, events },
+    })
 }
 
 async fn wait_for_decode(store: &Store, signature: Signature) -> DecodeRecord {

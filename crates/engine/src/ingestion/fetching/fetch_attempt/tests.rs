@@ -12,7 +12,7 @@ use binsight_store::{ListedSignature, ListedTop, ListingPage, Store, WalletCurso
 use tokio::sync::{broadcast, watch};
 
 use super::*;
-use crate::ingestion::SyncPublisher;
+use crate::ingestion::{IngestionParts, SyncPublisher};
 use crate::test_support::{TEST_START, temporary_engine};
 
 const WALLET: Address = Address::from_bytes([1; 32]);
@@ -26,12 +26,13 @@ fn ingestion(
     let (_, wallets, _) = WalletStream::new(ScriptedConnector::new(), rpc.clone());
     let (states, _) = watch::channel(BTreeMap::new());
     let (events, _) = broadcast::channel(16);
-    Ingestion::new(
+    Ingestion::new(IngestionParts {
         store,
         rpc,
         clock,
-        (wallets, SyncPublisher { states, events }),
-    )
+        watch: wallets,
+        sync: SyncPublisher { states, events },
+    })
 }
 
 fn failed_close() -> Vec<u8> {
