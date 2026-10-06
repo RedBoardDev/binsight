@@ -37,7 +37,7 @@ async fn reports_healthy_and_backs_up_while_the_server_runs() {
     assert_eq!(health.status.code(), Some(0));
     assert_eq!(backup.status.code(), Some(0), "{backup:?}");
     assert!(
-        stdout(&backup).contains("-schema7.db"),
+        stdout(&backup).contains("-schema8.db"),
         "{}",
         stdout(&backup)
     );
@@ -77,7 +77,7 @@ async fn shows_the_schema_and_signs_everyone_out_once_stopped() {
     .await;
 
     assert_eq!(status.status.code(), Some(0));
-    assert!(stdout(&status).starts_with("Schema version: 7 (this binsight knows up to 7)"));
+    assert!(stdout(&status).starts_with("Schema version: 8 (this binsight knows up to 8)"));
     assert_eq!(rotation.status.code(), Some(0));
     assert!(stdout(&rotation).contains("Every session is signed out"));
 }

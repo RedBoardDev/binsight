@@ -40,8 +40,10 @@ Dependencies only point downwards. A crate may depend on the crates listed for i
 
 1. **Raw transactions** (`raw_tx`): stored once per signature, immutable (a trigger forbids updates). The chain is
    only fetched once; everything else is recomputed locally from this registry.
-2. **Decoded events**: derived from raw transactions, tagged with the `decoder_version` that produced them. Bumping the
-   decoder version re-decodes from the registry, at zero RPC cost.
+2. **Decode results** (`tx_decode`): what the decoder concluded about each raw transaction (decoded, not applicable,
+   or failed with its error) and how it executed, tagged with the `decoder_version` that produced them. Bumping the
+   decoder version re-decodes from the registry, at zero RPC cost. The events are not stored: readers decode the raw
+   transaction again.
 3. **Projections** (`proj_*`: positions, PnL, curves): disposable, tagged with a `calc_version`, rebuilt when it
    changes. Projection tables are created and dropped by code, never by migrations.
 

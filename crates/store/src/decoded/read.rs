@@ -4,16 +4,13 @@ use binsight_solana::Signature;
 use binsight_solana::transaction::TxOutcome;
 use rusqlite::{Connection, OptionalExtension, params};
 
-use super::{DecodeOutcome, DecodeRecord, DecodedEvent, DecodedRepo};
+use super::{DecodeOutcome, DecodeRecord, DecodedRepo};
 use crate::database::codec::{timestamp_from_sql, version_from_sql};
 use crate::error::StoreError;
 
 pub(super) const SELECT_DECODE: &str = "
     SELECT decoder_version, outcome, error, decoded_at, execution_outcome, execution_error
     FROM tx_decode WHERE signature = ?1 AND decoder = ?2";
-pub(super) const SELECT_EVENTS: &str = "
-    SELECT kind, payload FROM decoded_event
-    WHERE signature = ?1 AND decoder = ?2 ORDER BY event_index";
 
 impl DecodedRepo {
     /// The latest result of `decoder` on `signature`, if it ran.
@@ -27,27 +24,12 @@ impl DecodedRepo {
         decoder: String,
     ) -> Result<Option<DecodeRecord>, StoreError> {
         self.database
-            .read(move |connection| {
-                read_snapshot(connection, |snapshot| {
-                    read_record(snapshot, signature, decoder)
-                })
-            })
+            .read(move |connection| read_record(connection, signature, decoder))
             .await
     }
 }
 
-/// Reads metadata and events under a single SQLite snapshot, even during a concurrent write.
-pub(super) fn read_snapshot(
-    connection: &Connection,
-    read: impl FnOnce(&Connection) -> Result<Option<DecodeRecord>, StoreError>,
-) -> Result<Option<DecodeRecord>, StoreError> {
-    let transaction = connection.unchecked_transaction()?;
-    let record = read(&transaction)?;
-    transaction.commit()?;
-    Ok(record)
-}
-
-/// Reads one result and, if it decoded anything, its events in order.
+/// Reads one result.
 pub(super) fn read_record(
     connection: &Connection,
     signature: Signature,
@@ -71,7 +53,7 @@ pub(super) fn read_record(
         return Ok(None);
     };
     let outcome = match (outcome.as_str(), error) {
-        ("decoded", None) => DecodeOutcome::Decoded(read_events(connection, key)?),
+        ("decoded", None) => DecodeOutcome::Decoded,
         ("not_applicable", None) => DecodeOutcome::NotApplicable,
         ("failed", Some(error)) => DecodeOutcome::Failed { error },
         _ => {
@@ -89,20 +71,6 @@ pub(super) fn read_record(
         outcome,
         decoded_at: timestamp_from_sql(decoded_at)?,
     }))
-}
-
-fn read_events(
-    connection: &Connection,
-    key: &[&dyn rusqlite::ToSql],
-) -> Result<Vec<DecodedEvent>, StoreError> {
-    let mut statement = connection.prepare(SELECT_EVENTS)?;
-    let rows = statement.query_map(key, |row| {
-        Ok(DecodedEvent {
-            kind: row.get(0)?,
-            payload_json: row.get(1)?,
-        })
-    })?;
-    Ok(rows.collect::<Result<_, _>>()?)
 }
 
 /// Unknown legacy execution facts stay unknown instead of being turned into success.

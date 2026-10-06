@@ -1,11 +1,12 @@
-//! Layer 2: what each decoder found in each raw transaction, tagged with the decoder version.
+//! Layer 2: what each decoder concluded about each raw transaction, tagged with the decoder
+//! version.
 //!
-//! The result of decoding one transaction with one decoder is replaced as a whole: the previous
-//! outcome and its events are deleted and the new ones inserted in the same transaction, so a
-//! reader never sees a half-written result. The transaction execution outcome is retained
-//! separately from decoder success: failed instructions can have emitted events in the raw
-//! payload without changing any position. Because the version is stored, a new decoder version
-//! can find what it has to re-decode. This module stores results; it does not decode anything.
+//! The result of decoding one transaction with one decoder replaces the previous one. The
+//! transaction execution outcome is retained separately from decoder success: failed instructions
+//! can have emitted events in the raw payload without changing any position. Because the version
+//! is stored, a new decoder version can find what it has to re-decode. The events themselves are
+//! not stored: whoever needs them reads the raw transaction again. This module stores results; it
+//! does not decode anything.
 
 mod pending;
 #[cfg(any(test, feature = "test-support"))]
@@ -25,20 +26,11 @@ use crate::store::Store;
 pub use pending::DecodeScan;
 use statements::replace_record;
 
-/// One event a decoder found in a transaction.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DecodedEvent {
-    /// What happened, namespaced by decoder (for example `dlmm.add_liquidity`).
-    pub kind: String,
-    /// The event's fields as JSON, amounts written as decimal strings.
-    pub payload_json: String,
-}
-
 /// What a decoder concluded about a transaction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DecodeOutcome {
-    /// The decoder understood the transaction; the events are in their order in the transaction.
-    Decoded(Vec<DecodedEvent>),
+    /// The decoder understood the transaction, which holds activity it is about.
+    Decoded,
     /// The transaction holds nothing this decoder is about.
     NotApplicable,
     /// The decoder could not read the transaction.
@@ -91,30 +83,18 @@ impl DecodedRepo {
     /// be written; nothing is changed then.
     pub async fn replace_for_signature(&self, record: DecodeRecord) -> Result<(), StoreError> {
         self.database
-            .write(move |connection| {
-                let transaction = connection.transaction()?;
-                replace_record(&transaction, &record)?;
-                transaction.commit()?;
-                Ok(())
-            })
+            .write(move |connection| replace_record(connection, &record))
             .await
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::read::{SELECT_DECODE, SELECT_EVENTS};
-    use super::statements::{DELETE_DECODE, INSERT_DECODE, INSERT_EVENT};
+    use super::read::SELECT_DECODE;
+    use super::statements::UPSERT_DECODE;
     use super::*;
     use crate::database::test_database::{assert_queries_prepare, migrated_store};
     use crate::raw_tx::tests::sample_record;
-
-    fn event(kind: &str) -> DecodedEvent {
-        DecodedEvent {
-            kind: kind.to_owned(),
-            payload_json: "{\"amount\":\"1\"}".to_owned(),
-        }
-    }
 
     fn decode_record(signature: Signature, version: u32, outcome: DecodeOutcome) -> DecodeRecord {
         DecodeRecord {
@@ -129,31 +109,16 @@ mod tests {
 
     #[tokio::test]
     async fn prepares_every_query_against_the_schema() {
-        assert_queries_prepare(&[
-            DELETE_DECODE,
-            INSERT_DECODE,
-            INSERT_EVENT,
-            SELECT_DECODE,
-            SELECT_EVENTS,
-        ])
-        .await;
+        assert_queries_prepare(&[UPSERT_DECODE, SELECT_DECODE]).await;
     }
 
     #[tokio::test]
-    async fn replaces_the_previous_result_and_its_events_as_a_whole() {
+    async fn replaces_the_previous_result() {
         let (_folder, store) = migrated_store().await;
         let raw = sample_record(10);
         store.raw_tx().insert_if_absent(raw.clone()).await.unwrap();
-        let first = decode_record(
-            raw.signature,
-            1,
-            DecodeOutcome::Decoded(vec![event("dlmm.a"), event("dlmm.b"), event("dlmm.c")]),
-        );
-        let second = decode_record(
-            raw.signature,
-            2,
-            DecodeOutcome::Decoded(vec![event("dlmm.d")]),
-        );
+        let first = decode_record(raw.signature, 1, DecodeOutcome::Decoded);
+        let second = decode_record(raw.signature, 2, DecodeOutcome::NotApplicable);
 
         store.decoded().replace_for_signature(first).await.unwrap();
         store
@@ -171,7 +136,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn keeps_the_outcome_of_a_transaction_without_events() {
+    async fn keeps_the_error_of_a_failed_decoding() {
         let (_folder, store) = migrated_store().await;
         let raw = sample_record(11);
         store.raw_tx().insert_if_absent(raw.clone()).await.unwrap();

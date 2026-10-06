@@ -10,7 +10,7 @@
 //! **Start here:** [`Store::open_and_upgrade`].
 //!
 //! The data lives in three layers: the raw transactions ([`Store::raw_tx`]), immutable; the
-//! decoded events ([`Store::decoded`]), versioned by decoder; and the disposable projections
+//! decoding results ([`Store::decoded`]), versioned by decoder; and the disposable projections
 //! ([`Store::projections`]), versioned by calculation. Instance settings live in
 //! [`Store::meta`]. Ingestion keeps its bookkeeping next to them: the tracked wallets
 //! ([`Store::wallets`]), their listed signatures ([`Store::signatures`]), the queue of
@@ -36,7 +36,7 @@ mod store;
 mod upgrade;
 
 pub use credits::{CreditTotal, CreditUsage, CreditsRepo};
-pub use decoded::{DecodeOutcome, DecodeRecord, DecodeScan, DecodedEvent, DecodedRepo};
+pub use decoded::{DecodeOutcome, DecodeRecord, DecodeScan, DecodedRepo};
 pub use error::StoreError;
 pub use ingestion::{
     DetectedSignature, FetchCounts, FetchFailure, FetchQueueRepo, FetchSetback, FetchTask,

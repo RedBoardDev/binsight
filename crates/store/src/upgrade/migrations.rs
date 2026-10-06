@@ -53,6 +53,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "drop_listing_rank",
         sql: include_str!("../../migrations/0007_drop_listing_rank.sql"),
     },
+    Migration {
+        version: 8,
+        name: "drop_decoded_events",
+        sql: include_str!("../../migrations/0008_drop_decoded_events.sql"),
+    },
 ];
 
 #[cfg(test)]

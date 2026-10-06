@@ -32,7 +32,7 @@ async fn skips_current_failed_results_but_revisits_every_old_result_on_a_version
                 error: "malformed".to_owned(),
             },
         ),
-        (3, 3, DecodeOutcome::Decoded(Vec::new())),
+        (3, 3, DecodeOutcome::Decoded),
     ] {
         let raw = sample_record(number);
         store.raw_tx().insert_if_absent(raw.clone()).await.unwrap();

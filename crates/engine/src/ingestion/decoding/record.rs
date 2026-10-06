@@ -1,26 +1,15 @@
-//! Reads one immutable raw transaction and stores events with their instruction provenance.
+//! Reads one immutable raw transaction and records what the DLMM decoder concludes about it.
 //!
-//! Persisted events describe emissions, including those of failed transactions. Accounting
-//! reads the raw transaction through `position_activity`, which yields no activity on failure.
+//! The verdict says whether the transaction holds DLMM activity the decoder reads, holds none,
+//! or cannot be read (with the error), and how it executed on chain. The events themselves are
+//! not kept: accounting reads the raw transaction through `position_activity`, which also
+//! yields no activity for a failed transaction.
 
-use binsight_dlmm::{DECODER_NAME, DECODER_VERSION, DlmmEvent, LocatedEvent};
+use binsight_dlmm::{DECODER_NAME, DECODER_VERSION};
 use binsight_solana::Commitment;
 use binsight_solana::transaction::{TransactionView, TxEncoding, read};
-use binsight_store::{DecodeOutcome, DecodeRecord, DecodedEvent, RawTxRecord};
+use binsight_store::{DecodeOutcome, DecodeRecord, RawTxRecord};
 use jiff::Timestamp;
-use serde::Serialize;
-
-#[derive(Serialize)]
-struct EventLocation {
-    top: u16,
-    inner: Option<u16>,
-}
-
-#[derive(Serialize)]
-struct StoredEvent {
-    at: EventLocation,
-    event: DlmmEvent,
-}
 
 pub(super) fn decode(raw: &RawTxRecord, payload: &[u8], decoded_at: Timestamp) -> DecodeRecord {
     let mut record = unreadable(raw.signature, decoded_at, "transaction has not been read");
@@ -70,27 +59,10 @@ fn decode_activity(transaction: &TransactionView) -> Result<DecodeOutcome, Strin
         .instructions
         .iter()
         .any(|instruction| instruction.program == binsight_dlmm::program::PROGRAM_ID);
-    if !has_program {
-        return Ok(DecodeOutcome::NotApplicable);
-    }
-    events
-        .iter()
-        .map(stored_event)
-        .collect::<Result<Vec<_>, _>>()
-        .map(DecodeOutcome::Decoded)
-}
-
-fn stored_event(located: &LocatedEvent) -> Result<DecodedEvent, String> {
-    let event = StoredEvent {
-        at: EventLocation {
-            top: located.at.top,
-            inner: located.at.inner,
-        },
-        event: located.event,
-    };
-    Ok(DecodedEvent {
-        kind: format!("{DECODER_NAME}.{}", located.event.kind()),
-        payload_json: serde_json::to_string(&event).map_err(|error| error.to_string())?,
+    Ok(if has_program {
+        DecodeOutcome::Decoded
+    } else {
+        DecodeOutcome::NotApplicable
     })
 }
 

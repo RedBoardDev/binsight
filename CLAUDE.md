@@ -15,7 +15,7 @@ enough for ~10 wallets).
 | `crates/solana` | Solana primitives: addresses, signatures, transaction reading (v0 and v1). Pure. |
 | `crates/dlmm` | Meteora DLMM: event/instruction decoding, accounts, fixed-point bin math. Pure. |
 | `crates/ledger` | Accounting: entries, PnL, FIFO, Net Worth, curves. Pure. |
-| `crates/store` | SQLite: raw transaction registry, versioned decoded events, projections, migrations. Disk I/O. |
+| `crates/store` | SQLite: raw transaction registry, versioned decode results, projections, migrations. Disk I/O. |
 | `crates/chain` | Helius JSON-RPC/WebSocket client, credit metering and budget. Network I/O. |
 | `crates/engine` | Orchestration: ingestion, catch-up, repair, valuation, notifications. |
 | `crates/api` | HTTP: REST `/api/v1` + SSE, password session, generated OpenAPI contract. |

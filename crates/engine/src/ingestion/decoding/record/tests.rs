@@ -1,4 +1,4 @@
-//! Mainnet records preserve execution outcomes and provenance without inventing successful reads.
+//! Mainnet records preserve execution outcomes without inventing successful reads.
 
 use super::*;
 use binsight_solana::{Signature, transaction::TxOutcome};
@@ -34,13 +34,10 @@ fn retains_a_failed_close_emission_without_claiming_any_lifecycle_activity() {
         record.execution_outcome,
         Some(TxOutcome::Failed { .. })
     ));
-    let DecodeOutcome::Decoded(events) = record.outcome else {
-        panic!("failed execution is not failed decoding")
-    };
-    assert!(
-        events
-            .iter()
-            .any(|event| event.kind == "dlmm.position_close")
+    assert_eq!(
+        record.outcome,
+        DecodeOutcome::Decoded,
+        "failed execution is not failed decoding"
     );
     let tx = read(&payload).unwrap();
     let activity =
@@ -49,25 +46,11 @@ fn retains_a_failed_close_emission_without_claiming_any_lifecycle_activity() {
 }
 
 #[test]
-fn stores_each_event_at_its_actual_instruction_with_amount_strings() {
+fn records_a_successful_dlmm_transaction_as_decoded() {
     let (raw, payload) = fixture("rebalance-with-fees");
     let record = decode(&raw, &payload, Timestamp::UNIX_EPOCH);
     assert_eq!(record.execution_outcome, Some(TxOutcome::Succeeded));
-    let DecodeOutcome::Decoded(stored) = record.outcome else {
-        panic!("expected events")
-    };
-    let located = binsight_dlmm::decode_events(&read(&payload).unwrap()).unwrap();
-    assert_eq!(stored.len(), located.len());
-    for (stored, located) in stored.iter().zip(located) {
-        let json: serde_json::Value = serde_json::from_str(&stored.payload_json).unwrap();
-        assert_eq!(json["at"]["top"], located.at.top);
-        assert_eq!(
-            json["at"]["inner"],
-            serde_json::to_value(located.at.inner).unwrap()
-        );
-        assert_eq!(json["event"], serde_json::to_value(located.event).unwrap());
-        assert_eq!(stored.kind, format!("dlmm.{}", located.event.kind()));
-    }
+    assert_eq!(record.outcome, DecodeOutcome::Decoded);
 }
 
 #[test]
@@ -113,7 +96,7 @@ fn does_not_treat_an_unknown_program_instruction_without_events_as_not_applicabl
     instruction.data = binsight_solana::transaction::InstructionData(vec![0]);
     assert_eq!(
         decode_activity(&transaction).unwrap(),
-        DecodeOutcome::Decoded(Vec::new())
+        DecodeOutcome::Decoded
     );
     let activity = binsight_dlmm::position_activity(&transaction, &[]).unwrap();
     assert!(activity.has_unknown_program_activity);

@@ -331,7 +331,6 @@ dependencies = [
  "binsight-solana",
  "binsight-store",
  "jiff",
- "serde",
  "serde_json",
  "tempfile",
  "thiserror",
