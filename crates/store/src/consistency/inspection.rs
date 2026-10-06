@@ -19,8 +19,12 @@ const SELECT_WALLETS: &str = "
             WHERE s.wallet = c.wallet AND s.signature = c.top_signature),
         c.history_before IS NULL OR EXISTS (
             SELECT 1 FROM wallet_signature AS s
-            WHERE s.wallet = c.wallet AND s.signature = c.history_before)
-    FROM wallet_cursor AS c ORDER BY c.wallet";
+            WHERE s.wallet = c.wallet AND s.signature = c.history_before),
+        r.verified_signature IS NULL OR EXISTS (
+            SELECT 1 FROM wallet_signature AS s
+            WHERE s.wallet = c.wallet AND s.signature = r.verified_signature)
+    FROM wallet_cursor AS c LEFT JOIN wallet_repair AS r ON r.wallet = c.wallet
+    ORDER BY c.wallet";
 const COUNT_UNQUEUED: &str = "
     SELECT count(DISTINCT s.signature) FROM wallet_signature AS s
     WHERE NOT EXISTS (SELECT 1 FROM tx_fetch AS f WHERE f.signature = s.signature)";
@@ -70,6 +74,8 @@ pub struct WalletInspection {
     /// Whether the signature its history listing continues from is among its listed ones (true
     /// when the history is not being listed).
     pub is_history_page_listed: bool,
+    /// Whether the point its last repair verified is among its listed ones (true without one).
+    pub is_verified_point_listed: bool,
 }
 
 /// How far the registry's facts disagree, read in one snapshot.
@@ -146,6 +152,7 @@ fn inspect_wallets(connection: &Connection) -> Result<Vec<WalletInspection>, Sto
             listed: unsigned_from_sql(row.get(2)?, "count")?,
             is_top_listed: row.get(3)?,
             is_history_page_listed: row.get(4)?,
+            is_verified_point_listed: row.get(5)?,
         });
     }
     Ok(wallets)

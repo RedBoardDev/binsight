@@ -60,6 +60,7 @@ async fn finds_nothing_wrong_in_a_registry_kept_in_step() {
     let wallet = inspection.wallets[0];
     assert_eq!((wallet.counted, wallet.listed), (2, 2));
     assert!(wallet.is_top_listed && wallet.is_history_page_listed);
+    assert!(wallet.is_verified_point_listed);
     assert_eq!(inspection.unqueued_signatures, 0);
     assert_eq!(inspection.fetched_without_payload, 0);
     assert_eq!(inspection.stored_but_queued, 0);
@@ -102,6 +103,31 @@ async fn notices_a_cursor_that_points_at_signatures_the_wallet_does_not_list() {
     let wallet = inspect(&store).await.wallets[0];
     assert!(!wallet.is_top_listed);
     assert!(!wallet.is_history_page_listed);
+}
+
+#[tokio::test]
+async fn notices_a_verified_point_the_wallet_does_not_list() {
+    let (_folder, store) = listed_store().await;
+    let verified = crate::ListedTop {
+        signature: listed(3, 10).signature,
+        slot: 10,
+    };
+    let repair = crate::WalletRepair {
+        wallet: WALLET,
+        verified: Some(verified),
+        repaired_at: Some(later(60)),
+    };
+    store.repairs().record(repair).await.unwrap();
+    assert!(inspect(&store).await.wallets[0].is_verified_point_listed);
+
+    break_by_hand(
+        &store,
+        "DELETE FROM wallet_signature WHERE signature = ?1",
+        3,
+    )
+    .await;
+
+    assert!(!inspect(&store).await.wallets[0].is_verified_point_listed);
 }
 
 #[tokio::test]
