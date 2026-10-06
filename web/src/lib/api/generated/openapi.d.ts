@@ -259,6 +259,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/share/positions/{position_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Reads the existing position detail once and projects it into a client-rendered share card. */
+        get: operations["getPositionShareCard"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/stats/series": {
         parameters: {
             query?: never;
@@ -583,6 +600,52 @@ export interface components {
             /** @description What it withdrew. */
             withdrawn: components["schemas"]["Figure"];
         };
+        /** @description The data to render a closed position's card; it has no current range or bins. */
+        ClosedPositionShareCard: {
+            /** @description Its physical account address, which may have hosted other lives. */
+            address: string;
+            bins: components["schemas"]["BinChart"] | null;
+            /**
+             * Format: date-time
+             * @description When it closed.
+             */
+            closed_at: string;
+            /** @description Claimed swap fees, unchanged from the detail. */
+            fees: components["schemas"]["Figure"];
+            /**
+             * Format: int64
+             * @description Seconds between its opening and closing, from the engine row.
+             */
+            held_seconds: number;
+            /** @description The stable full position identity, including its opening signature. */
+            id: string;
+            /** @description What was invested, unchanged from the detail. */
+            invested: components["schemas"]["Figure"];
+            /** @description The same pool or FIFO method as the closed detail. */
+            method: components["schemas"]["PnlMethod"];
+            /**
+             * Format: date-time
+             * @description When it opened.
+             */
+            opened_at: string;
+            /** @description Its final PnL, preserving exactness and reasons. */
+            pnl: components["schemas"]["Figure"];
+            /** @description The meaning of this card's PnL. */
+            pnl_kind: components["schemas"]["ClosedSharePnlKind"];
+            /** @description Its PnL percentage from the detail read. */
+            pnl_pct: components["schemas"]["PercentFigure"];
+            /** @description Its pool, including the existing token logo references. */
+            pool: components["schemas"]["PoolRef"];
+            range: components["schemas"]["RangeInfo"] | null;
+            strategy: components["schemas"]["Strategy"] | null;
+            /** @description The owner wallet reference. */
+            wallet: components["schemas"]["WalletRef"];
+        };
+        /**
+         * @description The PnL of a closed position.
+         * @enum {string}
+         */
+        ClosedSharePnlKind: "realized";
         /** @description The totals of a set of closed positions (every one counts, empty shells as `flat`). */
         ClosedTotals: {
             /**
@@ -994,6 +1057,49 @@ export interface components {
             /** @description What it withdrew. */
             withdrawn: components["schemas"]["Figure"];
         };
+        /** @description The data to render an open position's card; rendering remains a client operation. */
+        OpenPositionShareCard: {
+            /** @description Its physical account address. */
+            address: string;
+            /** @description Its existing grouped liquidity bins. */
+            bins: components["schemas"]["BinChart"];
+            /**
+             * Format: date-time
+             * @description Explicit `null`: this position has not closed.
+             */
+            closed_at: string | null;
+            /** @description Claimed and unclaimed swap fees, unchanged from the detail. */
+            fees: components["schemas"]["Figure"];
+            /**
+             * Format: int64
+             * @description Seconds held at the engine's shared financial read instant.
+             */
+            held_seconds: number;
+            /** @description The stable full position identity, including its opening signature. */
+            id: string;
+            /** @description What was invested, unchanged from the detail. */
+            invested: components["schemas"]["Figure"];
+            /** @description Open positions are valued at their pool's bins. */
+            method: components["schemas"]["OpenMethod"];
+            /**
+             * Format: date-time
+             * @description When it opened.
+             */
+            opened_at: string;
+            /** @description Its open PnL, preserving exactness and reasons. */
+            pnl: components["schemas"]["Figure"];
+            /** @description The meaning of this card's PnL. */
+            pnl_kind: components["schemas"]["OpenSharePnlKind"];
+            /** @description Its PnL percentage from the detail read. */
+            pnl_pct: components["schemas"]["PercentFigure"];
+            /** @description Its pool, including the existing token logo references. */
+            pool: components["schemas"]["PoolRef"];
+            /** @description Its existing range and composition. */
+            range: components["schemas"]["RangeInfo"];
+            strategy: components["schemas"]["Strategy"] | null;
+            /** @description The owner wallet reference. */
+            wallet: components["schemas"]["WalletRef"];
+        };
         /** @description The open positions and their totals. */
         OpenPositions: {
             /** @description How fresh the figures are. */
@@ -1005,6 +1111,11 @@ export interface components {
             /** @description The totals (`value` equals the net worth's `lp`, `unclaimed_fees` its unclaimed fees). */
             totals: components["schemas"]["OpenTotals"];
         };
+        /**
+         * @description The PnL of an open position.
+         * @enum {string}
+         */
+        OpenSharePnlKind: "open";
         /** @description V1 only emits this response when all raw fee presences are classified. */
         OpenSummary: components["schemas"]["OpenSummaryFields"] & {
             /** @description How many have observed raw fees to claim. */
@@ -1255,6 +1366,14 @@ export interface components {
             /** @description The physical position account on Solscan, shared by every lifetime of that account. */
             solscan: string;
         };
+        /** @description A share card's figures are those of its open or closed position. */
+        PositionShareCard: (components["schemas"]["OpenPositionShareCard"] & {
+            /** @enum {string} */
+            status: "open";
+        }) | (components["schemas"]["ClosedPositionShareCard"] & {
+            /** @enum {string} */
+            status: "closed";
+        });
         /** @description A unit price: quote tokens per base token, with at most twelve significant digits. */
         Price: {
             /** @description The price. */
@@ -2502,6 +2621,68 @@ export interface operations {
             };
             /** @description Not signed in (`unauthenticated`). */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The engine does not serve figures yet (`data_not_ready`). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    getPositionShareCard: {
+        parameters: {
+            query?: {
+                /** @description The currency of the figures (`sol` by default). */
+                currency?: components["schemas"]["Currency"];
+            };
+            header?: never;
+            path: {
+                /** @description The full permanent id: `<address>-<opening signature>`, both in base58. */
+                position_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The position card's data. Rendering is performed by the client. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PositionShareCard"];
+                };
+            };
+            /** @description The id or currency is invalid (`invalid_request`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not signed in (`unauthenticated`). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description No tracked wallet holds or held this position (`position_not_found`). */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

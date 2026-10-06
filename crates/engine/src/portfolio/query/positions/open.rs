@@ -93,6 +93,7 @@ pub(super) fn open_row(
         pool: pool_ref(snapshot, facts.pool)?,
         strategy: facts.strategy,
         opened_at: facts.opened_at,
+        held_seconds: held,
         price,
         lower,
         upper,

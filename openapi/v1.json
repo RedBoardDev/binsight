@@ -7,7 +7,7 @@
       "name": "MIT",
       "identifier": "MIT"
     },
-    "version": "1.7.0"
+    "version": "1.8.0"
   },
   "paths": {
     "/api/v1/auth/login": {
@@ -1167,6 +1167,92 @@
         ]
       }
     },
+    "/api/v1/share/positions/{position_id}": {
+      "get": {
+        "tags": [
+          "share"
+        ],
+        "summary": "Reads the existing position detail once and projects it into a client-rendered share card.",
+        "operationId": "getPositionShareCard",
+        "parameters": [
+          {
+            "name": "position_id",
+            "in": "path",
+            "description": "The full permanent id: `<address>-<opening signature>`, both in base58.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "currency",
+            "in": "query",
+            "description": "The currency of the figures (`sol` by default).",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Currency"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The position card's data. Rendering is performed by the client.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PositionShareCard"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The id or currency is invalid (`invalid_request`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No tracked wallet holds or held this position (`position_not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The engine does not serve figures yet (`data_not_ready`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
     "/api/v1/stats/series": {
       "get": {
         "tags": [
@@ -2140,6 +2226,125 @@
             "description": "What it withdrew."
           }
         }
+      },
+      "ClosedPositionShareCard": {
+        "type": "object",
+        "description": "The data to render a closed position's card; it has no current range or bins.",
+        "required": [
+          "id",
+          "address",
+          "pool",
+          "wallet",
+          "strategy",
+          "pnl",
+          "pnl_kind",
+          "pnl_pct",
+          "method",
+          "opened_at",
+          "closed_at",
+          "held_seconds",
+          "invested",
+          "fees",
+          "bins",
+          "range"
+        ],
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "Its physical account address, which may have hosted other lives."
+          },
+          "bins": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/BinChart",
+                "description": "Explicit `null`: closed liquidity has no current bins."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "closed_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it closed."
+          },
+          "fees": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "Claimed swap fees, unchanged from the detail."
+          },
+          "held_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Seconds between its opening and closing, from the engine row."
+          },
+          "id": {
+            "type": "string",
+            "description": "The stable full position identity, including its opening signature."
+          },
+          "invested": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "What was invested, unchanged from the detail."
+          },
+          "method": {
+            "$ref": "#/components/schemas/PnlMethod",
+            "description": "The same pool or FIFO method as the closed detail."
+          },
+          "opened_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it opened."
+          },
+          "pnl": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "Its final PnL, preserving exactness and reasons."
+          },
+          "pnl_kind": {
+            "$ref": "#/components/schemas/ClosedSharePnlKind",
+            "description": "The meaning of this card's PnL."
+          },
+          "pnl_pct": {
+            "$ref": "#/components/schemas/PercentFigure",
+            "description": "Its PnL percentage from the detail read."
+          },
+          "pool": {
+            "$ref": "#/components/schemas/PoolRef",
+            "description": "Its pool, including the existing token logo references."
+          },
+          "range": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RangeInfo",
+                "description": "Explicit `null`: closed liquidity has no current range."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "strategy": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Strategy",
+                "description": "Its proven strategy, or explicit `null` when unknown."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "wallet": {
+            "$ref": "#/components/schemas/WalletRef",
+            "description": "The owner wallet reference."
+          }
+        }
+      },
+      "ClosedSharePnlKind": {
+        "type": "string",
+        "description": "The PnL of a closed position.",
+        "enum": [
+          "realized"
+        ]
       },
       "ClosedTotals": {
         "type": "object",
@@ -3209,6 +3414,107 @@
           }
         }
       },
+      "OpenPositionShareCard": {
+        "type": "object",
+        "description": "The data to render an open position's card; rendering remains a client operation.",
+        "required": [
+          "id",
+          "address",
+          "pool",
+          "wallet",
+          "strategy",
+          "pnl",
+          "pnl_kind",
+          "pnl_pct",
+          "method",
+          "opened_at",
+          "closed_at",
+          "held_seconds",
+          "invested",
+          "fees",
+          "bins",
+          "range"
+        ],
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "Its physical account address."
+          },
+          "bins": {
+            "$ref": "#/components/schemas/BinChart",
+            "description": "Its existing grouped liquidity bins."
+          },
+          "closed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Explicit `null`: this position has not closed."
+          },
+          "fees": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "Claimed and unclaimed swap fees, unchanged from the detail."
+          },
+          "held_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Seconds held at the engine's shared financial read instant."
+          },
+          "id": {
+            "type": "string",
+            "description": "The stable full position identity, including its opening signature."
+          },
+          "invested": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "What was invested, unchanged from the detail."
+          },
+          "method": {
+            "$ref": "#/components/schemas/OpenMethod",
+            "description": "Open positions are valued at their pool's bins."
+          },
+          "opened_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it opened."
+          },
+          "pnl": {
+            "$ref": "#/components/schemas/Figure",
+            "description": "Its open PnL, preserving exactness and reasons."
+          },
+          "pnl_kind": {
+            "$ref": "#/components/schemas/OpenSharePnlKind",
+            "description": "The meaning of this card's PnL."
+          },
+          "pnl_pct": {
+            "$ref": "#/components/schemas/PercentFigure",
+            "description": "Its PnL percentage from the detail read."
+          },
+          "pool": {
+            "$ref": "#/components/schemas/PoolRef",
+            "description": "Its pool, including the existing token logo references."
+          },
+          "range": {
+            "$ref": "#/components/schemas/RangeInfo",
+            "description": "Its existing range and composition."
+          },
+          "strategy": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Strategy",
+                "description": "Its proven strategy, or explicit `null` when unknown."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "wallet": {
+            "$ref": "#/components/schemas/WalletRef",
+            "description": "The owner wallet reference."
+          }
+        }
+      },
       "OpenPositions": {
         "type": "object",
         "description": "The open positions and their totals.",
@@ -3241,6 +3547,13 @@
             "description": "The totals (`value` equals the net worth's `lp`, `unclaimed_fees` its unclaimed fees)."
           }
         }
+      },
+      "OpenSharePnlKind": {
+        "type": "string",
+        "description": "The PnL of an open position.",
+        "enum": [
+          "open"
+        ]
       },
       "OpenSummary": {
         "allOf": [
@@ -4025,6 +4338,57 @@
             "description": "The physical position account on Solscan, shared by every lifetime of that account."
           }
         }
+      },
+      "PositionShareCard": {
+        "oneOf": [
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OpenPositionShareCard",
+                "description": "A currently open position, with its liquidity range and bins."
+              },
+              {
+                "type": "object",
+                "required": [
+                  "status"
+                ],
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "open"
+                    ]
+                  }
+                }
+              }
+            ],
+            "description": "A currently open position, with its liquidity range and bins."
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ClosedPositionShareCard",
+                "description": "A closed position, with its final holding time and closing instant."
+              },
+              {
+                "type": "object",
+                "required": [
+                  "status"
+                ],
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "closed"
+                    ]
+                  }
+                }
+              }
+            ],
+            "description": "A closed position, with its final holding time and closing instant."
+          }
+        ],
+        "description": "A share card's figures are those of its open or closed position."
       },
       "Price": {
         "type": "object",
@@ -5376,6 +5740,10 @@
     {
       "name": "stats",
       "description": "Statistics and chart series."
+    },
+    {
+      "name": "share",
+      "description": "Authenticated data for client-rendered share cards."
     }
   ]
 }

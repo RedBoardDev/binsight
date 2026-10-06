@@ -21,7 +21,7 @@ use crate::history::{closed, pools};
 use crate::instance::{health, settings, sync, wallets};
 use crate::openapi::ApiDoc;
 use crate::overview::{open_positions, recent_closes, summary};
-use crate::positions::{candles, detail, events, logo};
+use crate::positions::{candles, detail, events, logo, share};
 use crate::stats::series;
 use crate::{live, openapi};
 
@@ -71,6 +71,7 @@ impl DocumentedRoutes {
             .routes(routes!(closed::list_closed_positions))
             .routes(routes!(pools::list_pools))
             .routes(routes!(detail::get_position))
+            .routes(routes!(share::get_position_share_card))
             .routes(routes!(events::list_position_events))
             .routes(routes!(candles::get_position_candles))
             .routes(routes!(logo::get_token_logo));

@@ -63,6 +63,8 @@ pub struct OpenPositionRow {
     pub strategy: Option<Strategy>,
     /// When it opened.
     pub opened_at: Timestamp,
+    /// How long it has been open at the instant shared by this read, in seconds.
+    pub held_seconds: i64,
     /// The current price (the active bin); `None` when the pool's quote cannot be valued.
     pub price: Option<PriceView>,
     /// The lower numeric displayed price bound; physical range IDs stay unchanged.

@@ -9,3 +9,4 @@ pub(crate) mod detail;
 pub(crate) mod events;
 pub(crate) mod logo;
 mod position_id;
+pub(crate) mod share;
