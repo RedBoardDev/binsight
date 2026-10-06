@@ -15,7 +15,7 @@ mod fetch_task;
 mod listing_page;
 mod signatures;
 #[cfg(test)]
-mod test_pages;
+pub(crate) mod test_pages;
 mod wallet_progress;
 mod wallets;
 

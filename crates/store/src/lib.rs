@@ -24,6 +24,7 @@
 
 #![deny(clippy::float_arithmetic, clippy::float_cmp)]
 
+mod consistency;
 mod credits;
 mod database;
 mod decoded;
@@ -35,6 +36,7 @@ mod raw_tx;
 mod store;
 mod upgrade;
 
+pub use consistency::{ConsistencyRepo, CurrentDecoder, RegistryInspection, WalletInspection};
 pub use credits::{CreditTotal, CreditUsage, CreditsRepo};
 pub use decoded::{
     DecodeBacklog, DecodeOutcome, DecodeRecord, DecodeScan, DecodedRepo, RegistryPosition,
