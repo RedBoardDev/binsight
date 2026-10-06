@@ -101,7 +101,12 @@ fn marks_unknown_historical_cost_or_reward_in_the_native_helper_itself() {
         assert_eq!(valuation.unclaimed_fees.exactness(), Exactness::Complete);
         let pnl = open_pnl(&position).unwrap();
         assert_eq!(pnl.value(), Some(&QuoteUnits(-80_000_000)));
-        assert_eq!(pnl.exactness(), Exactness::Estimated);
+        let expected = if source == 0 {
+            Exactness::Estimated
+        } else {
+            Exactness::Partial
+        };
+        assert_eq!(pnl.exactness(), expected);
         assert_eq!(
             pnl.reasons(),
             Reasons::from([Reason::UnpricedLeg {

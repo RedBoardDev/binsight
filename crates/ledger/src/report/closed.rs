@@ -206,14 +206,10 @@ fn outcome_of(position: &ClosedPositionFacts, native_pnl: QuoteUnits) -> Outcome
 
 /// The signed source quality shared by native PnL and its eventual FX conversion.
 fn native_signed(amount: QuoteUnits, position: &ClosedPositionFacts) -> Figure<QuoteUnits> {
-    if position.unpriced_movements == 0 && position.unpriced_rewards == 0 {
+    let exactness = signed_exactness(position.unpriced_movements, position.unpriced_rewards);
+    if exactness == Exactness::Complete {
         return Figure::Complete(amount);
     }
-    let exactness = if position.unpriced_movements > 0 {
-        Exactness::Estimated
-    } else {
-        Exactness::Partial
-    };
     Figure::from_parts(
         amount,
         exactness,
@@ -221,4 +217,17 @@ fn native_signed(amount: QuoteUnits, position: &ClosedPositionFacts) -> Figure<Q
             position: position.id,
         }]),
     )
+}
+
+/// How far a position's signed PnL can be trusted from its own movements: estimated when an
+/// unpriced movement may hide a cost, a lower bound when only rewards are unpriced (a reward
+/// only adds), and complete otherwise. Open and closed positions share this rule.
+pub(crate) fn signed_exactness(unpriced_movements: u32, unpriced_rewards: u32) -> Exactness {
+    if unpriced_movements > 0 {
+        Exactness::Estimated
+    } else if unpriced_rewards > 0 {
+        Exactness::Partial
+    } else {
+        Exactness::Complete
+    }
 }

@@ -7,6 +7,7 @@ use binsight_core::error::AmountError;
 use binsight_core::exactness::Exactness;
 
 use crate::facts::{OpenPositionFacts, QuoteUnits};
+use crate::report::closed::signed_exactness;
 use crate::report::figure::{Combination, Figure, Reason, Reasons};
 
 /// withdrawn + claimed fees + rewards + value + unclaimed fees − invested, in the quote token.
@@ -30,11 +31,12 @@ pub fn open_pnl(position: &OpenPositionFacts) -> Result<Figure<QuoteUnits>, Amou
         Combination::Difference,
         |returned, invested| native_sum(&[returned], &[invested]),
     )?;
-    if position.unpriced_movements == 0 && position.unpriced_rewards == 0 {
+    let exactness = signed_exactness(position.unpriced_movements, position.unpriced_rewards);
+    if exactness == Exactness::Complete {
         return Ok(pnl);
     }
     Ok(pnl.degraded(
-        Exactness::Estimated,
+        exactness,
         Reasons::from([Reason::UnpricedLeg {
             position: position.id,
         }]),
