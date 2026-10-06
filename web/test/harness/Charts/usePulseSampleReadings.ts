@@ -1,11 +1,11 @@
-import { CHART_SAMPLES } from '@app/applications/DesignReference/Ui/DesignReferencePage/chartSamples';
 import type { Figure, PercentFigure } from '@app/applications/Shared/Figure/Domain/figure';
 import { speakFigure } from '@app/applications/Shared/Figure/Ui/figureSpeech';
 import { useFigureFormatter } from '@app/applications/Shared/Figure/Ui/useFigureFormatter';
 import { useDateFormatters } from '@app/applications/Shared/Time/Ui/useDateFormatters';
 import { useLingui } from '@lingui/react/macro';
+import { CHART_SAMPLES } from './pulseSamples';
 
-export const useSampleReadings = (): ((index: number) => string) => {
+export const usePulseSampleReadings = (): ((index: number) => string) => {
   const { t, i18n } = useLingui();
   const format = useFigureFormatter();
   const { formatShortDate } = useDateFormatters();

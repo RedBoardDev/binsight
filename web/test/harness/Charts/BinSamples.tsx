@@ -1,7 +1,5 @@
-import { CHART_SAMPLES } from '@app/applications/DesignReference/Ui/DesignReferencePage/chartSamples';
 import { BinHistogram } from '@app/applications/Shared/Chart/Ui/BinHistogram';
 import { BinStrip } from '@app/applications/Shared/Chart/Ui/BinStrip';
-import { Sparkline } from '@app/applications/Shared/Chart/Ui/Sparkline';
 import { parseDecimalString } from '@app/applications/Shared/Figure/Domain/decimalString';
 import { useFigureFormatter } from '@app/applications/Shared/Figure/Ui/useFigureFormatter';
 import { useState } from 'react';
@@ -10,7 +8,7 @@ import {
   SAMPLE_BIN_PRICE,
   SAMPLE_LOWER_PRICE,
   SAMPLE_UPPER_PRICE,
-} from './BinSamples/binSamples';
+} from './binSamples';
 
 export const BinSamples = () => {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
@@ -33,13 +31,6 @@ export const BinSamples = () => {
       .join(' ');
   return (
     <div className="mt-8 grid gap-8">
-      <div className="flex items-center gap-6 text-small text-muted">
-        <span>Real PnL</span>
-        <div className="w-32">
-          <Sparkline values={CHART_SAMPLES.map((point) => point.line)} />
-        </div>
-        <span>Estimated readings have dashed segments.</span>
-      </div>
       <div className="flex flex-col gap-2 text-small text-muted">
         <span>Range cell · base and quote sides, active bin 104</span>
         <BinStrip chart={BIN_SAMPLES} height={18} />

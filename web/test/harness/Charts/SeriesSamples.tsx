@@ -14,7 +14,7 @@ import {
   CREDIT_SAMPLES,
   NET_WORTH_CHANGE,
   NET_WORTH_SAMPLES,
-} from './SeriesSamples/seriesSamples';
+} from './seriesSamples';
 
 export const SeriesSamples = () => {
   const [lineIndex, setLineIndex] = useState<number | null>(null);

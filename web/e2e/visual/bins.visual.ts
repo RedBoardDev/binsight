@@ -5,7 +5,7 @@ import { test } from '../visualTest';
 test('draws compressed bins and reads every source with the keyboard and hidden mode', async ({
   page,
 }, testInfo) => {
-  await page.goto('/design');
+  await page.goto('/test/harness/');
   const figure = page.getByRole('figure', { name: 'Liquidity bins sample' });
   const slider = page.getByRole('slider', { name: 'Liquidity bins sample' });
   await expect(slider).toBeVisible();

@@ -7,7 +7,7 @@ import {
   CANDLE_RANGE_SAMPLES,
   CANDLE_SAMPLES,
   CURRENT_PRICE_SAMPLE,
-} from './CandleSamples/candleSamples';
+} from './candleSamples';
 
 export const CandleSamples = () => {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);

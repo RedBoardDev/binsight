@@ -28,7 +28,6 @@ const shoot = async (page: Page, name: string, testInfo: TestInfo): Promise<void
 const PAGES = [
   { name: 'overview', path: '/', heading: 'Overview' },
   { name: 'settings', path: '/settings', heading: 'Settings' },
-  { name: 'design', path: '/design', heading: 'Design reference' },
 ] as const;
 
 for (const { name, path, heading } of PAGES) {
@@ -88,11 +87,11 @@ test('shrinks the tab bar to a disc on a quick scroll down', async ({ page }, te
 
 test('opens figure reasons from the touch area beside the glyph', async ({ page }, testInfo) => {
   test.skip(!isPhone(testInfo), 'the extended touch area exists on coarse pointers only');
-  await page.goto('/design');
-  await expect(page.getByRole('heading', { name: 'Design reference' })).toBeVisible({
+  await page.goto('/test/harness/');
+  await expect(page.getByRole('heading', { name: 'Test harness' })).toBeVisible({
     timeout: FIRST_LOAD_TIMEOUT_MS,
   });
-  await settle(page);
+  await page.evaluate('document.fonts.ready');
   const trigger = page.getByRole('button', { name: 'Why a lower bound?', exact: true }).first();
   await trigger.scrollIntoViewIfNeeded();
   const box = await trigger.boundingBox();

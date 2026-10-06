@@ -70,7 +70,7 @@ export default defineConfig(({ mode }) => ({
   resolve: { alias: { '@app': fileURLToPath(new URL('./src', import.meta.url)) } },
   // Routes are split and loaded lazily: scanned only from index.html, their dependencies would be
   // discovered on first visit, and Vite would reload the page mid-test to optimize them.
-  optimizeDeps: { entries: ['index.html', 'src/routes/**/*.tsx'] },
+  optimizeDeps: { entries: ['index.html', 'src/routes/**/*.tsx', 'test/harness/index.html'] },
   server: { port: 5173, strictPort: true, proxy: apiProxy },
   preview: { port: 4173, strictPort: true, proxy: apiProxy },
   // The manifest feeds the bundle budget (scripts/bundleBudget.ts).

@@ -91,9 +91,12 @@ test('signs in, finds its way around the shell and signs out', async ({ page }, 
   await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Back to the overview' })).toBeVisible();
 
-  // The design reference exists in development only.
-  await page.goto('/design');
+  // The test harness exists for the Vite dev server only: the shipped app never serves it.
+  const harness = await page.request.get('/test/harness/main.tsx');
+  expect(await harness.text()).not.toContain('HarnessPage');
+  await page.goto('/test/harness/');
   await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Test harness' })).toBeHidden();
 
   await page.goto('/settings');
   await page.getByRole('button', { name: 'Sign out' }).click();

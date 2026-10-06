@@ -1,14 +1,14 @@
-import { CHART_SAMPLES } from '@app/applications/DesignReference/Ui/DesignReferencePage/chartSamples';
 import { FigureAmount } from '@app/applications/Shared/Figure/Ui/FigureAmount';
 import { PercentValue } from '@app/applications/Shared/Figure/Ui/PercentValue';
 import { useDateFormatters } from '@app/applications/Shared/Time/Ui/useDateFormatters';
 import { useLingui } from '@lingui/react/macro';
+import { CHART_SAMPLES } from './pulseSamples';
 
-interface SampleReadoutProps {
+interface PulseSampleReadoutProps {
   readonly index: number;
 }
 
-export const SampleReadout = ({ index }: SampleReadoutProps) => {
+export const PulseSampleReadout = ({ index }: PulseSampleReadoutProps) => {
   const { t } = useLingui();
   const { formatShortDate } = useDateFormatters();
   const point = CHART_SAMPLES[index];

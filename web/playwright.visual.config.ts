@@ -1,8 +1,9 @@
 import { defineConfig, devices } from '@playwright/test';
 
-// Screenshots for review (not pixel baselines): the shell and the design reference, on a desktop
-// and a phone, in both themes. The Vite dev server (the reference page exists in development only)
-// talks to a stub API, so no binary is needed. Shots land in test-results/visual/.
+// Screenshots for review (not pixel baselines): the shell, and the shared pieces no screen shows
+// yet on the test harness page (test/harness), on a desktop and a phone, in both themes. The Vite
+// dev server (which alone serves the harness) talks to a stub API, so no binary is needed. Shots
+// land in test-results/visual/.
 const STUB_API_PORT = 8099;
 const DEV_SERVER_PORT = 5174;
 const isCi = process.env.CI !== undefined;

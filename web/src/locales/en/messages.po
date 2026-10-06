@@ -187,8 +187,6 @@ msgstr "Copy failed: select the text and copy it."
 msgid "Could not sign out."
 msgstr "Could not sign out."
 
-#: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/SampleReadout.tsx
-#: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/useSampleReadings.ts
 #: src/applications/Overview/Ui/RealPnlPulse/PulseReadout.tsx
 #: src/applications/Overview/Ui/RealPnlPulse/usePulseReadings.ts
 #: src/applications/Shared/Chart/Ui/PulseChart/PulseLegend.tsx
@@ -383,7 +381,6 @@ msgstr "Net worth"
 msgid "Net worth breakdown"
 msgstr "Net worth breakdown"
 
-#: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/useSampleReadings.ts
 #: src/applications/Overview/Ui/RealPnlPulse/usePulseReadings.ts
 #: src/applications/Shared/Chart/Ui/LineSeriesChart.tsx
 #: src/applications/Shared/Chart/Ui/PulseChart.tsx
@@ -478,8 +475,6 @@ msgstr "Price history is not available for this pool yet"
 msgid "Price interval"
 msgstr "Price interval"
 
-#: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/SampleReadout.tsx
-#: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/useSampleReadings.ts
 #: src/applications/Overview/Ui/RealPnlPulse/PulseReadout.tsx
 #: src/applications/Overview/Ui/RealPnlPulse/usePulseReadings.ts
 msgid "Profit"
@@ -737,8 +732,6 @@ msgstr "Version"
 msgid "View"
 msgstr "View"
 
-#: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/SampleReadout.tsx
-#: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/useSampleReadings.ts
 #: src/applications/Overview/Ui/RealPnlPulse/PulseReadout.tsx
 #: src/applications/Overview/Ui/RealPnlPulse/usePulseReadings.ts
 msgid "vs net worth"

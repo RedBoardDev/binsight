@@ -5,7 +5,7 @@ import { test } from '../visualTest';
 test('draws lazy position candles with exact server readouts, range labels and TradingView attribution', async ({
   page,
 }, testInfo) => {
-  await page.goto('/design');
+  await page.goto('/test/harness/');
   const figure = page.getByRole('figure', { name: 'Position candles sample', exact: true });
   const slider = page.getByRole('slider', { name: 'Position candles sample', exact: true });
   await expect(figure.locator('canvas').first()).toBeVisible();
@@ -117,7 +117,7 @@ test('draws lazy position candles with exact server readouts, range labels and T
 test('moves the crosshair, changes intervals and reapplies the theme without replacing its canvases', async ({
   page,
 }) => {
-  await page.goto('/design');
+  await page.goto('/test/harness/');
   const figure = page.getByRole('figure', { name: 'Position candles sample', exact: true });
   const slider = page.getByRole('slider', { name: 'Position candles sample', exact: true });
   await expect(figure.locator('canvas').first()).toBeVisible();
@@ -153,7 +153,7 @@ test('allows vertical scrolling on the candle surface after a native touch gestu
   page,
 }, testInfo) => {
   test.skip(!testInfo.project.name.startsWith('mobile'), 'Native touch is checked on phones');
-  await page.goto('/design');
+  await page.goto('/test/harness/');
   const slider = page.getByRole('slider', { name: 'Position candles sample', exact: true });
   await expect(
     page
@@ -184,7 +184,7 @@ test('allows vertical scrolling on the candle surface after a native touch gestu
 test('links a native event-marker hover to the caller timeline and accepts the inverse highlight', async ({
   page,
 }) => {
-  await page.goto('/design');
+  await page.goto('/test/harness/');
   const figure = page.getByRole('figure', { name: 'Position candles sample', exact: true });
   const canvas = figure.locator('canvas').first();
   await expect(canvas).toBeVisible();

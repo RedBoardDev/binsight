@@ -29,7 +29,7 @@ const chartTouchPoint = async (
 test('scrubs the net worth server readings and masks amounts in speech and the equivalent table', async ({
   page,
 }, testInfo) => {
-  await page.goto('/design');
+  await page.goto('/test/harness/');
   const figure = page.getByRole('figure', { name: 'Net worth sample' });
   const slider = page.getByRole('slider', { name: 'Net worth sample' });
   await slider.focus();
@@ -75,7 +75,7 @@ test('scrubs the net worth server readings and masks amounts in speech and the e
 test('draws neutral billing-cycle days across months and keeps credit readings visible in hidden mode', async ({
   page,
 }, testInfo) => {
-  await page.goto('/design');
+  await page.goto('/test/harness/');
   const figure = page.getByRole('figure', { name: 'Billing cycle credits sample' });
   const slider = page.getByRole('slider', { name: 'Billing cycle credits sample' });
   await page.evaluate('document.fonts.ready');
@@ -136,7 +136,7 @@ test('starts line and credit touch scrubbing after the horizontal threshold and 
     'Native touch gestures are checked on phones',
   );
   for (const label of ['Net worth sample', 'Billing cycle credits sample']) {
-    await page.goto('/design');
+    await page.goto('/test/harness/');
     const figure = page.getByRole('figure', { name: label });
     const slider = page.getByRole('slider', { name: label });
     await expect(slider).toBeVisible();

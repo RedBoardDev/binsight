@@ -3,7 +3,7 @@ import { expectNoA11yViolations } from '../expectNoA11yViolations';
 import { test } from '../visualTest';
 
 const openChart = async (page: Page) => {
-  await page.goto('/design');
+  await page.goto('/test/harness/');
   const slider = page.getByRole('slider', { name: 'Real PnL sample' });
   await expect(slider).toBeVisible();
   await slider.scrollIntoViewIfNeeded();
