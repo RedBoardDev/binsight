@@ -1,5 +1,3 @@
-import { mkdir, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
 import { expect, type Page } from '@playwright/test';
 import { overviewFixture } from '../../test/fixtures/overview';
 import { statsSeriesFixture } from '../../test/fixtures/statsSeries';
@@ -27,7 +25,7 @@ test('shows the real pnl layout and four server readings through native keyboard
     path: `test-results/visual/${testInfo.project.name}/overview-pulse.png`,
     fullPage: !testInfo.project.name.startsWith('mobile'),
   });
-  const keyRow = page.getByRole('button', { name: 'Show net worth breakdown' });
+  const keyRow = page.getByRole('region', { name: 'Today' });
   const figuresBox = await keyRow.boundingBox();
   const chartBox = await chart.boundingBox();
   if (figuresBox === null || chartBox === null)
@@ -43,7 +41,9 @@ test('shows the real pnl layout and four server readings through native keyboard
     'aria-valuetext',
     /Sep 30; Profit: plus 1.000 SOL.*plus 2.41%.*Cumulative: plus 1.000 SOL.*plus 20.40%/,
   );
-  await expect(chart).toContainText('+20.40%');
+  // The desktop tooltip shows the shares of net worth; the phone's one-line reading leaves them
+  // to the slider's spoken value.
+  if (testInfo.project.name.startsWith('desktop')) await expect(chart).toContainText('+20.40%');
   await expect(chart.locator('svg text').first()).toHaveText('Sep 30');
   if (testInfo.project.name.startsWith('desktop')) {
     const tooltip = chart.locator('.pointer-events-none');
@@ -71,7 +71,7 @@ test('shows the real pnl layout and four server readings through native keyboard
   await page.keyboard.press('.');
   await expect(slider).toHaveAttribute('aria-valuetext', /amount hidden SOL.*plus 20.40%/);
   await expect(chart).not.toContainText('12.553');
-  await expect(chart).toContainText('+20.40%');
+  if (testInfo.project.name.startsWith('desktop')) await expect(chart).toContainText('+20.40%');
   await expect(chart.getByRole('img')).toHaveAttribute('aria-label', /amount hidden SOL/);
   await expect(chart.getByRole('table')).not.toContainText('6.363');
   await expectNoA11yViolations(page);
@@ -122,7 +122,8 @@ test('cuts unavailable geometry and exposes estimate and import reasons without 
   await page.keyboard.press('ArrowRight');
   await expect(slider).toHaveAttribute('aria-valuetext', /estimated.*Reconstructed/);
   await expect(chart.locator('path[stroke-dasharray="4 4"]')).not.toHaveCount(0);
-  await expect(chart.locator('rect[fill^="url"]')).toHaveCount(1);
+  // An estimated day is told by the dashed curve and the readout, never by a texture on its bar.
+  await expect(chart.locator('rect[fill^="url"]')).toHaveCount(0);
   if (testInfo.project.name.startsWith('desktop'))
     await expect(chart.getByRole('button', { name: /Why/ })).toHaveCount(0);
   await expectNoA11yViolations(page);
@@ -185,16 +186,16 @@ test('preserves vertical touch scrolling and only scrubs after horizontal moveme
     type: 'touchMove',
     touchPoints: [{ x: x + 5, y }],
   });
-  await expect(page.getByText('Daily', { exact: true })).toBeVisible();
+  await expect(page.getByRole('radiogroup', { name: 'Period' })).toBeVisible();
   await session.send('Input.dispatchTouchEvent', {
     type: 'touchMove',
     touchPoints: [{ x: x + 35, y }],
   });
-  await expect(page.getByText('Daily', { exact: true })).toBeHidden();
+  await expect(page.getByRole('radiogroup', { name: 'Period' })).toBeHidden();
   const activeBox = await slider.boundingBox();
   expect(activeBox?.y).toBe(plotY);
   await session.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
-  await expect(page.getByText('Daily', { exact: true })).toBeVisible();
+  await expect(page.getByRole('radiogroup', { name: 'Period' })).toBeVisible();
   for (let gesture = 0; gesture < 2; gesture += 1) {
     const current = await slider.boundingBox();
     if (current === null) throw new Error('The chart needs current bounds');
@@ -212,182 +213,9 @@ test('preserves vertical touch scrolling and only scrubs after horizontal moveme
       });
     await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     await expect.poll(() => page.evaluate('window.scrollY')).toBeGreaterThan(before + 20);
-    await expect(page.getByText('Daily', { exact: true })).toBeVisible();
+    await expect(page.getByRole('radiogroup', { name: 'Period' })).toBeVisible();
   }
   await session.detach();
-});
-
-test('retains a released mobile reading so its quality can be opened and closed by touch', async ({
-  page,
-}, testInfo) => {
-  test.skip(!testInfo.project.name.startsWith('mobile'), 'Retained touch readings are mobile only');
-  const fixture = statsSeriesFixture();
-  for (const point of fixture.points) {
-    point.line = {
-      exactness: 'unavailable',
-      reasons: [{ code: 'history_incomplete', wallet: 'test-wallet', progress: null }],
-    };
-    point.line_share_of_net_worth = point.line;
-  }
-  await page.route('**/api/v1/stats/series?*', (route) => route.fulfill({ json: fixture }));
-  await page.goto('/');
-  const slider = page.getByRole('slider', { name: 'Real PnL', exact: true });
-  await expect(slider).toBeVisible();
-  const box = await slider.boundingBox();
-  if (box === null) throw new Error('The chart needs touch bounds');
-  const session = await page.context().newCDPSession(page);
-  const x = box.x + box.width / 3;
-  const y = box.y + box.height / 2;
-  await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
-  await session.send('Input.dispatchTouchEvent', {
-    type: 'touchMove',
-    touchPoints: [{ x: x + 35, y }],
-  });
-  await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-  await expect(page.getByText('Daily', { exact: true })).toBeHidden();
-  const chart = page.getByRole('figure', { name: 'Real PnL', exact: true });
-  await chart.getByRole('button', { name: 'Why not available?', exact: true }).first().tap();
-  await expect(page.getByRole('dialog', { name: 'Not available', exact: true })).toContainText(
-    'History still importing.',
-  );
-  await expectNoA11yViolations(page);
-  await page.keyboard.press('Escape');
-  const close = page.getByRole('button', { name: 'Close chart reading' });
-  const closeBox = await close.boundingBox();
-  if (closeBox === null) throw new Error('The close action needs bounds');
-  expect(closeBox.width).toBeGreaterThanOrEqual(44);
-  expect(closeBox.height).toBeGreaterThanOrEqual(44);
-  await close.tap();
-  await expect(chart.getByRole('radiogroup', { name: 'Period' })).toBeVisible();
-  await expect(page.getByText('Daily', { exact: true })).toBeVisible();
-  await expect(chart.getByRole('radio', { checked: true })).toBeFocused();
-  await session.detach();
-});
-
-test('keeps a fixed mobile caption with separate quality targets in English and German', async ({
-  page,
-}, testInfo) => {
-  test.skip(!testInfo.project.name.startsWith('mobile'), 'Caption touch geometry is mobile only');
-  const fixture = statsSeriesFixture();
-  const complete = fixture.points[0];
-  const estimated = fixture.points[1];
-  const unavailable = fixture.points[2];
-  if (complete === undefined || estimated === undefined || unavailable === undefined)
-    throw new Error('The fixture needs three quality states');
-  complete.bar = {
-    exactness: 'complete',
-    value: { amount: '99999.1234567890123456789', unit: 'sol' },
-  };
-  complete.line = {
-    exactness: 'complete',
-    value: { amount: '-123456.9876543210987654321', unit: 'sol' },
-  };
-  const reconstruction = [
-    {
-      code: 'reconstructed_history' as const,
-      wallet: 'test-wallet',
-      until: '2026-10-01T00:00:00Z',
-    },
-  ];
-  estimated.bar = {
-    exactness: 'estimated',
-    value: { amount: '-0.21', unit: 'sol' },
-    reasons: reconstruction,
-  };
-  estimated.line = {
-    exactness: 'estimated',
-    value: { amount: '0.790499999999999999', unit: 'sol' },
-    reasons: reconstruction,
-  };
-  estimated.bar_share_of_net_worth = {
-    exactness: 'estimated',
-    value: '-0.21',
-    reasons: reconstruction,
-  };
-  estimated.line_share_of_net_worth = {
-    exactness: 'estimated',
-    value: '0.79',
-    reasons: reconstruction,
-  };
-  unavailable.bar = {
-    exactness: 'unavailable',
-    reasons: [{ code: 'history_incomplete', wallet: 'test-wallet', progress: null }],
-  };
-  unavailable.line = unavailable.bar;
-  unavailable.bar_share_of_net_worth = {
-    exactness: 'unavailable',
-    reasons: [{ code: 'zero_denominator' }],
-  };
-  unavailable.line_share_of_net_worth = unavailable.bar_share_of_net_worth;
-  await page.route('**/api/v1/stats/series?*', (route) => route.fulfill({ json: fixture }));
-  const measurements: unknown[] = [];
-  for (const locale of ['en', 'de']) {
-    await page.goto('/');
-    await page.evaluate((language) => localStorage.setItem('binsight.locale', language), locale);
-    await page.reload();
-    const chart = page.getByRole('figure');
-    const slider = chart.getByRole('slider');
-    await expect(slider).toBeVisible();
-    await page.evaluate('document.fonts.ready');
-    const initial = await chart.locator('figcaption').boundingBox();
-    const initialPlot = await slider.boundingBox();
-    if (initial === null || initialPlot === null) throw new Error('The initial chart needs bounds');
-    expect(initial.height).toBe(136);
-    expect(initialPlot.height).toBe(236);
-    await focusChartWithKeyboard(page);
-    await page.keyboard.press('Home');
-    for (const quality of ['complete', 'estimated', 'unavailable']) {
-      const caption = await chart.locator('figcaption').boundingBox();
-      const plot = await slider.boundingBox();
-      expect(caption?.height).toBe(initial.height);
-      expect(plot?.y).toBe(initialPlot.y);
-      const targets = await chart
-        .locator('.figure-reasons-trigger, figcaption .button')
-        .evaluateAll((buttons) =>
-          buttons.map((button) => {
-            const box = button.getBoundingClientRect();
-            const after = button.ownerDocument.defaultView?.getComputedStyle(button, '::after');
-            if (after === undefined) throw new Error('The touch target needs computed styles');
-            const top = Number.parseFloat(after.top);
-            const left = Number.parseFloat(after.left);
-            const right = Number.parseFloat(after.right);
-            const bottom = Number.parseFloat(after.bottom);
-            return {
-              label: button.getAttribute('aria-label'),
-              x: box.x + left,
-              y: box.y + top,
-              width: box.width - left - right,
-              height: box.height - top - bottom,
-            };
-          }),
-        );
-      for (const target of targets) {
-        expect(target.width).toBeGreaterThanOrEqual(43.9);
-        expect(target.height).toBeGreaterThanOrEqual(43.9);
-        for (const other of targets) {
-          if (target === other) continue;
-          const horizontal =
-            Math.min(target.x + target.width, other.x + other.width) - Math.max(target.x, other.x);
-          const vertical =
-            Math.min(target.y + target.height, other.y + other.height) -
-            Math.max(target.y, other.y);
-          expect(horizontal <= 0.5 || vertical <= 0.5).toBe(true);
-        }
-      }
-      measurements.push({ locale, quality, initial, caption, initialPlot, plot, targets });
-      await expect
-        .poll(() => page.evaluate('document.documentElement.scrollWidth'))
-        .toBeLessThanOrEqual(page.viewportSize()?.width ?? 0);
-      await expectNoA11yViolations(page);
-      await page.screenshot({
-        path: `test-results/visual/${testInfo.project.name}/overview-pulse-${locale}-${quality}.png`,
-      });
-      await page.keyboard.press('ArrowRight');
-    }
-  }
-  const report = testInfo.outputPath('caption-geometry.json');
-  await mkdir(dirname(report), { recursive: true });
-  await writeFile(report, JSON.stringify(measurements, null, 2));
 });
 
 test('preserves the original USD chart readings and percentages after a failed refresh', async ({

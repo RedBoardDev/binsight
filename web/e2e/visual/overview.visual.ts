@@ -130,7 +130,7 @@ test('keeps unknown import progress unavailable and dates stale readings in the 
   await page.route('**/api/v1/overview?*', (route) => route.fulfill({ json: fixture }));
   await page.goto('/');
   await expect(page.getByText('Cold is importing history', { exact: true })).toBeVisible();
-  await expect(page.getByText('Data from 12:30:00 AM', { exact: true })).toBeVisible();
+  await expect(page.getByText('Data from 12:30 AM', { exact: true })).toBeVisible();
   await expect(page.getByText('Nothing closed yet today', { exact: true })).toBeHidden();
   await expect(page.getByText('0.000', { exact: true })).toBeHidden();
   await expect(page.getByText('+1.336', { exact: true })).toBeVisible();
@@ -191,7 +191,7 @@ test('keeps USD figures and an explicit stale date after a failed refresh, then 
   await page.evaluate('window.dispatchEvent(new Event("visibilitychange"))');
   await expect.poll(() => overviewReads).toBeGreaterThan(1);
   await expect(page.getByRole('alert')).toContainText('Something went wrong');
-  await expect(page.getByText('Data from 12:00:00 PM', { exact: true })).toBeVisible();
+  await expect(page.getByText('Data from 12:00 PM', { exact: true })).toBeVisible();
   await expect(page.getByText('+$1.00', { exact: true })).toBeVisible();
   await page.evaluate('document.fonts.ready');
   await page.screenshot({
@@ -216,6 +216,6 @@ test('keeps USD figures and an explicit stale date after a failed refresh, then 
   phase = 'recovered';
   await page.getByRole('button', { name: 'Retry', exact: true }).click();
   await expect(page.getByRole('alert')).toBeHidden();
-  await expect(page.getByText('Data from 12:00:00 PM', { exact: true })).toBeHidden();
+  await expect(page.getByText('Data from 12:00 PM', { exact: true })).toBeHidden();
   await expect.poll(() => overviewReads).toBeGreaterThan(readsBeforeRetry);
 });

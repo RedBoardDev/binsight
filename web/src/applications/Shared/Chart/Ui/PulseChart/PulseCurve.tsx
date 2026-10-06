@@ -2,6 +2,7 @@ import {
   PULSE_TOP_PADDING_PX,
   type PulseGeometry,
 } from '@app/applications/Shared/Chart/Domain/pulseGeometry';
+import { useId } from 'react';
 
 const CURVE_STROKE_WIDTH_PX = 1.5;
 const CURVE_AREA_OPACITY = 0.06;
@@ -15,13 +16,21 @@ interface PulseCurveProps {
   readonly activeIndex: number | null;
 }
 
+// The area under the curve fades toward the zero line: a wash, not a second shape.
 export const PulseCurve = ({ geometry, activeIndex }: PulseCurveProps) => {
+  const areaGradientId = useId();
   const pointIndex = activeIndex ?? geometry.linePoints.length - 1;
   const selected = geometry.linePoints[pointIndex];
   const cursorX = activeIndex === null ? undefined : geometry.positions[activeIndex];
   return (
     <g>
-      <g fill="var(--accent)" opacity={CURVE_AREA_OPACITY}>
+      <defs>
+        <linearGradient id={areaGradientId} x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0" stopColor="var(--accent)" stopOpacity={CURVE_AREA_OPACITY} />
+          <stop offset="1" stopColor="var(--accent)" stopOpacity={0} />
+        </linearGradient>
+      </defs>
+      <g fill={`url(#${areaGradientId})`}>
         {geometry.areas.map((path) => (
           <path key={path} d={path} />
         ))}

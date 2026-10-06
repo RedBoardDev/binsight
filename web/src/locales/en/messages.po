@@ -155,10 +155,6 @@ msgstr "Chart readings"
 msgid "Close"
 msgstr "Close"
 
-#: src/applications/Shared/Chart/Ui/PulseChart.tsx
-msgid "Close chart reading"
-msgstr "Close chart reading"
-
 #: src/applications/Shared/Chart/Ui/PriceChart/useCandleReadings.tsx
 msgid "Closing price"
 msgstr "Closing price"
@@ -187,6 +183,7 @@ msgstr "Copy failed: select the text and copy it."
 msgid "Could not sign out."
 msgstr "Could not sign out."
 
+#: src/applications/Overview/Ui/RealPnlPulse/PulseCaptionReadout.tsx
 #: src/applications/Overview/Ui/RealPnlPulse/PulseReadout.tsx
 #: src/applications/Overview/Ui/RealPnlPulse/usePulseReadings.ts
 #: src/applications/Shared/Chart/Ui/PulseChart/PulseLegend.tsx
@@ -197,6 +194,7 @@ msgstr "Cumulative"
 msgid "Currency"
 msgstr "Currency"
 
+#: src/applications/Overview/Ui/RealPnlPulse/PulseCaptionReadout.tsx
 #: src/applications/Shared/Chart/Ui/PulseChart/PulseLegend.tsx
 msgid "Daily"
 msgstr "Daily"
@@ -408,7 +406,7 @@ msgstr "No valuation is available for the positions open at this point."
 msgid "not available"
 msgstr "not available"
 
-#: src/applications/Overview/Ui/RealPnlPulse/PulseReadout.tsx
+#: src/applications/Overview/Ui/RealPnlPulse/PulseReadoutFigures.tsx
 #: src/applications/Overview/Ui/TodayHero.tsx
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "Not available"

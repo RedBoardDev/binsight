@@ -16,7 +16,7 @@ describe('useDateFormatters', () => {
     i18n.loadAndActivate({ locale: 'en', messages: {} });
     const { result } = renderHook(() => useDateFormatters(), { wrapper });
     const timestamp = '2026-10-03T21:00:15Z';
-    const expectedTime = new Intl.DateTimeFormat('en-US', { timeStyle: 'medium' }).format(
+    const expectedTime = new Intl.DateTimeFormat('en-US', { timeStyle: 'short' }).format(
       new Date(timestamp),
     );
 
@@ -25,7 +25,7 @@ describe('useDateFormatters', () => {
     act(() => i18n.loadAndActivate({ locale: 'fr', messages: frenchMessages }));
 
     expect(result.current.formatTime(timestamp)).toBe(
-      new Intl.DateTimeFormat('fr-FR', { timeStyle: 'medium' }).format(new Date(timestamp)),
+      new Intl.DateTimeFormat('fr-FR', { timeStyle: 'short' }).format(new Date(timestamp)),
     );
   });
 
@@ -46,16 +46,24 @@ describe('useDateFormatters', () => {
       { wrapper, initialProps: { timeZone: 'Europe/Berlin' as string | undefined } },
     );
     expect(result.current.formatShortDate('2026-10-05T22:30:00Z')).toBe('Oct 6');
-    expect(result.current.formatTime('2026-03-29T00:30:00Z')).toBe('1:30:00 AM');
-    expect(result.current.formatTime('2026-03-29T01:30:00Z')).toBe('3:30:00 AM');
+    expect(result.current.formatTime('2026-03-29T00:30:00Z')).toBe('1:30 AM');
+    expect(result.current.formatTime('2026-03-29T01:30:00Z')).toBe('3:30 AM');
     rerender({ timeZone: 'UTC' });
     expect(result.current.formatShortDate('2026-10-05T22:30:00Z')).toBe('Oct 5');
     rerender({ timeZone: undefined });
     expect(result.current.formatTime('2026-10-05T22:30:00Z')).toBe(
-      new Intl.DateTimeFormat('en-US', { timeStyle: 'medium' }).format(
+      new Intl.DateTimeFormat('en-US', { timeStyle: 'short' }).format(
         new Date('2026-10-05T22:30:00Z'),
       ),
     );
+  });
+
+  it('dates a time to the minute and a chart reading with its weekday', () => {
+    i18n.loadAndActivate({ locale: 'en', messages: {} });
+    const { result } = renderHook(() => useDateFormatters('UTC'), { wrapper });
+
+    expect(result.current.formatTime('2026-10-06T14:27:41Z')).toBe('2:27 PM');
+    expect(result.current.formatDay('2026-10-01T00:00:00Z')).toBe('Thu, Oct 1');
   });
 
   it('formats compact chart dates in the same language and time zone as other dates', () => {

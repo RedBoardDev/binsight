@@ -12,8 +12,13 @@ import { useStatsSeries } from '@app/applications/Stats/Api/useStatsSeries.api';
 import { ApiError } from '@app/lib/api/apiError';
 import { useLingui } from '@lingui/react/macro';
 import { useState } from 'react';
+import { PulseCaptionReadout } from './RealPnlPulse/PulseCaptionReadout';
 import { PulseReadout } from './RealPnlPulse/PulseReadout';
 import { usePulseReadings } from './RealPnlPulse/usePulseReadings';
+
+// The plot with its dates: beside the key figures on a desktop, under them on a phone.
+const PULSE_HEIGHT_PX = { desktop: 236, mobile: 132 } as const;
+const PULSE_SKELETON_CLASSES = { desktop: 'h-59', mobile: 'h-33' } as const;
 
 interface RealPnlPulseProps {
   readonly layout: 'desktop' | 'mobile';
@@ -42,7 +47,7 @@ export const RealPnlPulse = ({ layout }: RealPnlPulseProps) => {
   return (
     <section aria-label={t`Real PnL`} className="min-w-0">
       {(series.isPending || series.data === undefined) && (
-        <div className="flex min-h-14 justify-end">{controls}</div>
+        <div className="flex min-h-7 items-center justify-end">{controls}</div>
       )}
       {series.isError && <SectionError message={message} onRetry={() => void series.refetch()} />}
       {series.isRefetchError && snapshot !== undefined && (
@@ -50,7 +55,7 @@ export const RealPnlPulse = ({ layout }: RealPnlPulseProps) => {
       )}
       {series.isPending && (
         <div role="status" aria-label={t`Loading real PnL`}>
-          <SkeletonBlock className="h-60 w-full" />
+          <SkeletonBlock className={`mt-2 w-full ${PULSE_SKELETON_CLASSES[layout]}`} />
         </div>
       )}
       {snapshot !== undefined && (
@@ -58,17 +63,20 @@ export const RealPnlPulse = ({ layout }: RealPnlPulseProps) => {
           points={snapshot.points}
           label={t`Real PnL`}
           summary={summary}
+          height={PULSE_HEIGHT_PX[layout]}
           timeZone={snapshot.window.timezone}
           headerEnd={controls}
           readoutPlacement={layout === 'desktop' ? 'tooltip' : 'caption'}
-          readoutRetention={layout === 'mobile' ? 'reading' : 'gesture'}
           activeIndex={activeIndex}
           onScrub={(index) => setSelection({ scope, index })}
           describePoint={describePoint}
           renderReadout={(index) => {
             const point = snapshot.points[index];
-            return point === undefined ? null : (
-              <PulseReadout layout={layout} point={point} timeZone={snapshot.window.timezone} />
+            if (point === undefined) return null;
+            return layout === 'desktop' ? (
+              <PulseReadout point={point} timeZone={snapshot.window.timezone} />
+            ) : (
+              <PulseCaptionReadout point={point} timeZone={snapshot.window.timezone} />
             );
           }}
         />

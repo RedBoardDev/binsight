@@ -141,6 +141,13 @@
     font-weight: 500;
   }
 
+  /* A phone's row also holds the chart legend: narrower pills keep both on one line in German. */
+  @media (width < 64rem) {
+    .text-pills .toggle-button {
+      padding-inline: 0.5rem;
+    }
+  }
+
   .text-pills__indicator {
     position: absolute;
     inset: 0;

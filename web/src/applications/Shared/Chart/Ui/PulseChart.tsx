@@ -3,14 +3,9 @@ import {
   pulseGeometry,
 } from '@app/applications/Shared/Chart/Domain/pulseGeometry';
 import { useElementWidth } from '@app/applications/Shared/Chart/Ui/useElementWidth';
-import {
-  type ScrubRetention,
-  useScrubIndex,
-} from '@app/applications/Shared/Chart/Ui/useScrubIndex';
+import { useScrubIndex } from '@app/applications/Shared/Chart/Ui/useScrubIndex';
 import { useDateFormatters } from '@app/applications/Shared/Time/Ui/useDateFormatters';
-import { Button } from '@heroui/react';
 import { useLingui } from '@lingui/react/macro';
-import { X } from 'lucide-react';
 import { type ReactNode, useId, useMemo, useRef } from 'react';
 import { PulseBars } from './PulseChart/PulseBars';
 import { PulseCurve } from './PulseChart/PulseCurve';
@@ -19,6 +14,9 @@ import { PulseTable } from './PulseChart/PulseTable';
 import { PulseTooltip } from './PulseChart/PulseTooltip';
 
 const DEFAULT_PULSE_HEIGHT_PX = 236;
+// A caption reading takes two lines (the day and its profit, then the cumulative profit, each with
+// its share of net worth): their height is reserved, so nothing moves when a reading starts.
+const CAPTION_HEIGHT_CLASSES = { caption: 'min-h-9', tooltip: 'min-h-7' } as const;
 const DATE_LABEL_EDGE_PADDING_PX = 24;
 const DATE_LABEL_BOTTOM_PADDING_PX = 6;
 
@@ -33,8 +31,9 @@ interface PulseChartProps {
   readonly height?: number;
   readonly timeZone?: string;
   readonly headerEnd?: ReactNode;
+  // "caption": the reading takes the place of the legend and the controls, on one line, while
+  // the finger is down (a phone). "tooltip": it follows the pointer over the plot (a desktop).
   readonly readoutPlacement?: 'caption' | 'tooltip';
-  readonly readoutRetention?: ScrubRetention;
 }
 
 // The caller formats all four server figures, including hidden mode, in both callbacks.
@@ -51,24 +50,12 @@ export const PulseChart = ({
   timeZone,
   headerEnd,
   readoutPlacement = 'caption',
-  readoutRetention = 'gesture',
 }: PulseChartProps) => {
   const { t } = useLingui();
   const { ref, width } = useElementWidth();
   const { formatShortDate } = useDateFormatters(timeZone);
   const instructionsId = useId();
   const captionRef = useRef<HTMLElement>(null);
-  const controlsRef = useRef<HTMLDivElement>(null);
-  const closeReadout = () => {
-    onScrub(null);
-    requestAnimationFrame(() => {
-      const controls = controlsRef.current;
-      const target =
-        controls?.querySelector<HTMLElement>('[aria-checked="true"]') ??
-        controls?.querySelector<HTMLElement>('[tabindex="0"]');
-      target?.focus();
-    });
-  };
   const geometry = useMemo(() => pulseGeometry(points, { width, height }), [points, width, height]);
   const selectedIndex =
     activeIndex !== null && points[activeIndex] !== undefined ? activeIndex : null;
@@ -78,41 +65,25 @@ export const PulseChart = ({
     width,
     activeIndex: selectedIndex,
     onScrub,
-    readoutRetention,
   });
   return (
     <figure
       className="flex w-full flex-col gap-2"
       aria-label={label}
-      onKeyDown={(event) => {
-        if (readoutRetention === 'reading' && event.key === 'Escape' && !event.defaultPrevented) {
-          event.preventDefault();
-          closeReadout();
-        }
-      }}
+      // Set once the plot has a width, so its bars and curve are drawn: what a screenshot waits for.
+      data-ready={width > 0 ? 'true' : undefined}
     >
       <figcaption
         ref={captionRef}
-        className={`relative flex flex-wrap items-center justify-between gap-x-4 gap-y-2 ${readoutRetention === 'reading' ? 'min-h-34' : 'min-h-14'}`}
+        className={`flex items-center justify-between gap-x-3 ${CAPTION_HEIGHT_CLASSES[readoutPlacement]}`}
       >
         {selectedIndex !== null && readoutPlacement === 'caption' ? (
           renderReadout(selectedIndex)
         ) : (
-          <PulseLegend />
-        )}
-        {(selectedIndex === null || readoutPlacement === 'tooltip') && (
-          <div ref={controlsRef}>{headerEnd}</div>
-        )}
-        {selectedIndex !== null && readoutRetention === 'reading' && (
-          <Button
-            isIconOnly
-            variant="ghost"
-            aria-label={t`Close chart reading`}
-            onPress={closeReadout}
-            className="absolute top-0 right-0 size-11"
-          >
-            <X aria-hidden className="size-4" />
-          </Button>
+          <>
+            <PulseLegend curve={geometry.strokes.at(-1)?.style ?? 'solid'} />
+            {headerEnd}
+          </>
         )}
       </figcaption>
       <div ref={ref} className="relative w-full">
@@ -124,11 +95,6 @@ export const PulseChart = ({
           role="img"
           aria-label={summary}
         >
-          <g stroke="var(--border-subtle)" strokeDasharray="2 5">
-            {geometry.gridLines.map((y) => (
-              <line key={y} x1={0} x2={width} y1={y} y2={y} />
-            ))}
-          </g>
           <line x1={0} x2={width} y1={geometry.zeroY} y2={geometry.zeroY} stroke="var(--border)" />
           <PulseBars bars={geometry.bars} activeIndex={selectedIndex} />
           <PulseCurve geometry={geometry} activeIndex={selectedIndex} />

@@ -12,6 +12,8 @@ interface DateFormatters {
   readonly formatTime: (timestamp: string | null) => string;
   readonly formatDateTime: (timestamp: string | null) => string;
   readonly formatShortDate: (timestamp: string | null) => string;
+  // A day with its weekday ("Thu, Oct 1"): the date of a chart reading.
+  readonly formatDay: (timestamp: string | null) => string;
   readonly formatMoment: (timestamp: string | null, now: number) => string;
 }
 
@@ -49,7 +51,16 @@ export const useDateFormatters = (timeZoneOverride?: string): DateFormatters => 
       formatShortDate: formatWith(
         new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric', timeZone }),
       ),
-      formatTime: formatWith(new Intl.DateTimeFormat(locale, { timeStyle: 'medium', timeZone })),
+      formatDay: formatWith(
+        new Intl.DateTimeFormat(locale, {
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+          timeZone,
+        }),
+      ),
+      // Hours and minutes: a reader dates figures to the minute ("data from 14:02").
+      formatTime: formatWith(new Intl.DateTimeFormat(locale, { timeStyle: 'short', timeZone })),
       formatDateTime: formatWith(
         new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'medium', timeZone }),
       ),

@@ -90,7 +90,7 @@ describe('OverviewPage', () => {
     await act(() => queryClient.invalidateQueries({ queryKey: ['Overview'] }));
     expect(await screen.findByRole('alert')).toHaveTextContent('still preparing your figures');
     expect(screen.getByText('+1.000')).toBeInTheDocument();
-    expect(screen.getByText('Data from 12:00:00 PM')).toBeInTheDocument();
+    expect(screen.getByText('Data from 12:00 PM')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
   });
 

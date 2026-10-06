@@ -23,7 +23,6 @@ export interface PulseBar {
   readonly width: number;
   readonly height: number;
   readonly tone: 'gain' | 'loss' | 'neutral';
-  readonly isEstimated: boolean;
 }
 
 export interface PulseGeometry {
@@ -31,7 +30,6 @@ export interface PulseGeometry {
   readonly height: number;
   readonly bottom: number;
   readonly zeroY: number;
-  readonly gridLines: readonly number[];
   readonly positions: readonly number[];
   readonly bars: readonly PulseBar[];
   readonly linePoints: readonly ExactChartPoint[];
@@ -118,7 +116,7 @@ export const pulseGeometry = (
       step * (width < COMPACT_CHART_WIDTH_PX ? COMPACT_BAR_WIDTH_RATIO : BAR_WIDTH_RATIO),
     ),
   );
-  const bars = points.flatMap((point, index): PulseBar[] => {
+  const bars = points.flatMap((_, index): PulseBar[] => {
     const value = barValues[index];
     const x = positions[index];
     if (value === null || value === undefined || x === undefined) return [];
@@ -136,7 +134,6 @@ export const pulseGeometry = (
         width: barWidth,
         height: barHeight,
         tone: value === 0 ? 'neutral' : value > 0 ? 'gain' : 'loss',
-        isEstimated: point.bar?.exactness === 'estimated',
       },
     ];
   });
@@ -155,10 +152,6 @@ export const pulseGeometry = (
     height,
     bottom,
     zeroY,
-    gridLines: [
-      PULSE_TOP_PADDING_PX + (bottom - PULSE_TOP_PADDING_PX) / 3,
-      PULSE_TOP_PADDING_PX + (2 * (bottom - PULSE_TOP_PADDING_PX)) / 3,
-    ],
     positions,
     bars,
     linePoints,

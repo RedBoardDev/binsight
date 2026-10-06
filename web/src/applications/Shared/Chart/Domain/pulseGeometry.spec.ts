@@ -108,7 +108,6 @@ describe('pulseGeometry', () => {
       DIMENSIONS,
     );
     expect(geometry.bars).toHaveLength(1);
-    expect(geometry.bars[0]?.isEstimated).toBe(true);
     expect(geometry.strokes[0]?.style).toBe('dashed');
     expect(geometry.linePoints[1]).toEqual({ exactness: 'unavailable' });
   });

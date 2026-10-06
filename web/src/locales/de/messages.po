@@ -155,10 +155,6 @@ msgstr "Diagrammwerte"
 msgid "Close"
 msgstr "Schließen"
 
-#: src/applications/Shared/Chart/Ui/PulseChart.tsx
-msgid "Close chart reading"
-msgstr "Diagrammwerte schließen"
-
 #: src/applications/Shared/Chart/Ui/PriceChart/useCandleReadings.tsx
 msgid "Closing price"
 msgstr "Schlusskurs"
@@ -187,6 +183,7 @@ msgstr "Kopieren fehlgeschlagen: Markieren Sie den Text und kopieren Sie ihn."
 msgid "Could not sign out."
 msgstr "Abmelden fehlgeschlagen."
 
+#: src/applications/Overview/Ui/RealPnlPulse/PulseCaptionReadout.tsx
 #: src/applications/Overview/Ui/RealPnlPulse/PulseReadout.tsx
 #: src/applications/Overview/Ui/RealPnlPulse/usePulseReadings.ts
 #: src/applications/Shared/Chart/Ui/PulseChart/PulseLegend.tsx
@@ -197,6 +194,7 @@ msgstr "Kumuliert"
 msgid "Currency"
 msgstr "Währung"
 
+#: src/applications/Overview/Ui/RealPnlPulse/PulseCaptionReadout.tsx
 #: src/applications/Shared/Chart/Ui/PulseChart/PulseLegend.tsx
 msgid "Daily"
 msgstr "Täglich"
@@ -408,7 +406,7 @@ msgstr "Für die zu diesem Zeitpunkt offenen Positionen ist keine Bewertung verf
 msgid "not available"
 msgstr "nicht verfügbar"
 
-#: src/applications/Overview/Ui/RealPnlPulse/PulseReadout.tsx
+#: src/applications/Overview/Ui/RealPnlPulse/PulseReadoutFigures.tsx
 #: src/applications/Overview/Ui/TodayHero.tsx
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "Not available"

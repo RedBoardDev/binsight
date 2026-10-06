@@ -1,6 +1,5 @@
 import type { PulsePoint } from '@app/applications/Shared/Chart/Domain/pulseGeometry';
 import { PulseChart } from '@app/applications/Shared/Chart/Ui/PulseChart';
-import type { ScrubRetention } from '@app/applications/Shared/Chart/Ui/useScrubIndex';
 import { parseDecimalString } from '@app/applications/Shared/Figure/Domain/decimalString';
 import type { Figure, PercentFigure } from '@app/applications/Shared/Figure/Domain/figure';
 import { FigureAmount } from '@app/applications/Shared/Figure/Ui/FigureAmount';
@@ -39,11 +38,9 @@ const CUMULATIVE_SHARE: PercentFigure = { exactness: 'complete', value: decimal(
 const TestPulse = ({
   points = POINTS,
   onScrub = () => undefined,
-  readoutRetention = 'gesture',
 }: {
   readonly points?: readonly PulsePoint[];
   readonly onScrub?: (index: number | null) => void;
-  readonly readoutRetention?: ScrubRetention;
 }) => {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const format = useFigureFormatter();
@@ -73,7 +70,6 @@ const TestPulse = ({
       label="Real PnL"
       summary="Daily and cumulative profit over three days"
       activeIndex={activeIndex}
-      readoutRetention={readoutRetention}
       onScrub={(index) => {
         setActiveIndex(index);
         onScrub(index);
@@ -238,22 +234,6 @@ describe('PulseChart', () => {
     fireEvent.pointerMove(slider, { pointerType: 'touch', clientX: 175, clientY: 10 });
     expect(screen.getByTestId('readout')).toBeInTheDocument();
     fireEvent.pointerUp(slider, { pointerType: 'touch' });
-    expect(onScrub).toHaveBeenLastCalledWith(null);
-    expect(screen.queryByTestId('readout')).not.toBeInTheDocument();
-  });
-
-  it('retains a released reading only when requested and clears it through its explicit close', async () => {
-    const onScrub = vi.fn();
-    renderWithProviders(<TestPulse onScrub={onScrub} readoutRetention="reading" />);
-    const slider = screen.getByRole('slider');
-    chartBox(slider);
-    fireEvent.pointerDown(slider, { pointerType: 'touch', clientX: 140, clientY: 10 });
-    fireEvent.pointerMove(slider, { pointerType: 'touch', clientX: 175, clientY: 10 });
-    fireEvent.pointerUp(slider, { pointerType: 'touch' });
-    fireEvent.pointerLeave(slider, { pointerType: 'touch' });
-    expect(onScrub).toHaveBeenLastCalledWith(1);
-    expect(screen.getByTestId('readout')).toBeInTheDocument();
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Close chart reading' }));
     expect(onScrub).toHaveBeenLastCalledWith(null);
     expect(screen.queryByTestId('readout')).not.toBeInTheDocument();
   });

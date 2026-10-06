@@ -35,10 +35,7 @@ test('shows the pulse, its keyboard readout and masked accessible values', async
   await expect(
     page.locator('figure[aria-label="Real PnL sample"] svg[role="img"] > line'),
   ).not.toHaveCSS('stroke', 'none');
-  await expect(page.locator('figure[aria-label="Real PnL sample"] pattern path')).not.toHaveCSS(
-    'stroke',
-    'none',
-  );
+  await expect(page.locator('figure[aria-label="Real PnL sample"] pattern')).toHaveCount(0);
   await expect(page.locator('figure[aria-label="Real PnL sample"] circle')).not.toHaveCSS(
     'stroke',
     'none',

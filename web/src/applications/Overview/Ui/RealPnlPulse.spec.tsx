@@ -67,7 +67,7 @@ describe('Overview real pnl pulse', () => {
     expect(screen.getByRole('table', { name: 'Real PnL' })).not.toHaveTextContent('12.553');
   });
 
-  it('retains unavailable readings and lets the mobile caption explain its server reasons', async () => {
+  it('reads a day on the legend line of a phone, says why a reading is missing, then gives the legend back', async () => {
     const fixture = statsSeriesFixture();
     const unavailable = {
       exactness: 'unavailable' as const,
@@ -94,20 +94,14 @@ describe('Overview real pnl pulse', () => {
     expect(description).not.toContain('0.000');
     const figure = slider.closest('figure');
     if (figure === null) throw new Error('The chart needs a figure');
-    expect(within(figure).getAllByRole('button', { name: 'Why not available?' })).toHaveLength(2);
-    expect(within(figure).getAllByText('Not available').length).toBeGreaterThan(0);
+    const caption = within(figure).getByText('Wed, Sep 30').closest('figcaption');
+    expect(caption).not.toBeNull();
+    expect(within(figure).queryByRole('radiogroup', { name: 'Period' })).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Today' })).toBeInTheDocument();
     expect(screen.getByRole('table')).toHaveTextContent('History still importing.');
-    const user = userEvent.setup();
-    await user.keyboard('{Shift>}{Tab}{Tab}{/Shift}');
-    expect(within(figure).getAllByRole('button', { name: 'Why not available?' })[1]).toHaveFocus();
-    await user.keyboard('{Enter}');
-    expect(await screen.findByRole('dialog', { name: 'Not available' })).toHaveTextContent(
-      'History still importing.',
-    );
-    await user.keyboard('{Escape}');
-    await user.click(screen.getByRole('button', { name: 'Close chart reading' }));
-    expect(screen.getByText('Daily')).toBeInTheDocument();
-    expect(screen.getByRole('radiogroup', { name: 'Period' })).toBeInTheDocument();
+    act(() => slider.blur());
+    expect(within(figure).getByText('Daily')).toBeInTheDocument();
+    expect(within(figure).getByRole('radiogroup', { name: 'Period' })).toBeInTheDocument();
   });
 
   it('keeps period controls usable after the explicit daily bucket limit and retries the same request', async () => {
