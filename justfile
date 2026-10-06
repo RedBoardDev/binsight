@@ -253,12 +253,11 @@ rust-run *ARGS: rust-dev-env
 rust-admin *ARGS: rust-dev-env
     BINSIGHT_CONFIG_FILE=.dev/binsight.env cargo run --quiet -p binsight -- admin {{ ARGS }}
 
-# Its own data folder keeps the demo away from the wallets a chain run may track in .dev/data.
+# Demo mode keeps its data in .dev/data/demo, away from the wallets a chain run tracks in .dev/data.
 [doc('Run the server on the generated demo world (no Helius key needed, nothing is tracked).')]
 [group('rust')]
 demo *ARGS: rust-dev-env
-    mkdir -p .dev/demo-data
-    BINSIGHT_CONFIG_FILE=.dev/binsight.env BINSIGHT_DEMO=true BINSIGHT_DATA_DIR="$PWD/.dev/demo-data" cargo run -p binsight -- run {{ ARGS }}
+    BINSIGHT_CONFIG_FILE=.dev/binsight.env BINSIGHT_DEMO=true cargo run -p binsight -- run {{ ARGS }}
 
 # Build the release binary from scratch, so it embeds the current web build.
 [group('rust')]

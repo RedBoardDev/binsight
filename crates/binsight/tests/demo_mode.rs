@@ -69,7 +69,7 @@ fn refuses_a_demo_switch_other_than_true_or_false() {
 }
 
 #[test]
-fn keeps_the_demo_in_a_data_folder_of_its_own_by_default() {
+fn keeps_the_demo_in_the_demo_subfolder_of_the_data_folder() {
     let demo = validate(&environment(&[
         ("HOME", "/home/owner"),
         ("BINSIGHT_PASSWORD", PASSWORD),
@@ -83,12 +83,20 @@ fn keeps_the_demo_in_a_data_folder_of_its_own_by_default() {
     ]))
     .unwrap();
 
+    let pinned = validate(&environment(&[
+        ("BINSIGHT_PASSWORD", PASSWORD),
+        ("BINSIGHT_DATA_DIR", "/data"),
+        ("BINSIGHT_DEMO", "true"),
+    ]))
+    .unwrap();
+
     assert_eq!(
         demo.config.data_dir,
-        std::path::Path::new("/home/owner/.local/share/binsight-demo")
+        std::path::Path::new("/home/owner/.local/share/binsight/demo")
     );
     assert_eq!(
         chain.config.data_dir,
         std::path::Path::new("/home/owner/.local/share/binsight")
     );
+    assert_eq!(pinned.config.data_dir, std::path::Path::new("/data/demo"));
 }

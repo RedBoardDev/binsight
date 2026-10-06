@@ -15,7 +15,7 @@ use binsight_chain::HeliusApiKey;
 
 use super::credit_budget::CreditBudget;
 use super::data_source::{DataSourceConfig, parse_switch};
-use super::paths::{default_data_dir, default_demo_data_dir, expand_home};
+use super::paths::{DEMO_FOLDER, default_data_dir, expand_home};
 use super::problems::{ConfigError, ConfigProblem, ConfigWarning, Setting, Source};
 use super::sources::{ConfigSources, VARIABLE_PREFIX};
 use super::suggestion::closest_variable;
@@ -194,8 +194,18 @@ impl<'sources> SettingReader<'sources> {
     }
 
     /// The data folder: configured (with `~` expanded) or the default, and absolute. Demo mode
-    /// defaults to a folder of its own, so it never opens the folder of a real instance.
+    /// uses its `demo` subfolder, so it never opens the database of a real instance, even when
+    /// the data folder is pinned (as the Docker image does).
     fn data_dir(&mut self, data_source: Option<&DataSourceConfig>) -> Option<PathBuf> {
+        let folder = self.configured_or_default_data_dir()?;
+        Some(match data_source {
+            Some(DataSourceConfig::Demo) => folder.join(DEMO_FOLDER),
+            _ => folder,
+        })
+    }
+
+    /// The data folder as configured (with `~` expanded) or by default, and absolute.
+    fn configured_or_default_data_dir(&mut self) -> Option<PathBuf> {
         let env = &self.sources.env;
         if self.find(Setting::DataDir).is_some() {
             return self.optional(Setting::DataDir, |text| {
@@ -207,11 +217,7 @@ impl<'sources> SettingReader<'sources> {
                 }
             });
         }
-        let default = match data_source {
-            Some(DataSourceConfig::Demo) => default_demo_data_dir(env),
-            _ => default_data_dir(env),
-        };
-        let Some(default) = default else {
+        let Some(default) = default_data_dir(env) else {
             let message = "no default is possible because HOME is not set; set it explicitly";
             self.problems
                 .push(ConfigProblem::new(Setting::DataDir, message));

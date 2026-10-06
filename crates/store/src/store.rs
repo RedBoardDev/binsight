@@ -9,6 +9,8 @@ use std::path::Path;
 use crate::database::Database;
 use crate::error::StoreError;
 
+mod read_only;
+
 /// A handle on the binsight database.
 ///
 /// Clones share the same connection pools, so every clone sees the same data and all writes are

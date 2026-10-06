@@ -1,9 +1,11 @@
 //! The default locations of the data folder and of the configuration file.
 //!
 //! They follow the XDG conventions: `$XDG_DATA_HOME/binsight` (else `~/.local/share/binsight`)
-//! for data (`binsight-demo` in demo mode), `$XDG_CONFIG_HOME/binsight/binsight.env` (else `~/.config/binsight/binsight.env`) for
-//! the configuration. A leading `~/` in a configured path means the home folder. These functions
-//! only compute paths; they never touch the disk.
+//! for data, `$XDG_CONFIG_HOME/binsight/binsight.env` (else `~/.config/binsight/binsight.env`)
+//! for the configuration. Demo mode keeps its data in the [`DEMO_FOLDER`] subfolder of the data
+//! folder, so it never shares a database with a real instance, in Docker as anywhere else. A
+//! leading `~/` in a configured path means the home folder. These functions only compute paths;
+//! they never touch the disk.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -13,10 +15,8 @@ pub(crate) fn default_data_dir(env: &BTreeMap<String, String>) -> Option<PathBuf
     folder_from(env, "XDG_DATA_HOME", ".local/share").map(|base| base.join("binsight"))
 }
 
-/// The default data folder of demo mode, next to the real one so the two never mix.
-pub(crate) fn default_demo_data_dir(env: &BTreeMap<String, String>) -> Option<PathBuf> {
-    folder_from(env, "XDG_DATA_HOME", ".local/share").map(|base| base.join("binsight-demo"))
-}
+/// The subfolder of the data folder that demo mode uses as its own data folder.
+pub(crate) const DEMO_FOLDER: &str = "demo";
 
 /// The default configuration file, if the environment says where the home or config folder is.
 pub(crate) fn default_config_file(env: &BTreeMap<String, String>) -> Option<PathBuf> {

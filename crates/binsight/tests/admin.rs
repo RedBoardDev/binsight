@@ -184,3 +184,23 @@ async fn refuses_an_address_that_is_not_base58() {
 
     assert_eq!(output.status.code(), Some(2));
 }
+
+#[tokio::test]
+async fn refuses_to_add_a_wallet_in_demo_mode() {
+    let home = tempfile::tempdir().unwrap();
+    let variables = valid_variables(home.path(), "127.0.0.1:0");
+    let mut demo = as_pairs(&variables);
+    demo.push(("BINSIGHT_DEMO", "true"));
+
+    let added = run(
+        home.path(),
+        &["admin", "wallet-add", "11111111111111111111111111111111"],
+        &demo,
+    )
+    .await;
+
+    assert_eq!(added.status.code(), Some(78));
+    let stderr = String::from_utf8(added.stderr).unwrap();
+    assert!(stderr.contains("demo mode tracks no wallet"), "{stderr}");
+    assert!(!home.path().join("data").exists());
+}

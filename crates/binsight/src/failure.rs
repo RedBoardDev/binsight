@@ -47,13 +47,16 @@ pub enum Failure {
     /// Demo mode was started on a data folder that tracks wallets: it would mix generated figures
     /// with real ones, so it refuses.
     #[error(
-        "demo mode refuses the data folder {} because it tracks wallets; give demo mode a folder of its own (unset BINSIGHT_DATA_DIR to use the default demo folder)",
+        "demo mode refuses the data folder {} because it tracks wallets; demo mode keeps its data in the demo subfolder of BINSIGHT_DATA_DIR, which must not track wallets",
         path.display()
     )]
     DemoOnTrackedData {
         /// The data folder.
         path: PathBuf,
     },
+    /// A wallet was to be added in demo mode, which tracks nothing.
+    #[error("demo mode tracks no wallet; unset BINSIGHT_DEMO to add one to the real instance")]
+    WalletInDemo,
     /// The database was written by a newer binsight, or a migration was edited; the cause says
     /// which, and what to do.
     #[error("this binsight cannot use the database, which was left untouched")]
@@ -101,7 +104,7 @@ impl Failure {
     /// The process exit code for this failure.
     pub fn exit_code(&self) -> ExitCode {
         ExitCode::from(match self {
-            Self::Config(_) | Self::DemoOnTrackedData { .. } => EXIT_CONFIG,
+            Self::Config(_) | Self::DemoOnTrackedData { .. } | Self::WalletInDemo => EXIT_CONFIG,
             Self::Usage(_) => EXIT_USAGE,
             Self::DataDirLocked { .. } => EXIT_LOCKED,
             Self::IncompatibleDatabase(_) => EXIT_INCOMPATIBLE_DATABASE,

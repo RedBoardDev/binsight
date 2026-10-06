@@ -1,11 +1,11 @@
 //! What the server reads from: the engine on the chain, through the Helius provider, or the
 //! generated demo world, which runs no engine at all.
 //!
-//! Demo mode never starts ingestion: nothing is sent to the network, no credit is counted and
-//! nothing is written to the database. It also refuses a data folder that tracks wallets, so a
-//! demo can never run on the folder of a real instance.
+//! Demo mode never starts ingestion: nothing is sent to the network and no credit is counted. It
+//! keeps its data in a folder of its own (the `demo` subfolder of the data folder), and refuses
+//! that folder if it tracks wallets, which it checks read-only before opening anything, so a demo
+//! can never back up, migrate or write the database of a real instance.
 
-use std::path::Path;
 use std::sync::Arc;
 
 use binsight_chain::{
@@ -21,10 +21,11 @@ use jiff::tz::TimeZone;
 use tracing::{info, warn};
 
 use crate::config::{Config, DataSourceConfig};
+use crate::data_dir::database_path;
 use crate::failure::Failure;
 
 /// The engine and its handle in chain mode; only a handle in demo mode.
-pub(super) async fn engine(
+pub(super) fn engine(
     config: &Config,
     store: &Store,
     clock: &Arc<dyn Clock>,
@@ -37,7 +38,6 @@ pub(super) async fn engine(
             Ok((Some(engine), handle.with_data_source(DataSource::Chain)))
         }
         DataSourceConfig::Demo => {
-            refuse_tracked_wallets(store, &config.data_dir).await?;
             warn!("demo mode: serving generated figures; nothing is tracked or sent");
             let spec = WorldSpec::new(clock.now(), TimeZone::UTC);
             let portfolio =
@@ -83,12 +83,20 @@ fn stream_connector(key: &HeliusApiKey) -> Result<Arc<dyn WsConnector>, Failure>
     Ok(Arc::new(connector))
 }
 
-/// Refuses a data folder that tracks wallets: demo figures must never sit next to real ones.
-async fn refuse_tracked_wallets(store: &Store, data_dir: &Path) -> Result<(), Failure> {
-    if store.wallets().list().await?.is_empty() {
+/// In demo mode, refuses a data folder that tracks wallets: demo figures must never sit next to
+/// real ones. The database is only read, before anything opens it for writing.
+pub(super) async fn refuse_tracked_demo_folder(config: &Config) -> Result<(), Failure> {
+    if !matches!(config.data_source, DataSourceConfig::Demo) {
         return Ok(());
     }
-    Err(Failure::DemoOnTrackedData {
-        path: data_dir.to_path_buf(),
-    })
+    let database = database_path(&config.data_dir);
+    let tracks_wallets = tokio::task::spawn_blocking(move || Store::tracks_wallets(&database))
+        .await
+        .map_err(|error| Failure::Unexpected(error.into()))??;
+    if tracks_wallets {
+        return Err(Failure::DemoOnTrackedData {
+            path: config.data_dir.clone(),
+        });
+    }
+    Ok(())
 }

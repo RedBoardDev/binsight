@@ -1,7 +1,8 @@
 //! `binsight run`: the server.
 //!
 //! In order: validate the configuration (nothing starts if it is invalid), start logging, handle
-//! the stop signals, lock the data folder, open and upgrade the database (backing it up first),
+//! the stop signals, refuse a demo folder that tracks wallets (read-only), lock the data folder,
+//! open and upgrade the database (backing it up first),
 //! create the instance secrets, pick the source of the figures (the chain, or the generated demo
 //! world), listen, then run the engine and the HTTP server until a stop signal. Shutdown is graceful but bounded: after [`SHUTDOWN_DEADLINE_SECS`] seconds whatever is
 //! left is dropped.
@@ -64,12 +65,13 @@ async fn serve(config: Config) -> Result<(), Failure> {
     // copy) and stops the server as soon as it is up.
     let shutdown = CancellationToken::new();
     tokio::spawn(StopSignals::listen().cancel_on_signal(shutdown.clone()));
+    sources::refuse_tracked_demo_folder(&config).await?;
     let data_dir = LockedDataDir::open(&config.data_dir)?;
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let store = open_store(&data_dir, clock.as_ref()).await?;
     let session_secret = ensure_instance_secrets(&store).await?;
     let listener = listen(config.bind).await?;
-    let (engine, handle) = sources::engine(&config, &store, &clock).await?;
+    let (engine, handle) = sources::engine(&config, &store, &clock)?;
     let state = AppState::new(AppStateParts {
         engine: handle,
         auth: AuthSettings {

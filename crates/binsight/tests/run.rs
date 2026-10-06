@@ -90,18 +90,38 @@ async fn serves_the_demo_world_without_a_helius_key() {
 }
 
 #[tokio::test]
-async fn refuses_demo_mode_on_a_data_folder_that_tracks_wallets() {
+async fn runs_the_demo_beside_a_real_instance_without_touching_its_database() {
     let home = tempfile::tempdir().unwrap();
     let variables = valid_variables(home.path(), "127.0.0.1:0");
-    let added = binsight(
-        home.path(),
-        &["admin", "wallet-add", "11111111111111111111111111111111"],
-        &as_pairs(&variables),
-    )
-    .output()
-    .await
-    .unwrap();
-    assert_eq!(added.status.code(), Some(0), "{added:?}");
+    add_a_wallet(home.path(), &as_pairs(&variables)).await;
+    let data = home.path().join("data");
+    let real = folder_contents(&data);
+    let mut demo = as_pairs(&variables);
+    demo.push(("BINSIGHT_DEMO", "true"));
+
+    let server = Server::start(home.path(), &demo).await;
+    let health = get_health(&server.address).await;
+    server.send_sigterm().await;
+
+    assert!(health.contains(r#""data_source":"demo""#), "{health}");
+    assert!(data.join("demo").join("binsight.db").is_file());
+    assert_eq!(folder_contents(&data), real);
+}
+
+#[tokio::test]
+async fn refuses_a_demo_folder_that_tracks_wallets_before_changing_it() {
+    let home = tempfile::tempdir().unwrap();
+    let mut tracking_demo_folder = valid_variables(home.path(), "127.0.0.1:0");
+    let demo_folder = home.path().join("data").join("demo");
+    let demo_folder_text = demo_folder.display().to_string();
+    for (name, value) in &mut tracking_demo_folder {
+        if *name == "BINSIGHT_DATA_DIR" {
+            value.clone_from(&demo_folder_text);
+        }
+    }
+    add_a_wallet(home.path(), &as_pairs(&tracking_demo_folder)).await;
+    let before = folder_contents(&demo_folder);
+    let variables = valid_variables(home.path(), "127.0.0.1:0");
     let mut demo = as_pairs(&variables);
     demo.push(("BINSIGHT_DEMO", "true"));
 
@@ -113,6 +133,35 @@ async fn refuses_demo_mode_on_a_data_folder_that_tracks_wallets() {
     assert_eq!(output.status.code(), Some(78));
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("because it tracks wallets"), "{stderr}");
+    assert_eq!(folder_contents(&demo_folder), before);
+}
+
+/// Tracks a wallet in the data folder `variables` name.
+async fn add_a_wallet(home: &std::path::Path, variables: &[(&str, &str)]) {
+    let added = binsight(
+        home,
+        &["admin", "wallet-add", "11111111111111111111111111111111"],
+        variables,
+    )
+    .output()
+    .await
+    .unwrap();
+    assert_eq!(added.status.code(), Some(0), "{added:?}");
+}
+
+/// Every file of `folder` (not its subfolders) with its bytes.
+fn folder_contents(folder: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+    let mut files: Vec<_> = std::fs::read_dir(folder)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.is_file())
+        .map(|path| {
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            (name, std::fs::read(&path).unwrap())
+        })
+        .collect();
+    files.sort();
+    files
 }
 
 /// `GET /api/v1/health` over a plain connection, the raw response as text.
