@@ -6,6 +6,7 @@ import { useCandleReadings } from '@app/applications/Shared/Chart/Ui/PriceChart/
 import { usePriceChart } from '@app/applications/Shared/Chart/Ui/PriceChart/usePriceChart';
 import { useElementWidth } from '@app/applications/Shared/Chart/Ui/useElementWidth';
 import { useScrubIndex } from '@app/applications/Shared/Chart/Ui/useScrubIndex';
+import { priceWithSubscriptZeros } from '@app/applications/Shared/Figure/Domain/formatPrice';
 import { useFigureFormatter } from '@app/applications/Shared/Figure/Ui/useFigureFormatter';
 import { useDateFormatters } from '@app/applications/Shared/Time/Ui/useDateFormatters';
 import { useLingui } from '@lingui/react/macro';
@@ -44,9 +45,11 @@ export const LightweightPriceChart = (props: LightweightPriceChartProps) => {
   const { ref, width } = useElementWidth();
   const { formatDateTime } = useDateFormatters();
   const format = useFigureFormatter();
+  // The price scale is a canvas: tiny prices count their zeros in subscript digits there, as
+  // everywhere else in the app, instead of a raw 0.000000001520.
   const formatPrice = useCallback(
     (amount: Parameters<typeof format.price>[0]['amount']) =>
-      format.price({ amount, quote: props.quoteSymbol }).text,
+      priceWithSubscriptZeros(format.price({ amount, quote: props.quoteSymbol })),
     [format, props.quoteSymbol],
   );
   const { describePoint, renderReadout } = useCandleReadings(source, props.describeStatus);

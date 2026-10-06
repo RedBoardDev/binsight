@@ -37,3 +37,15 @@ export const formatPrice = (price: Price, languageTag: string): FormattedPrice =
     digits: fraction.slice(zeroCount),
   };
 };
+
+const SUBSCRIPT_DIGITS = '₀₁₂₃₄₅₆₇₈₉';
+
+// The same price as plain text, its zero count in subscript digits ("0.0₈1520"): for a canvas,
+// such as a chart's price scale, where no <sub> can be drawn.
+export const priceWithSubscriptZeros = (price: FormattedPrice): string => {
+  if (price.kind === 'plain') return price.text;
+  const subscript = [...String(price.zeroCount)]
+    .map((digit) => SUBSCRIPT_DIGITS.charAt(Number.parseInt(digit, 10)))
+    .join('');
+  return `${price.lead}${subscript}${price.digits}`;
+};

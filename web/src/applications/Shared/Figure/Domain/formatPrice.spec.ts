@@ -3,6 +3,7 @@ import type { PriceQuote } from '@app/applications/Shared/Figure/Domain/figure';
 import {
   type FormattedPrice,
   formatPrice,
+  priceWithSubscriptZeros,
 } from '@app/applications/Shared/Figure/Domain/formatPrice';
 import { describe, expect, it } from 'vitest';
 
@@ -43,5 +44,20 @@ describe('formatPrice', () => {
       zeroCount: 3,
       digits: '1000',
     });
+  });
+});
+
+describe('priceWithSubscriptZeros', () => {
+  it('writes the counted zeros of a tiny price as subscript digits', () => {
+    expect(priceWithSubscriptZeros(priced('0.00000000152'))).toBe('0.0₈1520');
+    expect(priceWithSubscriptZeros(priced('0.0000221'))).toBe('0.0₄2210');
+  });
+
+  it('writes a count of ten zeros or more with as many subscript digits', () => {
+    expect(priceWithSubscriptZeros(priced('0.0000000000001234'))).toBe('0.0₁₂1234');
+  });
+
+  it('leaves an ordinary price as it is', () => {
+    expect(priceWithSubscriptZeros(priced('148.2149'))).toBe('148.2');
   });
 });
