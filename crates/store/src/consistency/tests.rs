@@ -211,6 +211,27 @@ async fn queues_again_a_task_marked_fetched_without_its_transaction() {
 }
 
 #[tokio::test]
+async fn finds_no_missing_transaction_when_every_fetched_task_has_its_own() {
+    let (_folder, store) = listed_store().await;
+    store
+        .fetch_queue()
+        .complete(crate::ingestion::test_pages::fetched(2, b"{}"))
+        .await
+        .unwrap();
+    store_transaction(&store, 3).await;
+    store
+        .consistency()
+        .mark_stored_fetched(later(5))
+        .await
+        .unwrap();
+
+    let inspection = inspect(&store).await;
+
+    assert_eq!(inspection.fetched_without_payload, 0);
+    assert_eq!(inspection.stored_but_queued, 0);
+}
+
+#[tokio::test]
 async fn counts_unreturned_transactions_and_outdated_or_unordered_decodes() {
     let (_folder, store) = listed_store().await;
     break_by_hand(

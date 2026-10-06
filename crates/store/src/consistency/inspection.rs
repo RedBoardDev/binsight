@@ -2,7 +2,11 @@
 //!
 //! Each count is one query, and none reads a payload: the walks over every listed signature,
 //! every fetch task and every raw transaction follow primary keys, and the counts of open work
-//! read partial indexes. This module only counts.
+//! read partial indexes. The costliest walk, looking up the transaction of every fetched task,
+//! only runs when the totals say a fetched task lacks its transaction: the registry holds as many
+//! transactions as fetched tasks plus open tasks already stored, unless a fetched task lacks its
+//! transaction (or, by an equal number, a stored transaction lacks any task; both take a manual
+//! edit, and transactions are never deleted). This module only counts.
 
 use binsight_solana::Address;
 use rusqlite::{Connection, params};
@@ -32,6 +36,9 @@ const COUNT_FETCHED_WITHOUT_PAYLOAD: &str = "
     SELECT count(*) FROM tx_fetch AS f
     WHERE f.state = 'fetched'
       AND NOT EXISTS (SELECT 1 FROM raw_tx AS r WHERE r.signature = f.signature)";
+const COUNT_TASKS: &str = "SELECT count(*) FROM tx_fetch";
+const COUNT_OPEN_TASKS: &str = "SELECT count(*) FROM tx_fetch WHERE state <> 'fetched'";
+const COUNT_STORED: &str = "SELECT count(*) FROM raw_tx";
 const COUNT_STORED_BUT_QUEUED: &str = "
     SELECT count(*) FROM tx_fetch AS f
     WHERE f.state <> 'fetched'
@@ -130,11 +137,19 @@ fn inspect(
         let count: i64 = connection.query_row(query, parameters, |row| row.get(0))?;
         unsigned_from_sql(count, "count")
     };
+    let stored_but_queued = count(COUNT_STORED_BUT_QUEUED, &[])?;
+    let fetched_tasks = count(COUNT_TASKS, &[])?.saturating_sub(count(COUNT_OPEN_TASKS, &[])?);
+    let stored = count(COUNT_STORED, &[])?;
+    let fetched_without_payload = if fetched_tasks.saturating_add(stored_but_queued) == stored {
+        0
+    } else {
+        count(COUNT_FETCHED_WITHOUT_PAYLOAD, &[])?
+    };
     Ok(RegistryInspection {
         wallets: inspect_wallets(connection)?,
         unqueued_signatures: count(COUNT_UNQUEUED, &[])?,
-        fetched_without_payload: count(COUNT_FETCHED_WITHOUT_PAYLOAD, &[])?,
-        stored_but_queued: count(COUNT_STORED_BUT_QUEUED, &[])?,
+        fetched_without_payload,
+        stored_but_queued,
         unreturned_transactions: count(COUNT_UNRETURNED, &[])?,
         outdated_decodes: count(COUNT_OUTDATED_DECODES, versions)?,
         unordered_transactions: count(COUNT_UNORDERED, versions)?,
@@ -169,6 +184,9 @@ mod tests {
             SELECT_WALLETS,
             COUNT_UNQUEUED,
             COUNT_FETCHED_WITHOUT_PAYLOAD,
+            COUNT_TASKS,
+            COUNT_OPEN_TASKS,
+            COUNT_STORED,
             COUNT_STORED_BUT_QUEUED,
             COUNT_UNRETURNED,
             COUNT_OUTDATED_DECODES,
