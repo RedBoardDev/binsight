@@ -16,6 +16,7 @@ mod listing_page;
 mod signatures;
 #[cfg(test)]
 mod test_pages;
+mod wallet_progress;
 mod wallets;
 
 pub use cursor::{ListedTop, WalletCursor};
@@ -25,4 +26,5 @@ pub use fetch_queue::FetchQueueRepo;
 pub use fetch_task::{FetchFailure, FetchSetback, FetchTask, FetchedTx, RetryState};
 pub use listing_page::ListingPage;
 pub use signatures::{ListedSignature, SignaturesRepo};
-pub use wallets::{TrackedWallet, WalletListing, WalletsRepo};
+pub use wallet_progress::{WalletListing, WalletProgress};
+pub use wallets::{TrackedWallet, WalletsRepo};

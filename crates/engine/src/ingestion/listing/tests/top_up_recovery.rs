@@ -21,14 +21,14 @@ fn ingestion(
     wallets: &[Address],
 ) -> Ingestion {
     let (_, wallet_watch, _) = WalletStream::new(ScriptedConnector::new(), rpc.clone());
-    let (states, _) = watch::channel(BTreeMap::new());
+    let (statuses, _) = watch::channel(None);
     let (events, _) = broadcast::channel(16);
     let ingestion = Ingestion::new(IngestionParts {
         store,
         rpc,
         clock,
         watch: wallet_watch,
-        sync: SyncPublisher { states, events },
+        sync: SyncPublisher { statuses, events },
     });
     for wallet in wallets {
         ingestion

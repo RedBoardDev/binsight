@@ -18,6 +18,7 @@ use tokio::sync::{broadcast, watch};
 use crate::engine::events::EngineEvent;
 use crate::engine::health::{EngineHealth, check_database};
 use crate::engine::status::EngineStatus;
+use crate::ingestion::PublishedStatuses;
 use crate::portfolio::views::SyncState;
 use crate::portfolio::{ChainPortfolio, DataSourceKind, EngineState, ReadModel};
 
@@ -27,7 +28,7 @@ pub struct EngineHandle {
     store: Store,
     rpc: Option<RpcClient>,
     status: watch::Receiver<EngineStatus>,
-    sync_states: watch::Receiver<BTreeMap<Address, SyncState>>,
+    sync_statuses: watch::Receiver<PublishedStatuses>,
     events: broadcast::Sender<EngineEvent>,
     data_source: DataSourceKind,
     read_model: Arc<dyn ReadModel>,
@@ -49,7 +50,7 @@ impl EngineHandle {
             store: state.store.clone(),
             rpc: Some(state.rpc.clone()),
             status: state.status.clone(),
-            sync_states: state.sync_states.clone(),
+            sync_statuses: state.sync_statuses.clone(),
             events,
             data_source: DataSourceKind::Chain,
             read_model: Arc::new(ChainPortfolio::new(state)),
@@ -62,12 +63,12 @@ impl EngineHandle {
     pub fn without_engine(store: Store, demo: Arc<dyn ReadModel>) -> Self {
         let (_status_sender, status) = watch::channel(EngineStatus::Running);
         let (events, _) = broadcast::channel(1);
-        let (_sync_sender, sync_states) = watch::channel(BTreeMap::new());
+        let (_sync_sender, sync_statuses) = watch::channel(None);
         Self {
             store,
             rpc: None,
             status,
-            sync_states,
+            sync_statuses,
             events,
             data_source: DataSourceKind::Demo,
             read_model: demo,
@@ -109,7 +110,12 @@ impl EngineHandle {
     /// How up to date each tracked wallet is, as last decided (empty until the first decision,
     /// a few moments after startup).
     pub fn sync_states(&self) -> BTreeMap<Address, SyncState> {
-        self.sync_states.borrow().clone()
+        self.sync_statuses
+            .borrow()
+            .iter()
+            .flat_map(|statuses| statuses.iter())
+            .map(|status| (status.progress.wallet.address, status.state))
+            .collect()
     }
 
     /// Starts receiving the events published from now on.
@@ -153,7 +159,7 @@ mod tests {
             rpc: setup.handle.rpc.clone().unwrap(),
             clock: std::sync::Arc::new(binsight_core::clock::FixedClock::new(TEST_START)),
             status: setup.handle.status.clone(),
-            sync_states: setup.handle.sync_states.clone(),
+            sync_statuses: setup.handle.sync_statuses.clone(),
         });
         let handle = super::EngineHandle::without_engine(
             setup.store.clone(),
@@ -235,7 +241,7 @@ mod tests {
         engine
             .wait_for_counts(wallet, |counts| counts.unsupported_version == 1)
             .await;
-        let backlog = engine.store.fetch_queue().backlogs().await.unwrap()[&wallet];
+        let backlog = engine.store.wallets().progress().await.unwrap()[0].backlog;
         assert_eq!(backlog.unsupported_version, 1);
         assert_eq!(backlog.failed, 0);
         engine.stop().await;

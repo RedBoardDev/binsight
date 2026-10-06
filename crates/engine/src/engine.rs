@@ -12,12 +12,10 @@ pub(crate) mod events;
 pub(crate) mod health;
 pub(crate) mod status;
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use binsight_chain::{RpcClient, WalletStream, WsConnector};
 use binsight_core::clock::Clock;
-use binsight_solana::Address;
 use binsight_store::Store;
 use tokio::sync::{broadcast, watch};
 use tokio_util::sync::CancellationToken;
@@ -26,9 +24,9 @@ use tracing::info;
 use crate::credit_usage::{restore_spending, run_credit_usage};
 use crate::error::EngineError;
 use crate::handle::EngineHandle;
+use crate::ingestion::PublishedStatuses;
 use crate::ingestion::{Ingestion, IngestionParts, SyncPublisher, requeue_readable_versions};
 use crate::portfolio::EngineState;
-use crate::portfolio::views::SyncState;
 use crate::projections::{REGISTRY, reconcile_projections};
 use events::EngineEvent;
 use status::EngineStatus;
@@ -44,7 +42,7 @@ pub struct Engine {
     clock: Arc<dyn Clock>,
     status: watch::Sender<EngineStatus>,
     events: broadcast::Sender<EngineEvent>,
-    sync_states: watch::Sender<BTreeMap<Address, SyncState>>,
+    sync_statuses: watch::Sender<PublishedStatuses>,
 }
 
 impl std::fmt::Debug for Engine {
@@ -65,13 +63,13 @@ impl Engine {
     ) -> (Self, EngineHandle) {
         let (status, status_receiver) = watch::channel(EngineStatus::Starting);
         let (events, _) = broadcast::channel(EVENT_BUFFER_SIZE);
-        let (sync_states, sync_receiver) = watch::channel(BTreeMap::new());
+        let (sync_statuses, sync_receiver) = watch::channel(None);
         let state = EngineState {
             store: store.clone(),
             rpc: rpc.clone(),
             clock: clock.clone(),
             status: status_receiver,
-            sync_states: sync_receiver,
+            sync_statuses: sync_receiver,
         };
         let handle = EngineHandle::new(state, events.clone());
         (
@@ -82,7 +80,7 @@ impl Engine {
                 clock,
                 status,
                 events,
-                sync_states,
+                sync_statuses,
             },
             handle,
         )
@@ -103,7 +101,7 @@ impl Engine {
         let (stream, watch, stream_events) =
             WalletStream::new(self.stream.clone(), self.rpc.clone());
         let sync = SyncPublisher {
-            states: self.sync_states.clone(),
+            statuses: self.sync_statuses.clone(),
             events: self.events.clone(),
         };
         let ingestion = Ingestion::new(IngestionParts {
@@ -139,6 +137,8 @@ impl Engine {
 
 #[cfg(test)]
 mod tests {
+    use binsight_solana::Address;
+
     use super::*;
     use crate::engine::health::ComponentHealth;
     use binsight_chain::SIGNATURE_PAGE_LIMIT;

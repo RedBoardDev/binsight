@@ -198,7 +198,7 @@ mod tests {
             .await
             .unwrap();
 
-        let backlog = store.fetch_queue().backlogs().await.unwrap()[&WALLET];
+        let backlog = store.wallets().progress().await.unwrap()[0].backlog;
 
         assert_eq!(backlog.unfetched, 3);
         assert_eq!(backlog.history_unfetched, 2);

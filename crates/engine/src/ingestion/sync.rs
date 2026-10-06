@@ -1,21 +1,22 @@
 //! The sync monitor: how up to date each wallet is, published when it changes.
 //!
-//! The monitor gathers each wallet's facts (its cursor, what keeps its registry behind, its
+//! The monitor reads each wallet's progress (its cursor, what keeps its registry behind, how much
+//! is listed: one snapshot of the database), gathers the facts the engine holds in memory (its
 //! subscription and checks, the provider's and the budget's refusals), decides its
-//! [`SyncState`] (`sync_state`) and publishes the states: the current ones for whoever asks, and
-//! an event for each one that changed. It decides again when a worker reports a change (a
-//! listing written, a fetch recorded, the stream's news, a refusal), a few seconds later so a
-//! burst counts once, or when a state could change with time alone. An idle instance therefore
-//! leaves it asleep. The facts come from memory and one query over the fetch tasks not done yet;
-//! nothing is sent to the provider.
+//! [`SyncState`] (`sync_state`) and publishes the result: every wallet's progress and state for
+//! whoever reads them (the sync report and the wallet list read them from there instead of the
+//! database), and an event for each state that changed. It decides again when a worker reports a
+//! change (a listing written, a fetch recorded, the stream's news, a refusal), a few seconds
+//! later so a burst counts once (longer while a wallet imports, when changes come in streams), or
+//! when a state could change with time alone. An idle instance therefore leaves it asleep.
+//! Nothing is sent to the provider.
 
 mod sync_state;
 
-use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::Duration;
 
-use binsight_solana::Address;
-use binsight_store::{TrackedWallet, WalletBacklog, WalletCursor};
+use binsight_store::{TrackedWallet, WalletBacklog, WalletCursor, WalletProgress};
 use jiff::Timestamp;
 use tokio::sync::{broadcast, watch};
 use tokio_util::sync::CancellationToken;
@@ -30,14 +31,30 @@ use sync_state::{Stop, SyncFacts, next_change, sync_state};
 /// How long a reported change waits for the rest of its burst before the states are decided.
 const SETTLE_DELAY: Duration = Duration::from_secs(10);
 
+/// The same wait while a wallet imports its history, when every fetch reports a change.
+const IMPORT_SETTLE_DELAY: Duration = Duration::from_secs(30);
+
 /// How long the monitor waits before trying again when it cannot read the facts.
 const STORE_RETRY_DELAY: Duration = Duration::from_secs(30);
+
+/// A wallet's progress as the monitor last read it, and the state it decided from it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct WalletStatus {
+    /// The wallet and how far its ingestion is.
+    pub(crate) progress: WalletProgress,
+    /// How up to date it is.
+    pub(crate) state: SyncState,
+}
+
+/// What the monitor publishes: every wallet's status, the oldest wallet first; `None` until its
+/// first decision, a few moments after startup.
+pub(crate) type PublishedStatuses = Option<Arc<Vec<WalletStatus>>>;
 
 /// Where the sync states go: the current ones, and an event per change.
 #[derive(Debug, Clone)]
 pub(crate) struct SyncPublisher {
-    /// The current state of every wallet.
-    pub(crate) states: watch::Sender<BTreeMap<Address, SyncState>>,
+    /// The current status of every wallet.
+    pub(crate) statuses: watch::Sender<PublishedStatuses>,
     /// The engine's events.
     pub(crate) events: broadcast::Sender<EngineEvent>,
 }
@@ -45,11 +62,20 @@ pub(crate) struct SyncPublisher {
 /// Decides and publishes the sync states until `shutdown` is cancelled.
 pub(super) async fn run_sync_monitor(ingestion: &Ingestion, shutdown: &CancellationToken) {
     loop {
-        let wait = match publish_states(ingestion).await {
-            Ok(next) => next.map(|at| time_until(ingestion.clock.now(), at)),
+        let (wait, settle) = match publish_states(ingestion).await {
+            Ok(decision) => (
+                decision
+                    .next
+                    .map(|at| time_until(ingestion.clock.now(), at)),
+                if decision.is_importing {
+                    IMPORT_SETTLE_DELAY
+                } else {
+                    SETTLE_DELAY
+                },
+            ),
             Err(error) => {
                 error!(%error, "could not read what the wallets wait for");
-                Some(STORE_RETRY_DELAY)
+                (Some(STORE_RETRY_DELAY), SETTLE_DELAY)
             }
         };
         tokio::select! {
@@ -57,7 +83,7 @@ pub(super) async fn run_sync_monitor(ingestion: &Ingestion, shutdown: &Cancellat
             () = ingestion.sync_changed.notified() => {
                 tokio::select! {
                     () = shutdown.cancelled() => return,
-                    () = tokio::time::sleep(SETTLE_DELAY) => {}
+                    () = tokio::time::sleep(settle) => {}
                 }
             }
             () = sleep_for(wait) => {}
@@ -73,24 +99,44 @@ async fn sleep_for(wait: Option<Duration>) {
     }
 }
 
-/// Decides and publishes every wallet's state; returns when one could next change by itself.
-async fn publish_states(
-    ingestion: &Ingestion,
-) -> Result<Option<Timestamp>, binsight_store::StoreError> {
-    let wallets = ingestion.store.wallets().list().await?;
-    let backlogs = ingestion.store.fetch_queue().backlogs().await?;
+/// What one decision found out about the time ahead.
+struct Decision {
+    /// When a state could next change by itself, if one can.
+    next: Option<Timestamp>,
+    /// Whether a wallet imports its history.
+    is_importing: bool,
+}
+
+/// Decides and publishes every wallet's state.
+async fn publish_states(ingestion: &Ingestion) -> Result<Decision, binsight_store::StoreError> {
+    let wallets = ingestion.store.wallets().progress().await?;
     let now = ingestion.clock.now();
-    let mut states = BTreeMap::new();
+    let mut statuses = Vec::with_capacity(wallets.len());
     let mut next = None;
-    for wallet in &wallets {
-        let backlog = backlogs.get(&wallet.address).copied().unwrap_or_default();
-        let facts = facts_of(ingestion, wallet, backlog, now);
-        states.insert(wallet.address, sync_state(&facts, now));
+    for progress in wallets {
+        let facts = facts_of(ingestion, &progress.wallet, progress.backlog, now);
+        statuses.push(WalletStatus {
+            progress,
+            state: sync_state(&facts, now),
+        });
         next = [next, next_change(&facts, now)].into_iter().flatten().min();
     }
-    let previous = ingestion.sync.states.send_replace(states.clone());
-    for (wallet, state) in states {
-        if previous.get(&wallet) != Some(&state) {
+    let is_importing = statuses
+        .iter()
+        .any(|status| status.state == SyncState::Importing);
+    let previous = ingestion
+        .sync
+        .statuses
+        .send_replace(Some(Arc::new(statuses.clone())));
+    for status in statuses {
+        let (wallet, state) = (status.progress.wallet.address, status.state);
+        let was = previous.as_ref().and_then(|previous| {
+            previous
+                .iter()
+                .find(|old| old.progress.wallet.address == wallet)
+                .map(|old| old.state)
+        });
+        if was != Some(state) {
             debug!(%wallet, ?state, "sync state changed");
             // Nobody listening is normal (no client connected): the event is simply dropped.
             let _ = ingestion
@@ -99,7 +145,7 @@ async fn publish_states(
                 .send(EngineEvent::WalletSyncChanged { wallet, state });
         }
     }
-    Ok(next)
+    Ok(Decision { next, is_importing })
 }
 
 /// What `wallet`'s state is decided from at `now`.

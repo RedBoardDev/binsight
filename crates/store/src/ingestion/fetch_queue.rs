@@ -1,19 +1,17 @@
 //! The queue of transactions to fetch: which tasks are due, when the next one falls due, how a
-//! wallet's transactions stand and what keeps the wallets behind, and putting back the tasks parked for a
+//! wallet's transactions stand, and putting back the tasks parked for a
 //! version binsight now reads.
 //!
 //! Tasks are served the most urgent class first, then the newest slots. Recording what a fetch
 //! found lives in `fetch_results`. This module reads the queue; it does not decide when to try
 //! again.
 
-use std::collections::BTreeMap;
-
 use binsight_core::credits::Priority;
 use binsight_solana::{Address, Signature};
 use jiff::Timestamp;
 use rusqlite::{Row, params, params_from_iter, types::Value};
 
-use super::fetch_counts::{FetchCounts, WalletBacklog, count_states, read_backlogs};
+use super::fetch_counts::{FetchCounts, count_states};
 use super::fetch_task::FetchTask;
 use crate::database::Database;
 use crate::database::codec::{
@@ -135,16 +133,6 @@ impl FetchQueueRepo {
                 Ok(u64::try_from(requeued).unwrap_or(u64::MAX))
             })
             .await
-    }
-
-    /// What keeps each wallet's registry behind: the history still to fetch, the failed and
-    /// parked fetches, and the oldest live work waiting. A wallet with nothing open is left out.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the database cannot be read or holds an invalid row.
-    pub async fn backlogs(&self) -> Result<BTreeMap<Address, WalletBacklog>, StoreError> {
-        self.database.read(read_backlogs).await
     }
 
     /// How the transactions listed for `wallet` stand in the queue.

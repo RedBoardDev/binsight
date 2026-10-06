@@ -1,6 +1,5 @@
 //! Finalized fetches wake the decoder; retryable responses leave it asleep.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -24,14 +23,14 @@ fn ingestion(
     let clock = Arc::new(FixedClock::new(TEST_START));
     let rpc = scripted_client(transport, clock.clone(), None);
     let (_, wallets, _) = WalletStream::new(ScriptedConnector::new(), rpc.clone());
-    let (states, _) = watch::channel(BTreeMap::new());
+    let (statuses, _) = watch::channel(None);
     let (events, _) = broadcast::channel(16);
     Ingestion::new(IngestionParts {
         store,
         rpc,
         clock,
         watch: wallets,
-        sync: SyncPublisher { states, events },
+        sync: SyncPublisher { statuses, events },
     })
 }
 

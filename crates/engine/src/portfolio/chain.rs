@@ -9,14 +9,12 @@
 mod figures;
 mod wallet_lines;
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use binsight_chain::RpcClient;
 use binsight_core::clock::Clock;
 use binsight_ledger::report::valued::Currency;
-use binsight_solana::Address;
-use binsight_store::{Store, StoreError};
+use binsight_store::{Store, StoreError, WalletProgress};
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use tokio::sync::watch;
@@ -31,6 +29,7 @@ use super::views::{
     BillingCycle, ChainTip, InstanceSettings, SyncReport, SyncState, WalletSyncLine, WalletsView,
 };
 use crate::engine::status::EngineStatus;
+use crate::ingestion::PublishedStatuses;
 use wallet_lines::{WalletFacts, summary, sync_line, total};
 
 /// What the engine knows, as the API reads it.
@@ -40,7 +39,7 @@ pub(crate) struct ChainPortfolio {
     clock: Arc<dyn Clock>,
     started_at: Timestamp,
     status: watch::Receiver<EngineStatus>,
-    sync_states: watch::Receiver<BTreeMap<Address, SyncState>>,
+    sync_statuses: watch::Receiver<PublishedStatuses>,
 }
 
 /// Where the engine's state lives, for [`ChainPortfolio::new`].
@@ -53,8 +52,8 @@ pub(crate) struct EngineState {
     pub(crate) clock: Arc<dyn Clock>,
     /// The engine's lifecycle status.
     pub(crate) status: watch::Receiver<EngineStatus>,
-    /// Each wallet's sync state, as last decided.
-    pub(crate) sync_states: watch::Receiver<BTreeMap<Address, SyncState>>,
+    /// Each wallet's progress and sync state, as the sync monitor last decided them.
+    pub(crate) sync_statuses: watch::Receiver<PublishedStatuses>,
 }
 
 impl ChainPortfolio {
@@ -66,46 +65,44 @@ impl ChainPortfolio {
             rpc: state.rpc,
             clock: state.clock,
             status: state.status,
-            sync_states: state.sync_states,
+            sync_statuses: state.sync_statuses,
         }
     }
 
-    /// Every tracked wallet, the oldest first, with its sync line.
+    /// Every tracked wallet, the oldest first, with its sync line: from the sync monitor's last
+    /// decision, or read from the database until it made one.
     async fn wallet_lines(
         &self,
         now: Timestamp,
     ) -> Result<Vec<(binsight_store::TrackedWallet, WalletSyncLine)>, ReadError> {
-        let wallets = self
-            .store
-            .wallets()
-            .list()
-            .await
-            .map_err(|failure| database_error(&failure))?;
-        let backlogs = self
-            .store
-            .fetch_queue()
-            .backlogs()
-            .await
-            .map_err(|failure| database_error(&failure))?;
-        let listings = self
-            .store
-            .wallets()
-            .listings()
-            .await
-            .map_err(|failure| database_error(&failure))?;
-        let states = self.sync_states.borrow().clone();
-        Ok(wallets
+        let published = self.sync_statuses.borrow().clone();
+        let statuses: Vec<(WalletProgress, Option<SyncState>)> = match published {
+            Some(statuses) => statuses
+                .iter()
+                .map(|status| (status.progress, Some(status.state)))
+                .collect(),
+            None => self
+                .store
+                .wallets()
+                .progress()
+                .await
+                .map_err(|failure| database_error(&failure))?
+                .into_iter()
+                .map(|progress| (progress, None))
+                .collect(),
+        };
+        Ok(statuses
             .into_iter()
             .enumerate()
-            .map(|(position, wallet)| {
+            .map(|(position, (progress, state))| {
                 let facts = WalletFacts {
-                    wallet,
+                    wallet: progress.wallet,
                     position,
-                    state: states.get(&wallet.address).copied(),
-                    backlog: backlogs.get(&wallet.address).copied().unwrap_or_default(),
-                    listing: listings.get(&wallet.address).copied().unwrap_or_default(),
+                    state,
+                    backlog: progress.backlog,
+                    listing: progress.listing,
                 };
-                (wallet, sync_line(&facts, now))
+                (progress.wallet, sync_line(&facts, now))
             })
             .collect())
     }

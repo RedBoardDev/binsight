@@ -18,7 +18,7 @@ mod live;
 mod refusal;
 mod sync;
 
-pub(crate) use sync::SyncPublisher;
+pub(crate) use sync::{PublishedStatuses, SyncPublisher};
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -165,14 +165,14 @@ impl Ingestion {
             binsight_chain::test_support::ScriptedConnector::new(),
             rpc.clone(),
         );
-        let (states, _) = tokio::sync::watch::channel(std::collections::BTreeMap::new());
+        let (statuses, _) = tokio::sync::watch::channel(None);
         let (events, _) = tokio::sync::broadcast::channel(16);
         Self::new(IngestionParts {
             store: setup.store.clone(),
             rpc,
             clock,
             watch,
-            sync: SyncPublisher { states, events },
+            sync: SyncPublisher { statuses, events },
         })
     }
 }
