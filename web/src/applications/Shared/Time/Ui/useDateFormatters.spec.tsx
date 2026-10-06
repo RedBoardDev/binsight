@@ -39,6 +39,25 @@ describe('useDateFormatters', () => {
     expect(result.current.formatShortDate('not a date')).toBe('—');
   });
 
+  it('uses the supplied server time zone across midnight and daylight saving changes', () => {
+    i18n.loadAndActivate({ locale: 'en', messages: {} });
+    const { result, rerender } = renderHook(
+      ({ timeZone }: { timeZone: string | undefined }) => useDateFormatters(timeZone),
+      { wrapper, initialProps: { timeZone: 'Europe/Berlin' as string | undefined } },
+    );
+    expect(result.current.formatShortDate('2026-10-05T22:30:00Z')).toBe('Oct 6');
+    expect(result.current.formatTime('2026-03-29T00:30:00Z')).toBe('1:30:00 AM');
+    expect(result.current.formatTime('2026-03-29T01:30:00Z')).toBe('3:30:00 AM');
+    rerender({ timeZone: 'UTC' });
+    expect(result.current.formatShortDate('2026-10-05T22:30:00Z')).toBe('Oct 5');
+    rerender({ timeZone: undefined });
+    expect(result.current.formatTime('2026-10-05T22:30:00Z')).toBe(
+      new Intl.DateTimeFormat('en-US', { timeStyle: 'medium' }).format(
+        new Date('2026-10-05T22:30:00Z'),
+      ),
+    );
+  });
+
   it('formats compact chart dates in the same language and time zone as other dates', () => {
     i18n.loadAndActivate({ locale: 'fr', messages: frenchMessages });
     const { result } = renderHook(() => useDateFormatters(), { wrapper });

@@ -6,6 +6,8 @@ import { watchConsole } from './watchConsole';
 
 const LIVE_WITHIN_MS = 10_000;
 
+test.use({ mode: 'demo' });
+
 const signIn = async (page: Page, password: string): Promise<void> => {
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
@@ -22,8 +24,20 @@ test('signs in, finds its way around the shell and signs out', async ({ page }, 
   await signIn(page, 'not the password');
   await expect(page.getByText('Incorrect password.')).toBeVisible();
 
+  const overviewRead = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/overview' &&
+      response.request().method() === 'GET',
+  );
   await signIn(page, E2E_PASSWORD);
+  const overviewResponse = await overviewRead;
+  expect(overviewResponse.status()).toBe(200);
+  expect(await overviewResponse.json()).toMatchObject({
+    today: { totals: { pnl: { exactness: expect.any(String) } } },
+    net_worth: { total: { exactness: expect.any(String) } },
+  });
   await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Show net worth breakdown' })).toBeVisible();
   await expect(page.getByRole('status').filter({ hasText: 'Live updates:' })).toHaveText(
     'Live updates: Live',
     {
@@ -61,4 +75,52 @@ test('signs in, finds its way around the shell and signs out', async ({ page }, 
   await expect(page).toHaveURL(/\/login\?redirect=/);
 
   expect(consoleProblems).toEqual([]);
+});
+
+test.describe('a fresh chain instance', () => {
+  test.use({ mode: 'chain' });
+
+  test('explains that figures are not ready without showing an empty portfolio', async ({
+    page,
+  }) => {
+    const unexpectedErrors: string[] = [];
+    const expectedOverviewErrors: string[] = [];
+    page.on('pageerror', (error) => unexpectedErrors.push(`page error: ${error.message}`));
+    page.on('console', (message) => {
+      if (message.type() !== 'error') return;
+      const location = message.location().url;
+      if (
+        /^Failed to load resource: the server responded with a status of 401\b/.test(message.text())
+      )
+        return;
+      if (
+        /^Failed to load resource: the server responded with a status of 503\b/.test(
+          message.text(),
+        ) &&
+        URL.canParse(location) &&
+        new URL(location).pathname === '/api/v1/overview'
+      ) {
+        expectedOverviewErrors.push(location);
+      } else unexpectedErrors.push(`console: ${message.text()} (${location})`);
+    });
+    await page.goto('/');
+    await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
+    const overviewRead = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'GET' &&
+        new URL(response.url()).pathname === '/api/v1/overview',
+    );
+    await signIn(page, E2E_PASSWORD);
+    const response = await overviewRead;
+    expect(response.status()).toBe(503);
+    expect(await response.json()).toMatchObject({ error: { code: 'data_not_ready' } });
+    await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible();
+    await expect(page.getByRole('alert')).toContainText('still preparing your figures');
+    await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
+    await expect(page.getByText('Nothing closed yet today', { exact: true })).toBeHidden();
+    await expect(page.getByText('0.000', { exact: true })).toBeHidden();
+    await expectNoA11yViolations(page);
+    expect(expectedOverviewErrors.length).toBeGreaterThan(0);
+    expect(unexpectedErrors).toEqual([]);
+  });
 });

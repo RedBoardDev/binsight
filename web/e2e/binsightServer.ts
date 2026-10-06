@@ -76,14 +76,18 @@ const stopProcess = (child: ChildProcess): Promise<void> =>
 
 // A fresh server for one test: its own data folder, home folder and port, so no state (the
 // login throttle, sessions, the database) leaks from one test into another.
-export const startBinsightServer = async (): Promise<BinsightServer> => {
+export const startBinsightServer = async (
+  mode: 'chain' | 'demo' = 'chain',
+): Promise<BinsightServer> => {
   const home = mkdtempSync(join(tmpdir(), 'binsight-e2e-'));
   const child = spawn(BINARY, ['run'], {
     env: {
       HOME: home,
       BINSIGHT_DATA_DIR: join(home, 'data'),
       BINSIGHT_PASSWORD: E2E_PASSWORD,
-      BINSIGHT_HELIUS_API_KEY: 'e2e-placeholder-key',
+      ...(mode === 'demo'
+        ? { BINSIGHT_DEMO: 'true' }
+        : { BINSIGHT_HELIUS_API_KEY: 'e2e-placeholder-key' }),
       BINSIGHT_BIND: '127.0.0.1:0',
       BINSIGHT_LOG_FORMAT: 'json',
     },

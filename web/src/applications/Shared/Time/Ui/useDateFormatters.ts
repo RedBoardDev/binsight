@@ -31,9 +31,10 @@ const formatWith =
   };
 
 // Formats API timestamps (RFC 3339, UTC) in the instance's time zone and the active language.
-export const useDateFormatters = (): DateFormatters => {
+export const useDateFormatters = (timeZoneOverride?: string): DateFormatters => {
   const locale = useLanguageTag();
-  const timeZone = useInstanceTimeZone();
+  const instanceTimeZone = useInstanceTimeZone();
+  const timeZone = timeZoneOverride ?? instanceTimeZone;
 
   return useMemo(() => {
     const moments = {

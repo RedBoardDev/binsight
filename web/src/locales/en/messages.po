@@ -11,6 +11,42 @@ msgstr ""
 msgid "(opens in a new tab)"
 msgstr "(opens in a new tab)"
 
+#. placeholder {0}: totals.count
+#: src/applications/Overview/Ui/TodayHero.tsx
+msgid "{0, plural, one {# close} other {# closes}}"
+msgstr "{0, plural, one {# close} other {# closes}}"
+
+#. placeholder {0}: totals.flat
+#: src/applications/Overview/Ui/TodayHero.tsx
+msgid "{0, plural, one {# flat} other {# flat}}"
+msgstr "{0, plural, one {# flat} other {# flat}}"
+
+#. placeholder {0}: totals.losses
+#: src/applications/Overview/Ui/TodayHero.tsx
+msgid "{0, plural, one {# loss} other {# losses}}"
+msgstr "{0, plural, one {# loss} other {# losses}}"
+
+#. placeholder {0}: totals.unclassified_count
+#: src/applications/Overview/Ui/TodayHero.tsx
+msgid "{0, plural, one {# unclassified} other {# unclassified}}"
+msgstr "{0, plural, one {# unclassified} other {# unclassified}}"
+
+#. placeholder {0}: totals.wins
+#: src/applications/Overview/Ui/TodayHero.tsx
+msgid "{0, plural, one {# win} other {# wins}}"
+msgstr "{0, plural, one {# win} other {# wins}}"
+
+#. placeholder {0}: wallet.label
+#. placeholder {1}: formattedText(format.percent(progress, 'hero', 'negative-only'))
+#: src/applications/Overview/Ui/PerformancePair/ImportHistoryLabel.tsx
+msgid "{0} history {1}"
+msgstr "{0} history {1}"
+
+#. placeholder {0}: wallet.label
+#: src/applications/Overview/Ui/PerformancePair/ImportHistoryLabel.tsx
+msgid "{0} is importing history"
+msgstr "{0} is importing history"
+
 #: src/applications/Auth/Ui/LoginForm/LoginFormAlert.tsx
 msgid "{seconds, plural, one {Too many failed attempts. Try again in # second.} other {Too many failed attempts. Try again in # seconds.}}"
 msgstr "{seconds, plural, one {Too many failed attempts. Try again in # second.} other {Too many failed attempts. Try again in # seconds.}}"
@@ -50,6 +86,10 @@ msgstr "A token held by the wallet has no price yet."
 #: src/applications/Setting/Ui/SettingsPage/AboutSection.tsx
 msgid "About"
 msgstr "About"
+
+#: src/applications/Overview/Ui/PerformancePair.tsx
+msgid "Active PnL"
+msgstr "Active PnL"
 
 #. The whole history, in a row of short period pills.
 #: src/applications/Shared/Control/Ui/MultiSelectMenu.tsx
@@ -165,6 +205,13 @@ msgstr "Daily"
 msgid "Dark theme"
 msgstr "Dark theme"
 
+#. placeholder {0}: formatTime(freshness.as_of)
+#. placeholder {0}: formatTime(overview.data.freshness.as_of)
+#: src/applications/Overview/Ui/OverviewPage.tsx
+#: src/applications/Overview/Ui/TodayHero.tsx
+msgid "Data from {0}"
+msgstr "Data from {0}"
+
 #: src/applications/Health/Ui/HealthCard/HealthReport.tsx
 msgid "Database"
 msgstr "Database"
@@ -192,6 +239,11 @@ msgstr "estimated"
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "Estimated"
 msgstr "Estimated"
+
+#. placeholder {0}: i18n._(PERIOD_LABELS[period])
+#: src/applications/Overview/Ui/PerformancePair.tsx
+msgid "Gain · {0}"
+msgstr "Gain · {0}"
 
 #: src/applications/Health/Ui/HealthPage.tsx
 #: src/core/Layout/AppShell/navItems.ts
@@ -222,6 +274,18 @@ msgstr "History still importing: {progress} done."
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "History still importing."
 msgstr "History still importing."
+
+#: src/applications/Overview/Ui/NetWorthFigure/NetWorthBreakdown.tsx
+msgid "Holdings without a price"
+msgstr "Holdings without a price"
+
+#: src/applications/Overview/Ui/NetWorthFigure.tsx
+msgid "idle"
+msgstr "idle"
+
+#: src/applications/Overview/Ui/NetWorthFigure/NetWorthBreakdown.tsx
+msgid "Idle"
+msgstr "Idle"
 
 #. placeholder {0}: source.quoteSymbol.toUpperCase()
 #: src/applications/Shared/Chart/Ui/PriceChart/PriceChartHeader.tsx
@@ -254,6 +318,10 @@ msgstr "Licenses"
 msgid "Light theme"
 msgstr "Light theme"
 
+#: src/applications/Overview/Ui/NetWorthFigure/NetWorthBreakdown.tsx
+msgid "Liquidity"
+msgstr "Liquidity"
+
 #: src/applications/Realtime/Ui/streamStateLabels.ts
 msgid "Live"
 msgstr "Live"
@@ -266,6 +334,10 @@ msgstr "Live updates"
 msgid "Live updates:"
 msgstr "Live updates:"
 
+#: src/applications/Overview/Ui/OverviewPage/OverviewSkeleton.tsx
+msgid "Loading overview"
+msgstr "Loading overview"
+
 #: src/applications/Shared/Chart/Ui/PriceChart/useCandleReadings.tsx
 msgid "Low"
 msgstr "Low"
@@ -277,6 +349,10 @@ msgstr "lower bound"
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "Lower bound"
 msgstr "Lower bound"
+
+#: src/applications/Overview/Ui/NetWorthFigure.tsx
+msgid "LP"
+msgstr "LP"
 
 #: src/core/Layout/AppShell/DesktopNav.tsx
 #: src/core/Layout/AppShell/FloatingTabBar.tsx
@@ -292,6 +368,15 @@ msgstr "minus"
 msgid "More"
 msgstr "More"
 
+#: src/applications/Overview/Ui/NetWorthFigure.tsx
+msgid "Net worth"
+msgstr "Net worth"
+
+#: src/applications/Overview/Ui/NetWorthFigure.tsx
+#: src/applications/Overview/Ui/NetWorthFigure/NetWorthBreakdown.tsx
+msgid "Net worth breakdown"
+msgstr "Net worth breakdown"
+
 #: src/applications/DesignReference/Ui/DesignReferencePage/ChartsSection/useSampleReadings.ts
 #: src/applications/Shared/Chart/Ui/LineSeriesChart.tsx
 #: src/applications/Shared/Chart/Ui/PulseChart.tsx
@@ -302,6 +387,10 @@ msgstr "No chart values"
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "No losing position yet."
 msgstr "No losing position yet."
+
+#: src/applications/Overview/Ui/PerformancePair.tsx
+msgid "No open positions"
+msgstr "No open positions"
 
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "No SOL to dollar rate is available."
@@ -315,9 +404,14 @@ msgstr "No valuation is available for the positions open at this point."
 msgid "not available"
 msgstr "not available"
 
+#: src/applications/Overview/Ui/TodayHero.tsx
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "Not available"
 msgstr "Not available"
+
+#: src/applications/Overview/Ui/TodayHero.tsx
+msgid "Nothing closed yet today"
+msgstr "Nothing closed yet today"
 
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "Nothing to compare with yet."
@@ -381,6 +475,10 @@ msgstr "Price interval"
 msgid "Profit"
 msgstr "Profit"
 
+#: src/applications/Overview/Ui/TodayHero.tsx
+msgid "realized"
+msgstr "realized"
+
 #: src/applications/Realtime/Ui/streamStateLabels.ts
 msgid "Reconnecting"
 msgstr "Reconnecting"
@@ -388,6 +486,10 @@ msgstr "Reconnecting"
 #: src/applications/Shared/Figure/Ui/figureSpeech.ts
 msgid "Reconstructed for the time before the wallet was added."
 msgstr "Reconstructed for the time before the wallet was added."
+
+#: src/applications/Overview/Ui/NetWorthFigure/NetWorthBreakdown.tsx
+msgid "Recoverable rent"
+msgstr "Recoverable rent"
 
 #: src/applications/Shared/Motion/Ui/ReduceMotionSwitch.tsx
 msgid "Reduce motion"
@@ -424,6 +526,10 @@ msgstr "Settings"
 msgid "Settings and session"
 msgstr "Settings and session"
 
+#: src/applications/Overview/Ui/NetWorthFigure.tsx
+msgid "Show net worth breakdown"
+msgstr "Show net worth breakdown"
+
 #: src/core/Layout/AppShell/FloatingTabBar.tsx
 msgid "Show the tabs"
 msgstr "Show the tabs"
@@ -444,6 +550,10 @@ msgstr "Sign out"
 #: src/applications/Setting/Ui/SettingsPage.tsx
 msgid "Sign out of this device"
 msgstr "Sign out of this device"
+
+#: src/applications/Overview/Ui/TodayHero.tsx
+msgid "since 00:00"
+msgstr "since 00:00"
 
 #: src/core/Layout/AppShell/SkipLink.tsx
 msgid "Skip to content"
@@ -523,6 +633,10 @@ msgstr "The server took too long to answer. Try again."
 msgid "Theme"
 msgstr "Theme"
 
+#: src/applications/Overview/Ui/NetWorthFigure/NetWorthBreakdown.tsx
+msgid "These holdings are not included in net worth."
+msgstr "These holdings are not included in net worth."
+
 #: src/core/NotFoundScreen.tsx
 msgid "This address does not match any page of binsight."
 msgstr "This address does not match any page of binsight."
@@ -555,6 +669,14 @@ msgstr "This position is no longer tracked."
 msgid "This wallet is no longer tracked."
 msgstr "This wallet is no longer tracked."
 
+#: src/applications/Overview/Ui/TodayHero.tsx
+msgid "Today"
+msgstr "Today"
+
+#: src/applications/Overview/Ui/TodayHero.tsx
+msgid "Today's closed-position PnL as a share of their invested amount"
+msgstr "Today's closed-position PnL as a share of their invested amount"
+
 #: src/applications/Shared/Ui/apiErrorMessages.ts
 msgid "Too many attempts. Wait a moment and try again."
 msgstr "Too many attempts. Wait a moment and try again."
@@ -571,6 +693,10 @@ msgstr "Try again"
 #: src/applications/Health/Ui/HealthCard/healthLabels.ts
 msgid "Unavailable"
 msgstr "Unavailable"
+
+#: src/applications/Overview/Ui/NetWorthFigure/NetWorthBreakdown.tsx
+msgid "Unclaimed fees"
+msgstr "Unclaimed fees"
 
 #: src/applications/Shared/Chart/Ui/BinHistogram.tsx
 #: src/applications/Shared/Chart/Ui/LineSeriesChart.tsx
