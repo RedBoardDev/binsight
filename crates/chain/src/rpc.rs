@@ -4,6 +4,7 @@
 //! is a burst the pacing cannot smooth. Each typed method builds its parameters and reads its own
 //! result; the client handles deadlines and retries for all of them.
 
+mod accounts;
 mod call;
 mod client;
 mod envelope;
@@ -16,6 +17,9 @@ mod transaction;
 mod transport;
 mod wire_names;
 
+pub use accounts::{
+    ACCOUNT_BATCH_LIMIT, AccountBatch, AccountBatchError, AccountData, AccountsAtSlot, DataSlice,
+};
 pub use call::CallContext;
 pub use client::RpcClient;
 pub use http_transport::HttpTransport;

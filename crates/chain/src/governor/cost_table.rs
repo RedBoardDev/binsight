@@ -1,7 +1,7 @@
 //! What the provider bills, and what each item costs in credits.
 //!
-//! Helius bills standard Solana methods one credit per request; a request is one call, never a
-//! batch. The WebSocket stream costs one credit per connection opened and two per started tenth
+//! Helius bills standard Solana methods one credit per request, `getMultipleAccounts` included
+//! whatever the number of accounts it reads; a request is one call, never a batch. The WebSocket stream costs one credit per connection opened and two per started tenth
 //! of a megabyte it delivers, counted over the whole connection. These prices are what the old
 //! tracker's meter assumed; they are checked against the provider's dashboard during real runs
 //! and corrected here, in one place.
@@ -43,7 +43,11 @@ impl BilledMethod {
 /// The credits one unit of `method` costs.
 pub(crate) const fn cost(method: BilledMethod) -> Credits {
     match method {
-        BilledMethod::Rpc(RpcMethod::GetSignaturesForAddress | RpcMethod::GetTransaction)
+        BilledMethod::Rpc(
+            RpcMethod::GetSignaturesForAddress
+            | RpcMethod::GetTransaction
+            | RpcMethod::GetMultipleAccounts,
+        )
         | BilledMethod::StreamOpen => Credits(1),
         BilledMethod::StreamData => Credits(2),
     }

@@ -16,6 +16,8 @@ pub enum RpcMethod {
     GetSignaturesForAddress,
     /// `getTransaction`: one transaction by signature.
     GetTransaction,
+    /// `getMultipleAccounts`: up to a hundred accounts at one slot.
+    GetMultipleAccounts,
 }
 
 impl RpcMethod {
@@ -24,13 +26,14 @@ impl RpcMethod {
         match self {
             Self::GetSignaturesForAddress => "getSignaturesForAddress",
             Self::GetTransaction => "getTransaction",
+            Self::GetMultipleAccounts => "getMultipleAccounts",
         }
     }
 
     /// How long one attempt may wait for the answer.
     pub(crate) const fn timeout(self) -> Duration {
         match self {
-            Self::GetSignaturesForAddress | Self::GetTransaction => {
+            Self::GetSignaturesForAddress | Self::GetTransaction | Self::GetMultipleAccounts => {
                 Duration::from_secs(STANDARD_TIMEOUT_SECS)
             }
         }

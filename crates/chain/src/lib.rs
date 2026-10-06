@@ -36,7 +36,8 @@ pub use governor::{
 pub use helius_key::{HeliusApiKey, HeliusKeyError};
 pub use plan::HeliusPlan;
 pub use rpc::{
-    CallContext, HttpReply, HttpTransport, RawTransaction, RpcClient, RpcMethod, RpcTransport,
+    ACCOUNT_BATCH_LIMIT, AccountBatch, AccountBatchError, AccountData, AccountsAtSlot, CallContext,
+    DataSlice, HttpReply, HttpTransport, RawTransaction, RpcClient, RpcMethod, RpcTransport,
     SIGNATURE_PAGE_LIMIT, SendFuture, SignatureInfo, SignaturesRequest, TransactionLookup,
 };
 pub use stream::{

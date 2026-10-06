@@ -263,6 +263,7 @@ dependencies = [
 name = "binsight-chain"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "binsight-core",
  "binsight-solana",
  "futures-util",

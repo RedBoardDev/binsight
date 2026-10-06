@@ -17,6 +17,7 @@ workspace = true
 test-support = []
 
 [dependencies]
+base64.workspace = true
 binsight-core.workspace = true
 binsight-solana.workspace = true
 futures-util = { workspace = true, features = ["sink"] }
