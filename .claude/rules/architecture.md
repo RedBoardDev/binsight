@@ -26,7 +26,8 @@ Dependencies only point downwards. A crate may depend on the crates listed for i
 | `binsight-store` | disk I/O | core, solana, dlmm, ledger |
 | `binsight-chain` | network I/O | core, solana |
 | `binsight-engine` | orchestration | core, solana, dlmm, ledger, store, chain |
-| `binsight-api` | HTTP | core, solana, dlmm, ledger, engine |
+| `binsight-api` | HTTP | core, solana, dlmm, ledger, engine (and `binsight-demo` for its tests only) |
+| `binsight-demo` | generated demo world | core, solana, dlmm, ledger, engine |
 | `binsight` (binary) | composition root | all |
 | `xtask` | tooling | none; nothing depends on it |
 

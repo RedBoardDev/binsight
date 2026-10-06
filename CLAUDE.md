@@ -19,6 +19,7 @@ enough for ~10 wallets).
 | `crates/chain` | Helius JSON-RPC/WebSocket client, credit metering and budget. Network I/O. |
 | `crates/engine` | Orchestration: ingestion, catch-up, repair, valuation, notifications. |
 | `crates/api` | HTTP: REST `/api/v1` + SSE, password session, generated OpenAPI contract. |
+| `crates/demo` | The generated demo world (`BINSIGHT_DEMO=true`): deterministic facts served through the engine's queries. |
 | `crates/binsight` | The binary: `init`, `run`, `admin`; composition root; embeds the web build. |
 | `xtask/` | Repository checks (`layering`, `structure`). |
 | `web/` | The web app / PWA (React, TypeScript, Vite, HeroUI, Tailwind, Lingui). |
