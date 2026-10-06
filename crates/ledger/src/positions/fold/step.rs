@@ -159,10 +159,34 @@ impl<'a> Step<'a> {
         if !self.sources.owned.contains(&reward.position) || reward.amount.0 == 0 {
             return Ok(());
         }
-        let value = value_reward(reward, self.pool(reward.pool)?);
+        let bin = self.reward_bin(reward);
+        let value = value_reward(reward, self.pool(reward.pool)?, bin)?;
         self.life(reward.position, reward.pool)?
             .flows
             .add_reward(value)
+    }
+
+    /// The active bin when `reward` was paid: the bin of the movement of its pool nearest before
+    /// it in instruction order (the claim beside it), or else nearest after it. A swap through
+    /// the pool between instructions moves the bin, so the nearest movement prices it best.
+    fn reward_bin(&self, reward: &RewardClaim) -> Option<i32> {
+        let priced = || {
+            self.sources
+                .activity
+                .movements
+                .iter()
+                .filter(|movement| movement.pool == reward.pool)
+                .filter_map(|movement| Some((movement.at, movement.price_bin?)))
+        };
+        let before = priced()
+            .filter(|&(at, _)| at <= reward.at)
+            .max_by_key(|&(at, _)| at);
+        let after = || {
+            priced()
+                .filter(|&(at, _)| at > reward.at)
+                .min_by_key(|&(at, _)| at)
+        };
+        before.or_else(after).map(|(_, bin)| bin)
     }
 
     /// The open life of `position`, started here when its creation is not in the history.

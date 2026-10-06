@@ -19,8 +19,10 @@
 //! 4. The two halves of a rebalance count like any withdrawal and deposit.
 //! 5. A movement without a bin counts its quote side only and is unpriced, and so is every
 //!    movement in a pool without a supported quote token.
-//! 6. A farming reward paid in the pool's quote token counts at its amount; a reward in any
-//!    other token is unpriced, since no reward price is known yet.
+//! 6. A farming reward paid in the pool's quote token counts at its amount, and one paid in the
+//!    pool's base token at the active bin of its own transaction (the bin of the movement of
+//!    that pool nearest before it, or else after it); a reward in any other token, or without
+//!    such a bin, is unpriced.
 //!
 //! A life's liquidity PnL (withdrawn + claimed fees + rewards − invested), its quality and its
 //! outcome are read rules of [`crate::report::closed`]. This module reads no storage, network

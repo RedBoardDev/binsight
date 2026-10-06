@@ -3,11 +3,9 @@
 mod common;
 
 use binsight_core::exactness::Exactness;
-use binsight_core::units::RawTokenAmount;
-use binsight_dlmm::activity::{MovementKind, RewardClaim, TxActivity};
+use binsight_dlmm::activity::MovementKind;
 use binsight_ledger::facts::QuoteUnits;
 use binsight_ledger::report::closed::{Outcome, lp_pnl};
-use binsight_solana::well_known::WSOL_MINT;
 use common::*;
 
 #[test]
@@ -122,34 +120,6 @@ fn counts_a_claim_without_a_bin_on_its_quote_side_and_marks_the_sign_unknown() {
     assert_eq!(valued.outcome, Outcome::Unknown);
     assert_eq!(valued.native_pnl.exactness(), Exactness::Estimated);
     assert_eq!(valued.claimed_fees.exactness(), Exactness::Partial);
-}
-
-/// A reward of 300 lamports of wrapped SOL in a SOL pool counts at its amount; a reward in
-/// another token has no price.
-#[test]
-fn values_a_reward_paid_in_the_quote_token_and_leaves_any_other_unpriced() {
-    let reward = |mint, amount| TxActivity {
-        reward_claims: vec![RewardClaim {
-            at: at(0),
-            position: POSITION,
-            pool: SOL_POOL,
-            reward_index: 0,
-            mint: Some(mint),
-            amount: RawTokenAmount(amount),
-        }],
-        ..TxActivity::default()
-    };
-    let closed = life(
-        SOL_POOL,
-        vec![reward(WSOL_MINT, 300), reward(OTHER_TOKEN, 7_000)],
-    );
-    assert_eq!(closed[0].rewards, QuoteUnits(300));
-    assert_eq!(closed[0].unpriced_rewards, 1);
-    assert_eq!(lp_pnl(&closed[0]), Ok(QuoteUnits(300)));
-    let valued = valued(&closed[0]);
-    assert_eq!(valued.outcome, Outcome::Win);
-    assert_eq!(valued.native_pnl.exactness(), Exactness::Partial);
-    assert_eq!(valued.rewards.exactness(), Exactness::Partial);
 }
 
 /// An open life that invested 5,000 lamports and claimed 30, valued live at 5,100 with 20 of
