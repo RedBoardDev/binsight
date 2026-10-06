@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
 
+use binsight_dlmm::activity::LifecycleFact;
 use binsight_solana::Address;
 use binsight_solana::transaction::InstructionPosition;
 
@@ -66,7 +67,19 @@ impl TransactionDelta {
         action: Action,
     ) -> Result<(), LifetimeError> {
         match action {
-            Action::Lifecycle(fact) => super::lifecycle::apply(self, replay, source, fact),
+            Action::Lifecycle(index, fact) => {
+                super::lifecycle::apply(self, replay, source, fact)?;
+                let (position, at) = match fact {
+                    LifecycleFact::Created { position, at, .. }
+                    | LifecycleFact::Closed { position, at, .. } => (position, at),
+                };
+                if let Some(known) = self.known_position(replay, position)
+                    && known.owner == replay.context.wallet
+                {
+                    self.ownership.lifecycle_sources.push((index, at, known.id));
+                }
+                Ok(())
+            }
             Action::Movement(index, movement) => self.observe(
                 replay,
                 source,

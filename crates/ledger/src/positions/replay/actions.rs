@@ -11,7 +11,7 @@ use crate::positions::{LifetimeError, PositionTransaction};
 
 #[derive(Debug, Clone, Copy)]
 pub(super) enum Action {
-    Lifecycle(LifecycleFact),
+    Lifecycle(usize, LifecycleFact),
     Movement(usize, PositionMovement),
     Reward(usize, RewardClaim),
 }
@@ -20,6 +20,7 @@ impl Action {
     fn location(self) -> (Address, InstructionPosition) {
         match self {
             Self::Lifecycle(
+                _,
                 LifecycleFact::Created { position, at, .. }
                 | LifecycleFact::Closed { position, at, .. },
             ) => (position, at),
@@ -35,7 +36,8 @@ pub(super) fn collect(source: &PositionTransaction) -> Result<Vec<Action>, Lifet
         .lifecycle
         .iter()
         .copied()
-        .map(Action::Lifecycle)
+        .enumerate()
+        .map(|(index, fact)| Action::Lifecycle(index, fact))
         .chain(
             activity
                 .movements
@@ -56,7 +58,7 @@ pub(super) fn collect(source: &PositionTransaction) -> Result<Vec<Action>, Lifet
     let mut locations = BTreeMap::<_, bool>::new();
     for action in &actions {
         let location = action.location();
-        let lifecycle = matches!(action, Action::Lifecycle(_));
+        let lifecycle = matches!(action, Action::Lifecycle(..));
         if let Some(previous_lifecycle) = locations.insert(location, lifecycle)
             && (previous_lifecycle || lifecycle)
         {
