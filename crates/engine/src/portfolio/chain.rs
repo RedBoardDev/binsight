@@ -29,7 +29,7 @@ use super::views::{
     BillingCycle, ChainTip, InstanceSettings, SyncReport, SyncState, WalletSyncLine, WalletsView,
 };
 use crate::engine::status::EngineStatus;
-use crate::ingestion::{PublishedFailures, PublishedStatuses};
+use crate::ingestion::{PublishedFailures, PublishedRegistryCheck, PublishedStatuses};
 use wallet_lines::{WalletFacts, summary, sync_line, total};
 
 /// What the engine knows, as the API reads it.
@@ -41,6 +41,7 @@ pub(crate) struct ChainPortfolio {
     status: watch::Receiver<EngineStatus>,
     sync_statuses: watch::Receiver<PublishedStatuses>,
     failed_decodes: watch::Receiver<PublishedFailures>,
+    registry_check: watch::Receiver<PublishedRegistryCheck>,
 }
 
 /// Where the engine's state lives, for [`ChainPortfolio::new`].
@@ -57,6 +58,8 @@ pub(crate) struct EngineState {
     pub(crate) sync_statuses: watch::Receiver<PublishedStatuses>,
     /// How many transactions could not be decoded, as the decoder last counted them.
     pub(crate) failed_decodes: watch::Receiver<PublishedFailures>,
+    /// What the startup check of the registry found, once it ran.
+    pub(crate) registry_check: watch::Receiver<PublishedRegistryCheck>,
 }
 
 impl ChainPortfolio {
@@ -70,6 +73,7 @@ impl ChainPortfolio {
             status: state.status,
             sync_statuses: state.sync_statuses,
             failed_decodes: state.failed_decodes,
+            registry_check: state.registry_check,
         }
     }
 
@@ -111,7 +115,8 @@ impl ChainPortfolio {
             .collect())
     }
 
-    /// The engine's lifecycle, the credits of the billing cycle and the decoding failures.
+    /// The engine's lifecycle, the credits of the billing cycle, the decoding failures and what
+    /// the startup check of the registry found.
     async fn instance_status(&self) -> Result<InstanceStatus, ReadError> {
         let published = *self.failed_decodes.borrow();
         let failed_decodes = match published {
@@ -141,6 +146,7 @@ impl ChainPortfolio {
             credits_used: standing.spent_cycle.0,
             credits_budget: standing.cycle_credits.0,
             failed_decodes,
+            registry_check: self.registry_check.borrow().as_deref().cloned(),
         })
     }
 }

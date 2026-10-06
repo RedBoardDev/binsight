@@ -18,8 +18,11 @@ mod fetching;
 mod listing;
 mod live;
 mod refusal;
+mod registry_check;
 mod sync;
 
+pub use registry_check::read_registry_findings;
+pub(crate) use registry_check::{PublishedRegistryCheck, check_registry};
 #[cfg(test)]
 pub(crate) use sync::WalletStatus;
 pub(crate) use sync::{PublishedFailures, PublishedStatuses, SyncPublisher};

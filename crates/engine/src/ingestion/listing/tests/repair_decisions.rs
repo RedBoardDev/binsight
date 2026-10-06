@@ -17,6 +17,8 @@ use crate::test_support::{
 #[tokio::test(start_paused = true)]
 async fn repairs_down_to_the_verified_point_and_moves_it_to_the_newest_settled_signature() {
     let setup = complete_history(&[WALLET], 2_000).await;
+    list_below_the_top(&setup, WALLET, 2_010).await;
+    expect_transactions(&setup.transport, 1);
     let verified = ListedTop {
         signature: numbered_signature(2_010),
         slot: slot_of(2_010),
@@ -38,13 +40,14 @@ async fn repairs_down_to_the_verified_point_and_moves_it_to_the_newest_settled_s
         .respond(dated_page(&[2_000], 2));
     let engine = RunningEngine::start(setup);
 
-    engine.wait_for_calls(2).await;
+    wait_for_listings(&engine, 2).await;
     tokio::time::sleep(Duration::from_secs(10)).await;
 
     let repairs = engine.store.repairs().list().await.unwrap();
     assert_eq!(repairs[0].verified, Some(top()));
     assert!(repairs[0].repaired_at.is_some_and(|at| at >= TEST_START));
-    assert_eq!(fetches(&engine), 0);
+    let the_one_listed_below_the_top = 1;
+    assert_eq!(fetches(&engine), the_one_listed_below_the_top);
     engine.stop().await;
 }
 

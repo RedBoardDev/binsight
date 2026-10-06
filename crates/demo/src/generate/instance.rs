@@ -2,7 +2,7 @@
 
 use binsight_engine::EngineStatus;
 use binsight_engine::portfolio::InstanceStatus;
-use binsight_engine::portfolio::views::{BillingCycle, ChainTip, WalletSync};
+use binsight_engine::portfolio::views::{BillingCycle, ChainTip, RegistryCheck, WalletSync};
 use jiff::tz::TimeZone;
 use jiff::{Timestamp, ToSpan};
 
@@ -46,6 +46,10 @@ pub(crate) fn instance_status(anchor: Timestamp) -> Result<InstanceStatus, DemoE
         credits_used,
         credits_budget: CREDITS_BUDGET,
         failed_decodes: 0,
+        registry_check: Some(RegistryCheck {
+            checked_at: anchor,
+            findings: Vec::new(),
+        }),
     })
 }
 

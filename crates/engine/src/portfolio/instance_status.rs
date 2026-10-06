@@ -3,7 +3,7 @@
 
 use jiff::Timestamp;
 
-use super::views::{BillingCycle, ChainTip};
+use super::views::{BillingCycle, ChainTip, RegistryCheck};
 use crate::engine::status::EngineStatus;
 
 /// The state of the instance, as its source last saw it.
@@ -25,4 +25,6 @@ pub struct InstanceStatus {
     pub credits_budget: u64,
     /// How many transactions of the registry could not be decoded.
     pub failed_decodes: u64,
+    /// What the startup check of the registry found; `None` until it ran.
+    pub registry_check: Option<RegistryCheck>,
 }

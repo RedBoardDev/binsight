@@ -69,6 +69,7 @@ async fn serves_the_sync_report_and_the_wallets_from_what_the_engine_published()
 
     use crate::engine::status::EngineStatus;
     use crate::ingestion::WalletStatus;
+    use crate::portfolio::views::RegistryCheck;
     use crate::portfolio::{ChainPortfolio, EngineState};
 
     // A file with no schema: any read of the database fails, so the answers below can only
@@ -100,6 +101,11 @@ async fn serves_the_sync_report_and_the_wallets_from_what_the_engine_published()
         status: watch::channel(EngineStatus::Running).1,
         sync_statuses: watch::channel(Some(Arc::new(vec![status]))).1,
         failed_decodes: watch::channel(Some(2)).1,
+        registry_check: watch::channel(Some(Arc::new(RegistryCheck {
+            checked_at: TEST_START,
+            findings: Vec::new(),
+        })))
+        .1,
     });
     let portfolio: &dyn ReadModel = &portfolio;
 
@@ -107,7 +113,32 @@ async fn serves_the_sync_report_and_the_wallets_from_what_the_engine_published()
     let wallets = portfolio.wallets(Currency::Sol).await.unwrap();
 
     assert_eq!(sync.failed_decodes, 2);
+    assert!(
+        sync.registry_check
+            .is_some_and(|check| check.is_consistent())
+    );
     assert_eq!(sync.state, SyncState::Live);
     assert_eq!(sync.wallets[0].sync.indexed_tx, 3);
     assert_eq!(wallets.items[0].wallet.address, WALLET);
+}
+
+#[tokio::test]
+async fn serves_what_the_startup_check_of_the_registry_found_once_the_engine_runs() {
+    let setup = crate::test_support::temporary_engine().await;
+    let handle = setup.handle.clone();
+    let mut events = handle.subscribe();
+    let shutdown = tokio_util::sync::CancellationToken::new();
+    let before = handle.read_model().sync_report().await.unwrap();
+    let task = tokio::spawn(setup.engine.run(shutdown.clone()));
+
+    let running = events.recv().await.unwrap();
+    let after = handle.read_model().sync_report().await.unwrap();
+    shutdown.cancel();
+    task.await.unwrap().unwrap();
+
+    assert!(matches!(running, EngineEvent::StatusChanged { .. }));
+    assert_eq!(before.registry_check, None);
+    let check = after.registry_check.unwrap();
+    assert!(check.is_consistent());
+    assert!(check.checked_at >= TEST_START);
 }

@@ -5,6 +5,7 @@ use binsight_ledger::report::figure::Figure;
 use jiff::Timestamp;
 
 use super::refs::WalletRef;
+use super::registry_check::RegistryCheck;
 use crate::engine::status::EngineStatus;
 
 /// How a wallet (or the whole instance) keeps up with the chain, from the best to the worst:
@@ -118,6 +119,8 @@ pub struct SyncReport {
     /// How many transactions of the registry could not be decoded; their activity is missing
     /// from the figures until a newer binsight reads them.
     pub failed_decodes: u64,
+    /// What the startup check of the registry found; `None` until it ran.
+    pub registry_check: Option<RegistryCheck>,
     /// Each wallet, in the order of the wallet list.
     pub wallets: Vec<WalletSyncLine>,
 }

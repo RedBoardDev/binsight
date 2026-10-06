@@ -161,6 +161,7 @@ mod tests {
             status: setup.handle.status.clone(),
             sync_statuses: setup.handle.sync_statuses.clone(),
             failed_decodes: tokio::sync::watch::channel(None).1,
+            registry_check: tokio::sync::watch::channel(None).1,
         });
         let handle = super::EngineHandle::without_engine(
             setup.store.clone(),

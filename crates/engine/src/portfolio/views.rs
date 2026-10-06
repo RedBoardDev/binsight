@@ -10,6 +10,7 @@ mod logo;
 mod overview;
 mod position;
 mod refs;
+mod registry_check;
 mod series;
 mod settings;
 mod sync;
@@ -33,6 +34,7 @@ pub use position::{
     PositionState, RangeBounds, RangeSpan, RangeView, RewardMovement, TokenQuantity,
 };
 pub use refs::{PoolRef, PriceView, TokenLogo, TokenRef, WalletColor, WalletRef};
+pub use registry_check::{RegistryCheck, RegistryFinding, RegistryFindingKind};
 pub use series::{SeriesHeaderView, SeriesPointView, SeriesView};
 pub use settings::{InstanceSettings, TimezoneSource};
 pub use sync::{

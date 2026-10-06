@@ -56,6 +56,7 @@ pub(crate) fn report_of(
         valuation_interval_seconds: status.valuation_interval_seconds,
         credits: credits(status, now)?,
         failed_decodes: status.failed_decodes,
+        registry_check: status.registry_check.clone(),
         wallets,
     })
 }
@@ -162,6 +163,7 @@ mod tests {
             credits_used,
             credits_budget: 1_000_000,
             failed_decodes: 0,
+            registry_check: None,
         }
     }
 
