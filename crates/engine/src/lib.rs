@@ -31,4 +31,4 @@ pub use engine::health::{ComponentHealth, EngineHealth, RpcHealth, StreamHealth}
 pub use engine::status::EngineStatus;
 pub use error::EngineError;
 pub use handle::EngineHandle;
-pub use ingestion::read_registry_findings;
+pub use ingestion::{RepairEstimate, estimate_full_repair, read_registry_findings};

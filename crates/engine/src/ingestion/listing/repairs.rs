@@ -109,3 +109,7 @@ mod gap_tests;
 #[cfg(test)]
 #[path = "tests/repair_decisions.rs"]
 mod decision_tests;
+
+#[cfg(test)]
+#[path = "tests/repair_credits.rs"]
+mod credit_tests;

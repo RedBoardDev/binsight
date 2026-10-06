@@ -21,6 +21,7 @@ mod refusal;
 mod registry_check;
 mod sync;
 
+pub use listing::{RepairEstimate, estimate_full_repair};
 pub use registry_check::read_registry_findings;
 pub(crate) use registry_check::{PublishedRegistryCheck, check_registry};
 #[cfg(test)]

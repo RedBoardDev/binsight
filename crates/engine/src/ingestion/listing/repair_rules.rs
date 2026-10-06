@@ -7,9 +7,11 @@
 //! cursor's top when the repair started) are compared with the rows; newer ones are the top-up's.
 //! The newest compared signature that is at least an hour old can become the next verified point:
 //! a node that indexed a transaction late has had an hour to catch up, and the next repair lists
-//! that hour again. This module decides; it does no I/O.
+//! that hour again. A full repair's cost is planned from how many signatures the wallet lists.
+//! This module decides; it does no I/O.
 
-use binsight_chain::SignatureInfo;
+use binsight_chain::{BilledMethod, RpcMethod, SIGNATURE_PAGE_LIMIT, SignatureInfo};
+use binsight_core::credits::Credits;
 use binsight_store::ListedTop;
 use jiff::{SignedDuration, Timestamp};
 
@@ -18,6 +20,32 @@ use super::top_up_rules::read_top_up_page;
 
 /// How old a signature must be when a repair starts to become the next verified point.
 const SETTLE_DELAY: SignedDuration = SignedDuration::from_hours(1);
+
+/// What a full repair is planned to cost, before any gap it finds is fetched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RepairEstimate {
+    /// The listing requests it sends: one per full page of the wallet's listed signatures, and
+    /// the last, shorter one. More if the chain holds signatures the wallet does not list yet.
+    pub listing_requests: u64,
+    /// What those requests cost.
+    pub credits: Credits,
+    /// What fetching each gap it finds costs on top.
+    pub credits_per_gap: Credits,
+}
+
+/// The plan of a full repair of a wallet that lists `listed` signatures.
+pub fn estimate_full_repair(listed: u64) -> RepairEstimate {
+    let page = u64::try_from(SIGNATURE_PAGE_LIMIT)
+        .unwrap_or(u64::MAX)
+        .max(1);
+    let listing_requests = (listed / page).saturating_add(1);
+    let per_listing = BilledMethod::Rpc(RpcMethod::GetSignaturesForAddress).credits();
+    RepairEstimate {
+        listing_requests,
+        credits: Credits(listing_requests.saturating_mul(per_listing.0)),
+        credits_per_gap: BilledMethod::Rpc(RpcMethod::GetTransaction).credits(),
+    }
+}
 
 /// What a repair page holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,6 +125,18 @@ mod tests {
             ceiling: point(9, 900),
             floor,
         }
+    }
+
+    #[test]
+    fn plans_one_listing_per_full_page_and_one_for_the_last_shorter_page() {
+        let plans: Vec<u64> = [0, 999, 1_000, 2_500]
+            .into_iter()
+            .map(|listed| estimate_full_repair(listed).listing_requests)
+            .collect();
+
+        assert_eq!(plans, [1, 1, 2, 3]);
+        assert_eq!(estimate_full_repair(2_500).credits, Credits(3));
+        assert_eq!(estimate_full_repair(2_500).credits_per_gap, Credits(1));
     }
 
     #[test]

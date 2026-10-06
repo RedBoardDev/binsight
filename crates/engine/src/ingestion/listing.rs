@@ -23,6 +23,8 @@ mod top_up_rules;
 
 use tokio_util::sync::CancellationToken;
 
+pub use repair_rules::{RepairEstimate, estimate_full_repair};
+
 use super::Ingestion;
 use listing_step::{ListingWorker, Progress};
 

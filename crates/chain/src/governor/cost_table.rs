@@ -33,6 +33,11 @@ impl BilledMethod {
             Self::StreamData => "ws_data",
         }
     }
+
+    /// The credits one unit costs, as the meter counts it: what a plan of requests multiplies.
+    pub const fn credits(self) -> Credits {
+        cost(self)
+    }
 }
 
 /// The credits one unit of `method` costs.
