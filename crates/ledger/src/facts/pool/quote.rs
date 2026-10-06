@@ -14,8 +14,9 @@ pub enum PhysicalSide {
 
 /// The selected valuation token and the physical side that holds it.
 ///
-/// Created only from a pool's verified token facts. Priority is SOL, USDC, then USDT, on
-/// either side. Equal priority keeps Y. Amount and price conversions live in
+/// Callers provide a pool's verified token facts. Priority is USDC, USDT, then SOL, on
+/// either side, preserving stablecoin-native dollar valuation. Equal priority keeps Y.
+/// Amount and price conversions live in
 /// [`crate::report::valued::quote`]; this selection never swaps physical bin IDs or raw amounts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct QuoteConvention {
@@ -26,9 +27,9 @@ pub struct QuoteConvention {
 impl QuoteConvention {
     pub(super) fn of(pool: &PoolFacts) -> Option<Self> {
         for (kind, asset) in [
-            (TokenKind::Sol, QuoteAsset::Sol),
             (TokenKind::Usdc, QuoteAsset::Usdc),
             (TokenKind::Usdt, QuoteAsset::Usdt),
+            (TokenKind::Sol, QuoteAsset::Sol),
         ] {
             if pool.quote.kind == kind {
                 return Some(Self {

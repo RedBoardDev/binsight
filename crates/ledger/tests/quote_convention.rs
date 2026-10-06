@@ -1,11 +1,15 @@
 //! Synthetic token facts exercise quote selection without changing physical amounts.
+use binsight_core::exactness::Exactness;
+use binsight_core::money::{SignedLamports, SolUsdRate, UsdMicros};
 use binsight_core::price::Price;
 use binsight_core::units::{Decimals, RawTokenAmount};
 use binsight_dlmm::math::{BinMathError, Q64x64, price_from_bin};
 use binsight_ledger::facts::{
-    FlowValuation, PhysicalSide, PoolFacts, QuoteAsset, QuoteConvention, TokenFacts, TokenKind,
+    FlowValuation, PhysicalSide, PoolFacts, QuoteAsset, QuoteConvention, QuoteUnits, TokenFacts,
+    TokenKind,
 };
 use binsight_ledger::report::valued::quote::QuoteMathError;
+use binsight_ledger::report::valued::{Currency, resolve, value_quote};
 use binsight_solana::Address;
 use proptest::prelude::*;
 
@@ -39,7 +43,7 @@ fn convention(side: PhysicalSide) -> QuoteConvention {
 }
 
 #[test]
-fn prioritizes_sol_then_usdc_then_usdt_on_either_physical_side() {
+fn prioritizes_usdc_then_usdt_then_sol_on_either_physical_side() {
     use PhysicalSide::{X, Y};
     use TokenKind::{Other, Sol, Usdc, Usdt};
     let cases = [
@@ -49,14 +53,14 @@ fn prioritizes_sol_then_usdc_then_usdt_on_either_physical_side() {
         (Other, Usdt, Some((QuoteAsset::Usdt, Y))),
         (Sol, Other, Some((QuoteAsset::Sol, X))),
         (Sol, Sol, Some((QuoteAsset::Sol, Y))),
-        (Sol, Usdc, Some((QuoteAsset::Sol, X))),
-        (Sol, Usdt, Some((QuoteAsset::Sol, X))),
+        (Sol, Usdc, Some((QuoteAsset::Usdc, Y))),
+        (Sol, Usdt, Some((QuoteAsset::Usdt, Y))),
         (Usdc, Other, Some((QuoteAsset::Usdc, X))),
-        (Usdc, Sol, Some((QuoteAsset::Sol, Y))),
+        (Usdc, Sol, Some((QuoteAsset::Usdc, X))),
         (Usdc, Usdc, Some((QuoteAsset::Usdc, Y))),
         (Usdc, Usdt, Some((QuoteAsset::Usdc, X))),
         (Usdt, Other, Some((QuoteAsset::Usdt, X))),
-        (Usdt, Sol, Some((QuoteAsset::Sol, Y))),
+        (Usdt, Sol, Some((QuoteAsset::Usdt, X))),
         (Usdt, Usdc, Some((QuoteAsset::Usdc, Y))),
         (Usdt, Usdt, Some((QuoteAsset::Usdt, Y))),
     ];
@@ -85,9 +89,57 @@ fn selects_display_tokens_without_swapping_physical_pool_tokens() {
 
 #[test]
 fn leaves_the_existing_y_only_consumer_convention_unchanged_until_migration() {
-    let pool = pool(TokenKind::Sol, TokenKind::Usdc);
-    assert_eq!(pool.quote_asset(), Some(QuoteAsset::Usdc));
-    assert_eq!(pool.quote_convention().unwrap().asset(), QuoteAsset::Sol);
+    let pool = pool(TokenKind::Usdc, TokenKind::Sol);
+    assert_eq!(pool.quote_asset(), Some(QuoteAsset::Sol));
+    assert_eq!(pool.quote_convention().unwrap().asset(), QuoteAsset::Usdc);
+}
+
+#[test]
+fn retains_native_dollars_independently_of_fx_for_both_physical_orientations() {
+    use TokenKind::{Sol, Usdc};
+    let rate = SolUsdRate::new(1_000_000_000).unwrap();
+    for (x_kind, y_kind, x, y, raw) in [
+        (Sol, Usdc, 1_000_000_000, 20_000_000, Q64x64::ONE.0 / 2),
+        (Usdc, Sol, 20_000_000, 1_000_000_000, Q64x64::ONE.0 * 2),
+    ] {
+        let mut physical = pool(x_kind, y_kind);
+        physical.base.decimals = Decimals(if x_kind == Sol { 9 } else { 6 });
+        physical.quote.decimals = Decimals(if y_kind == Sol { 9 } else { 6 });
+        let selected = physical.quote_convention().unwrap();
+        let quoted = selected
+            .value_raw(RawTokenAmount(x), RawTokenAmount(y), Some(Q64x64(raw)))
+            .unwrap();
+        assert_eq!(quoted.amount, RawTokenAmount(520_000_000));
+        assert_eq!(quoted.valuation, FlowValuation::Complete);
+        assert_eq!(selected.asset(), QuoteAsset::Usdc);
+        assert_eq!(
+            selected.unit_price(Q64x64(raw), physical.base.decimals, physical.quote.decimals),
+            Ok(Price(500_000_000_000_000_000_000))
+        );
+        let amount = QuoteUnits(i128::try_from(quoted.amount.0).unwrap());
+        let native = value_quote(amount, selected.asset(), None).unwrap();
+        let converted = value_quote(amount, selected.asset(), Some(rate)).unwrap();
+        assert_eq!(native.value().unwrap().usd, Some(UsdMicros(520_000_000)));
+        assert_eq!(native.value().unwrap().sol, None);
+        assert_eq!(
+            resolve(&native, Currency::Usd).exactness(),
+            Exactness::Complete
+        );
+        assert_eq!(
+            resolve(&native, Currency::Sol).exactness(),
+            Exactness::Unavailable
+        );
+        assert_eq!(converted.value().unwrap().usd, native.value().unwrap().usd);
+        assert_eq!(
+            converted.value().unwrap().sol,
+            Some(SignedLamports(520_000_000))
+        );
+    }
+    // The former SOL-first definition would turn 1.04 SOL into 1040 USD at this rate.
+    assert_eq!(
+        rate.to_usd(SignedLamports(1_040_000_000)),
+        Ok(UsdMicros(1_040_000_000))
+    );
 }
 
 #[test]
