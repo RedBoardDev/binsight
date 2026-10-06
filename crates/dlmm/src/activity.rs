@@ -29,6 +29,7 @@ mod claims;
 pub(crate) mod emitter;
 mod facts;
 mod lifecycle_guard;
+mod provenance;
 mod rebalance;
 mod swaps;
 
@@ -36,6 +37,10 @@ use binsight_solana::transaction::{InstructionPosition, TransactionView, TxOutco
 
 pub use facts::{
     ActivityError, LifecycleFact, MovementKind, PoolSwap, PositionMovement, RewardClaim, TxActivity,
+};
+pub use provenance::{
+    ActivityDiagnostic, ActivityProvenance, ActivityProvenanceError, ActivityRef, ClaimKind,
+    DerivedPositionActivity, EventEffect, EventSource, derive_position_activity,
 };
 
 use crate::event::{DlmmEvent, LiquidityChanged, LocatedEvent};
@@ -62,6 +67,14 @@ pub fn position_activity(
     tx: &TransactionView,
     events: &[LocatedEvent],
 ) -> Result<TxActivity, ActivityError> {
+    collect_activity(tx, events, &mut provenance::Capture::Legacy)
+}
+
+fn collect_activity(
+    tx: &TransactionView,
+    events: &[LocatedEvent],
+    capture: &mut provenance::Capture,
+) -> Result<TxActivity, ActivityError> {
     if tx.outcome != TxOutcome::Succeeded {
         return Ok(TxActivity::default());
     }
@@ -71,10 +84,14 @@ pub fn position_activity(
         has_unknown_program_activity: has_unknown_instruction(tx),
         ..TxActivity::default()
     };
-    let mut claims = ClaimBook::new(tx, events);
-    for &LocatedEvent { at, event } in events {
+    let mut claims = ClaimBook::new(tx, events, capture.sources());
+    for (index, &LocatedEvent { at, event }) in events.iter().enumerate() {
+        let checkpoint = capture.before(index, &event, &activity);
+        claims.begin_event(capture.sources().get(index).copied());
         record(at, event, &mut claims, &mut activity);
+        capture.after(checkpoint, &activity);
     }
+    capture.finish(claims.into_diagnostics());
     Ok(activity)
 }
 

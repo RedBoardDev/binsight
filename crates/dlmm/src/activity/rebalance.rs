@@ -20,7 +20,7 @@ use crate::event::Rebalanced;
 pub(super) fn record(
     at: InstructionPosition,
     rebalance: &Rebalanced,
-    claims: &ClaimBook<'_>,
+    claims: &mut ClaimBook<'_>,
     activity: &mut TxActivity,
 ) {
     let movement = |kind, x, y| PositionMovement {
