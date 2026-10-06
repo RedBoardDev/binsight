@@ -1,7 +1,14 @@
-import { expect } from '@playwright/test';
+import { expect, type Locator } from '@playwright/test';
 import { overviewFixture } from '../../test/fixtures/overview';
 import { expectNoA11yViolations } from '../expectNoA11yViolations';
 import { test } from '../visualTest';
+
+const expectPopoverSettled = async (dialog: Locator): Promise<void> => {
+  // Visibility starts during the enter fade; axe must measure the settled text contrast.
+  const popover = dialog.locator('..');
+  await expect(popover).not.toHaveAttribute('data-entering', 'true');
+  await expect(popover).toHaveCSS('opacity', '1');
+};
 
 test('shows the overview server readings and opens its breakdown with the keyboard', async ({
   page,
@@ -40,6 +47,7 @@ test('shows the overview server readings and opens its breakdown with the keyboa
   await expect(breakdown).toBeVisible();
   await expect(breakdown).toContainText('Liquidity');
   await expect(breakdown).toContainText('Recoverable rent');
+  await expectPopoverSettled(breakdown);
   await expectNoA11yViolations(page);
   await page.keyboard.press('Escape');
   await expect(breakdown).toBeHidden();
@@ -50,6 +58,7 @@ test('shows the overview server readings and opens its breakdown with the keyboa
   await trigger.click();
   await expect(breakdown).not.toContainText('4.000');
   await expect(breakdown).toContainText('amount hidden SOL');
+  await expectPopoverSettled(breakdown);
   await expectNoA11yViolations(page);
   await expect
     .poll(() => page.evaluate('document.documentElement.scrollWidth'))
@@ -189,6 +198,7 @@ test('keeps USD figures and an explicit stale date after a failed refresh, then 
   await expect(page.getByRole('dialog', { name: 'Net worth breakdown' })).toContainText(
     'amount hidden USD',
   );
+  await expectPopoverSettled(page.getByRole('dialog', { name: 'Net worth breakdown' }));
   await expectNoA11yViolations(page);
   await page.keyboard.press('Escape');
   const readsBeforeRetry = overviewReads;

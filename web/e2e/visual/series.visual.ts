@@ -1,6 +1,30 @@
-import { expect } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 import { expectNoA11yViolations } from '../expectNoA11yViolations';
 import { test } from '../visualTest';
+
+const chartTouchPoint = async (
+  page: Page,
+  slider: Locator,
+  label: string,
+): Promise<{ x: number; y: number }> => {
+  await page.evaluate('document.fonts.ready');
+  await page.evaluate(
+    `document.querySelector('[role="slider"][aria-label="${label}"]').scrollIntoView({block:"center",behavior:"instant"})`,
+  );
+  // Playwright waits for stable layout; the touch point must still hit this slider afterward.
+  await slider.scrollIntoViewIfNeeded();
+  await expect(slider).toBeInViewport({ ratio: 1 });
+  const box = await slider.boundingBox();
+  if (box === null) throw new Error('The chart has no touch bounds');
+  const x = box.x + box.width / 4;
+  const y = box.y + box.height / 2;
+  expect(
+    await page.evaluate<string>(
+      `document.elementFromPoint(${x},${y})?.closest('[role="slider"]')?.getAttribute('aria-label')`,
+    ),
+  ).toBe(label);
+  return { x, y };
+};
 
 test('scrubs the net worth server readings and masks amounts in speech and the equivalent table', async ({
   page,
@@ -116,14 +140,8 @@ test('starts line and credit touch scrubbing after the horizontal threshold and 
     const figure = page.getByRole('figure', { name: label });
     const slider = page.getByRole('slider', { name: label });
     await expect(slider).toBeVisible();
-    await page.evaluate(
-      `document.querySelector('figure[aria-label="${label}"]').scrollIntoView({block:"center"})`,
-    );
-    const box = await slider.boundingBox();
-    if (box === null) throw new Error('The chart has no touch bounds');
+    let { x, y } = await chartTouchPoint(page, slider, label);
     const session = await page.context().newCDPSession(page);
-    const x = box.x + box.width / 4;
-    const y = box.y + box.height / 2;
     const caption = figure.locator('figcaption');
     const initial = await caption.textContent();
     await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
@@ -139,6 +157,7 @@ test('starts line and credit touch scrubbing after the horizontal threshold and 
     await expect(caption).not.toHaveText(initial ?? '');
     await session.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
     await expect(caption).toHaveText(initial ?? '');
+    ({ x, y } = await chartTouchPoint(page, slider, label));
     const before = await page.evaluate<number>('window.scrollY');
     await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
     for (const distance of [20, 45, 75]) {
