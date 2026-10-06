@@ -32,6 +32,24 @@ describe('FigureAmount', () => {
     expect(screen.getByText('plus 0.422 SOL')).toHaveClass('sr-only');
   });
 
+  it('qualifies an estimated figure with its glyph and says it in words', async () => {
+    renderWithProviders(
+      <FigureAmount
+        figure={{
+          exactness: 'estimated',
+          value: money('0.2907'),
+          reasons: [{ code: 'provisional_rate', day: '2026-10-06' }],
+        }}
+        placement="key"
+        signing="always"
+      />,
+    );
+
+    // Its colour is checked where colours are computed: e2e/visual/overview.visual.ts.
+    expect(await screen.findByRole('button', { name: 'Why an estimate?' })).toHaveTextContent('≈');
+    expect(screen.getByText('plus 0.291 SOL, estimated')).toBeInTheDocument();
+  });
+
   it('shows a loss with a true minus', () => {
     renderWithProviders(
       <FigureAmount figure={complete('-0.949')} placement="key" signing="always" />,

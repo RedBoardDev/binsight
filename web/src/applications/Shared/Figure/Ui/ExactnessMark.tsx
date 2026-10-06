@@ -11,6 +11,18 @@ import { useLingui } from '@lingui/react/macro';
 // complete figure, so the digits of a column stay aligned whatever the exactness of each row.
 export type FigureLayout = 'inline' | 'column';
 export type FigureReasonDisplay = 'popover' | 'static';
+// Where a hero's glyph goes. One rule: it hangs in the margin only beside a left-aligned hero
+// whose column has room for it (a desktop); everywhere else it sits inline, before the digits.
+export type MarkPosition = 'inline' | 'hanging';
+
+// The glyph takes the figure's own color (≥ and ≈ qualify the figure); only "unavailable", a dash
+// standing for a missing figure, is dimmed.
+const GLYPH_CLASSES: Record<Exactness, string> = {
+  complete: '',
+  partial: '',
+  estimated: '',
+  unavailable: 'text-faint',
+};
 
 interface ExactnessMarkProps {
   exactness: Exactness;
@@ -33,7 +45,7 @@ export const ExactnessMark = ({
   if (reasonDisplay === 'static') {
     return (
       <span className={gutter}>
-        <span aria-hidden className="text-muted">
+        <span aria-hidden className={GLYPH_CLASSES[exactness]}>
           {EXACTNESS_GLYPHS[exactness]}
         </span>
         <span className="sr-only">{i18n._(EXACTNESS_TITLES[exactness])}</span>
@@ -46,7 +58,7 @@ export const ExactnessMark = ({
       title={i18n._(EXACTNESS_TITLES[exactness])}
       reasons={reasons}
     >
-      <span className={`text-faint ${gutter}`}>{EXACTNESS_GLYPHS[exactness]}</span>
+      <span className={`${GLYPH_CLASSES[exactness]} ${gutter}`}>{EXACTNESS_GLYPHS[exactness]}</span>
     </FigureReasons>
   );
 };

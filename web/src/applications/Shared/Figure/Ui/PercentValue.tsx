@@ -44,11 +44,14 @@ export const PercentValue = ({
     return <span className="num inline-flex items-baseline whitespace-nowrap">{mark}</span>;
   }
   const formatted = format.percent(figure.value, placement, signing);
+  const toneOf = tone === 'neutral' ? 'neutral' : formatted.tone;
 
   return (
     <span className="num inline-flex items-baseline gap-[0.2em] whitespace-nowrap">
-      {mark}
-      <span className={TONE_CLASSES[tone === 'neutral' ? 'neutral' : formatted.tone]}>
+      {(figure.exactness !== 'complete' || layout === 'column') && (
+        <span className={`-me-[0.1em] ${TONE_CLASSES[toneOf]}`}>{mark}</span>
+      )}
+      <span className={TONE_CLASSES[toneOf]}>
         {formatted.sign}
         {formattedText(formatted)}
       </span>
