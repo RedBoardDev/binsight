@@ -1,7 +1,7 @@
 //! Wide Q64 division checked against independent integer oracles and bounded exhaustive cases.
 
 use binsight_core::units::RawTokenAmount;
-use binsight_dlmm::math::{Q64DivisionError, Q64x64, div_q64, div_raw_q64, mul_shr_64};
+use binsight_dlmm::math::{Q64DivisionError, Q64x64, div_raw_q64, mul_shr_64};
 use proptest::prelude::*;
 use serde::Deserialize;
 
@@ -45,10 +45,6 @@ fn divides_every_small_amount_and_price_without_rounding_a_reciprocal() {
             assert_eq!(
                 div_raw_q64(RawTokenAmount(u128::from(value)), Q64x64(price)),
                 expected
-            );
-            assert_eq!(
-                div_q64(value, Q64x64(price)),
-                expected.ok().map(|amount| amount.0)
             );
         }
     }
@@ -94,10 +90,9 @@ fn accepts_the_last_fitting_amount_before_a_fractional_price_overflows() {
 
 proptest! {
     #[test]
-    fn matches_the_direct_u64_numerator_and_preserves_the_existing_interface(value: u64, price: u128) {
+    fn matches_the_direct_u64_numerator(value: u64, price: u128) {
         let expected = (u128::from(value) << 64).checked_div(price);
         prop_assert_eq!(div_raw_q64(RawTokenAmount(u128::from(value)), Q64x64(price)).ok().map(|amount| amount.0), expected);
-        prop_assert_eq!(div_q64(value, Q64x64(price)), expected);
     }
 
     #[test]

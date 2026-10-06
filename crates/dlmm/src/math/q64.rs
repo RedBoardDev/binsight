@@ -32,14 +32,6 @@ pub fn mul_shr_64(amount: u128, price: Q64x64) -> Option<u128> {
     whole.checked_add(cross)?.checked_add(fraction)
 }
 
-/// `floor(value × 2^64 / price)`: how many base units `value` quote units buy at `price`.
-/// `None` when the price is zero or the result does not fit in a `u128`.
-pub fn div_q64(value: u64, price: Q64x64) -> Option<u128> {
-    div_raw_q64(RawTokenAmount(u128::from(value)), price)
-        .ok()
-        .map(|amount| amount.0)
-}
-
 /// An amount cannot be divided by a Q64.64 price.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Q64DivisionError {
@@ -118,8 +110,14 @@ mod tests {
     fn values_an_amount_at_a_price_of_one_and_a_half() {
         let one_and_a_half = Q64x64(Q64x64::ONE.0 + (Q64x64::ONE.0 >> 1));
         assert_eq!(mul_shr_64(1_000, one_and_a_half), Some(1_500));
-        assert_eq!(div_q64(1_500, one_and_a_half), Some(1_000));
-        assert_eq!(div_q64(1, Q64x64(0)), None);
+        assert_eq!(
+            div_raw_q64(RawTokenAmount(1_500), one_and_a_half),
+            Ok(RawTokenAmount(1_000))
+        );
+        assert_eq!(
+            div_raw_q64(RawTokenAmount(1), Q64x64(0)),
+            Err(Q64DivisionError::ZeroPrice)
+        );
     }
 
     proptest! {

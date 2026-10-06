@@ -52,12 +52,6 @@ impl RunningSum {
         Figure::from_parts(self.total_of_prefix(|at| at <= instant), exactness, reasons)
     }
 
-    /// The total of the leaves strictly before `instant`, for windows that exclude their end.
-    pub fn before(&self, instant: Timestamp) -> Figure<Valued> {
-        let (exactness, reasons) = self.marks_where(|at| at < instant);
-        Figure::from_parts(self.total_of_prefix(|at| at < instant), exactness, reasons)
-    }
-
     /// The total of the leaves at or after `start` and strictly before `end`.
     ///
     /// # Errors
@@ -123,10 +117,6 @@ mod tests {
         assert_eq!(sum.at(at(9)).value().unwrap().sol, Some(SignedLamports(0)));
         assert_eq!(sum.at(at(10)).value().unwrap().sol, Some(SignedLamports(2)));
         assert_eq!(sum.at(at(25)).value().unwrap().sol, Some(SignedLamports(7)));
-        assert_eq!(
-            sum.before(at(20)).value().unwrap().sol,
-            Some(SignedLamports(2))
-        );
         let during = sum.during(at(11), at(21)).unwrap();
         assert_eq!(during.value().unwrap().sol, Some(SignedLamports(5)));
         assert_eq!(sum.first_instant(), Some(at(10)));
