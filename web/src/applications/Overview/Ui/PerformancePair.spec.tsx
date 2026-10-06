@@ -58,7 +58,15 @@ describe('PerformancePair', () => {
 
   it('announces unknown import progress without displaying a fabricated zero percent', () => {
     const overview = overviewFixture();
-    const wallet = { address: 'test-wallet', label: 'Cold', color: 'wallet_1' as const };
+    const wallet = {
+      address: 'test-wallet',
+      label: 'Cold',
+      color: 'wallet_1' as const,
+      links: {
+        solscan: 'https://solscan.io/account/test-wallet',
+        jupiter_portfolio: 'https://jup.ag/portfolio/test-wallet',
+      },
+    };
     const reasons = [
       { code: 'history_incomplete' as const, wallet: wallet.address, progress: null },
     ];

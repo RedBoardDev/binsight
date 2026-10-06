@@ -554,6 +554,8 @@ export interface components {
             invested: components["schemas"]["Figure"];
             /** @description Whether nothing ever moved: an empty shell (its outcome is `flat`). */
             is_shell: boolean;
+            /** @description External pool, physical position-account and displayed base-token destinations. */
+            links: components["schemas"]["PositionLinks"];
             /** @description Its liquidity PnL: withdrawn + fees + rewards − invested. */
             lp_pnl: components["schemas"]["Figure"];
             market_pnl?: components["schemas"]["Figure"] | null;
@@ -952,6 +954,8 @@ export interface components {
             id: string;
             /** @description What it invested. */
             invested: components["schemas"]["Figure"];
+            /** @description External pool, physical position-account and displayed base-token destinations. */
+            links: components["schemas"]["PositionLinks"];
             lower?: components["schemas"]["Price"] | null;
             /** @description Always `pool`: an open position is marked at its bins. */
             method: components["schemas"]["OpenMethod"];
@@ -1237,6 +1241,15 @@ export interface components {
             items: components["schemas"]["PositionEvent"][];
             /** @description The cursor of the next (older) page; `null` on the last page. */
             next_cursor?: string | null;
+        };
+        /** @description External destinations shared by position lists and details. */
+        PositionLinks: {
+            /** @description The displayed base token on GMGN, following the pool's selected quote convention. */
+            gmgn: string;
+            /** @description The DLMM pool on Meteora; does not select a position or a historical lifetime. */
+            meteora: string;
+            /** @description The physical position account on Solscan, shared by every lifetime of that account. */
+            solscan: string;
         };
         /** @description A unit price: quote tokens per base token, with at most twelve significant digits. */
         Price: {
@@ -1541,6 +1554,13 @@ export interface components {
          * @enum {string}
          */
         WalletColor: "wallet_1" | "wallet_2" | "wallet_3" | "wallet_4" | "wallet_5" | "wallet_6" | "wallet_7" | "wallet_8";
+        /** @description External destinations shared by every reference to a tracked wallet. */
+        WalletLinks: {
+            /** @description The physical wallet's Jupiter portfolio. */
+            jupiter_portfolio: string;
+            /** @description The physical wallet account on Solscan. */
+            solscan: string;
+        };
         /** @description The tracked wallets and their total. */
         WalletList: {
             /** @description Each wallet, in the order they were added. */
@@ -1558,6 +1578,8 @@ export interface components {
             color: components["schemas"]["WalletColor"];
             /** @description Its label: never empty, at most 10 characters (the short address when the owner gave none). */
             label: string;
+            /** @description External destinations for the physical wallet account. */
+            links: components["schemas"]["WalletLinks"];
         };
         /** @description One tracked wallet and its figures. */
         WalletSummary: {

@@ -171,3 +171,50 @@ fn keeps_the_v1_fee_count_integer_and_requires_the_v2_nullable_count() {
         assert_eq!(property.get("minimum").unwrap(), 0);
     }
 }
+
+#[test]
+fn requires_shared_external_links_on_position_and_wallet_references() {
+    let spec: serde_json::Value =
+        serde_json::from_str(&binsight_api::openapi::spec_json()).unwrap();
+    for (name, target) in [
+        ("OpenPositionRow", "PositionLinks"),
+        ("ClosedPositionRow", "PositionLinks"),
+        ("WalletRef", "WalletLinks"),
+    ] {
+        let schema = spec
+            .pointer(&format!("/components/schemas/{name}"))
+            .unwrap();
+        assert!(
+            schema
+                .get("required")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|field| field == "links")
+        );
+        assert_eq!(
+            schema.pointer("/properties/links/$ref").unwrap(),
+            &format!("#/components/schemas/{target}")
+        );
+    }
+    for (name, fields) in [
+        ("PositionLinks", vec!["meteora", "solscan", "gmgn"]),
+        ("WalletLinks", vec!["jupiter_portfolio", "solscan"]),
+    ] {
+        let schema = spec
+            .pointer(&format!("/components/schemas/{name}"))
+            .unwrap();
+        let required = schema.get("required").unwrap().as_array().unwrap();
+        assert_eq!(required.len(), fields.len());
+        for field in fields {
+            assert!(required.iter().any(|item| item == field));
+            assert_eq!(
+                schema
+                    .pointer(&format!("/properties/{field}/type"))
+                    .unwrap(),
+                "string"
+            );
+        }
+    }
+}

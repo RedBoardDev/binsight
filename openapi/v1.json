@@ -7,7 +7,7 @@
       "name": "MIT",
       "identifier": "MIT"
     },
-    "version": "1.5.0"
+    "version": "1.6.0"
   },
   "paths": {
     "/api/v1/auth/login": {
@@ -2005,6 +2005,7 @@
           "address",
           "wallet",
           "pool",
+          "links",
           "opened_at",
           "closed_at",
           "held_seconds",
@@ -2058,6 +2059,10 @@
           "is_shell": {
             "type": "boolean",
             "description": "Whether nothing ever moved: an empty shell (its outcome is `flat`)."
+          },
+          "links": {
+            "$ref": "#/components/schemas/PositionLinks",
+            "description": "External pool, physical position-account and displayed base-token destinations."
           },
           "lp_pnl": {
             "$ref": "#/components/schemas/Figure",
@@ -3033,6 +3038,7 @@
           "address",
           "wallet",
           "pool",
+          "links",
           "opened_at",
           "range",
           "bins",
@@ -3089,6 +3095,10 @@
           "invested": {
             "$ref": "#/components/schemas/Figure",
             "description": "What it invested."
+          },
+          "links": {
+            "$ref": "#/components/schemas/PositionLinks",
+            "description": "External pool, physical position-account and displayed base-token destinations."
           },
           "lower": {
             "oneOf": [
@@ -3983,6 +3993,29 @@
           }
         }
       },
+      "PositionLinks": {
+        "type": "object",
+        "description": "External destinations shared by position lists and details.",
+        "required": [
+          "meteora",
+          "solscan",
+          "gmgn"
+        ],
+        "properties": {
+          "gmgn": {
+            "type": "string",
+            "description": "The displayed base token on GMGN, following the pool's selected quote convention."
+          },
+          "meteora": {
+            "type": "string",
+            "description": "The DLMM pool on Meteora; does not select a position or a historical lifetime."
+          },
+          "solscan": {
+            "type": "string",
+            "description": "The physical position account on Solscan, shared by every lifetime of that account."
+          }
+        }
+      },
       "Price": {
         "type": "object",
         "description": "A unit price: quote tokens per base token, with at most twelve significant digits.",
@@ -4813,6 +4846,24 @@
           "wallet_8"
         ]
       },
+      "WalletLinks": {
+        "type": "object",
+        "description": "External destinations shared by every reference to a tracked wallet.",
+        "required": [
+          "jupiter_portfolio",
+          "solscan"
+        ],
+        "properties": {
+          "jupiter_portfolio": {
+            "type": "string",
+            "description": "The physical wallet's Jupiter portfolio."
+          },
+          "solscan": {
+            "type": "string",
+            "description": "The physical wallet account on Solscan."
+          }
+        }
+      },
       "WalletList": {
         "type": "object",
         "description": "The tracked wallets and their total.",
@@ -4847,7 +4898,8 @@
         "required": [
           "address",
           "label",
-          "color"
+          "color",
+          "links"
         ],
         "properties": {
           "address": {
@@ -4863,6 +4915,10 @@
             "description": "Its label: never empty, at most 10 characters (the short address when the owner gave none).",
             "maxLength": 10,
             "minLength": 1
+          },
+          "links": {
+            "$ref": "#/components/schemas/WalletLinks",
+            "description": "External destinations for the physical wallet account."
           }
         }
       },

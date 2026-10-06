@@ -6,7 +6,7 @@ use jiff::civil::Date;
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use super::decimal::DecimalString;
+use super::super::decimal::DecimalString;
 
 /// One reason a figure is partial, estimated or unavailable, tagged by `code`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]

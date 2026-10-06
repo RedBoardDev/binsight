@@ -8,7 +8,9 @@ use jiff::Timestamp;
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use crate::contract::{DecimalString, Figure, PercentFigure, PoolRef, Price, Strategy, WalletRef};
+use crate::contract::{
+    DecimalString, Figure, PercentFigure, PoolRef, PositionLinks, Price, Strategy, WalletRef,
+};
 
 /// One open position.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
@@ -21,6 +23,8 @@ pub(crate) struct OpenPositionRow {
     pub(crate) wallet: WalletRef,
     /// Its pool.
     pub(crate) pool: PoolRef,
+    /// External pool, physical position-account and displayed base-token destinations.
+    pub(crate) links: PositionLinks,
     /// Its proven strategy; `null` for arbitrary weights or mixed strategies.
     pub(crate) strategy: Option<Strategy>,
     /// When it opened (clients compute its age).
@@ -150,6 +154,7 @@ impl From<&views::OpenPositionRow> for OpenPositionRow {
             address: row.id.address.to_string(),
             wallet: (&row.wallet).into(),
             pool: (&row.pool).into(),
+            links: PositionLinks::of(row.id.address, row.pool.address, row.pool.base.mint),
             strategy: row.strategy.map(Into::into),
             opened_at: row.opened_at,
             price: row.price.map(Price::from),

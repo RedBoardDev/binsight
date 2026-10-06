@@ -4,6 +4,8 @@ use binsight_engine::portfolio::views;
 use serde::Serialize;
 use utoipa::ToSchema;
 
+use super::WalletLinks;
+
 /// A tracked wallet: its address, its label and its color.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub(crate) struct WalletRef {
@@ -15,6 +17,8 @@ pub(crate) struct WalletRef {
     pub(crate) label: String,
     /// Its color in charts and legends.
     pub(crate) color: WalletColor,
+    /// External destinations for the physical wallet account.
+    pub(crate) links: WalletLinks,
 }
 
 /// One of the eight wallet colors of the theme.
@@ -52,6 +56,7 @@ impl From<&views::WalletRef> for WalletRef {
             address: wallet.address.to_string(),
             label: wallet.label.to_string(),
             color: wallet.color.into(),
+            links: WalletLinks::of(wallet.address),
         }
     }
 }

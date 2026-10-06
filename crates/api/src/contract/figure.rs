@@ -6,9 +6,11 @@ use binsight_ledger::report::valued;
 use serde::Serialize;
 use utoipa::ToSchema;
 
+mod reason;
+
 use super::decimal::DecimalString;
 use super::money::Money;
-use super::reason::Reason;
+use reason::Reason;
 
 /// An amount and how far it can be trusted. `value` is present unless the figure is
 /// `unavailable`; `reasons` say why a figure is not `complete`.

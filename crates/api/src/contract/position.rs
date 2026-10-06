@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use super::figure::{Figure, PercentFigure};
+use super::links::PositionLinks;
 use super::token::PoolRef;
 use super::wallet_ref::WalletRef;
 
@@ -56,6 +57,8 @@ pub(crate) struct ClosedPositionRow {
     pub(crate) wallet: WalletRef,
     /// Its pool.
     pub(crate) pool: PoolRef,
+    /// External pool, physical position-account and displayed base-token destinations.
+    pub(crate) links: PositionLinks,
     /// Its proven strategy; `null` for arbitrary weights or mixed strategies.
     pub(crate) strategy: Option<Strategy>,
     /// When it opened.
@@ -163,6 +166,7 @@ impl From<&views::ClosedPositionRow> for ClosedPositionRow {
             address: row.id.address.to_string(),
             wallet: (&row.wallet).into(),
             pool: (&row.pool).into(),
+            links: PositionLinks::of(row.id.address, row.pool.address, row.pool.base.mint),
             strategy: row.strategy.map(Into::into),
             opened_at: row.opened_at,
             closed_at: row.closed_at,

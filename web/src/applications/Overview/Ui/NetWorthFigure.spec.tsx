@@ -28,7 +28,15 @@ describe('NetWorthFigure', () => {
     const user = userEvent.setup();
     const { net_worth } = overviewFixture();
     const unpriced = {
-      wallet: { address: 'test-wallet', label: 'Cold', color: 'wallet_1' as const },
+      wallet: {
+        address: 'test-wallet',
+        label: 'Cold',
+        color: 'wallet_1' as const,
+        links: {
+          solscan: 'https://solscan.io/account/test-wallet',
+          jupiter_portfolio: 'https://jup.ag/portfolio/test-wallet',
+        },
+      },
       token: {
         mint: 'token-mint',
         symbol: 'TEST',

@@ -121,6 +121,11 @@ expression: "detail(&app, id).await"
     }
   },
   "is_shell": false,
+  "links": {
+    "gmgn": "https://gmgn.ai/sol/token/6Cy4bsfHWSz97CTcZrrShVQKySUEpkxQKQqJQjmard4p",
+    "meteora": "https://app.meteora.ag/dlmm/Em1Hj2NEmfWo3TwgdJZAgSWEvEAEHMnprXWiMT74u4Uk",
+    "solscan": "https://solscan.io/account/BpkemGKazKYfXMDsap1G2emic5LpW87yrmRQmoA2NykY"
+  },
   "lp_pnl": {
     "exactness": "complete",
     "value": {
@@ -179,7 +184,11 @@ expression: "detail(&app, id).await"
   "wallet": {
     "address": "C6w9dL1omhyPtyYnQdZeFcbk3mcUzQgXJYQT2XN5xRUq",
     "color": "wallet_1",
-    "label": "Main"
+    "label": "Main",
+    "links": {
+      "jupiter_portfolio": "https://jup.ag/portfolio/C6w9dL1omhyPtyYnQdZeFcbk3mcUzQgXJYQT2XN5xRUq",
+      "solscan": "https://solscan.io/account/C6w9dL1omhyPtyYnQdZeFcbk3mcUzQgXJYQT2XN5xRUq"
+    }
   },
   "withdrawn": {
     "exactness": "complete",

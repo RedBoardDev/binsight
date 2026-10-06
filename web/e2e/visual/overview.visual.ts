@@ -113,7 +113,18 @@ test('keeps unknown import progress unavailable and dates stale readings in the 
     state: 'importing',
     lagging: [],
     importing: [
-      { wallet: { address: 'test-wallet', label: 'Cold', color: 'wallet_1' }, progress: null },
+      {
+        wallet: {
+          address: 'test-wallet',
+          label: 'Cold',
+          color: 'wallet_1',
+          links: {
+            solscan: 'https://solscan.io/account/test-wallet',
+            jupiter_portfolio: 'https://jup.ag/portfolio/test-wallet',
+          },
+        },
+        progress: null,
+      },
     ],
   };
   await page.route('**/api/v2/overview?*', (route) => route.fulfill({ json: fixture }));

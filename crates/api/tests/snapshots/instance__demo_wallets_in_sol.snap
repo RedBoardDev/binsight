@@ -44,7 +44,11 @@ expression: in_sol.json()
       "wallet": {
         "address": "C6w9dL1omhyPtyYnQdZeFcbk3mcUzQgXJYQT2XN5xRUq",
         "color": "wallet_1",
-        "label": "Main"
+        "label": "Main",
+        "links": {
+          "jupiter_portfolio": "https://jup.ag/portfolio/C6w9dL1omhyPtyYnQdZeFcbk3mcUzQgXJYQT2XN5xRUq",
+          "solscan": "https://solscan.io/account/C6w9dL1omhyPtyYnQdZeFcbk3mcUzQgXJYQT2XN5xRUq"
+        }
       }
     },
     {
@@ -101,7 +105,11 @@ expression: in_sol.json()
       "wallet": {
         "address": "H8dBDBULv1kPgqs3Pfc8gvkS3aqcqNmRCPkXhSZXQe4X",
         "color": "wallet_2",
-        "label": "Degen"
+        "label": "Degen",
+        "links": {
+          "jupiter_portfolio": "https://jup.ag/portfolio/H8dBDBULv1kPgqs3Pfc8gvkS3aqcqNmRCPkXhSZXQe4X",
+          "solscan": "https://solscan.io/account/H8dBDBULv1kPgqs3Pfc8gvkS3aqcqNmRCPkXhSZXQe4X"
+        }
       }
     },
     {
@@ -144,7 +152,11 @@ expression: in_sol.json()
       "wallet": {
         "address": "7oz2w2VzUmffCuwBwTmuC1evos4EkG4goAyHiYXGVowM",
         "color": "wallet_3",
-        "label": "Cold"
+        "label": "Cold",
+        "links": {
+          "jupiter_portfolio": "https://jup.ag/portfolio/7oz2w2VzUmffCuwBwTmuC1evos4EkG4goAyHiYXGVowM",
+          "solscan": "https://solscan.io/account/7oz2w2VzUmffCuwBwTmuC1evos4EkG4goAyHiYXGVowM"
+        }
       }
     }
   ],
