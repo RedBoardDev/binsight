@@ -2,8 +2,9 @@
 //! Standalone snapshots without ownership history prove conservation only.
 use binsight_dlmm::activity::TxActivity;
 use binsight_dlmm::{decode_events, position_activity};
+use binsight_ledger::book::Counterparty;
 use binsight_ledger::book::{Asset, EntryKind, WalletContext, book_transaction, invariant};
-use binsight_ledger::counterparties::LandingService;
+use binsight_ledger::counterparties::{BridgeId, LandingService};
 use binsight_solana::transaction::{TransactionView, read};
 
 #[expect(
@@ -164,4 +165,31 @@ fn a_public_owned_close_keeps_token_2022_tax_separate_from_claims() {
         entry.kind,
         EntryKind::ProtocolActivity { .. } | EntryKind::SwapIn | EntryKind::SwapOut
     )));
+}
+
+/// A public wallet deposits 5 SOL into Relay's depository: the 5 SOL leave as capital through
+/// the bridge, and only the fee is a cost.
+#[test]
+fn books_a_public_relay_deposit_as_capital_through_the_bridge() {
+    let folder = root().join("relay-deposit");
+    let (wallet, tx, activity) = fixture(&folder, &folder.join("tx-1.json"));
+    let entries: Vec<_> = book_transaction(&wallet, &tx, &activity)
+        .unwrap()
+        .into_iter()
+        .map(|entry| (entry.asset, entry.amount, entry.kind))
+        .collect();
+    assert_eq!(
+        entries,
+        [
+            (Asset::Sol, -5_000, EntryKind::NetworkFee),
+            (Asset::Sol, -500_000, EntryKind::PriorityFee),
+            (
+                Asset::Sol,
+                -5_000_000_000,
+                EntryKind::CapitalWithdrawal {
+                    counterparty: Counterparty::Bridge(BridgeId::Relay)
+                }
+            ),
+        ]
+    );
 }

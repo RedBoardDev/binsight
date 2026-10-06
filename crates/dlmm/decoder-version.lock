@@ -16,6 +16,7 @@ version = 3
 "pre-2022-serum-order-tx-1" = "7592b52c636f8d5c1a341202f810468218fd7b749121b8d988f5978918b22b6b"
 "rebalance-and-claim-fee2-tx-1" = "f878efe8e36c8d858e9f500d7b2b3c706a72625ac475be259ed289ae2fd8e153"
 "rebalance-with-fees-tx-1" = "c19f7b8b8a370aa0b54bfe744820cb4c58d5c23247e4f1b71f90b79c3df2fae6"
+"relay-deposit-tx-1" = "7592b52c636f8d5c1a341202f810468218fd7b749121b8d988f5978918b22b6b"
 "scenario-add-liquidity" = "be1b13446d32a3a88a34b4682f0aabda2448d307a4c632fdb8ade387042a3919"
 "scenario-claim-alone-without-bin" = "333e7d24135700dbe5f7c0ace81de9f18452f112b15dacef67058155d3a086e3"
 "scenario-claim-batch-without-twins" = "b2333d5dcf5e2ec8a4b448b8798c4497474e6d5e6f486216fba393eb6074feb0"

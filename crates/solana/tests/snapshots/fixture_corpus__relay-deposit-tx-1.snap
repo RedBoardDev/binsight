@@ -1,0 +1,190 @@
+---
+source: crates/solana/tests/fixture_corpus.rs
+expression: view
+---
+TransactionView {
+    signature: Signature(7ipwTxsMz34DJiz63GpNiicnXtsoHvhnGscEcu1DKXhEaEazsT4Hx6W2x98p8PqGsfTVGSFUC8Lm891Q5tqwJfz),
+    slot: 453842620,
+    block_time: Some(
+        2026-10-06T08:05:53Z,
+    ),
+    transaction_index: Some(
+        1102,
+    ),
+    version: V0,
+    outcome: Succeeded,
+    fee_payer: Address(cboZmSgm6eo352NvQ9r3Gc6ZYmnmx8d76GvopjjAg4E),
+    fee: FeeBreakdown {
+        total: Lamports(
+            505000,
+        ),
+        base: Lamports(
+            5000,
+        ),
+        priority: Lamports(
+            500000,
+        ),
+    },
+    accounts: [
+        AccountKey {
+            address: Address(cboZmSgm6eo352NvQ9r3Gc6ZYmnmx8d76GvopjjAg4E),
+            is_signer: true,
+            is_writable: true,
+            source: Message,
+        },
+        AccountKey {
+            address: Address(99vQwtBwYtrqqD9YSXbdum3KBdxPAVxYTaQ3cfnJSrN2),
+            is_signer: false,
+            is_writable: false,
+            source: Message,
+        },
+        AccountKey {
+            address: Address(ComputeBudget111111111111111111111111111111),
+            is_signer: false,
+            is_writable: false,
+            source: Message,
+        },
+        AccountKey {
+            address: Address(7uTT8Xi5RWXzy7h9XL244GRgEycDYDhLjr3ZyNdXi8pZ),
+            is_signer: false,
+            is_writable: true,
+            source: LookupTable {
+                table: Address(Hm9fUgcn7qwDaiNTFiGh6pNtVATgnaRcmK6Bbx6EMZfP),
+            },
+        },
+        AccountKey {
+            address: Address(11111111111111111111111111111111),
+            is_signer: false,
+            is_writable: false,
+            source: LookupTable {
+                table: Address(Hm9fUgcn7qwDaiNTFiGh6pNtVATgnaRcmK6Bbx6EMZfP),
+            },
+        },
+        AccountKey {
+            address: Address(Dodg2HifwU8rmaVVyMyUZDGTRbqAJTyVYxXPwcbNpBKc),
+            is_signer: false,
+            is_writable: false,
+            source: LookupTable {
+                table: Address(Hm9fUgcn7qwDaiNTFiGh6pNtVATgnaRcmK6Bbx6EMZfP),
+            },
+        },
+    ],
+    instructions: [
+        InstructionNode {
+            position: InstructionPosition {
+                top: 0,
+                inner: None,
+            },
+            stack_height: Some(
+                1,
+            ),
+            program: Address(ComputeBudget111111111111111111111111111111),
+            accounts: [],
+            data: 0x02801a0600,
+        },
+        InstructionNode {
+            position: InstructionPosition {
+                top: 1,
+                inner: None,
+            },
+            stack_height: Some(
+                1,
+            ),
+            program: Address(ComputeBudget111111111111111111111111111111),
+            accounts: [],
+            data: 0x03d012130000000000,
+        },
+        InstructionNode {
+            position: InstructionPosition {
+                top: 2,
+                inner: None,
+            },
+            stack_height: Some(
+                1,
+            ),
+            program: Address(99vQwtBwYtrqqD9YSXbdum3KBdxPAVxYTaQ3cfnJSrN2),
+            accounts: [
+                Address(Dodg2HifwU8rmaVVyMyUZDGTRbqAJTyVYxXPwcbNpBKc),
+                Address(cboZmSgm6eo352NvQ9r3Gc6ZYmnmx8d76GvopjjAg4E),
+                Address(cboZmSgm6eo352NvQ9r3Gc6ZYmnmx8d76GvopjjAg4E),
+                Address(7uTT8Xi5RWXzy7h9XL244GRgEycDYDhLjr3ZyNdXi8pZ),
+                Address(11111111111111111111111111111111),
+            ],
+            data: 0x0d9e0ddf5fd51c0600f2052a01000000e0a8fa9bb4a3c6522dd8448495bdb3e39c71bb252d560dd7ef9668c5d06875cf,
+        },
+        InstructionNode {
+            position: InstructionPosition {
+                top: 2,
+                inner: Some(
+                    0,
+                ),
+            },
+            stack_height: Some(
+                2,
+            ),
+            program: Address(11111111111111111111111111111111),
+            accounts: [
+                Address(cboZmSgm6eo352NvQ9r3Gc6ZYmnmx8d76GvopjjAg4E),
+                Address(7uTT8Xi5RWXzy7h9XL244GRgEycDYDhLjr3ZyNdXi8pZ),
+            ],
+            data: 0x0200000000f2052a01000000,
+        },
+    ],
+    native_balances: [
+        NativeBalance {
+            account: Address(cboZmSgm6eo352NvQ9r3Gc6ZYmnmx8d76GvopjjAg4E),
+            pre: Lamports(
+                6730759058,
+            ),
+            post: Lamports(
+                1730254058,
+            ),
+        },
+        NativeBalance {
+            account: Address(99vQwtBwYtrqqD9YSXbdum3KBdxPAVxYTaQ3cfnJSrN2),
+            pre: Lamports(
+                144071564,
+            ),
+            post: Lamports(
+                144071564,
+            ),
+        },
+        NativeBalance {
+            account: Address(ComputeBudget111111111111111111111111111111),
+            pre: Lamports(
+                1,
+            ),
+            post: Lamports(
+                1,
+            ),
+        },
+        NativeBalance {
+            account: Address(7uTT8Xi5RWXzy7h9XL244GRgEycDYDhLjr3ZyNdXi8pZ),
+            pre: Lamports(
+                234718757175,
+            ),
+            post: Lamports(
+                239718757175,
+            ),
+        },
+        NativeBalance {
+            account: Address(11111111111111111111111111111111),
+            pre: Lamports(
+                1,
+            ),
+            post: Lamports(
+                1,
+            ),
+        },
+        NativeBalance {
+            account: Address(Dodg2HifwU8rmaVVyMyUZDGTRbqAJTyVYxXPwcbNpBKc),
+            pre: Lamports(
+                1628641,
+            ),
+            post: Lamports(
+                1628641,
+            ),
+        },
+    ],
+    token_balances: [],
+}

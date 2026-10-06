@@ -1,0 +1,13 @@
+# Captured by `cargo xtask fixture capture` (finalized commitment). Each JSON file is the
+# node's `result`, byte for byte; do not edit them by hand.
+
+name = "relay-deposit"
+why = "A wallet deposits 5 SOL into Relay's depository program to bridge it to another chain: capital out, not PnL."
+perspective = "cboZmSgm6eo352NvQ9r3Gc6ZYmnmx8d76GvopjjAg4E"
+oracles = ["C-10"]
+captured_at = "2026-10-06"
+
+[[transaction]]
+file = "tx-1.json"
+signature = "7ipwTxsMz34DJiz63GpNiicnXtsoHvhnGscEcu1DKXhEaEazsT4Hx6W2x98p8PqGsfTVGSFUC8Lm891Q5tqwJfz"
+slot = 453842620
