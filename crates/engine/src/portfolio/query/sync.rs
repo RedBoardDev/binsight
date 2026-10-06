@@ -33,9 +33,22 @@ pub fn sync_report(
             sync: wallet.sync.clone(),
         })
         .collect();
-    let state = SyncState::worst(wallets.iter().map(|line| line.sync.state));
+    report_of(wallets, status, now)
+}
+
+/// The synchronization of the instance at `now`, from each wallet's line and the instance's
+/// status: one rule for every source.
+///
+/// # Errors
+///
+/// Returns an error when the supplied cycle is invalid or a projection overflows.
+pub(crate) fn report_of(
+    wallets: Vec<WalletSyncLine>,
+    status: &InstanceStatus,
+    now: Timestamp,
+) -> Result<SyncReport, ReadError> {
     Ok(SyncReport {
-        state,
+        state: SyncState::worst(wallets.iter().map(|line| line.sync.state)),
         engine: status.engine,
         as_of: now,
         started_at: status.started_at,
@@ -47,7 +60,7 @@ pub fn sync_report(
 }
 
 /// Credits of the supplied billing cycle, projected by elapsed UTC seconds.
-pub(crate) fn credits(
+pub(super) fn credits(
     status: &InstanceStatus,
     now: Timestamp,
 ) -> Result<CreditsSummary, ReadError> {

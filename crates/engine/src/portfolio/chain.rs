@@ -22,7 +22,7 @@ use tracing::error;
 
 use super::answer::{Answer, answered};
 use super::instance_status::InstanceStatus;
-use super::query::credits;
+use super::query::report_of;
 use super::read_error::ReadError;
 use super::read_model::{InstanceReads, WalletReads};
 use super::views::{
@@ -141,16 +141,7 @@ impl InstanceReads for ChainPortfolio {
                 .map(|(_, line)| line)
                 .collect();
             let status = self.instance_status()?;
-            Ok(SyncReport {
-                state: SyncState::worst(wallets.iter().map(|line| line.sync.state)),
-                engine: status.engine,
-                as_of: now,
-                started_at: status.started_at,
-                chain: status.chain,
-                valuation_interval_seconds: status.valuation_interval_seconds,
-                credits: credits(&status, now)?,
-                wallets,
-            })
+            report_of(wallets, &status, now)
         })
     }
 
