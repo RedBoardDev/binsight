@@ -29,7 +29,7 @@ describe('PriceChart', () => {
         onScrub={() => undefined}
       />,
     );
-    expect(await screen.findByRole('alert', {}, { timeout: 10000 })).toHaveTextContent(
+    expect(await screen.findByRole('alert')).toHaveTextContent(
       'The price chart could not be loaded.',
     );
     expect(screen.getByText('Price')).toBeVisible();

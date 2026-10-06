@@ -1,6 +1,14 @@
 import '@testing-library/jest-dom/vitest';
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import { afterEach } from 'vitest';
+
+// findBy* and waitFor give up after one second by default. A spec that renders the whole app
+// passes the session guard and several stubbed reads before its first screen; on a host that
+// shares its cores with builds, that took more than a second, and the overview chart specs failed
+// now and then for being slow, not wrong. Like the test deadline (vitest.config.ts), this is a
+// deadline, not a retry: a screen that never appears still fails, with its DOM, before the test's
+// own deadline.
+configure({ asyncUtilTimeout: 15_000 });
 
 // Without Vitest globals, Testing Library cannot register its own cleanup: rendered trees would
 // leak from one test into the next.
