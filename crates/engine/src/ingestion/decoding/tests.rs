@@ -209,7 +209,11 @@ async fn records_a_damaged_payload_as_unknown_execution_and_continues_the_regist
     assert_eq!(setup.transport.calls(), Vec::new());
 }
 
-fn panicking_decoder(_raw: &RawTxRecord, _decoded_at: Timestamp) -> DecodeRecord {
+fn panicking_decoder(
+    _raw: &RawTxRecord,
+    _decoded_at: Timestamp,
+    _wallets: &HashSet<Address>,
+) -> Decoding {
     panic!("a payload the decoder cannot handle")
 }
 
@@ -231,7 +235,10 @@ async fn records_a_decoder_panic_as_the_failed_result_of_that_transaction_only()
         .unwrap()
         .unwrap();
 
-    let record = decode_isolated(stored, TEST_START, panicking_decoder).await;
+    let no_wallet = Arc::new(HashSet::new());
+    let record = decode_isolated(stored, TEST_START, no_wallet, panicking_decoder)
+        .await
+        .record;
 
     assert_eq!(record.signature, raw.signature);
     assert_eq!(record.decoder_version, DECODER_VERSION);

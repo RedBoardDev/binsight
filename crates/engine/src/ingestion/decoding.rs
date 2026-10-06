@@ -14,21 +14,31 @@
 //! database failure stops a scan; it is retried after a delay from where it stopped.
 //!
 //! The results tell which transactions hold DLMM activity the decoder reads and how each one
-//! executed; the producer of the position figures selects its transactions from them.
+//! executed; the producer of the position figures selects its transactions from them. With each
+//! result, the decoder records what the transaction left in the token accounts the tracked
+//! wallets own, which the daily comparison with the chain reads.
 
 mod record;
+mod token_balances;
+
+use std::collections::HashSet;
+use std::sync::Arc;
 
 use binsight_dlmm::{DECODER_NAME, DECODER_VERSION};
-use binsight_solana::Signature;
 use binsight_solana::transaction::READER_VERSION;
-use binsight_store::{DecodeRecord, DecodeScan, RawTxRecord, RegistryPosition, StoreError};
+use binsight_solana::{Address, Signature};
+use binsight_store::{DecodeScan, RawTxRecord, RegistryPosition, StoreError};
 use jiff::Timestamp;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, warn};
 
 use super::{Ingestion, STORE_RETRY_DELAY};
+use record::Decoding;
 
 const DECODE_BATCH_SIZE: u16 = 500;
+
+/// The wallets whose token accounts the decoder records.
+type TrackedWallets = Arc<HashSet<Address>>;
 
 /// Decodes the registry until `shutdown` is cancelled.
 pub(super) async fn run_decoder(ingestion: &Ingestion, shutdown: &CancellationToken) {
@@ -84,6 +94,16 @@ async fn decode_new(
     ingestion: &Ingestion,
     position: &mut RegistryPosition,
 ) -> Result<(), StoreError> {
+    let wallets: TrackedWallets = Arc::new(
+        ingestion
+            .store
+            .wallets()
+            .list()
+            .await?
+            .into_iter()
+            .map(|wallet| wallet.address)
+            .collect(),
+    );
     loop {
         let backlog = ingestion
             .store
@@ -97,7 +117,7 @@ async fn decode_new(
             })
             .await?;
         for signature in backlog.signatures {
-            decode_one(ingestion, signature).await?;
+            decode_one(ingestion, signature, &wallets).await?;
         }
         *position = backlog.scanned_to;
         if !backlog.is_truncated {
@@ -106,7 +126,11 @@ async fn decode_new(
     }
 }
 
-async fn decode_one(ingestion: &Ingestion, signature: Signature) -> Result<(), StoreError> {
+async fn decode_one(
+    ingestion: &Ingestion,
+    signature: Signature,
+    wallets: &TrackedWallets,
+) -> Result<(), StoreError> {
     let raw = ingestion
         .store
         .raw_tx()
@@ -116,31 +140,38 @@ async fn decode_one(ingestion: &Ingestion, signature: Signature) -> Result<(), S
             what: "raw transaction for decoding",
             value: signature.to_string(),
         })?;
-    let record = decode_isolated(raw, ingestion.clock.now(), record::decode_stored).await;
+    let decoding = decode_isolated(
+        raw,
+        ingestion.clock.now(),
+        wallets.clone(),
+        record::decode_stored,
+    )
+    .await;
     ingestion
         .store
         .decoded()
-        .replace_for_signature(record)
+        .record_with_balances(decoding.record, decoding.token_accounts)
         .await
 }
 
-/// Decodes `raw` with `decode` on a blocking thread. A panic is caught there and becomes the
-/// failed result of this one transaction.
+/// Decodes `raw` with `decode` for the tracked `wallets`, on a blocking thread. A panic is caught
+/// there and becomes the failed result of this one transaction.
 async fn decode_isolated(
     raw: RawTxRecord,
     decoded_at: Timestamp,
-    decode: fn(&RawTxRecord, Timestamp) -> DecodeRecord,
-) -> DecodeRecord {
+    wallets: TrackedWallets,
+    decode: fn(&RawTxRecord, Timestamp, &HashSet<Address>) -> Decoding,
+) -> Decoding {
     let signature = raw.signature;
-    match tokio::task::spawn_blocking(move || decode(&raw, decoded_at)).await {
-        Ok(record) => record,
+    match tokio::task::spawn_blocking(move || decode(&raw, decoded_at, &wallets)).await {
+        Ok(decoding) => decoding,
         Err(stopped) => {
             warn!(%signature, error = %stopped, "the decoder stopped on a transaction; recorded as failed");
-            record::unreadable(
+            Decoding::verdict_only(record::unreadable(
                 signature,
                 decoded_at,
                 "the decoder stopped on this transaction",
-            )
+            ))
         }
     }
 }
