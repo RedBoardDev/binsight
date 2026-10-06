@@ -72,8 +72,8 @@ pub(crate) struct DayGroup {
     /// How many ended flat: exactly even, or empty shells.
     pub(crate) flat: usize,
     /// How many closed positions have an unknown outcome (their PnL sign is still open).
-    pub(crate) unclassified_count: usize,
-    /// `wins / (wins + losses)`.
+    pub(crate) unknown: usize,
+    /// `wins / (wins + losses)`: flat and unknown outcomes are left out.
     pub(crate) win_rate: PercentFigure,
     /// The sum of their PnL.
     pub(crate) pnl: Figure,
@@ -141,7 +141,7 @@ impl From<&views::DayGroup> for DayGroup {
             wins: group.wins,
             losses: group.losses,
             flat: group.flat,
-            unclassified_count: group.unclassified_count,
+            unknown: group.unknown,
             win_rate: (&group.win_rate).into(),
             pnl: (&group.pnl).into(),
         }

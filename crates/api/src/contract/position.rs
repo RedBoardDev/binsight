@@ -121,9 +121,9 @@ pub(crate) struct ClosedTotals {
     /// How many ended flat: exactly even, or empty shells.
     pub(crate) flat: usize,
     /// How many closed positions have an unknown outcome (their PnL sign is still open).
-    pub(crate) unclassified_count: usize,
-    /// `wins / (wins + losses)`: flat and unknown outcomes left out; estimated while some outcomes
-    /// are unknown. Unavailable without a win or a loss.
+    pub(crate) unknown: usize,
+    /// `wins / (wins + losses)`: flat and unknown outcomes are left out, and the rate stays
+    /// complete. Unavailable without a win or a loss.
     pub(crate) win_rate: PercentFigure,
     /// The sum of their PnL.
     pub(crate) pnl: Figure,
@@ -224,7 +224,7 @@ impl From<&views::ClosedTotalsView> for ClosedTotals {
             wins: totals.wins,
             losses: totals.losses,
             flat: totals.flat,
-            unclassified_count: totals.unclassified_count,
+            unknown: totals.unknown,
             win_rate: (&totals.win_rate).into(),
             pnl: (&totals.pnl).into(),
             pnl_pct: (&totals.pnl_pct).into(),

@@ -278,7 +278,7 @@ fn pages_unknown_outcomes_without_including_them_in_explicit_outcomes() {
         )
         .unwrap();
         assert_eq!(page.matched_count, 3);
-        assert_eq!(page.day_groups.as_ref().unwrap()[0].unclassified_count, 3);
+        assert_eq!(page.day_groups.as_ref().unwrap()[0].unknown, 3);
         assert_eq!(page.items[0].outcome, Outcome::Unknown);
         assert!(ids.insert(page.items[0].id));
         after = page.next;

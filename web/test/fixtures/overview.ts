@@ -26,7 +26,7 @@ export const overviewFixture = (): ApiSchema<'Overview'> => ({
       wins: 3,
       losses: 2,
       flat: 0,
-      unclassified_count: 0,
+      unknown: 0,
       win_rate: completeOverviewPercent('60'),
       pnl: completeOverviewAmount('1.000499999999999999999'),
       pnl_pct: completeOverviewPercent('2.56'),

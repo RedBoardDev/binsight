@@ -659,10 +659,10 @@ export interface components {
             /** @description Farming rewards, separately from swap fees. */
             rewards: components["schemas"]["Figure"];
             /** @description How many closed positions have an unknown outcome (their PnL sign is still open). */
-            unclassified_count: number;
+            unknown: number;
             /**
-             * @description `wins / (wins + losses)`: flat and unknown outcomes left out; estimated while some outcomes
-             *     are unknown. Unavailable without a win or a loss.
+             * @description `wins / (wins + losses)`: flat and unknown outcomes are left out, and the rate stays
+             *     complete. Unavailable without a win or a loss.
              */
             win_rate: components["schemas"]["PercentFigure"];
             /** @description How many gained. */
@@ -727,8 +727,8 @@ export interface components {
             /** @description The sum of their PnL. */
             pnl: components["schemas"]["Figure"];
             /** @description How many closed positions have an unknown outcome (their PnL sign is still open). */
-            unclassified_count: number;
-            /** @description `wins / (wins + losses)`. */
+            unknown: number;
+            /** @description `wins / (wins + losses)`: flat and unknown outcomes are left out. */
             win_rate: components["schemas"]["PercentFigure"];
             /** @description How many gained. */
             wins: number;

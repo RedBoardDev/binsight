@@ -136,13 +136,7 @@ async fn shows_today_as_the_overview_does_with_or_without_flat_positions() {
         (&today.clone().into(), &today.into())
     );
     for field in [
-        "count",
-        "wins",
-        "losses",
-        "flat",
-        "unclassified_count",
-        "win_rate",
-        "pnl",
+        "count", "wins", "losses", "flat", "unknown", "win_rate", "pnl",
     ] {
         assert_eq!(every[field], totals[field], "{field}");
     }
@@ -153,7 +147,7 @@ async fn shows_today_as_the_overview_does_with_or_without_flat_positions() {
     assert_eq!(
         shown["count"].as_u64().unwrap()
             + totals["flat"].as_u64().unwrap()
-            + totals["unclassified_count"].as_u64().unwrap(),
+            + totals["unknown"].as_u64().unwrap(),
         totals["count"].as_u64().unwrap()
     );
 }
@@ -180,12 +174,12 @@ async fn keeps_only_what_the_filters_name() {
             .all(|row| row["outcome"] == "win" || row["outcome"] == "loss")
     );
     assert!(flat.iter().any(|row| row["is_shell"] == true));
-    let unclassified = all.iter().filter(|row| row["outcome"] == "unknown").count();
-    assert!(unclassified > 0);
-    assert_eq!(unknown.len(), unclassified);
+    let unknown_rows = all.iter().filter(|row| row["outcome"] == "unknown").count();
+    assert!(unknown_rows > 0);
+    assert_eq!(unknown.len(), unknown_rows);
     assert!(unknown.iter().all(|row| row["outcome"] == "unknown"));
     assert_eq!(all_but_flat.len(), clear.len() + unknown.len());
-    assert_eq!(flat.len() + clear.len() + unclassified, all.len());
+    assert_eq!(flat.len() + clear.len() + unknown_rows, all.len());
     assert!(spot.iter().all(|row| row["strategy"] == "spot"));
 }
 

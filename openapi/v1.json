@@ -2234,7 +2234,7 @@
           "wins",
           "losses",
           "flat",
-          "unclassified_count",
+          "unknown",
           "win_rate",
           "pnl",
           "pnl_pct",
@@ -2295,14 +2295,14 @@
             "$ref": "#/components/schemas/Figure",
             "description": "Farming rewards, separately from swap fees."
           },
-          "unclassified_count": {
+          "unknown": {
             "type": "integer",
             "description": "How many closed positions have an unknown outcome (their PnL sign is still open).",
             "minimum": 0
           },
           "win_rate": {
             "$ref": "#/components/schemas/PercentFigure",
-            "description": "`wins / (wins + losses)`: flat and unknown outcomes left out; estimated while some outcomes\nare unknown. Unavailable without a win or a loss."
+            "description": "`wins / (wins + losses)`: flat and unknown outcomes are left out, and the rate stays\ncomplete. Unavailable without a win or a loss."
           },
           "wins": {
             "type": "integer",
@@ -2407,7 +2407,7 @@
           "wins",
           "losses",
           "flat",
-          "unclassified_count",
+          "unknown",
           "win_rate",
           "pnl"
         ],
@@ -2435,14 +2435,14 @@
             "$ref": "#/components/schemas/Figure",
             "description": "The sum of their PnL."
           },
-          "unclassified_count": {
+          "unknown": {
             "type": "integer",
             "description": "How many closed positions have an unknown outcome (their PnL sign is still open).",
             "minimum": 0
           },
           "win_rate": {
             "$ref": "#/components/schemas/PercentFigure",
-            "description": "`wins / (wins + losses)`."
+            "description": "`wins / (wins + losses)`: flat and unknown outcomes are left out."
           },
           "wins": {
             "type": "integer",

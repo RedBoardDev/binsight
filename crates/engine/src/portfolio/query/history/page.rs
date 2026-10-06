@@ -168,7 +168,7 @@ fn day_groups(
                 wins: totals.wins,
                 losses: totals.losses,
                 flat: totals.flat,
-                unclassified_count: totals.unclassified_count,
+                unknown: totals.unknown,
                 win_rate: totals.win_rate,
                 pnl: totals.pnl,
             })

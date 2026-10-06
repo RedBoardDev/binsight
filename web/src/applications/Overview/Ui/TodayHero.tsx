@@ -61,14 +61,10 @@ export const TodayHero = ({ today, freshness, historyHref }: TodayHeroProps) => 
               <Plural value={totals.flat} one="# flat" other="# flat" />
             </>
           )}
-          {totals.unclassified_count > 0 && (
+          {totals.unknown > 0 && (
             <>
               <span aria-hidden>·</span>
-              <Plural
-                value={totals.unclassified_count}
-                one="# unclassified"
-                other="# unclassified"
-              />
+              <Plural value={totals.unknown} one="# unknown" other="# unknown" />
             </>
           )}
           <span aria-hidden>·</span>

@@ -77,8 +77,8 @@ pub struct ClosedTotalsView {
     /// How many ended flat (exactly even, or empty shells).
     pub flat: usize,
     /// How many closed positions have an unknown outcome.
-    pub unclassified_count: usize,
-    /// `wins / (wins + losses)`.
+    pub unknown: usize,
+    /// `wins / (wins + losses)`: flat and unknown outcomes are left out.
     pub win_rate: Figure<Percent>,
     /// The sum of their PnL.
     pub pnl: Figure<Money>,

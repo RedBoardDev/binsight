@@ -26,10 +26,10 @@ msgstr "{0, plural, one {# neutral} other {# neutral}}"
 msgid "{0, plural, one {# loss} other {# losses}}"
 msgstr "{0, plural, one {# Verlust} other {# Verluste}}"
 
-#. placeholder {0}: totals.unclassified_count
+#. placeholder {0}: totals.unknown
 #: src/applications/Overview/Ui/TodayHero.tsx
-msgid "{0, plural, one {# unclassified} other {# unclassified}}"
-msgstr "{0, plural, one {# nicht klassifiziert} other {# nicht klassifiziert}}"
+msgid "{0, plural, one {# unknown} other {# unknown}}"
+msgstr "{0, plural, one {# unbekannt} other {# unbekannt}}"
 
 #. placeholder {0}: totals.wins
 #: src/applications/Overview/Ui/TodayHero.tsx

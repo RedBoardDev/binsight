@@ -241,7 +241,7 @@ expression: response.json()
           "unit": "sol"
         }
       },
-      "unclassified_count": 0,
+      "unknown": 0,
       "win_rate": {
         "exactness": "complete",
         "value": "57.142857"
