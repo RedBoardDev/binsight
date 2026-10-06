@@ -9,6 +9,7 @@
 use binsight_core::error::AmountError;
 use binsight_core::units::RawTokenAmount;
 use binsight_dlmm::math::Q64x64;
+use binsight_ledger::facts::PositionHistory;
 use binsight_ledger::facts::UnpricedMovements;
 use binsight_ledger::facts::{
     BinLiquidity, OpenPositionFacts, PhysicalSide, PositionId, QuoteConvention, QuoteUnits,
@@ -149,6 +150,7 @@ pub(crate) fn open_position(
         bins,
         range_since: since,
         valued_at: timeline.anchor,
+        history: PositionHistory::Whole,
         unpriced_movements: UnpricedMovements::default(),
     })
 }

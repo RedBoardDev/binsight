@@ -20,7 +20,8 @@ pub(crate) use sign::PnlUncertainty;
 use super::figure::{Figure, Reason, Reasons};
 use super::valued::{Money, Valued, quote::native_money, value_quote_at};
 use crate::facts::{
-    ClosedPositionFacts, PnlMethod, PoolFacts, QuoteConvention, QuoteUnits, SolUsdRates,
+    ClosedPositionFacts, PnlMethod, PoolFacts, PositionHistory, QuoteConvention, QuoteUnits,
+    SolUsdRates,
 };
 
 /// How a closed position ended, read on the exact sign of its PnL in the pool's quote token.
@@ -83,9 +84,10 @@ impl ClosedValuation {
         let reasons = Reasons::from([Reason::UnpricedLeg {
             position: position.id,
         }]);
+        let has_gap = position.history != PositionHistory::Whole;
         let flow = |amount: QuoteUnits, unpriced: u32| -> Result<Figure<Valued>, AmountError> {
             let figure = value_known(amount, position, pool, rates)?;
-            if unpriced == 0 {
+            if unpriced == 0 && !has_gap {
                 return Ok(figure);
             }
             Ok(figure.degraded(Exactness::Partial, reasons.clone()))
@@ -163,6 +165,7 @@ fn is_shell(position: &ClosedPositionFacts) -> bool {
     .all(|amount| amount.0 == 0)
         && position.unpriced_movements.is_none()
         && position.unpriced_rewards == 0
+        && position.history == PositionHistory::Whole
 }
 
 fn value_known(
@@ -181,7 +184,11 @@ fn value_known(
 
 /// Which way the PnL of `position` may lie from its known value.
 fn uncertainty(position: &ClosedPositionFacts) -> PnlUncertainty {
-    PnlUncertainty::of(position.unpriced_movements, position.unpriced_rewards)
+    PnlUncertainty::of(
+        position.unpriced_movements,
+        position.unpriced_rewards,
+        position.history,
+    )
 }
 
 /// The signed source quality shared by native PnL and its eventual FX conversion.

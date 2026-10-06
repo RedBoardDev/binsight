@@ -8,7 +8,7 @@ use binsight_solana::transaction::{InstructionPosition, TransactionView};
 use jiff::Timestamp;
 
 use super::PositionFold;
-use crate::facts::{ClosedPositionFacts, PoolFacts, PositionId};
+use crate::facts::{ClosedPositionFacts, PoolFacts, PositionHistory, PositionId};
 use crate::positions::valuation::{value_movement, value_reward};
 use crate::positions::{FoldError, OpenLife};
 
@@ -85,6 +85,7 @@ impl<'a> Step<'a> {
             .chain(activity.reward_claims.iter().map(Action::Reward))
             .collect();
         actions.sort_by_key(|action| action.order());
+        self.mark_unknown_activity();
         for action in actions {
             match action {
                 Action::Lifecycle(fact) => self.apply_lifecycle(*fact)?,
@@ -92,7 +93,19 @@ impl<'a> Step<'a> {
                 Action::Reward(reward) => self.apply_reward(reward)?,
             }
         }
+        self.mark_unknown_activity();
         Ok(())
+    }
+
+    /// An unknown DLMM instruction or event cannot name the positions it changed: every life of
+    /// the wallet open before or after it may miss something.
+    fn mark_unknown_activity(&mut self) {
+        if !self.sources.activity.has_unknown_program_activity {
+            return;
+        }
+        for life in self.outcome.open.values_mut() {
+            life.mark_gap(PositionHistory::UncountedActivity);
+        }
     }
 
     pub(super) fn finish(self) -> StepOutcome {
@@ -209,7 +222,9 @@ impl<'a> Step<'a> {
                     address: position,
                     opened_by: tx.signature,
                 };
-                Ok(entry.insert(OpenLife::new(id, pool, opened_at)))
+                let mut life = OpenLife::new(id, pool, opened_at);
+                life.mark_gap(PositionHistory::MissingCreation);
+                Ok(entry.insert(life))
             }
         }
     }

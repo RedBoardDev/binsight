@@ -134,6 +134,7 @@ mod tests {
             rewards: QuoteUnits(0),
             method: PnlMethod::Pool,
             unpriced_rewards: 0,
+            history: PositionHistory::Whole,
             unpriced_movements: UnpricedMovements::default(),
         }
     }

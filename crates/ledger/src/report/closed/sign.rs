@@ -8,7 +8,7 @@
 use binsight_core::exactness::Exactness;
 
 use super::Outcome;
-use crate::facts::{QuoteUnits, UnpricedMovements};
+use crate::facts::{PositionHistory, QuoteUnits, UnpricedMovements};
 
 /// Which way a position's true PnL may lie from its known PnL.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,13 +20,20 @@ pub(crate) struct PnlUncertainty {
 }
 
 impl PnlUncertainty {
-    /// The uncertainty of a position with these unpriced movements and rewards.
-    pub(crate) fn of(unpriced: UnpricedMovements, unpriced_rewards: u32) -> Self {
+    /// The uncertainty of a position with these unpriced movements and rewards, and this
+    /// history. A gap in the history may hide movements of either direction.
+    pub(crate) fn of(
+        unpriced: UnpricedMovements,
+        unpriced_rewards: u32,
+        history: PositionHistory,
+    ) -> Self {
+        let has_gap = history != PositionHistory::Whole;
         Self {
             may_be_higher: unpriced.withdrawals > 0
                 || unpriced.fee_claims > 0
-                || unpriced_rewards > 0,
-            may_be_lower: unpriced.deposits > 0,
+                || unpriced_rewards > 0
+                || has_gap,
+            may_be_lower: unpriced.deposits > 0 || has_gap,
         }
     }
 
@@ -116,9 +123,23 @@ mod tests {
             ),
         ];
         for (movements, rewards, pnl, outcome, exactness) in cases {
-            let uncertainty = PnlUncertainty::of(movements, rewards);
+            let uncertainty = PnlUncertainty::of(movements, rewards, PositionHistory::Whole);
             assert_eq!(uncertainty.outcome(QuoteUnits(pnl)), outcome);
             assert_eq!(uncertainty.exactness(), exactness);
+        }
+    }
+
+    #[test]
+    fn hides_every_sign_of_a_life_whose_history_has_a_gap() {
+        for gap in [
+            PositionHistory::MissingCreation,
+            PositionHistory::UncountedActivity,
+        ] {
+            let uncertainty = PnlUncertainty::of(unpriced(0, 0, 0), 0, gap);
+            for pnl in [-5, 0, 5] {
+                assert_eq!(uncertainty.outcome(QuoteUnits(pnl)), Outcome::Unknown);
+            }
+            assert_eq!(uncertainty.exactness(), Exactness::Estimated);
         }
     }
 }

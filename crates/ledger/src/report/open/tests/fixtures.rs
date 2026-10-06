@@ -2,6 +2,7 @@
 //! whose other token is not SOL, so USDC is the quote on either physical side.
 
 use super::super::*;
+use crate::facts::PositionHistory;
 use crate::facts::UnpricedMovements;
 
 pub(super) fn pool(side: PhysicalSide) -> PoolFacts {
@@ -57,6 +58,7 @@ pub(super) fn position(pool: &PoolFacts) -> OpenPositionFacts {
         bins: Vec::new(),
         range_since: None,
         valued_at: at,
+        history: PositionHistory::Whole,
         unpriced_movements: UnpricedMovements::default(),
     }
 }
@@ -76,6 +78,7 @@ pub(super) fn closed(position: &OpenPositionFacts) -> crate::facts::ClosedPositi
         rewards: position.rewards,
         unpriced_rewards: position.unpriced_rewards,
         method: PnlMethod::Pool,
+        history: position.history,
         unpriced_movements: position.unpriced_movements,
     }
 }

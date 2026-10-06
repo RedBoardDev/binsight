@@ -9,7 +9,7 @@ use binsight_core::exactness::Exactness;
 use binsight_dlmm::pool_tokens::PoolTokens;
 use binsight_ledger::book::{Asset, EntryKind, WalletContext};
 use binsight_ledger::facts::{
-    ClosedPositionFacts, PoolFacts, QuoteUnits, SolUsdRates, TokenFacts, TokenKind,
+    ClosedPositionFacts, PoolFacts, PositionHistory, QuoteUnits, SolUsdRates, TokenFacts, TokenKind,
 };
 use binsight_ledger::positions::{FoldDiagnostics, FoldedTransaction, PositionFold};
 use binsight_ledger::report::closed::{ClosedValuation, Outcome, lp_pnl};
@@ -163,6 +163,7 @@ fn starts_a_life_at_a_claim_whose_creation_is_missing_and_keeps_what_has_no_pric
     assert_eq!(life.flows.unpriced_movements.fee_claims, 1);
     assert_eq!(life.flows.unpriced_rewards, 1);
     assert_eq!(life.flows.rewards, QuoteUnits(0));
+    assert_eq!(life.history, PositionHistory::MissingCreation);
     assert_eq!(fold.diagnostics().missing_creations, 1);
     let entries = &folded.first().unwrap().entries;
     assert!(

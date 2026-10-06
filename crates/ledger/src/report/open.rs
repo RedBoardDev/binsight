@@ -20,8 +20,8 @@ use native::{native_fees, native_sum};
 use super::figure::{Figure, Reason, Reasons};
 use super::valued::{Money, Valued, quote::native_money, value_quote};
 use crate::facts::{
-    OpenPositionFacts, PhysicalSide, PoolFacts, QuoteConvention, QuoteUnits, SolUsdRates,
-    WalletFacts,
+    OpenPositionFacts, PhysicalSide, PoolFacts, PositionHistory, QuoteConvention, QuoteUnits,
+    SolUsdRates, WalletFacts,
 };
 
 /// Where the active bin stands against a position's range.
@@ -113,16 +113,17 @@ impl OpenValuation {
         let reasons = Reasons::from([Reason::UnpricedLeg {
             position: position.id,
         }]);
+        let has_gap = position.history != PositionHistory::Whole;
         let flow = |amount: QuoteUnits, unpriced: u32| -> Result<Figure<Valued>, AmountError> {
             let figure = value_current(Figure::Complete(amount), pool, rates)?;
-            if unpriced == 0 {
+            if unpriced == 0 && !has_gap {
                 return Ok(figure);
             }
             Ok(figure.degraded(Exactness::Partial, reasons.clone()))
         };
         let unpriced = position.unpriced_movements;
         let mut net_invested = flow(native_sum(&[position.invested], &[position.withdrawn])?, 0)?;
-        if unpriced.deposits > 0 || unpriced.withdrawals > 0 {
+        if unpriced.deposits > 0 || unpriced.withdrawals > 0 || has_gap {
             net_invested = net_invested.degraded(
                 Exactness::Estimated,
                 Reasons::from([Reason::UnpricedLeg {

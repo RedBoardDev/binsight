@@ -7,6 +7,7 @@
 )]
 
 use binsight_core::units::{Decimals, RawTokenAmount};
+use binsight_ledger::facts::PositionHistory;
 use binsight_ledger::facts::UnpricedMovements;
 use binsight_ledger::facts::{
     ChainOrder, ClosedPositionFacts, PnlMethod, PositionEventKind, QuoteUnits, Strategy,
@@ -48,6 +49,7 @@ fn snapshot_facts(events: Vec<PositionEventFact>) -> SnapshotFacts {
             rewards: QuoteUnits(0),
             unpriced_rewards: 0,
             method: PnlMethod::Pool,
+            history: PositionHistory::Whole,
             unpriced_movements: UnpricedMovements::default(),
         }],
         events,

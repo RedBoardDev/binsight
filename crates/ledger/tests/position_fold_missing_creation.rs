@@ -3,11 +3,13 @@
 #[path = "common/fold.rs"]
 mod common;
 
+use binsight_core::exactness::Exactness;
 use binsight_core::units::Decimals;
 use binsight_dlmm::activity::{MovementKind, TxActivity};
 use binsight_dlmm::program::{EVENT_AUTHORITY, EVENT_IX_TAG, PROGRAM_ID};
 use binsight_ledger::book::{Asset, EntryKind};
-use binsight_ledger::facts::QuoteUnits;
+use binsight_ledger::facts::{PositionHistory, QuoteUnits};
+use binsight_ledger::report::closed::{Outcome, lp_pnl};
 use binsight_solana::Address;
 use binsight_solana::transaction::{InstructionNode, InstructionPosition, TransactionView};
 use binsight_solana::well_known::{SYSTEM_PROGRAM, TOKEN_PROGRAM, WSOL_MINT};
@@ -158,7 +160,32 @@ fn starts_a_life_at_a_withdrawal_that_paid_the_wallet_when_its_creation_is_missi
     assert_eq!(lives[0].id.opened_by, tx.signature);
     assert_eq!(lives[0].opened_at, time(10));
     assert_eq!(lives[0].flows.withdrawn, QuoteUnits(500));
+    assert_eq!(lives[0].history, PositionHistory::MissingCreation);
     assert_eq!(fold.diagnostics().missing_creations, 1);
+}
+
+/// The life started at a withdrawal of 500 lamports closes later: its known PnL is +500, but its
+/// earlier deposits are not in the history, so the PnL is estimated and its sign unknown.
+#[test]
+fn marks_a_life_without_its_creation_estimated_with_an_unknown_outcome() {
+    let (tx, activity) = into_the_wallets_account();
+    let mut fold = fold();
+    fold.book(&tx, &activity, &pools()).unwrap();
+    let close = moves(Vec::new());
+    let close = TxActivity {
+        lifecycle: vec![closed(POSITION, WALLET)],
+        ..close
+    };
+    let closed = fold
+        .book(&step(2, 11, &close), &close, &pools())
+        .unwrap()
+        .closed;
+    assert_eq!(closed[0].history, PositionHistory::MissingCreation);
+    assert_eq!(lp_pnl(&closed[0]), Ok(QuoteUnits(500)));
+    let valued = valued(&closed[0]);
+    assert_eq!(valued.outcome, Outcome::Unknown);
+    assert_eq!(valued.native_pnl.exactness(), Exactness::Estimated);
+    assert_eq!(valued.withdrawn.exactness(), Exactness::Partial);
 }
 
 #[test]

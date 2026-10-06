@@ -250,3 +250,31 @@ fn refuses_a_close_of_the_wallets_life_that_names_another_owner() {
     );
     assert_eq!(fold, before);
 }
+
+/// A transaction of an open life runs a DLMM instruction this version does not know: what it did
+/// to the life is not counted, so the life closes estimated with an unknown outcome.
+#[test]
+fn marks_a_life_open_during_unknown_dlmm_activity() {
+    use binsight_ledger::facts::{PositionHistory, QuoteUnits};
+    use binsight_ledger::report::closed::Outcome;
+    let unknown = binsight_dlmm::activity::TxActivity {
+        has_unknown_program_activity: true,
+        ..lifecycle(vec![])
+    };
+    let closed = life(
+        SOL_POOL,
+        vec![
+            moves(vec![movement(
+                POSITION,
+                SOL_POOL,
+                MovementKind::Withdrawal,
+                (0, 500),
+                Some(0),
+            )]),
+            unknown,
+        ],
+    );
+    assert_eq!(closed[0].withdrawn, QuoteUnits(500));
+    assert_eq!(closed[0].history, PositionHistory::UncountedActivity);
+    assert_eq!(valued(&closed[0]).outcome, Outcome::Unknown);
+}

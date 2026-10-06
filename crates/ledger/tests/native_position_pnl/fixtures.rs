@@ -2,6 +2,7 @@
 use binsight_core::money::SolUsdRate;
 use binsight_core::units::{Decimals, RawTokenAmount};
 use binsight_dlmm::math::{Q64x64, price_from_bin};
+use binsight_ledger::facts::PositionHistory;
 use binsight_ledger::facts::UnpricedMovements;
 use binsight_ledger::facts::{
     ClosedPositionFacts, OpenPositionFacts, PnlMethod, PoolFacts, PositionId, QuoteUnits,
@@ -56,6 +57,7 @@ pub(super) fn position(pool: &PoolFacts) -> OpenPositionFacts {
         bins: Vec::new(),
         range_since: None,
         valued_at: Timestamp::UNIX_EPOCH,
+        history: PositionHistory::Whole,
         unpriced_movements: UnpricedMovements::default(),
     }
 }
@@ -74,6 +76,7 @@ pub(super) fn closed(position: &OpenPositionFacts) -> ClosedPositionFacts {
         rewards: position.rewards,
         unpriced_rewards: position.unpriced_rewards,
         method: PnlMethod::Pool,
+        history: position.history,
         unpriced_movements: position.unpriced_movements,
     }
 }

@@ -5,7 +5,8 @@ use jiff::Timestamp;
 
 use super::PositionFlows;
 use crate::facts::{
-    BinLiquidity, ClosedPositionFacts, OpenPositionFacts, PnlMethod, PositionId, QuoteUnits,
+    BinLiquidity, ClosedPositionFacts, OpenPositionFacts, PnlMethod, PositionHistory, PositionId,
+    QuoteUnits,
 };
 use crate::report::figure::Figure;
 
@@ -20,6 +21,8 @@ pub struct OpenLife {
     pub opened_at: Timestamp,
     /// What its movements add up to so far.
     pub flows: PositionFlows,
+    /// Whether every transaction of its life so far was counted.
+    pub history: PositionHistory,
 }
 
 /// What a snapshot of an open position's accounts says about it now, in its pool's quote token.
@@ -53,6 +56,14 @@ impl OpenLife {
             pool,
             opened_at,
             flows: PositionFlows::default(),
+            history: PositionHistory::Whole,
+        }
+    }
+
+    /// Records that part of this life was not counted; the first gap found is kept.
+    pub(super) fn mark_gap(&mut self, gap: PositionHistory) {
+        if self.history == PositionHistory::Whole {
+            self.history = gap;
         }
     }
 
@@ -72,6 +83,7 @@ impl OpenLife {
             rewards: flows.rewards,
             unpriced_rewards: flows.unpriced_rewards,
             method: PnlMethod::Pool,
+            history: self.history,
             unpriced_movements: flows.unpriced_movements,
         }
     }
@@ -99,6 +111,7 @@ impl OpenLife {
             bins: live.bins,
             range_since: live.range_since,
             valued_at: live.valued_at,
+            history: self.history,
             unpriced_movements: flows.unpriced_movements,
         }
     }

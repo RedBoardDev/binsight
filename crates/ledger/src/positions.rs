@@ -11,7 +11,9 @@
 //!    names, whoever signed.
 //! 2. A position moved without a known creation (a history that starts in the middle of its
 //!    life) is the wallet's when its movement moved the wallet's own tokens; its life starts at
-//!    that transaction, with only the movements seen.
+//!    that transaction, with only the movements seen, and is marked as missing its creation. A
+//!    life open during an unknown DLMM instruction or event is marked as missing what it did.
+//!    Either mark leaves the life's PnL estimated and its sign unknown.
 //! 3. Every movement is valued in its own pool's quote token (SOL, then USDC, then USDT) at the
 //!    active bin of its own transaction, in exact integers, with the amounts its event reports:
 //!    a deposit counts what the wallet paid, a Token-2022 transfer fee withheld on the way in

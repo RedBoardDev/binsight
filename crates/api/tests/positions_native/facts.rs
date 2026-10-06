@@ -92,6 +92,7 @@ fn open(byte: u8, pool: u8, now: Timestamp) -> OpenPositionFacts {
         bins: vec![],
         range_since: None,
         valued_at: now,
+        history: PositionHistory::Whole,
         unpriced_movements: UnpricedMovements::default(),
     }
 }
@@ -110,6 +111,7 @@ fn closed(byte: u8, pool: u8, method: PnlMethod, now: Timestamp) -> ClosedPositi
         rewards: QuoteUnits(0),
         unpriced_rewards: 0,
         method,
+        history: PositionHistory::Whole,
         unpriced_movements: UnpricedMovements::default(),
     }
 }

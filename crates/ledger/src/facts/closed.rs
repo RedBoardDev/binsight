@@ -4,7 +4,7 @@
 use binsight_solana::Address;
 use jiff::Timestamp;
 
-use super::position::{PositionId, QuoteUnits, Strategy, UnpricedMovements};
+use super::position::{PositionHistory, PositionId, QuoteUnits, Strategy, UnpricedMovements};
 
 /// One closed life of a position, summed from its movements.
 ///
@@ -38,6 +38,8 @@ pub struct ClosedPositionFacts {
     pub method: PnlMethod,
     /// The movements valued on their quote side only, or not at all, by direction.
     pub unpriced_movements: UnpricedMovements,
+    /// Whether every transaction of its life was counted.
+    pub history: PositionHistory,
 }
 
 /// How the PnL of a closed position is measured.

@@ -4,7 +4,7 @@ use binsight_core::units::RawTokenAmount;
 use binsight_solana::Address;
 use jiff::Timestamp;
 
-use super::position::{PositionId, QuoteUnits, Strategy, UnpricedMovements};
+use super::position::{PositionHistory, PositionId, QuoteUnits, Strategy, UnpricedMovements};
 use crate::report::figure::Figure;
 
 /// An open position, valued at its pool's active bin.
@@ -53,6 +53,8 @@ pub struct OpenPositionFacts {
     pub valued_at: Timestamp,
     /// The movements valued on their quote side only, or not at all, by direction.
     pub unpriced_movements: UnpricedMovements,
+    /// Whether every transaction of its life was counted.
+    pub history: PositionHistory,
 }
 
 /// The liquidity a position holds in one bin.

@@ -7,6 +7,7 @@
     reason = "tests fail loudly"
 )]
 
+use binsight_ledger::facts::PositionHistory;
 use binsight_ledger::facts::UnpricedMovements;
 use std::collections::BTreeSet;
 
@@ -89,6 +90,7 @@ fn snapshot_with_facts(count: u32, strategy: Option<Strategy>, unknown: bool) ->
                 rewards: QuoteUnits(0),
                 unpriced_rewards: 0,
                 method: PnlMethod::Pool,
+                history: PositionHistory::Whole,
                 unpriced_movements: UnpricedMovements {
                     deposits: u32::from(unknown),
                     ..UnpricedMovements::default()

@@ -55,6 +55,7 @@ fn facts() -> SnapshotFacts {
         rewards: QuoteUnits(0),
         unpriced_rewards: 0,
         method,
+        history: PositionHistory::Whole,
         unpriced_movements: UnpricedMovements::default(),
     };
     let tracked = TrackedWallet {

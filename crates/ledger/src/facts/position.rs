@@ -95,6 +95,19 @@ impl UnpricedMovements {
     }
 }
 
+/// Whether every transaction of a position's life was counted.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum PositionHistory {
+    /// Every transaction of its life was counted.
+    #[default]
+    Whole,
+    /// Its creation is not in the wallet's history: earlier movements may be missing.
+    MissingCreation,
+    /// A transaction of its life did something that was not counted: a DLMM instruction or
+    /// event this version does not know, or a movement that could not be valued.
+    UncountedActivity,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

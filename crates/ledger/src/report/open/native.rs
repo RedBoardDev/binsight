@@ -6,7 +6,7 @@
 use binsight_core::error::AmountError;
 use binsight_core::exactness::Exactness;
 
-use crate::facts::{OpenPositionFacts, QuoteUnits};
+use crate::facts::{OpenPositionFacts, PositionHistory, QuoteUnits};
 use crate::report::closed::PnlUncertainty;
 use crate::report::figure::{Combination, Figure, Reason, Reasons};
 
@@ -31,8 +31,12 @@ pub fn open_pnl(position: &OpenPositionFacts) -> Result<Figure<QuoteUnits>, Amou
         Combination::Difference,
         |returned, invested| native_sum(&[returned], &[invested]),
     )?;
-    let exactness =
-        PnlUncertainty::of(position.unpriced_movements, position.unpriced_rewards).exactness();
+    let exactness = PnlUncertainty::of(
+        position.unpriced_movements,
+        position.unpriced_rewards,
+        position.history,
+    )
+    .exactness();
     if exactness == Exactness::Complete {
         return Ok(pnl);
     }
@@ -47,7 +51,9 @@ pub fn open_pnl(position: &OpenPositionFacts) -> Result<Figure<QuoteUnits>, Amou
 /// Claimed and pending fees share one native unit and one eventual conversion boundary.
 pub(super) fn native_fees(position: &OpenPositionFacts) -> Result<Figure<QuoteUnits>, AmountError> {
     let claimed = Figure::Complete(position.claimed_fees);
-    let claimed = if position.unpriced_movements.fee_claims == 0 {
+    let claimed = if position.unpriced_movements.fee_claims == 0
+        && position.history == PositionHistory::Whole
+    {
         claimed
     } else {
         claimed.degraded(

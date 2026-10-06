@@ -2,6 +2,7 @@
 
 use binsight_core::units::{Decimals, RawTokenAmount};
 use binsight_dlmm::math::price_from_bin;
+use binsight_ledger::facts::PositionHistory;
 use binsight_ledger::facts::UnpricedMovements;
 use binsight_ledger::facts::{
     OpenPositionFacts, PoolFacts, PositionId, QuoteUnits, TokenFacts, TokenKind,
@@ -53,6 +54,7 @@ fn position(index: u8, presence: Option<bool>, fees: Figure<QuoteUnits>) -> Open
         bins: Vec::new(),
         range_since: None,
         valued_at: Timestamp::UNIX_EPOCH,
+        history: PositionHistory::Whole,
         unpriced_movements: UnpricedMovements::default(),
     }
 }
