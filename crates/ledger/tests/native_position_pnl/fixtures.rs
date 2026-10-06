@@ -56,7 +56,6 @@ pub(super) fn position(pool: &PoolFacts) -> OpenPositionFacts {
         range_since: None,
         valued_at: Timestamp::UNIX_EPOCH,
         unpriced_movements: 0,
-        unpriced_rebalances: 0,
     }
 }
 
@@ -75,7 +74,6 @@ pub(super) fn closed(position: &OpenPositionFacts) -> ClosedPositionFacts {
         unpriced_rewards: position.unpriced_rewards,
         method: PnlMethod::Pool,
         unpriced_movements: position.unpriced_movements,
-        unpriced_rebalances: position.unpriced_rebalances,
     }
 }
 

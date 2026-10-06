@@ -4068,7 +4068,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/Figure",
-                "description": "The accounting contribution to the header figure, converted at the position's closing\nor spot rate. Rebalance halves contribute only their net addition or withdrawal;\nbase/quote retain their full transfers. Cumulative rounding by category precedes paging.\n`null` for lifecycle events; unavailable when a reward's own price is unknown."
+                "description": "The accounting contribution to the header figure, converted at the position's closing\nor spot rate. Each rebalance half counts whole, like any deposit or withdrawal.\nCumulative rounding by category precedes paging.\n`null` for lifecycle events; unavailable when a reward's own price is unknown."
               },
               {
                 "type": "null"

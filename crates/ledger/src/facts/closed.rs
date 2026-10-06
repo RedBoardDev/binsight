@@ -24,9 +24,9 @@ pub struct ClosedPositionFacts {
     pub opened_at: Timestamp,
     /// When it was closed.
     pub closed_at: Timestamp,
-    /// Deposits outside rebalances plus each rebalance's positive net contribution.
+    /// The value of every deposit, the re-deposits of rebalances included.
     pub invested: QuoteUnits,
-    /// Withdrawals outside rebalances plus each rebalance's negative net contribution.
+    /// The value of every withdrawal, the withdrawals of rebalances included.
     pub withdrawn: QuoteUnits,
     /// The value of every fee claim.
     pub claimed_fees: QuoteUnits,
@@ -39,8 +39,6 @@ pub struct ClosedPositionFacts {
     /// How many movements were valued on their quote side only. Positive flow subtotals are
     /// partial; signed PnL is estimated because the unknown amount may be a cost.
     pub unpriced_movements: u32,
-    /// Rebalance groups with an unpriced half; their net contributions may change sign.
-    pub unpriced_rebalances: u32,
 }
 
 /// How the PnL of a closed position is measured.

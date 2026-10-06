@@ -175,7 +175,6 @@ fn closed_positions(draws: &mut Draws, pool: &PoolFacts, start: i64) -> Vec<Clos
                 unpriced_rewards: 0,
                 method,
                 unpriced_movements: 0,
-                unpriced_rebalances: 0,
             }
         })
         .collect()
@@ -211,7 +210,6 @@ fn open_positions(
         range_since: None,
         valued_at: now,
         unpriced_movements: 0,
-        unpriced_rebalances: 0,
     };
     (vec![position], drift + unclaimed)
 }

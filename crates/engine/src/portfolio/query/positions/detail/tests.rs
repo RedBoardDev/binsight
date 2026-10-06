@@ -55,7 +55,6 @@ fn facts() -> SnapshotFacts {
         unpriced_rewards: 0,
         method,
         unpriced_movements: 0,
-        unpriced_rebalances: 0,
     };
     let tracked = TrackedWallet {
         facts: WalletFacts {

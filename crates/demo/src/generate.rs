@@ -18,7 +18,9 @@ mod wallet;
 use std::collections::BTreeMap;
 
 use binsight_engine::portfolio::{InstanceStatus, SnapshotFacts};
-use binsight_ledger::facts::{PoolFacts, PositionEventFact};
+use binsight_ledger::facts::{
+    ClosedPositionFacts, PoolFacts, PositionEventFact, PositionEventKind,
+};
 use binsight_ledger::report::period::{local_day, midnight};
 use binsight_solana::Address;
 use jiff::{SignedDuration, Timestamp, ToSpan};
@@ -102,7 +104,9 @@ pub(crate) fn generate(spec: &WorldSpec) -> Result<Generated, DemoError> {
         .iter()
         .filter_map(|pool| Some((pool.facts.address, paths.get(&pool.key)?.clone())))
         .collect();
-    facts.events = position_events(spec.seed, &facts, &paths, timeline.anchor)?;
+    let events = position_events(spec.seed, &facts, &paths, timeline.anchor)?;
+    add_rebalances(&mut facts.closed, &events)?;
+    facts.events = events;
     Ok(Generated {
         facts,
         status: instance::instance_status(timeline.anchor)?,
@@ -137,6 +141,36 @@ fn position_events(
         events.extend(open_events(seed, position, market(position.pool)?, now)?);
     }
     Ok(events)
+}
+
+/// Adds each rebalance half to what its closed position invested or withdrew: the re-deposits
+/// of a rebalance count as invested, so a position's figures stay the sums of its movements.
+fn add_rebalances(
+    closed: &mut [ClosedPositionFacts],
+    events: &[PositionEventFact],
+) -> Result<(), DemoError> {
+    for event in events {
+        let Some(position) = closed
+            .iter_mut()
+            .find(|position| position.id == event.position)
+        else {
+            continue;
+        };
+        let (total, flow) = match event.kind {
+            PositionEventKind::RebalanceDeposit { movement, .. } => {
+                (&mut position.invested, movement.flow)
+            }
+            PositionEventKind::RebalanceWithdrawal(movement) => {
+                (&mut position.withdrawn, movement.flow)
+            }
+            _ => continue,
+        };
+        total.0 = total
+            .0
+            .checked_add(flow.value.0)
+            .ok_or(DemoError::OutOfRange)?;
+    }
+    Ok(())
 }
 
 /// The instants of the world of `spec`.

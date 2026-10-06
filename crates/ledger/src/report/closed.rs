@@ -85,19 +85,6 @@ impl ClosedValuation {
             Ok(value_known(amount, position, pool, rates)?.degraded(exactness, reasons))
         };
         let pnl = native_signed(native_pnl, position);
-        let flow = |amount| {
-            let figure = value(amount)?;
-            if position.unpriced_rebalances == 0 {
-                Ok(figure)
-            } else {
-                Ok(figure.degraded(
-                    Exactness::Estimated,
-                    Reasons::from([Reason::UnpricedLeg {
-                        position: position.id,
-                    }]),
-                ))
-            }
-        };
         let mut rewards = value_known(position.rewards, position, pool, rates)?;
         if position.unpriced_rewards > 0 {
             rewards = rewards.degraded(
@@ -112,8 +99,8 @@ impl ClosedValuation {
             PnlMethod::Pool => None,
         };
         Ok(Self {
-            invested: flow(position.invested)?,
-            withdrawn: flow(position.withdrawn)?,
+            invested: value(position.invested)?,
+            withdrawn: value(position.withdrawn)?,
             claimed_fees: value(position.claimed_fees)?,
             rewards,
             pnl: signed(pnl.clone())?,
@@ -170,7 +157,6 @@ fn is_shell(position: &ClosedPositionFacts) -> bool {
     .iter()
     .all(|amount| amount.0 == 0)
         && position.unpriced_movements == 0
-        && position.unpriced_rebalances == 0
         && position.unpriced_rewards == 0
 }
 
@@ -209,7 +195,7 @@ fn value_known(
 /// The outcome of `position`: unknown when an unpriced movement hides the sign, or when an
 /// unpriced reward could still turn a loss or an even result into a gain.
 fn outcome_of(position: &ClosedPositionFacts, native_pnl: QuoteUnits) -> Outcome {
-    if position.unpriced_movements > 0 || position.unpriced_rebalances > 0 {
+    if position.unpriced_movements > 0 {
         return Outcome::Unknown;
     }
     if position.unpriced_rewards > 0 && native_pnl.0 <= 0 {
@@ -220,13 +206,10 @@ fn outcome_of(position: &ClosedPositionFacts, native_pnl: QuoteUnits) -> Outcome
 
 /// The signed source quality shared by native PnL and its eventual FX conversion.
 fn native_signed(amount: QuoteUnits, position: &ClosedPositionFacts) -> Figure<QuoteUnits> {
-    if position.unpriced_movements == 0
-        && position.unpriced_rebalances == 0
-        && position.unpriced_rewards == 0
-    {
+    if position.unpriced_movements == 0 && position.unpriced_rewards == 0 {
         return Figure::Complete(amount);
     }
-    let exactness = if position.unpriced_movements > 0 || position.unpriced_rebalances > 0 {
+    let exactness = if position.unpriced_movements > 0 {
         Exactness::Estimated
     } else {
         Exactness::Partial

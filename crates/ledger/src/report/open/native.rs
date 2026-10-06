@@ -30,10 +30,7 @@ pub fn open_pnl(position: &OpenPositionFacts) -> Result<Figure<QuoteUnits>, Amou
         Combination::Difference,
         |returned, invested| native_sum(&[returned], &[invested]),
     )?;
-    if position.unpriced_movements == 0
-        && position.unpriced_rebalances == 0
-        && position.unpriced_rewards == 0
-    {
+    if position.unpriced_movements == 0 && position.unpriced_rewards == 0 {
         return Ok(pnl);
     }
     Ok(pnl.degraded(

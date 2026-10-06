@@ -89,12 +89,11 @@ fn preserves_unavailable_sources_without_zero_or_cross_leaf_degradation() {
 #[test]
 fn marks_unknown_historical_cost_or_reward_in_the_native_helper_itself() {
     let pool = pool(PhysicalSide::Y);
-    for source in 0..3 {
+    for source in 0..2 {
         let mut position = position(&pool);
         position.invested = QuoteUnits(600_000_000);
         match source {
             0 => position.unpriced_movements = 1,
-            1 => position.unpriced_rebalances = 1,
             _ => position.unpriced_rewards = 1,
         }
         let valuation = OpenValuation::of(&position, &pool, &SolUsdRates::default()).unwrap();

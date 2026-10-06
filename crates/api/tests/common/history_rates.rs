@@ -121,7 +121,6 @@ fn facts(now: Timestamp) -> SnapshotFacts {
         method: PnlMethod::Pool,
         unpriced_rewards: 0,
         unpriced_movements: 0,
-        unpriced_rebalances: 0,
     })
     .collect();
     SnapshotFacts {

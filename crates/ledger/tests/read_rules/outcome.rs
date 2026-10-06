@@ -72,14 +72,6 @@ fn proves_positive_income_and_empty_shells_but_never_unknown_costs() {
         Outcome::Unknown
     );
     position.unpriced_movements = 0;
-    position.unpriced_rebalances = 1;
-    assert_eq!(
-        ClosedValuation::of(position, &world.pool, &world.rates)
-            .unwrap()
-            .outcome,
-        Outcome::Unknown
-    );
-    position.unpriced_rebalances = 0;
     position.unpriced_rewards = 0;
     position.withdrawn = QuoteUnits(0);
     let shell = ClosedValuation::of(position, &world.pool, &world.rates).unwrap();

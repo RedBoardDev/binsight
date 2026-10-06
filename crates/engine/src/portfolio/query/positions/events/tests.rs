@@ -48,7 +48,6 @@ fn snapshot_facts(events: Vec<PositionEventFact>) -> SnapshotFacts {
             unpriced_rewards: 0,
             method: PnlMethod::Pool,
             unpriced_movements: 0,
-            unpriced_rebalances: 0,
         }],
         events,
         ..SnapshotFacts::default()
@@ -160,7 +159,7 @@ fn keeps_both_movements_when_synthetic_transaction_indices_collide() {
 }
 
 #[test]
-fn pages_full_rebalance_transfers_with_net_header_values_in_both_currencies() {
+fn pages_full_rebalance_transfers_with_gross_header_values_in_both_currencies() {
     use binsight_core::money::SolUsdRate;
     use binsight_ledger::facts::{QuoteAsset, RebalanceFlow};
     use binsight_ledger::report::valued::value_quote;
@@ -202,8 +201,8 @@ fn pages_full_rebalance_transfers_with_net_header_values_in_both_currencies() {
         let mut facts = snapshot_facts(events.clone());
         facts.pools[0].quote.kind = token_kind;
         facts.pools[0].quote.decimals = decimals;
-        facts.closed[0].invested = QuoteUnits(8);
-        facts.closed[0].withdrawn = QuoteUnits(3);
+        facts.closed[0].invested = QuoteUnits(408);
+        facts.closed[0].withdrawn = QuoteUnits(403);
         facts.rates.daily.insert(
             jiff::Timestamp::UNIX_EPOCH
                 .to_zoned(jiff::tz::TimeZone::UTC)
@@ -220,8 +219,8 @@ fn pages_full_rebalance_transfers_with_net_header_values_in_both_currencies() {
                 assert_eq!(event.quote.unwrap().amount, RawTokenAmount(70));
             }
             for (kind, expected) in [
-                (MovementKind::RebalanceDeposit, 8),
-                (MovementKind::RebalanceWithdrawal, 3),
+                (MovementKind::RebalanceDeposit, 408),
+                (MovementKind::RebalanceWithdrawal, 403),
             ] {
                 let sum: i128 = whole
                     .iter()
@@ -300,7 +299,7 @@ fn serves_empty_lifecycle_events_without_inventing_a_deposit_or_range() {
 }
 
 #[test]
-fn estimates_both_rebalance_halves_when_the_unknown_base_can_reverse_its_net() {
+fn values_each_rebalance_half_whole_and_partial_when_its_base_is_unpriced() {
     use binsight_core::exactness::Exactness;
     use binsight_ledger::facts::{FlowValuation, RebalanceFlow};
     use binsight_solana::transaction::InstructionPosition;
@@ -324,29 +323,28 @@ fn estimates_both_rebalance_halves_when_the_unknown_base_can_reverse_its_net() {
     let mut removed = movement(1, 0);
     removed.kind = PositionEventKind::RebalanceWithdrawal(half(50, 100));
     let mut facts = snapshot_facts(vec![added, removed]);
-    facts.closed[0].invested = QuoteUnits(4);
+    facts.closed[0].invested = QuoteUnits(104);
+    facts.closed[0].withdrawn = QuoteUnits(100);
     facts.closed[0].unpriced_movements = 2;
-    facts.closed[0].unpriced_rebalances = 1;
     let snapshot = Snapshot::new(facts).unwrap();
     let items = read_every_movement(&snapshot, 1, Currency::Sol);
-    for item in &items {
-        assert_eq!(
-            item.value.as_ref().unwrap().exactness(),
-            Exactness::Estimated
-        );
-    }
-    assert_eq!(items[0].value.as_ref().unwrap().value().unwrap().raw, 4);
-    // At one quote unit per raw base unit, the real net is (104+10)-(100+50) = -36.
-    let actual_deposited = 104_i128.checked_add(10).unwrap();
-    let actual_withdrawn = 100_i128.checked_add(50).unwrap();
-    assert_eq!(actual_deposited.checked_sub(actual_withdrawn).unwrap(), -36);
+    let mut values: Vec<i128> = items
+        .iter()
+        .map(|item| {
+            let value = item.value.as_ref().unwrap();
+            assert_eq!(value.exactness(), Exactness::Partial);
+            value.value().unwrap().raw
+        })
+        .collect();
+    values.sort_unstable();
+    assert_eq!(values, [100, 104]);
     let valuation = &snapshot
         .closed_in(crate::portfolio::Scope::All)
         .next()
         .unwrap()
         .valuation;
-    assert_eq!(valuation.invested.exactness(), Exactness::Estimated);
-    assert_eq!(valuation.withdrawn.exactness(), Exactness::Estimated);
+    assert_eq!(valuation.invested.exactness(), Exactness::Partial);
+    assert_eq!(valuation.withdrawn.exactness(), Exactness::Partial);
 }
 
 #[test]

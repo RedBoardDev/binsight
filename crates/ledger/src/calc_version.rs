@@ -4,7 +4,8 @@
 //! that a projection has already been persisted or that an earlier definition was deployed.
 
 /// The positions definition: each position valued in its pool quote (SOL, then USDC, then USDT)
-/// with independent source figures. Version 2 restored SOL as the first quote.
+/// with independent source figures. Version 2 restored SOL as the first quote; version 3
+/// counts the re-deposits of rebalances in what a position invested.
 ///
 /// Change this version when the economic definition or calculated position values change.
-pub const POSITIONS: u32 = 2;
+pub const POSITIONS: u32 = 3;

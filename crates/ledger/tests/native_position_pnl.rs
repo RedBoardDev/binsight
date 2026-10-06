@@ -175,14 +175,11 @@ fn shares_history_degradation_while_retaining_current_balances() {
 #[test]
 fn qualifies_open_history_and_closed_methods_from_the_same_native_sources() {
     let pool = pool(TokenKind::Usdt, TokenKind::Other);
-    for (movements, rebalances, rewards, exactness) in [
-        (1, 0, 0, Exactness::Estimated),
-        (0, 1, 0, Exactness::Estimated),
-        (0, 0, 1, Exactness::Partial),
-    ] {
+    for (movements, rewards, exactness) in
+        [(1, 0, Exactness::Estimated), (0, 1, Exactness::Partial)]
+    {
         let mut position = position(&pool);
         position.unpriced_movements = movements;
-        position.unpriced_rebalances = rebalances;
         position.unpriced_rewards = rewards;
         let open = OpenValuation::of(&position, &pool, &rates()).unwrap();
         assert_eq!(open.native_pnl.exactness(), Exactness::Estimated);

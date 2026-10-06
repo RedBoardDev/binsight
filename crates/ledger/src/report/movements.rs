@@ -1,20 +1,20 @@
 //! A position's movements as a breakdown of its figures in either currency.
 //!
-//! Quote-token amounts retain their transaction-bin valuation. Currency conversion uses the
-//! position's rate (closing day or spot), as its header does. Converting successive cumulative
-//! flows and taking their difference distributes rounding deterministically: deposits,
-//! withdrawals and claims each add up exactly to their position figure, regardless of pagination.
+//! Quote-token amounts retain their transaction-bin valuation. Each half of a rebalance counts
+//! whole, like any deposit or withdrawal, so the re-deposits of rebalances are part of what a
+//! position invested. Currency conversion uses the position's rate (closing day or spot), as its
+//! header does. Converting successive cumulative flows and taking their difference distributes
+//! rounding deterministically: deposits, withdrawals and claims each add up exactly to their
+//! position figure, regardless of pagination.
 
 use binsight_core::error::AmountError;
+use binsight_core::exactness::Exactness;
 
 use super::figure::{Figure, Reason, Reasons};
 use super::valued::{Valued, subtract_valued, value_quote_at};
 use crate::facts::{
     DailyRate, FlowValuation, PositionEventFact, PositionEventKind, QuoteAsset, QuoteUnits,
 };
-use binsight_core::exactness::Exactness;
-
-pub(crate) mod rebalance;
 
 /// Values the movements, in their supplied chain order, at the position's rate.
 /// Movements that carry no tokens have no value. The returned vector has one item per movement.
@@ -27,13 +27,11 @@ pub fn value_movements(
     asset: QuoteAsset,
     rate: Option<DailyRate>,
 ) -> Result<Vec<Option<Figure<Valued>>>, AmountError> {
-    let contributions = rebalance::contributions(events)?;
     let mut totals = MovementTotals::default();
     events
         .iter()
-        .zip(contributions)
-        .map(|(event, rebalance)| {
-            let Some(amount) = contribution(event, rebalance.value) else {
+        .map(|event| {
+            let Some(amount) = contribution(event) else {
                 return Ok(
                     matches!(event.kind, PositionEventKind::RewardClaim(_)).then(|| {
                         Figure::unavailable(Reason::UnpricedLeg {
@@ -53,46 +51,27 @@ pub fn value_movements(
             let before = value_quote_at(previous, asset, rate)?;
             let after = value_quote_at(*total, asset, rate)?;
             let value = subtract_valued(after, before)?;
-            let quality = match event.kind {
-                PositionEventKind::RebalanceDeposit { .. }
-                | PositionEventKind::RebalanceWithdrawal(_)
-                    if rebalance.valuation == FlowValuation::QuoteOnly =>
-                {
-                    Exactness::Estimated
-                }
-                _ if event
-                    .kind
-                    .flow()
-                    .is_some_and(|flow| flow.valuation == FlowValuation::QuoteOnly) =>
-                {
-                    Exactness::Partial
-                }
-                _ => Exactness::Complete,
-            };
-            let reasons = if quality == Exactness::Complete {
-                Reasons::new()
-            } else {
-                Reasons::from([Reason::UnpricedLeg {
-                    position: event.position,
-                }])
-            };
-            Ok(Some(value.degraded(quality, reasons)))
+            let is_quote_only = event
+                .kind
+                .flow()
+                .is_some_and(|flow| flow.valuation == FlowValuation::QuoteOnly);
+            if !is_quote_only {
+                return Ok(Some(value));
+            }
+            let reasons = Reasons::from([Reason::UnpricedLeg {
+                position: event.position,
+            }]);
+            Ok(Some(value.degraded(Exactness::Partial, reasons)))
         })
         .collect()
 }
 
-fn contribution(event: &PositionEventFact, rebalance: QuoteUnits) -> Option<QuoteUnits> {
+fn contribution(event: &PositionEventFact) -> Option<QuoteUnits> {
     match event.kind {
-        PositionEventKind::Add(flow)
-        | PositionEventKind::Remove(flow)
-        | PositionEventKind::Claim(flow) => Some(flow.value),
-        PositionEventKind::RebalanceDeposit { .. } | PositionEventKind::RebalanceWithdrawal(_) => {
-            Some(rebalance)
-        }
         PositionEventKind::RewardClaim(reward) => reward
             .value
             .or_else(|| (reward.amount.0 == 0).then_some(QuoteUnits(0))),
-        PositionEventKind::Created { .. } | PositionEventKind::Closed => None,
+        _ => event.kind.flow().map(|flow| flow.value),
     }
 }
 
@@ -216,7 +195,7 @@ mod tests {
     }
 
     #[test]
-    fn nets_each_rebalance_in_one_transaction_before_currency_rounding() {
+    fn counts_each_rebalance_half_whole_in_its_header_figure() {
         let events: Vec<_> = [
             rebalance(0, 0, 100, 100),
             rebalance(2, 1, 104, 100),
@@ -242,26 +221,15 @@ mod tests {
                     }
                     _ => panic!("unexpected fixture kind"),
                 }
-                assert_eq!(event.kind.flow().unwrap().base, RawTokenAmount(50));
-                assert_eq!(event.kind.flow().unwrap().quote, RawTokenAmount(70));
             }
-            assert_eq!(
-                deposits,
-                *value_quote(QuoteUnits(8), asset, Some(rate))
+            let header = |amount| {
+                *value_quote(QuoteUnits(amount), asset, Some(rate))
                     .unwrap()
                     .value()
                     .unwrap()
-            );
-            assert_eq!(
-                withdrawals,
-                *value_quote(QuoteUnits(3), asset, Some(rate))
-                    .unwrap()
-                    .value()
-                    .unwrap()
-            );
-            for index in [0, 1, 2, 5, 6] {
-                assert_eq!(values[index].as_ref().unwrap().value(), Some(&Valued::ZERO));
-            }
+            };
+            assert_eq!(deposits, header(408));
+            assert_eq!(withdrawals, header(403));
         }
     }
 

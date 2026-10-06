@@ -38,15 +38,15 @@ fn sums(events: &[PositionEventFact]) -> Sums {
     for event in events {
         let value = event.kind.flow().map_or(0, |flow| flow.value.0);
         match event.kind {
-            PositionEventKind::Add(_) => sums.deposited += value,
-            PositionEventKind::Remove(_) => {
+            PositionEventKind::Add(_) | PositionEventKind::RebalanceDeposit { .. } => {
+                sums.deposited += value;
+            }
+            PositionEventKind::Remove(_) | PositionEventKind::RebalanceWithdrawal(_) => {
                 sums.withdrawn += value;
             }
             PositionEventKind::Claim(_) => sums.claimed += value,
             PositionEventKind::Created { .. }
             | PositionEventKind::Closed
-            | PositionEventKind::RebalanceDeposit { .. }
-            | PositionEventKind::RebalanceWithdrawal(_)
             | PositionEventKind::RewardClaim(_) => {}
         }
     }

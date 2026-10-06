@@ -242,7 +242,7 @@ fn adds_valued_rewards_to_position_pnl_without_turning_them_into_fees() {
 }
 
 #[test]
-fn does_not_blur_known_rewards_or_current_balances_with_an_unpriced_rebalance() {
+fn does_not_blur_known_rewards_or_current_balances_with_unpriced_movements() {
     use binsight_core::money::SignedLamports;
     use binsight_ledger::facts::{PnlMethod, QuoteUnits};
     let mut world = wallet_world(9);
@@ -253,10 +253,10 @@ fn does_not_blur_known_rewards_or_current_balances_with_an_unpriced_rebalance() 
     closed.rewards = QuoteUnits(12);
     closed.method = PnlMethod::Pool;
     closed.unpriced_movements = 2;
-    closed.unpriced_rebalances = 1;
     let valued = ClosedValuation::of(closed, &world.pool, &world.rates).unwrap();
-    assert_eq!(valued.invested.exactness(), Exactness::Estimated);
-    assert_eq!(valued.withdrawn.exactness(), Exactness::Estimated);
+    assert_eq!(valued.invested.exactness(), Exactness::Partial);
+    assert_eq!(valued.withdrawn.exactness(), Exactness::Partial);
+    assert_eq!(valued.pnl.exactness(), Exactness::Estimated);
     assert_eq!(valued.rewards.exactness(), Exactness::Complete);
     assert_eq!(
         valued.rewards.value().unwrap().sol,
@@ -264,11 +264,10 @@ fn does_not_blur_known_rewards_or_current_balances_with_an_unpriced_rebalance() 
     );
     let open = &mut world.open[0];
     open.unpriced_movements = 2;
-    open.unpriced_rebalances = 1;
     open.rewards = QuoteUnits(12);
     let valued = OpenValuation::of(open, &world.pool, &world.rates).unwrap();
-    assert_eq!(valued.invested.exactness(), Exactness::Estimated);
-    assert_eq!(valued.withdrawn.exactness(), Exactness::Estimated);
+    assert_eq!(valued.invested.exactness(), Exactness::Partial);
+    assert_eq!(valued.withdrawn.exactness(), Exactness::Partial);
     assert_eq!(valued.net_invested.exactness(), Exactness::Estimated);
     assert_eq!(valued.pnl.exactness(), Exactness::Estimated);
     assert_eq!(valued.value.exactness(), Exactness::Complete);

@@ -77,7 +77,7 @@ pub enum PositionEventKind {
     Add(TokenFlow),
     /// Liquidity was redeposited by one rebalance.
     RebalanceDeposit {
-        /// Its full raw transfer, before netting the accounting contribution.
+        /// Its full raw transfer, counted whole in what the position invested.
         movement: RebalanceFlow,
         /// The new range, when instruction arguments supply it.
         range: Option<BinRange>,
@@ -131,7 +131,7 @@ pub enum FlowValuation {
 pub struct RebalanceFlow {
     /// The position of its Rebalancing event; both halves share it.
     pub instruction: InstructionPosition,
-    /// The full transfer. Reporting contributes only the net deposit or withdrawal to totals.
+    /// The full transfer, counted whole like any deposit or withdrawal.
     pub flow: TokenFlow,
 }
 

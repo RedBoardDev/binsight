@@ -20,9 +20,9 @@ pub struct OpenPositionFacts {
     pub strategy: Option<Strategy>,
     /// When it was created.
     pub opened_at: Timestamp,
-    /// Deposits outside rebalances plus each rebalance's positive net contribution.
+    /// The value of every deposit so far, the re-deposits of rebalances included.
     pub invested: QuoteUnits,
-    /// Withdrawals outside rebalances plus each rebalance's negative net contribution.
+    /// The value of every withdrawal so far, the withdrawals of rebalances included.
     pub withdrawn: QuoteUnits,
     /// The value of every fee claim so far.
     pub claimed_fees: QuoteUnits,
@@ -53,8 +53,6 @@ pub struct OpenPositionFacts {
     pub valued_at: Timestamp,
     /// How many movements had no bin price and were valued on their quote side only.
     pub unpriced_movements: u32,
-    /// Rebalance groups with an unpriced half; their net contributions may change sign.
-    pub unpriced_rebalances: u32,
 }
 
 /// The liquidity a position holds in one bin.

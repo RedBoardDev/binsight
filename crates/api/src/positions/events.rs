@@ -62,8 +62,8 @@ pub(crate) struct PositionEvent {
     /// A farming reward paid in its own mint, when this movement is a reward claim.
     pub(crate) reward: Option<RewardMovement>,
     /// The accounting contribution to the header figure, converted at the position's closing
-    /// or spot rate. Rebalance halves contribute only their net addition or withdrawal;
-    /// base/quote retain their full transfers. Cumulative rounding by category precedes paging.
+    /// or spot rate. Each rebalance half counts whole, like any deposit or withdrawal.
+    /// Cumulative rounding by category precedes paging.
     /// `null` for lifecycle events; unavailable when a reward's own price is unknown.
     pub(crate) value: Option<Figure>,
     /// The exact bin price of its transaction; `null` when the transaction does not say it.

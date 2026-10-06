@@ -89,7 +89,6 @@ fn snapshot_with_facts(count: u32, strategy: Option<Strategy>, unknown: bool) ->
                 unpriced_rewards: 0,
                 method: PnlMethod::Pool,
                 unpriced_movements: u32::from(unknown),
-                unpriced_rebalances: 0,
             }
         })
         .collect();

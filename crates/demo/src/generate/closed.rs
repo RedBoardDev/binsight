@@ -252,7 +252,6 @@ fn position(
             PnlMethod::Pool
         },
         unpriced_movements: u32::from(stream.below(400) == 0 && shape == Shape::Ordinary),
-        unpriced_rebalances: 0,
     })
 }
 

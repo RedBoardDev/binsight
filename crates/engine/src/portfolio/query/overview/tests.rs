@@ -53,7 +53,6 @@ fn position(index: u8, presence: Option<bool>, fees: Figure<QuoteUnits>) -> Open
         range_since: None,
         valued_at: Timestamp::UNIX_EPOCH,
         unpriced_movements: 0,
-        unpriced_rebalances: 0,
     }
 }
 

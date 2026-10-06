@@ -149,7 +149,6 @@ pub(crate) fn open_position(
         range_since: since,
         valued_at: timeline.anchor,
         unpriced_movements: 0,
-        unpriced_rebalances: 0,
     })
 }
 

@@ -111,19 +111,6 @@ impl OpenValuation {
         rates: &SolUsdRates,
     ) -> Result<Self, AmountError> {
         let value = |amount: QuoteUnits| value_leaf(amount, position, pool, rates);
-        let flow = |amount| {
-            let figure = value(amount)?;
-            if position.unpriced_rebalances == 0 {
-                Ok(figure)
-            } else {
-                Ok(figure.degraded(
-                    Exactness::Estimated,
-                    Reasons::from([Reason::UnpricedLeg {
-                        position: position.id,
-                    }]),
-                ))
-            }
-        };
         let mut rewards = value_current(Figure::Complete(position.rewards), pool, rates)?;
         if position.unpriced_rewards > 0 {
             rewards = rewards.degraded(
@@ -134,7 +121,7 @@ impl OpenValuation {
             );
         }
         let mut net_invested = value(native_sum(&[position.invested], &[position.withdrawn])?)?;
-        if position.unpriced_movements > 0 || position.unpriced_rebalances > 0 {
+        if position.unpriced_movements > 0 {
             net_invested = net_invested.degraded(
                 Exactness::Estimated,
                 Reasons::from([Reason::UnpricedLeg {
@@ -144,8 +131,8 @@ impl OpenValuation {
         }
         let pnl = open_pnl(position)?;
         Ok(Self {
-            invested: flow(position.invested)?,
-            withdrawn: flow(position.withdrawn)?,
+            invested: value(position.invested)?,
+            withdrawn: value(position.withdrawn)?,
             net_invested,
             claimed_fees: value(position.claimed_fees)?,
             rewards,

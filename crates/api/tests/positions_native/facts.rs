@@ -92,7 +92,6 @@ fn open(byte: u8, pool: u8, now: Timestamp) -> OpenPositionFacts {
         range_since: None,
         valued_at: now,
         unpriced_movements: 0,
-        unpriced_rebalances: 0,
     }
 }
 
@@ -111,7 +110,6 @@ fn closed(byte: u8, pool: u8, method: PnlMethod, now: Timestamp) -> ClosedPositi
         unpriced_rewards: 0,
         method,
         unpriced_movements: 0,
-        unpriced_rebalances: 0,
     }
 }
 

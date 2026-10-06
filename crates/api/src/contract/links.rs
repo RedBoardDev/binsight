@@ -135,7 +135,6 @@ mod tests {
             method: PnlMethod::Pool,
             unpriced_rewards: 0,
             unpriced_movements: 0,
-            unpriced_rebalances: 0,
         }
     }
 

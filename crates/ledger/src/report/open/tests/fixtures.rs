@@ -57,7 +57,6 @@ pub(super) fn position(pool: &PoolFacts) -> OpenPositionFacts {
         range_since: None,
         valued_at: at,
         unpriced_movements: 0,
-        unpriced_rebalances: 0,
     }
 }
 
@@ -77,7 +76,6 @@ pub(super) fn closed(position: &OpenPositionFacts) -> crate::facts::ClosedPositi
         unpriced_rewards: position.unpriced_rewards,
         method: PnlMethod::Pool,
         unpriced_movements: position.unpriced_movements,
-        unpriced_rebalances: position.unpriced_rebalances,
     }
 }
 
