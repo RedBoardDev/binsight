@@ -18,7 +18,6 @@ use binsight_solana::Address;
 use binsight_solana::transaction::{InstructionPosition, TransactionView};
 
 use super::emitter::{emitter, scope_of};
-use super::provenance::{ActivityDiagnostic, ClaimKind, EventSource};
 use super::{EventForm, MovementKind, PositionMovement, RewardClaim, TxActivity};
 use crate::event::{DlmmEvent, FeeClaimed, LocatedEvent, RewardClaimed};
 use crate::instruction::{
@@ -77,21 +76,15 @@ impl RewardIdentity {
 pub(super) struct ClaimBook<'a> {
     tx: &'a TransactionView,
     events: &'a [LocatedEvent],
-    reported_fees: Vec<(FeeIdentity, EventForm, Option<EventSource>)>,
-    reported_rewards: Vec<(RewardIdentity, EventForm, Option<EventSource>)>,
-    counted_fees: Vec<(FeeIdentity, Option<EventSource>)>,
-    counted_rewards: Vec<(RewardIdentity, Option<EventSource>)>,
-    current: Option<EventSource>,
-    diagnostics: Vec<ActivityDiagnostic>,
+    reported_fees: Vec<(FeeIdentity, EventForm)>,
+    reported_rewards: Vec<(RewardIdentity, EventForm)>,
+    counted_fees: Vec<FeeIdentity>,
+    counted_rewards: Vec<RewardIdentity>,
 }
 
 impl<'a> ClaimBook<'a> {
     /// A book of the claim events among the `events` of `tx`, with nothing counted yet.
-    pub(super) fn new(
-        tx: &'a TransactionView,
-        events: &'a [LocatedEvent],
-        sources: &[EventSource],
-    ) -> Self {
+    pub(super) fn new(tx: &'a TransactionView, events: &'a [LocatedEvent]) -> Self {
         let mut book = Self {
             tx,
             events,
@@ -99,40 +92,28 @@ impl<'a> ClaimBook<'a> {
             reported_rewards: Vec::new(),
             counted_fees: Vec::new(),
             counted_rewards: Vec::new(),
-            current: None,
-            diagnostics: Vec::new(),
         };
-        for (index, located) in events.iter().enumerate() {
-            book.note_reported(located, sources.get(index).copied());
+        for located in events {
+            book.note_reported(located);
         }
         book
     }
 
-    fn note_reported(&mut self, located: &LocatedEvent, source: Option<EventSource>) {
+    fn note_reported(&mut self, located: &LocatedEvent) {
         let scope = || scope_of(self.tx, located.at);
         match &located.event {
-            DlmmEvent::ClaimFee(claim) => {
-                self.reported_fees.push((
-                    FeeIdentity::of(scope(), claim),
-                    EventForm::First,
-                    source,
-                ));
-            }
-            DlmmEvent::ClaimFee2 { claim, .. } => self.reported_fees.push((
-                FeeIdentity::of(scope(), claim),
-                EventForm::Second,
-                source,
-            )),
-            DlmmEvent::ClaimReward(claim) => self.reported_rewards.push((
-                RewardIdentity::of(scope(), claim),
-                EventForm::First,
-                source,
-            )),
-            DlmmEvent::ClaimReward2 { claim, .. } => self.reported_rewards.push((
-                RewardIdentity::of(scope(), claim),
-                EventForm::Second,
-                source,
-            )),
+            DlmmEvent::ClaimFee(claim) => self
+                .reported_fees
+                .push((FeeIdentity::of(scope(), claim), EventForm::First)),
+            DlmmEvent::ClaimFee2 { claim, .. } => self
+                .reported_fees
+                .push((FeeIdentity::of(scope(), claim), EventForm::Second)),
+            DlmmEvent::ClaimReward(claim) => self
+                .reported_rewards
+                .push((RewardIdentity::of(scope(), claim), EventForm::First)),
+            DlmmEvent::ClaimReward2 { claim, .. } => self
+                .reported_rewards
+                .push((RewardIdentity::of(scope(), claim), EventForm::Second)),
             _ => {}
         }
     }
@@ -197,81 +178,26 @@ impl<'a> ClaimBook<'a> {
         self.count_reward(at, identity, claim, activity);
     }
 
-    /// Whether a report caused this fee harvest to be suppressed.
-    pub(super) fn has_fee_claim_event(&mut self, wanted: FeeIdentity) -> bool {
-        self.fee_report(wanted, None)
-    }
-
-    /// Whether a report caused this reward harvest to be suppressed.
-    pub(super) fn has_reward_claim_event(&mut self, wanted: RewardIdentity) -> bool {
-        self.reward_report(wanted, None)
-    }
-
-    fn has_second_form_fee(&mut self, wanted: FeeIdentity) -> bool {
-        self.fee_report(wanted, Some(EventForm::Second))
-    }
-
-    fn has_second_form_reward(&mut self, wanted: RewardIdentity) -> bool {
-        self.reward_report(wanted, Some(EventForm::Second))
-    }
-
-    fn fee_report(&mut self, wanted: FeeIdentity, form: Option<EventForm>) -> bool {
-        let report = self
-            .reported_fees
+    /// Whether a claim event of either form reports the fee claim `wanted`.
+    pub(super) fn has_fee_claim_event(&self, wanted: FeeIdentity) -> bool {
+        self.reported_fees
             .iter()
-            .find(|&&(identity, reported, _)| {
-                identity == wanted && form.is_none_or(|form| reported == form)
-            })
-            .map(|&(_, _, source)| source);
-        if let Some(representative) = report {
-            if wanted.scope.is_none() && (wanted.x.0 > 0 || wanted.y.0 > 0) {
-                self.note_suppression(wanted.position, ClaimKind::Fee, representative);
-            }
-            true
-        } else {
-            false
-        }
+            .any(|&(identity, _)| identity == wanted)
     }
 
-    fn reward_report(&mut self, wanted: RewardIdentity, form: Option<EventForm>) -> bool {
-        let report = self
-            .reported_rewards
+    /// Whether a claim event of either form reports the reward claim `wanted`.
+    pub(super) fn has_reward_claim_event(&self, wanted: RewardIdentity) -> bool {
+        self.reported_rewards
             .iter()
-            .find(|&&(identity, reported, _)| {
-                identity == wanted && form.is_none_or(|form| reported == form)
-            })
-            .map(|&(_, _, source)| source);
-        if let Some(representative) = report {
-            if wanted.scope.is_none() && wanted.amount.0 > 0 {
-                self.note_suppression(wanted.position, ClaimKind::Reward, representative);
-            }
-            true
-        } else {
-            false
-        }
+            .any(|&(identity, _)| identity == wanted)
     }
 
-    pub(super) fn begin_event(&mut self, source: Option<EventSource>) {
-        self.current = source;
+    fn has_second_form_fee(&self, wanted: FeeIdentity) -> bool {
+        self.reported_fees.contains(&(wanted, EventForm::Second))
     }
 
-    pub(super) fn into_diagnostics(self) -> Vec<ActivityDiagnostic> {
-        self.diagnostics
-    }
-
-    fn note_suppression(
-        &mut self,
-        position: Address,
-        kind: ClaimKind,
-        representative: Option<EventSource>,
-    ) {
-        if let (Some(suppressed), Some(representative)) = (self.current, representative) {
-            self.diagnostics.push(ActivityDiagnostic::new(
-                position,
-                kind,
-                (suppressed, representative),
-            ));
-        }
+    fn has_second_form_reward(&self, wanted: RewardIdentity) -> bool {
+        self.reported_rewards.contains(&(wanted, EventForm::Second))
     }
 
     fn count_fee(
@@ -280,18 +206,10 @@ impl<'a> ClaimBook<'a> {
         movement: PositionMovement,
         activity: &mut TxActivity,
     ) {
-        if let Some(representative) = self
-            .counted_fees
-            .iter()
-            .find(|&&(known, _)| known == identity)
-            .map(|&(_, source)| source)
-        {
-            if identity.scope.is_none() && (identity.x.0 > 0 || identity.y.0 > 0) {
-                self.note_suppression(identity.position, ClaimKind::Fee, representative);
-            }
+        if self.counted_fees.contains(&identity) {
             return;
         }
-        self.counted_fees.push((identity, self.current));
+        self.counted_fees.push(identity);
         activity.movements.push(movement);
     }
 
@@ -302,18 +220,10 @@ impl<'a> ClaimBook<'a> {
         claim: &RewardClaimed,
         activity: &mut TxActivity,
     ) {
-        if let Some(representative) = self
-            .counted_rewards
-            .iter()
-            .find(|&&(known, _)| known == identity)
-            .map(|&(_, source)| source)
-        {
-            if identity.scope.is_none() && identity.amount.0 > 0 {
-                self.note_suppression(identity.position, ClaimKind::Reward, representative);
-            }
+        if self.counted_rewards.contains(&identity) {
             return;
         }
-        self.counted_rewards.push((identity, self.current));
+        self.counted_rewards.push(identity);
         activity.reward_claims.push(RewardClaim {
             at,
             position: claim.position,
