@@ -216,3 +216,33 @@ async fn refuses_to_add_a_wallet_in_demo_mode() {
     assert!(stderr.contains("demo mode tracks no wallet"), "{stderr}");
     assert!(!home.path().join("data").exists());
 }
+
+#[tokio::test]
+async fn plans_a_full_repair_then_asks_for_it_once_stopped() {
+    let home = tempfile::tempdir().unwrap();
+    let variables = valid_variables(home.path(), "127.0.0.1:0");
+    let wallet = "11111111111111111111111111111111";
+    let unknown = "SysvarC1ock11111111111111111111111111111111";
+    let vars = as_pairs(&variables);
+    run(home.path(), &["admin", "wallet-add", wallet], &vars).await;
+
+    let plan = run(home.path(), &["admin", "repair", wallet], &vars).await;
+    let planned_status = run(home.path(), &["admin", "sync-status"], &vars).await;
+    let asked = run(home.path(), &["admin", "repair", wallet, "--apply"], &vars).await;
+    let asked_status = run(home.path(), &["admin", "sync-status"], &vars).await;
+    let refused = run(home.path(), &["admin", "repair", unknown], &vars).await;
+
+    assert_eq!(plan.status.code(), Some(0), "{plan:?}");
+    let shown = stdout(&plan);
+    assert!(shown.contains("lists its 0 signatures again"), "{shown}");
+    assert!(
+        shown.contains("Cost: 1 getSignaturesForAddress requests, 1 credits"),
+        "{shown}"
+    );
+    assert!(shown.contains("Dry run: nothing was changed"), "{shown}");
+    assert!(!stdout(&planned_status).contains("a full repair is due"));
+    assert_eq!(asked.status.code(), Some(0), "{asked:?}");
+    assert!(stdout(&asked).contains("Asked: the repair runs when"));
+    assert!(stdout(&asked_status).contains("  repair: a full repair is due"));
+    assert_eq!(refused.status.code(), Some(64));
+}

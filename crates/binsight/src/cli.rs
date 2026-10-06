@@ -75,4 +75,13 @@ pub enum AdminCommand {
         /// The transaction signature (base58)
         signature: Signature,
     },
+    /// Plan a full repair of a wallet's listing and print its credit cost; --apply asks for it
+    /// (the server must be stopped; it runs when the server starts)
+    Repair {
+        /// The wallet's address (base58)
+        address: Address,
+        /// Ask for the repair instead of only planning it
+        #[arg(long)]
+        apply: bool,
+    },
 }

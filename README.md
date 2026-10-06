@@ -108,7 +108,7 @@ binsight run    # serves http://127.0.0.1:8080 until Ctrl-C or SIGTERM
 ```
 
 `binsight --help` and `binsight admin --help` list the other commands (configuration, database status,
-backup, signing every session out).
+backup, signing every session out, sync status, a wallet's full repair).
 
 ## Exposing it safely
 

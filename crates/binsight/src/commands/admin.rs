@@ -8,10 +8,13 @@
 //! - `wallet-add` tracks a wallet; it writes too, so the same applies, and it creates or upgrades
 //!   the database like `run`;
 //! - `sync-status` shows each wallet's import and the credits spent, and `export-tx` prints a
-//!   stored transaction; both only read, so they work while `run` runs.
+//!   stored transaction; both only read, so they work while `run` runs;
+//! - `repair` plans a full repair of a wallet's listing and prints its cost (a dry run that only
+//!   reads); with `--apply` it asks for it, which writes, so the same lock applies.
 
 mod effective_config;
 mod export_tx;
+mod repair;
 mod sync_status;
 mod wallet_add;
 
@@ -30,6 +33,7 @@ use crate::instance_secrets::rotate_session_secret;
 use crate::output::print_line;
 use effective_config::describe;
 use export_tx::export_tx;
+use repair::{ask_repair, plan_repair};
 use sync_status::show_sync_status;
 use wallet_add::add_wallet;
 
@@ -47,6 +51,14 @@ pub(super) fn execute(config_file: Option<&Path>, command: &AdminCommand) -> Res
         AdminCommand::WalletAdd { address } => block_on(add_wallet(&config, *address)),
         AdminCommand::SyncStatus => block_on(show_sync_status(&config)),
         AdminCommand::ExportTx { signature } => block_on(export_tx(&config, *signature)),
+        AdminCommand::Repair {
+            address,
+            apply: false,
+        } => block_on(plan_repair(&config, *address)),
+        AdminCommand::Repair {
+            address,
+            apply: true,
+        } => block_on(ask_repair(&config, *address)),
     }
 }
 

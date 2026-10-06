@@ -14,6 +14,7 @@ Commands:
   wallet-add       Track a wallet; its history is imported when the server starts (the server must be stopped)
   sync-status      Show how far each wallet is imported and the credits spent (works while the server runs)
   export-tx        Print a stored transaction exactly as the RPC node returned it (works while the server runs)
+  repair           Plan a full repair of a wallet's listing and print its credit cost; --apply asks for it (the server must be stopped; it runs when the server starts)
   help             Print this message or the help of the given subcommand(s)
 
 Options:
