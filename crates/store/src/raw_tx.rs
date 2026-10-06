@@ -21,7 +21,7 @@ use crate::database::Database;
 use crate::database::codec::unsigned_from_sql;
 use crate::error::StoreError;
 use crate::store::Store;
-use compression::{StoredPayload, decompress};
+use compression::decompress_bytes;
 use statements::{COUNT, read_record};
 
 /// One transaction of the registry.
@@ -47,6 +47,19 @@ pub struct RawTxRecord {
     pub payload_sha256: [u8; 32],
     /// When binsight fetched it.
     pub fetched_at: Timestamp,
+}
+
+impl RawTxRecord {
+    /// The node's answer, uncompressed and checked against its hash. This is CPU work without
+    /// I/O: a caller can run it off the async threads.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::PayloadChecksumMismatch`] or [`StoreError::Compression`] if the
+    /// stored payload is damaged.
+    pub fn uncompressed_payload(&self) -> Result<Vec<u8>, StoreError> {
+        decompress_bytes(self.compression, &self.payload, &self.payload_sha256)
+    }
 }
 
 /// Reads and writes the raw transaction registry. Get one with [`Store::raw_tx`].
@@ -100,15 +113,9 @@ impl RawTxRepo {
     pub async fn payload(&self, signature: Signature) -> Result<Option<Vec<u8>>, StoreError> {
         self.database
             .read(move |connection| {
-                let Some(record) = read_record(connection, signature)? else {
-                    return Ok(None);
-                };
-                let stored = StoredPayload {
-                    compression: record.compression,
-                    bytes: record.payload,
-                    sha256: record.payload_sha256,
-                };
-                decompress(&stored).map(Some)
+                read_record(connection, signature)?
+                    .map(|record| record.uncompressed_payload())
+                    .transpose()
             })
             .await
     }

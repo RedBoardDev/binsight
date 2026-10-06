@@ -1,7 +1,15 @@
-//! Decodes the registry at startup and after a fetch commits, without polling or network calls.
+//! Decodes each transaction of the registry once per decoder version, without network calls.
 //!
-//! A signature cursor bounds each traversal; it never orders financial activity. New writes
-//! wake a fresh traversal, so a signature before the previous cursor is not lost.
+//! At startup the decoder scans the whole registry once, which is how a new decoder version
+//! re-decodes everything. After that, each fetch wakes it and it only reads the transactions
+//! inserted since its previous scan ([`RegistryPosition`]), so the work follows what was fetched,
+//! not the size of the registry.
+//!
+//! One transaction can never stop the others: whatever goes wrong with it (an unreadable
+//! payload, a decoder error, even a panic of the decoder) is recorded as a failed result with its
+//! error, and the decoder moves on. Decoding is a pure function of the immutable payload, so a
+//! failed transaction is not tried again at the same decoder version: the next version retries
+//! it. Only a database failure stops a scan; it is retried after a delay from where it stopped.
 
 mod record;
 
@@ -9,35 +17,30 @@ use std::time::Duration;
 
 use binsight_dlmm::{DECODER_NAME, DECODER_VERSION};
 use binsight_solana::Signature;
-use binsight_store::{DecodeScan, StoreError};
+use binsight_store::{DecodeRecord, DecodeScan, RawTxRecord, RegistryPosition, StoreError};
+use jiff::Timestamp;
 use tokio_util::sync::CancellationToken;
-use tracing::error;
+use tracing::{error, warn};
 
 use super::Ingestion;
 
 const DECODE_BATCH_SIZE: u16 = 500;
-const WRITE_RETRY_DELAY: Duration = Duration::from_secs(30);
+const STORE_RETRY_DELAY: Duration = Duration::from_secs(30);
 
-#[derive(Debug, thiserror::Error)]
-enum DecodeRunError {
-    #[error("could not read or write the decoding registry")]
-    Store(#[from] StoreError),
-    #[error("the decoding task stopped unexpectedly")]
-    Task(#[from] tokio::task::JoinError),
-}
-
+/// Decodes the registry until `shutdown` is cancelled.
 pub(super) async fn run_decoder(ingestion: &Ingestion, shutdown: &CancellationToken) {
+    let mut position = RegistryPosition::START;
     loop {
         let result = tokio::select! {
             biased;
             () = shutdown.cancelled() => return,
-            result = drain_registry(ingestion) => result,
+            result = decode_new(ingestion, &mut position) => result,
         };
         if let Err(error) = result {
             error!(%error, "could not decode the transaction registry");
             tokio::select! {
                 () = shutdown.cancelled() => return,
-                () = tokio::time::sleep(WRITE_RETRY_DELAY) => {},
+                () = tokio::time::sleep(STORE_RETRY_DELAY) => {},
             }
             continue;
         }
@@ -48,58 +51,70 @@ pub(super) async fn run_decoder(ingestion: &Ingestion, shutdown: &CancellationTo
     }
 }
 
-async fn drain_registry(ingestion: &Ingestion) -> Result<(), DecodeRunError> {
-    let mut after = None;
+/// Decodes what waits after `position`, batch by batch, and moves `position` past each batch
+/// once it is recorded.
+async fn decode_new(
+    ingestion: &Ingestion,
+    position: &mut RegistryPosition,
+) -> Result<(), StoreError> {
     loop {
-        let signatures = ingestion
+        let backlog = ingestion
             .store
             .decoded()
             .pending(DecodeScan {
                 decoder: DECODER_NAME.to_owned(),
                 decoder_version: DECODER_VERSION,
-                after,
+                after: *position,
                 limit: DECODE_BATCH_SIZE,
             })
             .await?;
-        if signatures.is_empty() {
-            return Ok(());
-        }
-        for signature in signatures {
+        for signature in backlog.signatures {
             decode_one(ingestion, signature).await?;
-            after = Some(signature);
+        }
+        *position = backlog.scanned_to;
+        if !backlog.is_truncated {
+            return Ok(());
         }
     }
 }
 
-async fn decode_one(ingestion: &Ingestion, signature: Signature) -> Result<(), DecodeRunError> {
-    let registry = ingestion.store.raw_tx();
-    let missing = || StoreError::InvalidStoredValue {
-        what: "raw transaction for decoding",
-        value: signature.to_string(),
-    };
-    let raw = registry.get(signature).await?.ok_or_else(missing)?;
-    let decoded_at = ingestion.clock.now();
-    let payload = match registry.payload(signature).await {
-        Ok(payload) => payload.ok_or_else(missing)?,
-        Err(error @ (StoreError::PayloadChecksumMismatch | StoreError::Compression { .. })) => {
-            let record = record::unreadable(signature, decoded_at, error);
-            ingestion
-                .store
-                .decoded()
-                .replace_for_signature(record)
-                .await?;
-            return Ok(());
-        }
-        Err(error) => return Err(error.into()),
-    };
-    let record =
-        tokio::task::spawn_blocking(move || record::decode(&raw, &payload, decoded_at)).await?;
+async fn decode_one(ingestion: &Ingestion, signature: Signature) -> Result<(), StoreError> {
+    let raw = ingestion
+        .store
+        .raw_tx()
+        .get(signature)
+        .await?
+        .ok_or_else(|| StoreError::InvalidStoredValue {
+            what: "raw transaction for decoding",
+            value: signature.to_string(),
+        })?;
+    let record = decode_isolated(raw, ingestion.clock.now(), record::decode_stored).await;
     ingestion
         .store
         .decoded()
         .replace_for_signature(record)
-        .await?;
-    Ok(())
+        .await
+}
+
+/// Decodes `raw` with `decode` on a blocking thread. A panic is caught there and becomes the
+/// failed result of this one transaction.
+async fn decode_isolated(
+    raw: RawTxRecord,
+    decoded_at: Timestamp,
+    decode: fn(&RawTxRecord, Timestamp) -> DecodeRecord,
+) -> DecodeRecord {
+    let signature = raw.signature;
+    match tokio::task::spawn_blocking(move || decode(&raw, decoded_at)).await {
+        Ok(record) => record,
+        Err(stopped) => {
+            warn!(%signature, error = %stopped, "the decoder stopped on a transaction; recorded as failed");
+            record::unreadable(
+                signature,
+                decoded_at,
+                "the decoder stopped on this transaction",
+            )
+        }
+    }
 }
 
 #[cfg(test)]

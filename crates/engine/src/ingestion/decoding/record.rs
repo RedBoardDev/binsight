@@ -11,6 +11,16 @@ use binsight_solana::transaction::{TransactionView, TxEncoding, read};
 use binsight_store::{DecodeOutcome, DecodeRecord, RawTxRecord};
 use jiff::Timestamp;
 
+/// What the decoder concludes about the registry row `raw`, its payload included: a damaged
+/// payload is a failed result like any other.
+pub(super) fn decode_stored(raw: &RawTxRecord, decoded_at: Timestamp) -> DecodeRecord {
+    match raw.uncompressed_payload() {
+        Ok(payload) => decode(raw, &payload, decoded_at),
+        Err(error) => unreadable(raw.signature, decoded_at, error),
+    }
+}
+
+/// What the decoder concludes about `payload`, the node's answer stored as `raw`.
 pub(super) fn decode(raw: &RawTxRecord, payload: &[u8], decoded_at: Timestamp) -> DecodeRecord {
     let mut record = unreadable(raw.signature, decoded_at, "transaction has not been read");
     let transaction = match read(payload) {
@@ -29,6 +39,7 @@ pub(super) fn decode(raw: &RawTxRecord, payload: &[u8], decoded_at: Timestamp) -
     record
 }
 
+/// A failed result for `signature`, whose execution stays unknown.
 pub(super) fn unreadable(
     signature: binsight_solana::Signature,
     decoded_at: Timestamp,

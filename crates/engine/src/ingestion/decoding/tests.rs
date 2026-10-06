@@ -1,4 +1,4 @@
-//! Startup replay and live wake-ups derive results without spending RPC credits.
+//! Startup replay, wake-ups after a fetch and isolated failures, without spending RPC credits.
 
 use super::*;
 use crate::ingestion::SyncPublisher;
@@ -10,7 +10,7 @@ use binsight_solana::{
     Commitment,
     transaction::{TxEncoding, read},
 };
-use binsight_store::{DecodeOutcome, DecodeRecord, FetchedTx, Store};
+use binsight_store::{DecodeOutcome, DecodeRecord, FetchedTx, RawTxRecord, Store};
 use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -35,6 +35,20 @@ fn fetched(name: &str) -> FetchedTx {
     }
 }
 
+fn ingestion_on(setup: &crate::test_support::TemporaryEngine) -> Ingestion {
+    let clock = Arc::new(FixedClock::new(TEST_START));
+    let rpc = scripted_client(setup.transport.clone(), clock.clone(), None);
+    let (_, watch_wallets, _) = WalletStream::new(ScriptedConnector::new(), rpc.clone());
+    let (states, _) = watch::channel(BTreeMap::new());
+    let (events, _) = broadcast::channel(16);
+    Ingestion::new(
+        setup.store.clone(),
+        rpc,
+        clock,
+        (watch_wallets, SyncPublisher { states, events }),
+    )
+}
+
 async fn wait_for_decode(store: &Store, signature: Signature) -> DecodeRecord {
     tokio::time::timeout(Duration::from_secs(3_600), async {
         loop {
@@ -57,17 +71,7 @@ async fn wait_for_decode(store: &Store, signature: Signature) -> DecodeRecord {
 #[tokio::test(start_paused = true)]
 async fn upgrades_old_and_failed_results_offline_and_keeps_current_results_unchanged() {
     let setup = temporary_engine().await;
-    let clock = Arc::new(FixedClock::new(TEST_START));
-    let rpc = scripted_client(setup.transport.clone(), clock.clone(), None);
-    let (_, watch_wallets, _) = WalletStream::new(ScriptedConnector::new(), rpc.clone());
-    let (states, _) = watch::channel(BTreeMap::new());
-    let (events, _) = broadcast::channel(16);
-    let ingestion = Ingestion::new(
-        setup.store.clone(),
-        rpc,
-        clock,
-        (watch_wallets, SyncPublisher { states, events }),
-    );
+    let ingestion = ingestion_on(&setup);
     let raw = fetched("failed-close");
     setup
         .store
@@ -90,13 +94,17 @@ async fn upgrades_old_and_failed_results_offline_and_keeps_current_results_uncha
         })
         .await
         .unwrap();
-    drain_registry(&ingestion).await.unwrap();
+    decode_new(&ingestion, &mut RegistryPosition::default())
+        .await
+        .unwrap();
     let upgraded = wait_for_decode(&setup.store, raw.signature).await;
     assert!(matches!(
         upgraded.execution_outcome,
         Some(binsight_solana::transaction::TxOutcome::Failed { .. })
     ));
-    drain_registry(&ingestion).await.unwrap();
+    decode_new(&ingestion, &mut RegistryPosition::default())
+        .await
+        .unwrap();
     assert_eq!(
         setup
             .store
@@ -114,26 +122,14 @@ async fn upgrades_old_and_failed_results_offline_and_keeps_current_results_uncha
 }
 
 #[tokio::test(start_paused = true)]
-async fn wakes_for_a_new_signature_before_the_previous_cursor_without_polling_or_refetching() {
+async fn decodes_a_transaction_fetched_later_when_woken_without_polling_or_refetching() {
     let setup = temporary_engine().await;
-    let clock = Arc::new(FixedClock::new(TEST_START));
-    let rpc = scripted_client(setup.transport.clone(), clock.clone(), None);
-    let (_, watch_wallets, _) = WalletStream::new(ScriptedConnector::new(), rpc.clone());
-    let (states, _) = watch::channel(BTreeMap::new());
-    let (events, _) = broadcast::channel(16);
-    let ingestion = Ingestion::new(
-        setup.store.clone(),
-        rpc,
-        clock,
-        (watch_wallets, SyncPublisher { states, events }),
-    );
-    let mut raws = [fetched("failed-close"), fetched("legacy-sol-transfer")];
-    raws.sort_by_key(|raw| raw.signature.to_string());
-    let [earlier, later] = raws;
+    let ingestion = ingestion_on(&setup);
+    let [first, later] = [fetched("legacy-sol-transfer"), fetched("failed-close")];
     setup
         .store
         .fetch_queue()
-        .complete(later.clone())
+        .complete(first.clone())
         .await
         .unwrap();
     let shutdown = CancellationToken::new();
@@ -142,15 +138,15 @@ async fn wakes_for_a_new_signature_before_the_previous_cursor_without_polling_or
         let shutdown = shutdown.clone();
         async move { run_decoder(&ingestion, &shutdown).await }
     });
-    wait_for_decode(&setup.store, later.signature).await;
+    wait_for_decode(&setup.store, first.signature).await;
     setup
         .store
         .fetch_queue()
-        .complete(earlier.clone())
+        .complete(later.clone())
         .await
         .unwrap();
     ingestion.new_raw.notify_one();
-    wait_for_decode(&setup.store, earlier.signature).await;
+    wait_for_decode(&setup.store, later.signature).await;
     assert_eq!(setup.transport.calls(), Vec::new());
     shutdown.cancel();
     worker.await.unwrap();
@@ -186,17 +182,7 @@ async fn startup_replay_survives_a_restart_without_refetching_or_replacing_curre
 #[tokio::test(start_paused = true)]
 async fn records_a_damaged_payload_as_unknown_execution_and_continues_the_registry_scan() {
     let setup = temporary_engine().await;
-    let clock = Arc::new(FixedClock::new(TEST_START));
-    let rpc = scripted_client(setup.transport.clone(), clock.clone(), None);
-    let (_, watch_wallets, _) = WalletStream::new(ScriptedConnector::new(), rpc.clone());
-    let (states, _) = watch::channel(BTreeMap::new());
-    let (events, _) = broadcast::channel(16);
-    let ingestion = Ingestion::new(
-        setup.store.clone(),
-        rpc,
-        clock,
-        (watch_wallets, SyncPublisher { states, events }),
-    );
+    let ingestion = ingestion_on(&setup);
     let valid = fetched("failed-close");
     let damaged = binsight_store::RawTxRecord {
         signature: Signature::from_bytes([0; 64]),
@@ -222,7 +208,9 @@ async fn records_a_damaged_payload_as_unknown_execution_and_continues_the_regist
         .complete(valid.clone())
         .await
         .unwrap();
-    drain_registry(&ingestion).await.unwrap();
+    decode_new(&ingestion, &mut RegistryPosition::default())
+        .await
+        .unwrap();
     let rejected = wait_for_decode(&setup.store, damaged.signature).await;
     assert_eq!(rejected.execution_outcome, None);
     assert!(matches!(rejected.outcome, DecodeOutcome::Failed { .. }));
@@ -237,4 +225,34 @@ async fn records_a_damaged_payload_as_unknown_execution_and_continues_the_regist
         Err(StoreError::PayloadChecksumMismatch)
     ));
     assert_eq!(setup.transport.calls(), Vec::new());
+}
+
+fn panicking_decoder(_raw: &RawTxRecord, _decoded_at: Timestamp) -> DecodeRecord {
+    panic!("a payload the decoder cannot handle")
+}
+
+#[tokio::test]
+async fn records_a_decoder_panic_as_the_failed_result_of_that_transaction_only() {
+    let setup = temporary_engine().await;
+    let raw = fetched("failed-close");
+    setup
+        .store
+        .fetch_queue()
+        .complete(raw.clone())
+        .await
+        .unwrap();
+    let stored = setup
+        .store
+        .raw_tx()
+        .get(raw.signature)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let record = decode_isolated(stored, TEST_START, panicking_decoder).await;
+
+    assert_eq!(record.signature, raw.signature);
+    assert_eq!(record.decoder_version, DECODER_VERSION);
+    assert_eq!(record.execution_outcome, None);
+    assert!(matches!(record.outcome, DecodeOutcome::Failed { .. }));
 }

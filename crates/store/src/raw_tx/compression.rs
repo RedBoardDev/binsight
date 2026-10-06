@@ -35,14 +35,20 @@ pub(crate) fn compress(payload: &[u8]) -> Result<StoredPayload, StoreError> {
     })
 }
 
-/// The uncompressed payload, once its hash is checked.
-pub(crate) fn decompress(stored: &StoredPayload) -> Result<Vec<u8>, StoreError> {
-    let payload = match stored.compression {
-        PayloadCompression::None => stored.bytes.clone(),
-        PayloadCompression::Zstd => zstd::stream::decode_all(stored.bytes.as_slice())
-            .map_err(|source| StoreError::Compression { source })?,
+/// The uncompressed form of `bytes`, compressed as `compression`, once its hash is checked
+/// against `expected_sha256`.
+pub(crate) fn decompress_bytes(
+    compression: PayloadCompression,
+    bytes: &[u8],
+    expected_sha256: &[u8; 32],
+) -> Result<Vec<u8>, StoreError> {
+    let payload = match compression {
+        PayloadCompression::None => bytes.to_vec(),
+        PayloadCompression::Zstd => {
+            zstd::stream::decode_all(bytes).map_err(|source| StoreError::Compression { source })?
+        }
     };
-    if sha256(&payload) != stored.sha256 {
+    if sha256(&payload) != *expected_sha256 {
         return Err(StoreError::PayloadChecksumMismatch);
     }
     Ok(payload)
@@ -65,7 +71,10 @@ mod tests {
 
         assert_eq!(stored.compression, PayloadCompression::Zstd);
         assert!(stored.bytes.len() < payload.len());
-        assert_eq!(decompress(&stored).unwrap(), payload);
+        assert_eq!(
+            decompress_bytes(stored.compression, &stored.bytes, &stored.sha256).unwrap(),
+            payload
+        );
     }
 
     #[test]
@@ -74,7 +83,7 @@ mod tests {
         stored.sha256 = sha256(&stored.bytes);
 
         assert!(matches!(
-            decompress(&stored),
+            decompress_bytes(stored.compression, &stored.bytes, &stored.sha256),
             Err(StoreError::PayloadChecksumMismatch)
         ));
     }
@@ -87,6 +96,9 @@ mod tests {
             sha256: sha256(b"{}"),
         };
 
-        assert_eq!(decompress(&stored).unwrap(), b"{}");
+        assert_eq!(
+            decompress_bytes(stored.compression, &stored.bytes, &stored.sha256).unwrap(),
+            b"{}"
+        );
     }
 }

@@ -23,7 +23,7 @@ use jiff::Timestamp;
 use crate::database::Database;
 use crate::error::StoreError;
 use crate::store::Store;
-pub use pending::DecodeScan;
+pub use pending::{DecodeBacklog, DecodeScan, RegistryPosition};
 use statements::replace_record;
 
 /// What a decoder concluded about a transaction.
