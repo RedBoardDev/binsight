@@ -503,6 +503,8 @@ export interface components {
         ClosedPositionDetail: components["schemas"]["ClosedPositionRow"] & {
             /** @description Its price chart. */
             chart: components["schemas"]["PositionChart"];
+            /** @description Its chosen PnL in the pool’s native quote, before currency conversion. */
+            native_pnl: components["schemas"]["Figure"];
         };
         /** @description A page of History. */
         ClosedPositionPage: {
@@ -936,6 +938,8 @@ export interface components {
             chart: components["schemas"]["PositionChart"];
             /** @description How fresh its figures are. */
             freshness: components["schemas"]["Freshness"];
+            /** @description Its chosen PnL in the pool’s native quote, before currency conversion. */
+            native_pnl: components["schemas"]["Figure"];
         };
         /** @description One open position. */
         OpenPositionRow: {

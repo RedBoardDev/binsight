@@ -135,6 +135,13 @@ expression: "detail(&app, id).await"
   },
   "market_pnl": null,
   "method": "pool",
+  "native_pnl": {
+    "exactness": "complete",
+    "value": {
+      "amount": "0",
+      "unit": "sol"
+    }
+  },
   "opened_at": "2026-09-17T06:50:30Z",
   "outcome": "flat",
   "pnl": {

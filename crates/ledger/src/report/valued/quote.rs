@@ -9,7 +9,11 @@ use binsight_dlmm::math::{
     BinMathError, Q64DivisionError, Q64x64, div_raw_q64, inverse_unit_price, mul_shr_64, unit_price,
 };
 
-use crate::facts::{FlowValuation, PhysicalSide, QuoteConvention};
+use crate::facts::{
+    FlowValuation, PhysicalSide, PoolFacts, QuoteAsset, QuoteConvention, QuoteUnits,
+};
+use crate::report::figure::{Figure, Reason};
+use crate::report::valued::{Money, MoneyUnit};
 
 /// A known amount in the selected quote token, with the source's pricing coverage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,4 +101,23 @@ impl QuoteConvention {
             valuation: FlowValuation::Complete,
         })
     }
+}
+
+/// Keeps a position's selected raw token units and source quality, without an FX conversion.
+/// An unsupported quote remains unavailable even for a zero amount.
+pub fn native_money(figure: Figure<QuoteUnits>, pool: &PoolFacts) -> Figure<Money> {
+    let Some(asset) = pool.quote_asset() else {
+        let mut reasons = figure.reasons();
+        reasons.insert(Reason::UnsupportedQuote { pool: pool.address });
+        return Figure::Unavailable { reasons };
+    };
+    let unit = match asset {
+        QuoteAsset::Sol => MoneyUnit::Sol,
+        QuoteAsset::Usdc => MoneyUnit::Usdc,
+        QuoteAsset::Usdt => MoneyUnit::Usdt,
+    };
+    figure.map(|amount| Money {
+        raw: amount.0,
+        unit,
+    })
 }

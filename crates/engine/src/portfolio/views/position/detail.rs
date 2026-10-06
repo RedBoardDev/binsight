@@ -1,5 +1,8 @@
 //! One position as the drawer shows it: the same row as in its list, and its price chart.
 
+use binsight_ledger::report::figure::Figure;
+use binsight_ledger::report::valued::Money;
+
 use super::chart::ChartView;
 use super::open::OpenPositionRow;
 use crate::portfolio::views::{ClosedPositionRow, Freshness};
@@ -9,6 +12,8 @@ use crate::portfolio::views::{ClosedPositionRow, Freshness};
 pub struct PositionDetailView {
     /// The position and its figures.
     pub position: PositionState,
+    /// Its chosen PnL in the pool’s native quote, before currency conversion.
+    pub native_pnl: Figure<Money>,
     /// Its price chart: the window, the range band and the movements.
     pub chart: ChartView,
 }

@@ -18,7 +18,7 @@ pub use native::open_pnl;
 use native::{native_fees, native_sum};
 
 use super::figure::{Figure, Reason, Reasons};
-use super::valued::{Valued, value_quote};
+use super::valued::{Money, Valued, quote::native_money, value_quote};
 use crate::facts::{
     OpenPositionFacts, PhysicalSide, PoolFacts, QuoteConvention, QuoteUnits, SolUsdRates,
     WalletFacts,
@@ -67,6 +67,8 @@ pub struct OpenValuation {
     pub fees: Figure<Valued>,
     /// withdrawn + claimed fees + rewards + value + unclaimed fees − invested.
     pub pnl: Figure<Valued>,
+    /// The same PnL in its selected pool token, before currency conversion.
+    pub native_pnl: Figure<Money>,
     /// Where the active bin stands against the range.
     pub range: RangeStatus,
     /// What the position holds.
@@ -93,7 +95,8 @@ impl OpenValuation {
             .degraded(Exactness::Partial, reasons.clone());
         self.rewards = self.rewards.degraded(Exactness::Partial, reasons.clone());
         self.fees = self.fees.degraded(Exactness::Partial, reasons.clone());
-        self.pnl = self.pnl.degraded(Exactness::Estimated, reasons);
+        self.pnl = self.pnl.degraded(Exactness::Estimated, reasons.clone());
+        self.native_pnl = self.native_pnl.degraded(Exactness::Estimated, reasons);
         self
     }
 
@@ -139,6 +142,7 @@ impl OpenValuation {
                 }]),
             );
         }
+        let pnl = open_pnl(position)?;
         Ok(Self {
             invested: flow(position.invested)?,
             withdrawn: flow(position.withdrawn)?,
@@ -148,7 +152,8 @@ impl OpenValuation {
             value: value_current(position.value.clone(), pool, rates)?,
             unclaimed_fees: value_current(position.unclaimed_fees.clone(), pool, rates)?,
             fees: value_current(native_fees(position)?, pool, rates)?,
-            pnl: value_current(open_pnl(position)?, pool, rates)?,
+            pnl: value_current(pnl.clone(), pool, rates)?,
+            native_pnl: native_money(pnl, pool),
             range: range_status(position, pool),
             composition: composition(position, pool),
         })

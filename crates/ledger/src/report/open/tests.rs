@@ -24,6 +24,10 @@ fn does_not_call_pnl_a_lower_bound_when_an_old_deposit_is_missing() {
         unclaimed_fees: value(0),
         fees: value(0),
         pnl: value(80),
+        native_pnl: Figure::Complete(Money {
+            raw: 80,
+            unit: super::super::valued::MoneyUnit::Sol,
+        }),
         range: RangeStatus::InRange,
         composition: Composition::Mixed,
     };

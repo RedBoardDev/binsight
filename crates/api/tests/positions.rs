@@ -43,6 +43,7 @@ async fn opens_every_listed_position_by_its_id_with_the_same_figures() {
         let object = position.as_object_mut().unwrap();
         let status = object.remove("status").unwrap();
         object.remove("chart").unwrap();
+        object.remove("native_pnl").unwrap();
         object.remove("freshness");
 
         let expected = if row.get("closed_at").is_some() {

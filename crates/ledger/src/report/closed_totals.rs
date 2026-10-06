@@ -183,6 +183,10 @@ mod tests {
             lp_pnl: sol(pnl),
             market_pnl: None,
             pnl: sol(pnl),
+            native_pnl: Figure::Complete(super::super::valued::Money {
+                raw: pnl,
+                unit: super::super::valued::MoneyUnit::Sol,
+            }),
             outcome: Some(Outcome::of(crate::facts::QuoteUnits(pnl))),
             held_seconds,
             is_shell: false,

@@ -12,7 +12,7 @@ use binsight_core::exactness::Exactness;
 use jiff::Timestamp;
 
 use super::figure::{Figure, Reason, Reasons};
-use super::valued::{Valued, value_quote_at};
+use super::valued::{Money, Valued, quote::native_money, value_quote_at};
 use crate::facts::{
     ClosedPositionFacts, PnlMethod, PoolFacts, QuoteConvention, QuoteUnits, SolUsdRates,
 };
@@ -46,6 +46,8 @@ pub struct ClosedValuation {
     pub market_pnl: Option<Figure<Valued>>,
     /// The PnL of the position: the market PnL when known, otherwise the liquidity PnL.
     pub pnl: Figure<Valued>,
+    /// The same chosen PnL in its selected pool token, before currency conversion.
+    pub native_pnl: Figure<Money>,
     /// Its proved native PnL sign; `None` when unpriced movements or rewards prevent proving it.
     pub outcome: Option<Outcome>,
     /// How long it was held, in seconds.
@@ -71,27 +73,14 @@ impl ClosedValuation {
             PnlMethod::Pool => lp_pnl,
         };
         let value = |amount: QuoteUnits| value_leaf(amount, position, pool, rates);
-        let signed = |amount| {
-            let figure = value(amount)?;
-            let missing = if position.unpriced_movements > 0 || position.unpriced_rebalances > 0 {
-                Exactness::Estimated
-            } else {
-                Exactness::Partial
+        let signed = |figure: Figure<QuoteUnits>| -> Result<Figure<Valued>, AmountError> {
+            let (amount, exactness, reasons) = figure.into_parts();
+            let Some(amount) = amount else {
+                return Ok(Figure::Unavailable { reasons });
             };
-            if position.unpriced_movements == 0
-                && position.unpriced_rebalances == 0
-                && position.unpriced_rewards == 0
-            {
-                Ok(figure)
-            } else {
-                Ok(figure.degraded(
-                    missing,
-                    Reasons::from([Reason::UnpricedLeg {
-                        position: position.id,
-                    }]),
-                ))
-            }
+            Ok(value_known(amount, position, pool, rates)?.degraded(exactness, reasons))
         };
+        let pnl = native_signed(native_pnl, position);
         let flow = |amount| {
             let figure = value(amount)?;
             if position.unpriced_rebalances == 0 {
@@ -115,7 +104,7 @@ impl ClosedValuation {
             );
         }
         let market_pnl = match position.method {
-            PnlMethod::Fifo { market_pnl } => Some(signed(market_pnl)?),
+            PnlMethod::Fifo { market_pnl } => Some(signed(native_signed(market_pnl, position))?),
             PnlMethod::Pool => None,
         };
         Ok(Self {
@@ -123,8 +112,9 @@ impl ClosedValuation {
             withdrawn: flow(position.withdrawn)?,
             claimed_fees: value(position.claimed_fees)?,
             rewards,
-            pnl: signed(native_pnl)?,
-            lp_pnl: signed(lp_pnl)?,
+            pnl: signed(pnl.clone())?,
+            native_pnl: native_money(pnl, pool),
+            lp_pnl: signed(native_signed(lp_pnl, position))?,
             market_pnl,
             outcome: proven_outcome(position, native_pnl),
             held_seconds: held_seconds(position.opened_at, position.closed_at),
@@ -221,4 +211,26 @@ fn proven_outcome(position: &ClosedPositionFacts, native_pnl: QuoteUnits) -> Opt
         return None;
     }
     Some(Outcome::of(native_pnl))
+}
+
+/// The signed source quality shared by native PnL and its eventual FX conversion.
+fn native_signed(amount: QuoteUnits, position: &ClosedPositionFacts) -> Figure<QuoteUnits> {
+    if position.unpriced_movements == 0
+        && position.unpriced_rebalances == 0
+        && position.unpriced_rewards == 0
+    {
+        return Figure::Complete(amount);
+    }
+    let exactness = if position.unpriced_movements > 0 || position.unpriced_rebalances > 0 {
+        Exactness::Estimated
+    } else {
+        Exactness::Partial
+    };
+    Figure::from_parts(
+        amount,
+        exactness,
+        Reasons::from([Reason::UnpricedLeg {
+            position: position.id,
+        }]),
+    )
 }

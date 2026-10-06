@@ -37,6 +37,10 @@ pub fn position(
         .position(request.id)
         .ok_or(ReadError::PositionNotFound(request.id))?;
     let pool = snapshot.pool(found.pool()).ok_or(ReadError::MissingFact)?;
+    let native_pnl = match found {
+        PositionRow::Open(row) => row.valuation.native_pnl.clone(),
+        PositionRow::Closed(row) => row.valuation.native_pnl.clone(),
+    };
     let state = match found {
         PositionRow::Open(row) => {
             let wallet = Scope::Wallet(row.facts.wallet);
@@ -52,6 +56,10 @@ pub fn position(
     };
     Ok(PositionDetailView {
         position: state,
+        native_pnl,
         chart: chart(snapshot, found, pool, context.now),
     })
 }
+
+#[cfg(test)]
+mod tests;

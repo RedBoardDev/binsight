@@ -12,7 +12,9 @@ use utoipa::ToSchema;
 use super::chart::PositionChart;
 use super::position_id::parse_position_id;
 use crate::app::AppState;
-use crate::contract::{ApiQuery, ClosedPositionRow, CurrencyQuery, Freshness, OpenPositionRow};
+use crate::contract::{
+    ApiQuery, ClosedPositionRow, CurrencyQuery, Figure, Freshness, OpenPositionRow,
+};
 use crate::error::{ApiError, ErrorBody};
 
 /// A position, tagged by `status`.
@@ -33,6 +35,8 @@ pub(crate) struct OpenPositionDetail {
     pub(crate) position: OpenPositionRow,
     /// How fresh its figures are.
     pub(crate) freshness: Freshness,
+    /// Its chosen PnL in the pool’s native quote, before currency conversion.
+    pub(crate) native_pnl: Figure,
     /// Its price chart.
     pub(crate) chart: PositionChart,
 }
@@ -43,6 +47,8 @@ pub(crate) struct ClosedPositionDetail {
     /// The same figures as in History.
     #[serde(flatten)]
     pub(crate) position: ClosedPositionRow,
+    /// Its chosen PnL in the pool’s native quote, before currency conversion.
+    pub(crate) native_pnl: Figure,
     /// Its price chart.
     pub(crate) chart: PositionChart,
 }
@@ -50,16 +56,19 @@ pub(crate) struct ClosedPositionDetail {
 impl From<views::PositionDetailView> for PositionDetail {
     fn from(view: views::PositionDetailView) -> Self {
         let chart = PositionChart::from(&view.chart);
+        let native_pnl = Figure::from(&view.native_pnl);
         match view.position {
             views::PositionState::Open { row, freshness } => {
                 Self::Open(Box::new(OpenPositionDetail {
                     position: row.as_ref().into(),
                     freshness: freshness.into(),
+                    native_pnl,
                     chart,
                 }))
             }
             views::PositionState::Closed(row) => Self::Closed(Box::new(ClosedPositionDetail {
                 position: row.as_ref().into(),
+                native_pnl,
                 chart,
             })),
         }

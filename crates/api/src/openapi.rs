@@ -17,7 +17,7 @@ use crate::error::{ErrorBody, ErrorCode, ErrorDetail};
 
 /// The version of the API contract. A compatible addition bumps the minor version; a breaking
 /// change gets a new `/api/v2` instead.
-pub const API_CONTRACT_VERSION: &str = "1.6.0";
+pub const API_CONTRACT_VERSION: &str = "1.7.0";
 
 /// The parts of the contract that are not routes: metadata and shared schemas.
 #[derive(OpenApi)]

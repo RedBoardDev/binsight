@@ -218,3 +218,70 @@ fn requires_shared_external_links_on_position_and_wallet_references() {
         }
     }
 }
+
+#[test]
+fn requires_native_pnl_only_in_position_details_without_changing_the_read_operation() {
+    let spec: serde_json::Value =
+        serde_json::from_str(&binsight_api::openapi::spec_json()).unwrap();
+    assert_eq!(spec.pointer("/info/version").unwrap(), "1.7.0");
+    for name in ["OpenPositionDetail", "ClosedPositionDetail"] {
+        let schema = spec
+            .pointer(&format!("/components/schemas/{name}"))
+            .unwrap();
+        let object = schema
+            .get("allOf")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|part| part.pointer("/properties/native_pnl").is_some())
+            .unwrap();
+        assert!(
+            object
+                .get("required")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|field| field == "native_pnl")
+        );
+        assert_eq!(
+            object.pointer("/properties/native_pnl/$ref").unwrap(),
+            "#/components/schemas/Figure"
+        );
+    }
+    for name in [
+        "OpenPositionRow",
+        "ClosedPositionRow",
+        "OpenTotals",
+        "ClosedTotals",
+    ] {
+        let schema = spec
+            .pointer(&format!("/components/schemas/{name}"))
+            .unwrap();
+        assert!(schema.pointer("/properties/native_pnl").is_none());
+    }
+    let operation = spec
+        .get("paths")
+        .unwrap()
+        .get("/api/v1/positions/{position_id}")
+        .unwrap()
+        .get("get")
+        .unwrap();
+    assert_eq!(operation.get("operationId").unwrap(), "getPosition");
+    assert_eq!(
+        spec.get("paths")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .values()
+            .map(|path| path
+                .as_object()
+                .unwrap()
+                .values()
+                .filter(|operation| operation.get("operationId").is_some())
+                .count())
+            .sum::<usize>(),
+        20
+    );
+}
