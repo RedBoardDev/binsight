@@ -1,10 +1,13 @@
 //! Charge only the payer and keep inclusion tips separate from transaction fees.
+//!
+//! A tip is a SOL transfer from the wallet to the tip account of a landing service
+//! ([`crate::counterparties::landing_service`]), whoever pays the fee.
 use super::instructions::{Decoded, native_transfer};
 use super::worksheet::Worksheet;
 use super::{Asset, BookError, EntryKind};
+use crate::counterparties::landing_service;
 use binsight_solana::Address;
 use binsight_solana::transaction::TransactionView;
-use binsight_solana::well_known::JITO_TIP_ACCOUNTS;
 
 pub(super) fn failed(
     wallet: Address,
@@ -48,12 +51,12 @@ pub(super) fn successful(
     for (_, instruction) in decoded {
         if let Some((from, to, amount)) = native_transfer(instruction)
             && from == wallet
-            && JITO_TIP_ACCOUNTS.contains(&to)
+            && let Some(service) = landing_service(to)
         {
             sheet.book(
                 Asset::Sol,
                 amount.checked_neg().ok_or(BookError::Overflow)?,
-                EntryKind::Tip,
+                EntryKind::Tip { service },
             )?;
         }
     }

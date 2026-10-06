@@ -11,6 +11,7 @@ use std::fmt;
 use binsight_solana::{Address, transaction::InstructionPosition};
 
 use super::residue::BridgeId;
+use crate::counterparties::LandingService;
 
 /// One part of a wallet's change in one asset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,8 +110,11 @@ pub enum EntryKind {
     NetworkFee,
     /// The priority part of the fee the wallet paid.
     PriorityFee,
-    /// A tip the wallet paid to a block builder to be included.
-    Tip,
+    /// A tip the wallet paid to a transaction-landing service to be included.
+    Tip {
+        /// The service the tip account belongs to.
+        service: LandingService,
+    },
     /// The whole fee of a failed transaction the wallet paid.
     FailedTxFee,
     /// Tokens withheld by a Token-2022 transfer fee on a position transfer or direct receipt.

@@ -6,10 +6,14 @@ use binsight_ledger::book::{
     Asset, BookError, Counterparty, EntryKind, LedgerEntry, WalletContext, book_transaction,
     invariant,
 };
+use binsight_ledger::counterparties::LandingService;
 use binsight_solana::transaction::TxOutcome;
-use binsight_solana::well_known::{JITO_TIP_ACCOUNTS, TOKEN_PROGRAM, WSOL_MINT};
+use binsight_solana::well_known::{TOKEN_PROGRAM, WSOL_MINT};
 use common::*;
 use proptest::prelude::*;
+
+/// The first of Jito's tip accounts.
+const JITO_TIP_ACCOUNT: &str = "96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5";
 
 #[expect(
     clippy::unwrap_used,
@@ -166,15 +170,20 @@ fn books_a_jito_tip_as_a_tip_even_inside_a_protocol_transaction() {
     let mut tx = transaction(100_000, 85_000);
     tx.instructions
         .push(instruction(address(22), vec![], vec![1]));
-    tx.instructions
-        .push(transfer(address(1), JITO_TIP_ACCOUNTS[0], 10_000));
+    tx.instructions.push(transfer(
+        address(1),
+        JITO_TIP_ACCOUNT.parse().unwrap(),
+        10_000,
+    ));
     assert_eq!(
         book(&tx)[1],
         LedgerEntry {
             source: None,
             asset: Asset::Sol,
             amount: -10_000,
-            kind: EntryKind::Tip
+            kind: EntryKind::Tip {
+                service: LandingService::Jito
+            }
         }
     );
     assert_eq!(book(&tx).len(), 2);

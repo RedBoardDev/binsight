@@ -3,6 +3,7 @@ use super::{account_owner, capital, is_wallet_signer, native_funding};
 use crate::book::instructions::{Decoded, received_fee, transfers};
 use crate::book::worksheet::Worksheet;
 use crate::book::{Asset, BookError, Counterparty, EntryKind, WalletContext};
+use crate::counterparties::landing_service;
 use binsight_solana::{
     Address,
     programs::{ProgramInstruction, TokenInstruction},
@@ -43,7 +44,7 @@ pub(super) fn book(
                 || own_accounts.contains(&to)
                 || wallet.positions.contains(&from)
                 || wallet.positions.contains(&to)
-                || binsight_solana::well_known::JITO_TIP_ACCOUNTS.contains(&to)
+                || landing_service(to).is_some()
             {
                 continue;
             }

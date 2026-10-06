@@ -3,6 +3,7 @@
 use binsight_dlmm::activity::TxActivity;
 use binsight_dlmm::{decode_events, position_activity};
 use binsight_ledger::book::{Asset, EntryKind, WalletContext, book_transaction, invariant};
+use binsight_ledger::counterparties::LandingService;
 use binsight_solana::transaction::{TransactionView, read};
 
 #[expect(
@@ -154,11 +155,11 @@ fn a_public_owned_close_keeps_token_2022_tax_separate_from_claims() {
             .iter()
             .any(|entry| entry.amount == -338_481 && entry.kind == EntryKind::TransferFee)
     );
-    assert!(
-        entries
-            .iter()
-            .any(|entry| entry.amount == -5_355 && entry.kind == EntryKind::Tip)
-    );
+    assert!(entries.iter().any(|entry| entry.amount == -5_355
+        && entry.kind
+            == EntryKind::Tip {
+                service: LandingService::Jito
+            }));
     assert!(entries.iter().all(|entry| !matches!(
         entry.kind,
         EntryKind::ProtocolActivity { .. } | EntryKind::SwapIn | EntryKind::SwapOut

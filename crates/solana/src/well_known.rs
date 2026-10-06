@@ -1,5 +1,5 @@
 //! The addresses of the Solana programs binsight reads instructions of, and of the few accounts
-//! whose role is fixed (the wrapped SOL and canonical stable mints, the Jito tip accounts).
+//! whose role is fixed (the wrapped SOL and canonical stable mints).
 //!
 //! Each address is written as its 32 bytes, so it is a constant, and a test checks it against its
 //! base58 form. Mint identities establish no decimals, token program or valuation. Program
@@ -93,43 +93,6 @@ pub const USDT_MINT: Address = Address::from_bytes([
     210, 199, 2, 158, 178, 206, 30, 32, 130, 100,
 ]);
 
-/// The eight accounts Jito's block engine collects tips on: a transfer to one of them is a tip,
-/// paid to have the transaction included.
-pub const JITO_TIP_ACCOUNTS: [Address; 8] = [
-    Address::from_bytes([
-        120, 82, 28, 177, 121, 206, 187, 133, 137, 181, 86, 162, 213, 236, 148, 210, 73, 134, 130,
-        253, 249, 187, 42, 245, 173, 100, 228, 145, 204, 65, 83, 218,
-    ]),
-    Address::from_bytes([
-        241, 135, 236, 135, 209, 247, 69, 203, 58, 3, 56, 74, 38, 166, 158, 218, 12, 162, 209, 170,
-        15, 65, 228, 36, 22, 55, 126, 145, 255, 91, 93, 49,
-    ]),
-    Address::from_bytes([
-        177, 78, 13, 229, 94, 159, 186, 134, 57, 110, 191, 213, 72, 207, 248, 201, 32, 17, 234,
-        199, 183, 91, 170, 155, 45, 156, 106, 134, 245, 161, 113, 65,
-    ]),
-    Address::from_bytes([
-        136, 241, 255, 163, 162, 223, 230, 23, 189, 196, 227, 87, 50, 81, 163, 34, 227, 252, 174,
-        129, 229, 164, 87, 57, 14, 100, 117, 28, 0, 164, 101, 226,
-    ]),
-    Address::from_bytes([
-        188, 43, 87, 6, 94, 241, 221, 102, 84, 48, 190, 96, 107, 166, 89, 108, 2, 149, 48, 27, 173,
-        239, 139, 90, 252, 65, 1, 65, 80, 244, 18, 116,
-    ]),
-    Address::from_bytes([
-        137, 7, 125, 85, 165, 187, 19, 48, 118, 62, 183, 103, 245, 94, 192, 119, 180, 26, 13, 7,
-        95, 125, 225, 215, 63, 186, 202, 60, 99, 213, 84, 113,
-    ]),
-    Address::from_bytes([
-        191, 151, 27, 89, 16, 139, 91, 133, 160, 79, 176, 147, 241, 226, 27, 78, 63, 212, 196, 200,
-        244, 135, 221, 9, 185, 87, 82, 118, 159, 13, 216, 195,
-    ]),
-    Address::from_bytes([
-        32, 38, 16, 30, 194, 3, 40, 150, 74, 50, 171, 171, 19, 108, 84, 5, 185, 31, 58, 227, 142,
-        228, 246, 76, 182, 189, 232, 121, 184, 104, 56, 210,
-    ]),
-];
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,17 +155,5 @@ mod tests {
             USDT_MINT.to_string(),
             "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
         );
-        let tips = [
-            "96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5",
-            "HFqU5x63VTqvQss8hp11i4wVV8bD44PvwucfZ2bU7gRe",
-            "Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY",
-            "ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49",
-            "DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh",
-            "ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt",
-            "DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL",
-            "3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT",
-        ];
-        let written: Vec<String> = JITO_TIP_ACCOUNTS.iter().map(ToString::to_string).collect();
-        assert_eq!(written, tips);
     }
 }
