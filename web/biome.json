@@ -125,7 +125,7 @@
       }
     },
     {
-      "includes": ["*.config.ts"],
+      "includes": ["*.config.ts", "e2e/**/*.setup.ts"],
       "linter": {
         "rules": {
           "style": {

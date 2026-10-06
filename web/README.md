@@ -88,6 +88,26 @@ artifact. The harness is served by the dev server only: the production build nev
 The shots are for review, not pixel baselines, while the screens are being built: a baseline of a
 screen that changes every day only tests that it changed.
 
+## Parity with the mockup
+
+`just parity <screen>` (for example `just parity overview`) builds the web app and the debug binary,
+starts the binary in demo mode with its clock frozen (`BINSIGHT_DEMO_NOW`, the instant in
+`e2e/parity/parityScenarios.ts`) once per demo world (`BINSIGHT_DEMO_WORLD`: the `nominal` one, and the
+`showcase` for states such as catching up), each on a free port and a data folder of its own, and
+captures each state of the screen on a desktop (1440 × 900) and a phone (390 × 844), dark and light. It
+captures the mockup the same way and writes one sheet per shot, the mockup on the left and the app on the
+right, into `PARITY_OUT_DIR` (default `test-results/parity/<screen>/`; an absolute path is safest).
+
+A shot waits for the state's `ready` locators (the positive sign that its data is drawn), then for no
+placeholder and no running animation, never for a fixed pause: two runs give the same shots.
+
+The mockup is not part of the repository: `PARITY_MOCKUP_DIR` names its folder, whose `parity.json`
+gives the folder of its build (`root`), a query string for every page, the `localStorage` entries to set
+(`{theme}` is replaced by `dark` or `light`) and, per screen and state, the path, the `ready` locators, its
+own `localStorage` entries if any, and the steps that show that state. A screen joins the gate by adding
+its states to `APP_SCREENS`, under the same names. Nothing fails on a difference: the sheets are reviewed
+by a person before a screen is merged.
+
 ## Translations
 
 The interface is in English, French and German (Lingui). The English text is the message key. After adding or

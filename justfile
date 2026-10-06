@@ -140,6 +140,14 @@ web-check: web-lint web-typecheck web-test web-i18n-check web-openapi-check web-
 web-visual:
     {{ web }} visual
 
+# The mockup is local: PARITY_MOCKUP_DIR names its folder, whose parity.json says how to show each
+# state there. Sheets land in PARITY_OUT_DIR (default web/test-results/parity/<screen>).
+[doc('Capture the parity sheets of a screen: the frozen demo next to the mockup, desktop and phone, dark and light.')]
+[group('web')]
+parity screen: web-build
+    cargo build --locked -p binsight
+    PARITY_SCREEN={{ screen }} {{ web }} parity
+
 # --- Rust -----------------------------------------------------------------
 
 # Format the Rust code.

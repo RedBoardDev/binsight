@@ -74,10 +74,28 @@ const stopProcess = (child: ChildProcess): Promise<void> =>
     child.kill('SIGTERM');
   });
 
+// The demo worlds (BINSIGHT_DEMO_WORLD): "nominal" is the calm instance a screen is compared
+// against; "showcase" shows every state (a wallet catching up, reconstructed history).
+export const DEMO_WORLDS = ['nominal', 'showcase'] as const;
+export type DemoWorld = (typeof DEMO_WORLDS)[number];
+
+// A demo frozen at one instant: the same generated world and the same "now" on every start.
+export interface FrozenDemo {
+  readonly mode: 'frozen-demo';
+  readonly now: string;
+  readonly world: DemoWorld;
+}
+
+const sourceVariables = (mode: 'chain' | 'demo' | FrozenDemo): Readonly<Record<string, string>> => {
+  if (mode === 'chain') return { BINSIGHT_HELIUS_API_KEY: 'e2e-placeholder-key' };
+  if (mode === 'demo') return { BINSIGHT_DEMO: 'true' };
+  return { BINSIGHT_DEMO: 'true', BINSIGHT_DEMO_NOW: mode.now, BINSIGHT_DEMO_WORLD: mode.world };
+};
+
 // A fresh server for one test: its own data folder, home folder and port, so no state (the
 // login throttle, sessions, the database) leaks from one test into another.
 export const startBinsightServer = async (
-  mode: 'chain' | 'demo' = 'chain',
+  mode: 'chain' | 'demo' | FrozenDemo = 'chain',
 ): Promise<BinsightServer> => {
   const home = mkdtempSync(join(tmpdir(), 'binsight-e2e-'));
   const child = spawn(BINARY, ['run'], {
@@ -85,9 +103,7 @@ export const startBinsightServer = async (
       HOME: home,
       BINSIGHT_DATA_DIR: join(home, 'data'),
       BINSIGHT_PASSWORD: E2E_PASSWORD,
-      ...(mode === 'demo'
-        ? { BINSIGHT_DEMO: 'true' }
-        : { BINSIGHT_HELIUS_API_KEY: 'e2e-placeholder-key' }),
+      ...sourceVariables(mode),
       BINSIGHT_BIND: '127.0.0.1:0',
       BINSIGHT_LOG_FORMAT: 'json',
     },
