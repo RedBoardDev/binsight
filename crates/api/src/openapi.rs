@@ -15,9 +15,10 @@ use crate::app::DocumentedRoutes;
 use crate::auth::SESSION_COOKIE_NAME;
 use crate::error::{ErrorBody, ErrorCode, ErrorDetail};
 
-/// The version of the API contract. A compatible addition bumps the minor version; a breaking
-/// change gets a new `/api/v2` instead.
-pub const API_CONTRACT_VERSION: &str = "1.8.0";
+/// The version of the API contract. A compatible addition bumps the minor version. Until the
+/// first tagged release, breaking changes are made in place and bump the minor version; after
+/// it, a breaking change needs a new `/api/vN`.
+pub const API_CONTRACT_VERSION: &str = "1.9.0";
 
 /// The parts of the contract that are not routes: metadata and shared schemas.
 #[derive(OpenApi)]

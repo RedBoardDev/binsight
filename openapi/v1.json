@@ -7,7 +7,7 @@
       "name": "MIT",
       "identifier": "MIT"
     },
-    "version": "1.8.0"
+    "version": "1.9.0"
   },
   "paths": {
     "/api/v1/auth/login": {
@@ -196,7 +196,7 @@
         "operationId": "getHealth",
         "responses": {
           "200": {
-            "description": "The server and its required components answer.",
+            "description": "The server works; `status` says whether the provider answers too (`ok`) or not (`degraded`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -206,7 +206,7 @@
             }
           },
           "503": {
-            "description": "A required component is unavailable.",
+            "description": "The database does not answer (`status` is `unavailable`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2452,47 +2452,6 @@
           "all_quote"
         ]
       },
-      "CreditHealth": {
-        "type": "object",
-        "description": "Actual credits admitted by the engine's provider governor, without issuing a request.",
-        "required": [
-          "today_used",
-          "daily_allowance",
-          "cycle_used",
-          "quota",
-          "hard_limit_reached"
-        ],
-        "properties": {
-          "cycle_used": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Credits spent in the billing cycle.",
-            "minimum": 0
-          },
-          "daily_allowance": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Today's remaining allowance under the current billing cycle.",
-            "minimum": 0
-          },
-          "hard_limit_reached": {
-            "type": "boolean",
-            "description": "Whether every request is currently refused by a hard governor limit."
-          },
-          "quota": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Credits granted by the billing cycle.",
-            "minimum": 0
-          },
-          "today_used": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Credits spent today (UTC).",
-            "minimum": 0
-          }
-        }
-      },
       "CreditsSummary": {
         "type": "object",
         "description": "The provider credits of the current billing cycle.",
@@ -2890,21 +2849,9 @@
           "engine",
           "rpc",
           "stream",
-          "credits",
           "data_source"
         ],
         "properties": {
-          "credits": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/CreditHealth",
-                "description": "Actual provider credits; null when this application runs no engine."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "data_source": {
             "$ref": "#/components/schemas/DataSource",
             "description": "Where the figures come from."
@@ -2930,7 +2877,7 @@
           },
           "status": {
             "$ref": "#/components/schemas/HealthStatus",
-            "description": "`ok` when every component answers."
+            "description": "`ok` when every component answers, `degraded` when only the provider or its stream does\nnot, `unavailable` when the database does not."
           },
           "stream": {
             "oneOf": [
@@ -2954,6 +2901,7 @@
         "description": "The overall verdict of a health check.",
         "enum": [
           "ok",
+          "degraded",
           "unavailable"
         ]
       },

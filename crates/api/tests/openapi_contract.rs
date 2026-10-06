@@ -223,7 +223,7 @@ fn requires_shared_external_links_on_position_and_wallet_references() {
 fn requires_native_pnl_only_in_position_details_without_changing_the_read_operation() {
     let spec: serde_json::Value =
         serde_json::from_str(&binsight_api::openapi::spec_json()).unwrap();
-    assert_eq!(spec.pointer("/info/version").unwrap(), "1.8.0");
+    assert_eq!(spec.pointer("/info/version").unwrap(), "1.9.0");
     for name in ["OpenPositionDetail", "ClosedPositionDetail"] {
         let schema = spec
             .pointer(&format!("/components/schemas/{name}"))

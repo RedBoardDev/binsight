@@ -15,7 +15,6 @@ async fn reports_absent_provider_health_for_a_demo_without_network_io() {
         assert_eq!(response.status, StatusCode::OK);
         let health = response.json();
         assert_eq!(health["data_source"], "demo");
-        assert_eq!(health["credits"], serde_json::Value::Null);
         assert_eq!(health["rpc"], serde_json::Value::Null);
         assert_eq!(health["stream"], serde_json::Value::Null);
     }
@@ -33,13 +32,6 @@ async fn reports_a_healthy_server_with_its_version() {
     assert_eq!((app.network_io)(), (0, 0));
     insta::assert_json_snapshot!(response.json(), { ".version" => "[version]" }, @r#"
     {
-      "credits": {
-        "cycle_used": 0,
-        "daily_allowance": 95000,
-        "hard_limit_reached": false,
-        "quota": 1000000,
-        "today_used": 0
-      },
       "data_source": "chain",
       "database": "ok",
       "engine": "starting",

@@ -15,5 +15,6 @@ export const ENGINE_STATUS_LABELS: Record<Health['engine'], MessageDescriptor> =
 
 export const HEALTH_STATUS_LABELS: Record<Health['status'], MessageDescriptor> = {
   ok: msg`Healthy`,
-  unavailable: msg`Degraded`,
+  degraded: msg`Degraded`,
+  unavailable: msg`Unavailable`,
 };

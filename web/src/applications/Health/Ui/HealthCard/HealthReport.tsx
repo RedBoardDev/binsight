@@ -7,7 +7,7 @@ import {
 import { Chip } from '@heroui/react';
 import { useLingui } from '@lingui/react/macro';
 
-const STATUS_COLORS = { ok: 'success', unavailable: 'danger' } as const;
+const STATUS_COLORS = { ok: 'success', degraded: 'warning', unavailable: 'danger' } as const;
 
 interface HealthReportProps {
   health: Health;

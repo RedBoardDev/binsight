@@ -11,12 +11,5 @@ export const healthyServer = (overrides: Partial<Health> = {}): Health => ({
   rpc: 'unknown',
   stream: 'idle',
   data_source: 'chain',
-  credits: {
-    today_used: 0,
-    daily_allowance: 100_000,
-    cycle_used: 0,
-    quota: 1_000_000,
-    hard_limit_reached: false,
-  },
   ...overrides,
 });

@@ -8,7 +8,9 @@ paths:
 
 ## Contract
 
-- REST under `/api/v1`. Compatible additions stay in v1; a breaking change means `/api/v2` alongside.
+- REST under `/api/v1`. Compatible additions stay in v1 and bump the minor version. Until the first tagged release,
+  breaking changes are made in place and bump the minor version; after it, a breaking change needs a new `/api/vN`
+  alongside.
 - The OpenAPI 3.1 contract is **generated from the Rust code** (`utoipa`) and committed as `openapi/v1.json`. Never edit
   it by hand: change the code, run `just openapi`. CI fails if the committed file is stale.
 - Every operation has a stable `operationId` (the web client and the macOS app depend on them).

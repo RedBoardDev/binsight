@@ -696,31 +696,6 @@ export interface components {
          * @enum {string}
          */
         Composition: "mixed" | "all_base" | "all_quote";
-        /** @description Actual credits admitted by the engine's provider governor, without issuing a request. */
-        CreditHealth: {
-            /**
-             * Format: int64
-             * @description Credits spent in the billing cycle.
-             */
-            cycle_used: number;
-            /**
-             * Format: int64
-             * @description Today's remaining allowance under the current billing cycle.
-             */
-            daily_allowance: number;
-            /** @description Whether every request is currently refused by a hard governor limit. */
-            hard_limit_reached: boolean;
-            /**
-             * Format: int64
-             * @description Credits granted by the billing cycle.
-             */
-            quota: number;
-            /**
-             * Format: int64
-             * @description Credits spent today (UTC).
-             */
-            today_used: number;
-        };
         /** @description The provider credits of the current billing cycle. */
         CreditsSummary: {
             /**
@@ -877,7 +852,6 @@ export interface components {
         };
         /** @description The health report. */
         Health: {
-            credits: components["schemas"]["CreditHealth"] | null;
             /** @description Where the figures come from. */
             data_source: components["schemas"]["DataSource"];
             /** @description Whether the database answers. */
@@ -885,7 +859,10 @@ export interface components {
             /** @description Where the engine is in its lifecycle. */
             engine: components["schemas"]["EngineStatus"];
             rpc: components["schemas"]["RpcStatus"] | null;
-            /** @description `ok` when every component answers. */
+            /**
+             * @description `ok` when every component answers, `degraded` when only the provider or its stream does
+             *     not, `unavailable` when the database does not.
+             */
             status: components["schemas"]["HealthStatus"];
             stream: components["schemas"]["StreamStatus"] | null;
             /** @description The binsight version, for example `0.1.0`. */
@@ -895,7 +872,7 @@ export interface components {
          * @description The overall verdict of a health check.
          * @enum {string}
          */
-        HealthStatus: "ok" | "unavailable";
+        HealthStatus: "ok" | "degraded" | "unavailable";
         /** @description The progress of a history import. */
         ImportProgress: {
             /**
@@ -2022,7 +1999,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The server and its required components answer. */
+            /** @description The server works; `status` says whether the provider answers too (`ok`) or not (`degraded`). */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2031,7 +2008,7 @@ export interface operations {
                     "application/json": components["schemas"]["Health"];
                 };
             };
-            /** @description A required component is unavailable. */
+            /** @description The database does not answer (`status` is `unavailable`). */
             503: {
                 headers: {
                     [name: string]: unknown;

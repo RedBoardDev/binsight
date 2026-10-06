@@ -26,8 +26,17 @@ describe('HealthCard', () => {
     });
     renderWithProviders(<HealthCard />);
 
+    expect(await screen.findAllByText('Unavailable')).toHaveLength(2);
+  });
+
+  it('tells a degraded server from an unavailable one', async () => {
+    stubApi({
+      'GET /api/v1/health': () =>
+        jsonResponse(200, healthyServer({ status: 'degraded', rpc: 'unavailable' })),
+    });
+    renderWithProviders(<HealthCard />);
+
     expect(await screen.findByText('Degraded')).toBeInTheDocument();
-    expect(screen.getByText('Unavailable')).toBeInTheDocument();
   });
 
   it('offers to try again when the health cannot be read', async () => {

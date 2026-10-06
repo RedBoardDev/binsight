@@ -1,9 +1,13 @@
 //! `GET /api/v1/health`: is the server up, which version is it, does its database answer, and do
 //! its figures come from the chain or from the demo world?
 //!
-//! The endpoint is public (container health checks and the web app's about box call it) and
-//! answers `503` when the database or a required network component is unavailable, with the same body. This module holds the
-//! handler and its wire types, converted explicitly from the engine's types.
+//! The endpoint is public (container health checks and the web app's about box call it). It
+//! answers `503` only when the database does not answer: that is the server's own failure, which
+//! a restart may cure. A provider or stream outage is the provider's problem; restarting binsight
+//! would not help, so the server stays healthy (`200`) and reports `degraded` in the body. The
+//! credits spent are the owner's business and are only served behind the session (`GET /sync`).
+//! This module holds the handler and its wire types, converted explicitly from the engine's
+//! types.
 
 use axum::Json;
 use axum::extract::State;
@@ -25,7 +29,9 @@ use crate::app::AppState;
 pub(crate) enum HealthStatus {
     /// Everything answers.
     Ok,
-    /// Something binsight needs does not answer.
+    /// The server works, but the provider or its stream does not answer: figures may lag.
+    Degraded,
+    /// The database does not answer.
     Unavailable,
 }
 
@@ -73,7 +79,8 @@ impl From<DataSourceKind> for DataSource {
 /// The health report.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub(crate) struct Health {
-    /// `ok` when every component answers.
+    /// `ok` when every component answers, `degraded` when only the provider or its stream does
+    /// not, `unavailable` when the database does not.
     pub(crate) status: HealthStatus,
     /// The binsight version, for example `0.1.0`.
     pub(crate) version: String,
@@ -87,38 +94,8 @@ pub(crate) struct Health {
     /// Latest connection/subscription facts; null when the application runs no engine.
     #[schema(required = true)]
     pub(crate) stream: Option<StreamStatus>,
-    /// Actual provider credits; null when this application runs no engine.
-    #[schema(required = true)]
-    pub(crate) credits: Option<CreditHealth>,
     /// Where the figures come from.
     pub(crate) data_source: DataSource,
-}
-
-/// Actual credits admitted by the engine's provider governor, without issuing a request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
-pub(crate) struct CreditHealth {
-    /// Credits spent today (UTC).
-    today_used: u64,
-    /// Today's remaining allowance under the current billing cycle.
-    daily_allowance: u64,
-    /// Credits spent in the billing cycle.
-    cycle_used: u64,
-    /// Credits granted by the billing cycle.
-    quota: u64,
-    /// Whether every request is currently refused by a hard governor limit.
-    hard_limit_reached: bool,
-}
-
-impl From<binsight_engine::CreditHealth> for CreditHealth {
-    fn from(credits: binsight_engine::CreditHealth) -> Self {
-        Self {
-            today_used: credits.today_used.0,
-            daily_allowance: credits.daily_allowance.0,
-            cycle_used: credits.cycle_used.0,
-            quota: credits.quota.0,
-            hard_limit_reached: credits.hard_limit_reached,
-        }
-    }
 }
 
 impl From<binsight_engine::EngineStatus> for EngineStatus {
@@ -134,18 +111,14 @@ impl From<binsight_engine::EngineStatus> for EngineStatus {
 impl Health {
     /// The report of an engine with this `health`, serving figures from `data_source`.
     fn new(health: EngineHealth, data_source: DataSourceKind) -> Self {
-        let (status, database) = match health.database {
-            ComponentHealth::Ok => (HealthStatus::Ok, ComponentStatus::Ok),
-            ComponentHealth::Unavailable => {
+        let is_provider_down = health.rpc == Some(binsight_engine::RpcHealth::Unavailable)
+            || health.stream == Some(binsight_engine::StreamHealth::Unavailable);
+        let (status, database) = match (health.database, is_provider_down) {
+            (ComponentHealth::Unavailable, _) => {
                 (HealthStatus::Unavailable, ComponentStatus::Unavailable)
             }
-        };
-        let status = if health.rpc == Some(binsight_engine::RpcHealth::Unavailable)
-            || health.stream == Some(binsight_engine::StreamHealth::Unavailable)
-        {
-            HealthStatus::Unavailable
-        } else {
-            status
+            (ComponentHealth::Ok, true) => (HealthStatus::Degraded, ComponentStatus::Ok),
+            (ComponentHealth::Ok, false) => (HealthStatus::Ok, ComponentStatus::Ok),
         };
         Self {
             status,
@@ -154,7 +127,6 @@ impl Health {
             engine: health.engine.into(),
             rpc: health.rpc.map(Into::into),
             stream: health.stream.map(Into::into),
-            credits: health.credits.map(Into::into),
             data_source: data_source.into(),
         }
     }
@@ -167,17 +139,21 @@ impl Health {
     operation_id = "getHealth",
     tag = "system",
     responses(
-        (status = 200, description = "The server and its required components answer.", body = Health),
-        (status = 503, description = "A required component is unavailable.", body = Health),
+        (status = 200, description = "The server works; `status` says whether the provider answers too (`ok`) or not (`degraded`).", body = Health),
+        (status = 503, description = "The database does not answer (`status` is `unavailable`).", body = Health),
     ),
 )]
 pub(crate) async fn get_health(State(state): State<AppState>) -> (StatusCode, Json<Health>) {
     let health = Health::new(state.engine.health().await, state.engine.data_source());
-    let status = match health.status {
-        HealthStatus::Ok => StatusCode::OK,
+    (status_code(health.status), Json(health))
+}
+
+/// The HTTP status of a verdict: only an unavailable server answers `503`.
+fn status_code(status: HealthStatus) -> StatusCode {
+    match status {
+        HealthStatus::Ok | HealthStatus::Degraded => StatusCode::OK,
         HealthStatus::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
-    };
-    (status, Json(health))
+    }
 }
 
 #[cfg(test)]

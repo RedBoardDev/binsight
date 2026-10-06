@@ -193,11 +193,6 @@ mod tests {
 
         assert_eq!(health.database, ComponentHealth::Ok);
         assert_eq!(health.engine, EngineStatus::Starting);
-        assert_eq!(
-            health.credits.unwrap().quota,
-            binsight_core::credits::Credits(1_000_000)
-        );
-        assert!(!health.credits.unwrap().hard_limit_reached);
     }
 
     #[tokio::test(start_paused = true)]

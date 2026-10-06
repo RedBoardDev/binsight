@@ -121,16 +121,12 @@ impl EngineHandle {
         *self.status.borrow()
     }
 
-    /// Checks that the database answers (with a short deadline), and reports the status and
-    /// where the credits stand.
+    /// Checks that the database answers (with a short deadline), and reports the status and what
+    /// the chain client last saw of the provider.
     pub async fn health(&self) -> EngineHealth {
         EngineHealth {
             database: check_database(&self.store).await,
             engine: self.status(),
-            credits: self
-                .rpc
-                .as_ref()
-                .map(|rpc| rpc.credit_meter().standing().into()),
             rpc: self.rpc.as_ref().map(|rpc| rpc.last_outcome().into()),
             stream: self.rpc.as_ref().map(|rpc| rpc.stream_snapshot().into()),
         }
@@ -183,7 +179,6 @@ mod tests {
                 crate::portfolio::NotReadyPortfolio,
             )));
         let health = handle.health().await;
-        assert_eq!(health.credits, None);
         assert_eq!(health.rpc, None);
         assert_eq!(health.stream, None);
         assert_eq!(setup.transport.calls(), Vec::new());
