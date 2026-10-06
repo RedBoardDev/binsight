@@ -1,4 +1,4 @@
-//! How up to date a wallet is, from the worst state to the best, as a pure rule.
+//! How up to date a wallet is, as a pure rule. The states, the first that applies wins:
 //!
 //! - `Error`: a human must act: the provider refuses binsight's requests (the key, the plan, the
 //!   credits), or transactions keep failing to be fetched after an hour of attempts.
@@ -15,6 +15,8 @@
 use binsight_store::WalletBacklog;
 use jiff::{SignedDuration, Timestamp};
 
+use crate::portfolio::views::SyncState;
+
 /// How long a subscription may be down before the wallet lags.
 const UNSUBSCRIBED_TOLERANCE: SignedDuration = SignedDuration::from_mins(1);
 
@@ -24,19 +26,6 @@ const LIVE_WORK_TOLERANCE: SignedDuration = SignedDuration::from_mins(2);
 /// How often the state is decided again while a credit limit stops every request: the limit lifts
 /// at a day or cycle boundary the monitor does not track.
 const CREDIT_LIMIT_RECHECK: SignedDuration = SignedDuration::from_mins(5);
-
-/// How up to date a wallet is, the worst first.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum SyncState {
-    /// Something keeps failing; a human should look.
-    Error,
-    /// Its history is being imported.
-    Importing,
-    /// Behind the chain for now; it catches up by itself.
-    Lagging,
-    /// Up to date.
-    Live,
-}
 
 /// What stops every request, if anything.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

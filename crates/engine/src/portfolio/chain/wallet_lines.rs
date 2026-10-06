@@ -11,7 +11,6 @@ use binsight_solana::Address;
 use binsight_store::{TrackedWallet, WalletBacklog, WalletCursor, WalletListing};
 use jiff::Timestamp;
 
-use crate::ingestion;
 use crate::portfolio::views::{
     ImportProgress, SyncState, WalletColor, WalletRef, WalletSummary, WalletSync, WalletSyncLine,
     WalletsTotal,
@@ -38,7 +37,7 @@ pub(super) struct WalletFacts {
     /// Its place in the order wallets were added.
     pub(super) position: usize,
     /// Its state as the sync monitor last decided, if it did.
-    pub(super) state: Option<ingestion::SyncState>,
+    pub(super) state: Option<SyncState>,
     /// What keeps its registry behind.
     pub(super) backlog: WalletBacklog,
     /// How much of its history is listed.
@@ -48,7 +47,7 @@ pub(super) struct WalletFacts {
 /// The sync line of a wallet at `now`.
 pub(super) fn sync_line(facts: &WalletFacts, now: Timestamp) -> WalletSyncLine {
     let address = facts.wallet.address;
-    let state = facts.state.map_or(SyncState::Importing, SyncState::from);
+    let state = facts.state.unwrap_or(SyncState::Importing);
     let indexed_tx = facts.listing.listed.saturating_sub(facts.backlog.unfetched);
     let is_listed = matches!(facts.wallet.cursor, WalletCursor::HistoryComplete { .. });
     let import = (state == SyncState::Importing).then(|| ImportProgress {
@@ -127,17 +126,6 @@ fn wallet_ref(address: Address, position: usize) -> WalletRef {
             .get(position % COLORS.len())
             .copied()
             .unwrap_or(WalletColor::Wallet1),
-    }
-}
-
-impl From<ingestion::SyncState> for SyncState {
-    fn from(state: ingestion::SyncState) -> Self {
-        match state {
-            ingestion::SyncState::Error => Self::Error,
-            ingestion::SyncState::Importing => Self::Importing,
-            ingestion::SyncState::Lagging => Self::Lagging,
-            ingestion::SyncState::Live => Self::Live,
-        }
     }
 }
 

@@ -143,11 +143,7 @@ fn overview_sync(snapshot: &Snapshot, scope: Scope) -> OverviewSync {
             .collect()
     };
     OverviewSync {
-        state: wallets
-            .iter()
-            .map(|wallet| wallet.sync.state)
-            .max()
-            .unwrap_or(SyncState::Live),
+        state: SyncState::worst(wallets.iter().map(|wallet| wallet.sync.state)),
         lagging: refs(SyncState::Lagging)
             .into_iter()
             .filter_map(|address| snapshot.wallet_ref(address))

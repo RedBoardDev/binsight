@@ -76,7 +76,7 @@ mod tests {
             },
             LiveEvent::from_engine(&EngineEvent::WalletSyncChanged {
                 wallet: binsight_solana::Address::from_bytes([1; 32]),
-                state: binsight_engine::SyncState::Lagging,
+                state: binsight_engine::portfolio::views::SyncState::Lagging,
             }),
         ];
         for event in events {

@@ -12,7 +12,7 @@ fn now() -> Timestamp {
     Timestamp::from_second(1_790_000_000).unwrap()
 }
 
-fn facts(state: Option<ingestion::SyncState>, cursor: WalletCursor) -> WalletFacts {
+fn facts(state: Option<SyncState>, cursor: WalletCursor) -> WalletFacts {
     WalletFacts {
         wallet: TrackedWallet {
             address: WALLET,
@@ -44,10 +44,7 @@ fn listed() -> WalletCursor {
 
 #[test]
 fn shows_an_import_with_its_progress_once_the_history_is_listed() {
-    let line = sync_line(
-        &facts(Some(ingestion::SyncState::Importing), listed()),
-        now(),
-    );
+    let line = sync_line(&facts(Some(SyncState::Importing), listed()), now());
 
     assert_eq!(line.sync.state, SyncState::Importing);
     assert_eq!(line.sync.indexed_tx, 75);
@@ -69,9 +66,9 @@ fn has_no_progress_while_the_history_is_still_listed() {
 
 #[test]
 fn says_how_long_live_work_has_waited_while_it_lags() {
-    let mut lagging = facts(Some(ingestion::SyncState::Lagging), listed());
+    let mut lagging = facts(Some(SyncState::Lagging), listed());
     lagging.backlog.oldest_live_due_at = now().checked_sub(SignedDuration::from_secs(150)).ok();
-    let live = facts(Some(ingestion::SyncState::Live), listed());
+    let live = facts(Some(SyncState::Live), listed());
 
     assert_eq!(sync_line(&lagging, now()).sync.lag_seconds, Some(150));
     assert_eq!(sync_line(&live, now()).sync.lag_seconds, Some(0));
@@ -81,7 +78,7 @@ fn says_how_long_live_work_has_waited_while_it_lags() {
 #[test]
 fn leaves_the_figures_unavailable_and_the_positions_uncounted() {
     let importing = sync_line(&facts(None, listed()), now());
-    let live = sync_line(&facts(Some(ingestion::SyncState::Live), listed()), now());
+    let live = sync_line(&facts(Some(SyncState::Live), listed()), now());
 
     let row = summary(&importing, now());
     let expected = Reasons::from([Reason::HistoryIncomplete {

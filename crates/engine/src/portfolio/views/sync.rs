@@ -7,17 +7,27 @@ use jiff::Timestamp;
 use super::refs::WalletRef;
 use crate::engine::status::EngineStatus;
 
-/// How a wallet (or the whole instance) keeps up with the chain, from the best to the worst.
+/// How a wallet (or the whole instance) keeps up with the chain, from the best to the worst:
+/// the order is the one [`SyncState::worst`] reads. Which state a wallet is in is the sync
+/// monitor's rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SyncState {
     /// Up to date.
     Live,
     /// Its history is being imported.
     Importing,
-    /// Behind the chain, catching up.
+    /// Behind the chain for now; it catches up by itself.
     Lagging,
-    /// Failing; a human should look.
+    /// Something keeps failing; a human should look.
     Error,
+}
+
+impl SyncState {
+    /// The worst of `states`: a lagging wallet weighs more than one importing its history, a
+    /// failing one more than both. Live when there is none.
+    pub fn worst(states: impl IntoIterator<Item = Self>) -> Self {
+        states.into_iter().max().unwrap_or(Self::Live)
+    }
 }
 
 /// The synchronization of one wallet.
@@ -107,4 +117,22 @@ pub struct SyncReport {
     pub credits: CreditsSummary,
     /// Each wallet, in the order of the wallet list.
     pub wallets: Vec<WalletSyncLine>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn weighs_a_lagging_wallet_more_than_an_importing_one_and_an_error_most() {
+        assert_eq!(SyncState::worst([]), SyncState::Live);
+        assert_eq!(
+            SyncState::worst([SyncState::Importing, SyncState::Lagging, SyncState::Live]),
+            SyncState::Lagging
+        );
+        assert_eq!(
+            SyncState::worst([SyncState::Error, SyncState::Lagging]),
+            SyncState::Error
+        );
+    }
 }

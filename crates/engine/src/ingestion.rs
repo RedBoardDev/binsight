@@ -19,7 +19,6 @@ mod refusal;
 mod sync;
 
 pub(crate) use sync::SyncPublisher;
-pub use sync::SyncState;
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex, PoisonError};

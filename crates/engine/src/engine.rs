@@ -26,10 +26,9 @@ use tracing::info;
 use crate::credit_usage::{restore_spending, run_credit_usage};
 use crate::error::EngineError;
 use crate::handle::EngineHandle;
-use crate::ingestion::{
-    Ingestion, IngestionParts, SyncPublisher, SyncState, requeue_readable_versions,
-};
+use crate::ingestion::{Ingestion, IngestionParts, SyncPublisher, requeue_readable_versions};
 use crate::portfolio::EngineState;
+use crate::portfolio::views::SyncState;
 use crate::projections::{REGISTRY, reconcile_projections};
 use events::EngineEvent;
 use status::EngineStatus;

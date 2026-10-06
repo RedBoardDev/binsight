@@ -11,8 +11,6 @@
 
 mod sync_state;
 
-pub use sync_state::SyncState;
-
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -26,6 +24,7 @@ use tracing::{debug, error};
 use super::Ingestion;
 use super::refusal::time_until;
 use crate::engine::events::EngineEvent;
+use crate::portfolio::views::SyncState;
 use sync_state::{Stop, SyncFacts, next_change, sync_state};
 
 /// How long a reported change waits for the rest of its burst before the states are decided.

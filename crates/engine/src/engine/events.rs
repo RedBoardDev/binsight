@@ -7,7 +7,7 @@
 use binsight_solana::Address;
 
 use crate::engine::status::EngineStatus;
-use crate::ingestion::SyncState;
+use crate::portfolio::views::SyncState;
 
 /// Something the engine wants the rest of the application to know.
 #[derive(Debug, Clone, PartialEq, Eq)]

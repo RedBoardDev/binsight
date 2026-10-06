@@ -150,7 +150,7 @@ mod tests {
                 events,
                 change: EngineEvent::WalletSyncChanged {
                     wallet,
-                    state: binsight_engine::SyncState::Error,
+                    state: binsight_engine::portfolio::views::SyncState::Error,
                 },
             },
             Arc::new(FixedClock::new(Timestamp::UNIX_EPOCH)),
@@ -202,7 +202,7 @@ mod tests {
         events
             .send(EngineEvent::WalletSyncChanged {
                 wallet: binsight_solana::Address::from_bytes([1; 32]),
-                state: binsight_engine::SyncState::Error,
+                state: binsight_engine::portfolio::views::SyncState::Error,
             })
             .unwrap();
         events

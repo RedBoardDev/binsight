@@ -50,11 +50,7 @@ pub(super) fn freshness(snapshot: &Snapshot, scope: Scope, now: Timestamp) -> Fr
     let wallets: Vec<_> = snapshot.wallets_in(scope).collect();
     Freshness {
         as_of: now,
-        state: wallets
-            .iter()
-            .map(|wallet| wallet.sync.state)
-            .max()
-            .unwrap_or(SyncState::Live),
+        state: SyncState::worst(wallets.iter().map(|wallet| wallet.sync.state)),
         lag_seconds: wallets
             .iter()
             .filter_map(|wallet| wallet.sync.lag_seconds)

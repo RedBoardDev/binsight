@@ -31,7 +31,6 @@ use super::views::{
     BillingCycle, ChainTip, InstanceSettings, SyncReport, SyncState, WalletSyncLine, WalletsView,
 };
 use crate::engine::status::EngineStatus;
-use crate::ingestion;
 use wallet_lines::{WalletFacts, summary, sync_line, total};
 
 /// What the engine knows, as the API reads it.
@@ -41,7 +40,7 @@ pub(crate) struct ChainPortfolio {
     clock: Arc<dyn Clock>,
     started_at: Timestamp,
     status: watch::Receiver<EngineStatus>,
-    sync_states: watch::Receiver<BTreeMap<Address, ingestion::SyncState>>,
+    sync_states: watch::Receiver<BTreeMap<Address, SyncState>>,
 }
 
 /// Where the engine's state lives, for [`ChainPortfolio::new`].
@@ -55,7 +54,7 @@ pub(crate) struct EngineState {
     /// The engine's lifecycle status.
     pub(crate) status: watch::Receiver<EngineStatus>,
     /// Each wallet's sync state, as last decided.
-    pub(crate) sync_states: watch::Receiver<BTreeMap<Address, ingestion::SyncState>>,
+    pub(crate) sync_states: watch::Receiver<BTreeMap<Address, SyncState>>,
 }
 
 impl ChainPortfolio {
@@ -146,11 +145,7 @@ impl InstanceReads for ChainPortfolio {
                 .collect();
             let status = self.instance_status()?;
             Ok(SyncReport {
-                state: wallets
-                    .iter()
-                    .map(|line| line.sync.state)
-                    .max()
-                    .unwrap_or(SyncState::Live),
+                state: SyncState::worst(wallets.iter().map(|line| line.sync.state)),
                 engine: status.engine,
                 as_of: now,
                 started_at: status.started_at,

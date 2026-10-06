@@ -18,7 +18,7 @@ use tokio::sync::{broadcast, watch};
 use crate::engine::events::EngineEvent;
 use crate::engine::health::{EngineHealth, check_database};
 use crate::engine::status::EngineStatus;
-use crate::ingestion::SyncState;
+use crate::portfolio::views::SyncState;
 use crate::portfolio::{ChainPortfolio, DataSourceKind, EngineState, ReadModel};
 
 /// A shared, read-only view of a running engine.

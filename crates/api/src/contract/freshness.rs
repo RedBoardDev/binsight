@@ -42,17 +42,6 @@ impl From<views::SyncState> for SyncState {
     }
 }
 
-impl From<binsight_engine::SyncState> for SyncState {
-    fn from(state: binsight_engine::SyncState) -> Self {
-        match state {
-            binsight_engine::SyncState::Live => Self::Live,
-            binsight_engine::SyncState::Importing => Self::Importing,
-            binsight_engine::SyncState::Lagging => Self::Lagging,
-            binsight_engine::SyncState::Error => Self::Error,
-        }
-    }
-}
-
 impl From<views::Freshness> for Freshness {
     fn from(freshness: views::Freshness) -> Self {
         Self {

@@ -33,11 +33,7 @@ pub fn sync_report(
             sync: wallet.sync.clone(),
         })
         .collect();
-    let state = wallets
-        .iter()
-        .map(|line| line.sync.state)
-        .max()
-        .unwrap_or(SyncState::Live);
+    let state = SyncState::worst(wallets.iter().map(|line| line.sync.state));
     Ok(SyncReport {
         state,
         engine: status.engine,
