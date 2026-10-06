@@ -41,7 +41,8 @@ use sync::run_sync_monitor;
 
 /// What the ingestion workers share: the database, the RPC client, the clock, the stream's watch
 /// list, the live state, the provider's latest refusal, where sync states are published, and the
-/// wake-up the listings give the fetcher when they queue tasks.
+/// wake-ups the workers give each other: new fetch tasks, new raw transactions, and a change the
+/// sync states may follow.
 #[derive(Clone)]
 pub(crate) struct Ingestion {
     store: Store,
@@ -49,6 +50,7 @@ pub(crate) struct Ingestion {
     clock: Arc<dyn Clock>,
     new_tasks: Arc<Notify>,
     new_raw: Arc<Notify>,
+    sync_changed: Arc<Notify>,
     live: Arc<LiveState>,
     watch: WalletWatch,
     watched: Arc<Mutex<HashSet<Address>>>,
@@ -70,6 +72,7 @@ impl Ingestion {
             clock,
             new_tasks: Arc::new(Notify::new()),
             new_raw: Arc::new(Notify::new()),
+            sync_changed: Arc::new(Notify::new()),
             live,
             watch,
             watched: Arc::new(Mutex::new(HashSet::new())),
@@ -100,14 +103,16 @@ impl Ingestion {
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         *refusal = Some(refusal.map_or(until, |current| current.max(until)));
+        drop(refusal);
+        self.sync_changed.notify_one();
     }
 
-    /// Whether the provider refuses every request at `now`.
-    fn is_provider_refusing(&self, now: Timestamp) -> bool {
+    /// Until when the provider refuses every request, if it does at `now`.
+    fn provider_refusal_end(&self, now: Timestamp) -> Option<Timestamp> {
         self.provider_refuses_until
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .is_some_and(|until| until > now)
+            .filter(|until| *until > now)
     }
 
     /// Asks the stream to watch the wallets of `wallets` it does not watch yet.

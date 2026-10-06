@@ -90,6 +90,7 @@ impl TopUp {
             };
             let new_signatures = ingestion.store.signatures().record_listing(listing).await?;
             ingestion.new_tasks.notify_one();
+            ingestion.sync_changed.notify_one();
             debug!(%wallet, reason = ?self.reason, new_signatures, "top-up page listed");
         }
         self.cursor = next_cursor;

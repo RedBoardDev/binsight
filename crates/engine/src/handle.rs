@@ -259,7 +259,7 @@ mod tests {
         engine
             .wait_for_counts(wallet, |counts| counts.unsupported_version == 1)
             .await;
-        let backlog = engine.store.fetch_queue().backlog(wallet).await.unwrap();
+        let backlog = engine.store.fetch_queue().backlogs().await.unwrap()[&wallet];
         assert_eq!(backlog.unsupported_version, 1);
         assert_eq!(backlog.failed, 0);
         engine.stop().await;

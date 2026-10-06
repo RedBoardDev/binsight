@@ -58,6 +58,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "drop_decoded_events",
         sql: include_str!("../../migrations/0008_drop_decoded_events.sql"),
     },
+    Migration {
+        version: 9,
+        name: "open_fetch_tasks",
+        sql: include_str!("../../migrations/0009_open_fetch_tasks.sql"),
+    },
 ];
 
 #[cfg(test)]

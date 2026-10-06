@@ -15,7 +15,7 @@ use binsight_solana::Address;
 use binsight_store::{TrackedWallet, WalletCursor};
 use jiff::Timestamp;
 
-use super::wallet_checks::{CheckReason, WalletChecks};
+use super::wallet_checks::{CheckLag, CheckReason, WalletChecks};
 
 /// The next check to make.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,15 +131,10 @@ impl CheckSchedule {
             .is_some_and(WalletChecks::is_subscribed)
     }
 
-    /// Since when `wallet`'s subscription is down, if it is, and whether its check is late, at
-    /// `now`.
-    pub(in crate::ingestion) fn lag(
-        &self,
-        wallet: Address,
-        now: Timestamp,
-    ) -> (Option<Timestamp>, bool) {
+    /// How `wallet`'s live detection may lag.
+    pub(in crate::ingestion) fn lag(&self, wallet: Address) -> CheckLag {
         let checks = self.wallets.get(&wallet).copied().unwrap_or_default();
-        checks.lag(self.started_at, now)
+        checks.lag(self.started_at)
     }
 }
 

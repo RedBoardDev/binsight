@@ -13,7 +13,7 @@ mod wallet_checks;
 
 pub(super) use check_schedule::NextCheck;
 pub(super) use live_listener::run_live_listener;
-pub(super) use wallet_checks::{CheckReason, STARTUP_GRACE};
+pub(super) use wallet_checks::{CheckLag, CheckReason, STARTUP_GRACE};
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
@@ -125,10 +125,9 @@ impl LiveState {
         self.lock().failed(wallet, now)
     }
 
-    /// Since when `wallet`'s subscription is down, if it is, and whether its check is late, at
-    /// `now`.
-    pub(super) fn lag(&self, wallet: Address, now: Timestamp) -> (Option<Timestamp>, bool) {
-        self.lock().lag(wallet, now)
+    /// How `wallet`'s live detection may lag.
+    pub(super) fn lag(&self, wallet: Address) -> CheckLag {
+        self.lock().lag(wallet)
     }
 
     fn lock(&self) -> MutexGuard<'_, CheckSchedule> {

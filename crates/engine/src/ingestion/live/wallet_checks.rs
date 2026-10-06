@@ -60,6 +60,16 @@ impl CheckReason {
     }
 }
 
+/// How a wallet's live detection may lag behind the chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::ingestion) struct CheckLag {
+    /// Since when its subscription is down (since startup if it never came up), if it is.
+    pub(in crate::ingestion) unsubscribed_since: Option<Timestamp>,
+    /// After this instant its check is late by more than twice its cadence; `None` before its
+    /// first check.
+    pub(in crate::ingestion) late_after: Option<Timestamp>,
+}
+
 /// One wallet's checks.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(super) struct WalletChecks {
@@ -160,15 +170,15 @@ impl WalletChecks {
         self.is_subscribed
     }
 
-    /// Since when the subscription is down (since `started_at` if it never came up), and
-    /// whether the check is late by more than twice its cadence, at `now`.
-    pub(super) fn lag(&self, started_at: Timestamp, now: Timestamp) -> (Option<Timestamp>, bool) {
-        let unsubscribed_since =
-            (!self.is_subscribed).then(|| self.unsubscribed_since.unwrap_or(started_at));
-        let is_overdue = self
-            .last_check_at
-            .is_some_and(|last| later(last, self.cadence().saturating_mul(2)) < now);
-        (unsubscribed_since, is_overdue)
+    /// How the wallet may lag, for an engine started at `started_at`.
+    pub(super) fn lag(&self, started_at: Timestamp) -> CheckLag {
+        CheckLag {
+            unsubscribed_since: (!self.is_subscribed)
+                .then(|| self.unsubscribed_since.unwrap_or(started_at)),
+            late_after: self
+                .last_check_at
+                .map(|last| later(last, self.cadence().saturating_mul(2))),
+        }
     }
 
     fn cadence(&self) -> SignedDuration {
@@ -186,108 +196,4 @@ fn later(instant: Timestamp, delay: SignedDuration) -> Timestamp {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn start() -> Timestamp {
-        Timestamp::from_second(1_790_000_000).unwrap()
-    }
-
-    fn at(secs: i64) -> Timestamp {
-        later(start(), SignedDuration::from_secs(secs))
-    }
-
-    /// The check due first.
-    fn first_due(checks: &WalletChecks) -> (Timestamp, CheckReason) {
-        checks.due(start()).into_iter().min().unwrap()
-    }
-
-    /// A wallet subscribed and checked at startup.
-    fn checked_at_startup() -> WalletChecks {
-        let mut checks = WalletChecks::default();
-        checks.subscribed(at(0));
-        checks.checked(at(0));
-        checks
-    }
-
-    #[test]
-    fn checks_a_bursting_wallet_with_one_listing() {
-        let mut checks = checked_at_startup();
-
-        for second in [100, 105, 110, 115, 120] {
-            checks.activity(at(second));
-        }
-
-        assert_eq!(first_due(&checks), (at(150), CheckReason::Activity));
-        checks.checked(at(150));
-        assert_eq!(first_due(&checks), (at(1_050), CheckReason::Cadence));
-    }
-
-    #[test]
-    fn checks_a_wallet_that_never_stops_two_minutes_after_its_first_activity() {
-        let mut checks = checked_at_startup();
-
-        for second in (100..=300).step_by(10) {
-            checks.activity(at(second));
-        }
-
-        assert_eq!(first_due(&checks), (at(220), CheckReason::Activity));
-    }
-
-    #[test]
-    fn checks_a_busy_wallet_at_most_once_a_minute() {
-        let mut checks = checked_at_startup();
-        checks.activity(at(10));
-        checks.checked(at(40));
-
-        checks.activity(at(45));
-
-        assert_eq!(first_due(&checks), (at(100), CheckReason::Activity));
-    }
-
-    #[test]
-    fn keeps_an_activity_a_too_early_check_could_not_cover() {
-        let mut checks = WalletChecks::default();
-        checks.subscribed(at(0));
-        checks.activity(at(1));
-
-        checks.checked(at(2));
-
-        assert_eq!(first_due(&checks), (at(62), CheckReason::Activity));
-    }
-
-    #[test]
-    fn checks_every_minute_while_unsubscribed() {
-        let mut checks = checked_at_startup();
-
-        checks.unsubscribed(at(1));
-
-        assert_eq!(first_due(&checks), (at(60), CheckReason::Cadence));
-    }
-
-    #[test]
-    fn holds_a_failing_check_back_longer_after_each_failure() {
-        let mut checks = WalletChecks::default();
-        checks.subscribed(at(0));
-
-        assert_eq!(checks.failed(at(0)), (1, at(30)));
-        assert_eq!(first_due(&checks), (at(30), CheckReason::TopUp));
-        assert_eq!(checks.failed(at(30)), (2, at(90)));
-        checks.checked(at(90));
-        assert_eq!(checks.failed(at(100)), (1, at(130)));
-    }
-
-    #[test]
-    fn tells_how_long_a_subscription_is_down_and_whether_a_check_is_late() {
-        let mut checks = WalletChecks::default();
-        assert_eq!(checks.lag(start(), at(5)), (Some(start()), false));
-        checks.subscribed(at(1));
-        checks.checked(at(1));
-        assert_eq!(checks.lag(start(), at(1_801)), (None, false));
-        assert_eq!(checks.lag(start(), at(1_802)), (None, true));
-
-        checks.unsubscribed(at(1_900));
-
-        assert_eq!(checks.lag(start(), at(1_950)).0, Some(at(1_900)));
-    }
-}
+mod tests;

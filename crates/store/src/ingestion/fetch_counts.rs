@@ -1,29 +1,40 @@
 //! How a wallet's listed transactions stand in the fetch queue, counted per state, and what
-//! keeps its registry behind.
+//! keeps each wallet's registry behind.
 //!
-//! The counts feed the sync status: how much of a wallet's history is in the registry and how
-//! much still waits, and how old the oldest live work waiting is. This module only counts.
+//! The backlog feeds the sync status: how much of each wallet's history still waits, what keeps
+//! failing, and how old the oldest live work waiting is. It is read from the open tasks only
+//! (an index holds them), so its cost follows the work left, not the history. The full counts
+//! walk a wallet's whole history; only the administration command asks for them. This module
+//! only counts.
+
+use std::collections::BTreeMap;
 
 use binsight_solana::Address;
 use jiff::Timestamp;
 use rusqlite::Connection;
 
-use crate::database::codec::{timestamp_from_sql, unsigned_from_sql};
+use crate::database::codec::{parse_from_sql, timestamp_from_sql, unsigned_from_sql};
 use crate::error::StoreError;
 
 const COUNT_LISTED: &str = "SELECT count(*) FROM wallet_signature WHERE wallet = ?1";
 const COUNT_BY_STATE: &str = "
     SELECT f.state, count(*) FROM wallet_signature s JOIN tx_fetch f ON f.signature = s.signature
     WHERE s.wallet = ?1 GROUP BY f.state";
-const SELECT_BACKLOG: &str = "
+// The open tasks drive the query, through their partial index, and find their wallets through the
+// signature index: CROSS JOIN fixes that order, which SQLite would otherwise pick from table
+// sizes it does not know, and could turn into a walk of every listed signature.
+const SELECT_BACKLOGS: &str = "
     SELECT
-        coalesce(sum(f.priority = 'history' AND f.state IN ('pending', 'empty_retry')), 0),
-        coalesce(sum(f.state = 'failed'), 0),
-        coalesce(sum(f.state = 'unsupported_version'), 0),
+        s.wallet,
+        sum(f.priority = 'history' AND f.state IN ('pending', 'empty_retry')),
+        sum(f.state = 'failed'),
+        sum(f.state = 'unsupported_version'),
         min(CASE WHEN f.priority <> 'history' AND f.state IN ('pending', 'empty_retry')
                  THEN f.next_attempt_at END)
-    FROM wallet_signature s JOIN tx_fetch f ON f.signature = s.signature
-    WHERE s.wallet = ?1";
+    FROM tx_fetch AS f INDEXED BY tx_fetch_open
+    CROSS JOIN wallet_signature AS s ON s.signature = f.signature
+    WHERE f.state <> 'fetched'
+    GROUP BY s.wallet";
 
 /// How a wallet's listed transactions stand in the fetch queue.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -55,21 +66,25 @@ pub struct WalletBacklog {
     pub oldest_live_due_at: Option<Timestamp>,
 }
 
-/// Reads what keeps `wallet`'s registry behind.
-pub(super) fn read_backlog(
+/// Reads what keeps each wallet's registry behind; a wallet without open work is left out.
+pub(super) fn read_backlogs(
     connection: &Connection,
-    wallet: Address,
-) -> Result<WalletBacklog, StoreError> {
-    let (history_unfetched, failed, unsupported_version, oldest): (i64, i64, i64, Option<i64>) =
-        connection.query_row(SELECT_BACKLOG, [wallet.to_string()], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-        })?;
-    Ok(WalletBacklog {
-        history_unfetched: unsigned_from_sql(history_unfetched, "count")?,
-        failed: unsigned_from_sql(failed, "count")?,
-        unsupported_version: unsigned_from_sql(unsupported_version, "count")?,
-        oldest_live_due_at: oldest.map(timestamp_from_sql).transpose()?,
-    })
+) -> Result<BTreeMap<Address, WalletBacklog>, StoreError> {
+    let mut query = connection.prepare(SELECT_BACKLOGS)?;
+    let mut rows = query.query([])?;
+    let mut backlogs = BTreeMap::new();
+    while let Some(row) = rows.next()? {
+        let wallet = parse_from_sql(&row.get::<_, String>(0)?, "wallet address")?;
+        let oldest: Option<i64> = row.get(4)?;
+        let backlog = WalletBacklog {
+            history_unfetched: unsigned_from_sql(row.get(1)?, "count")?,
+            failed: unsigned_from_sql(row.get(2)?, "count")?,
+            unsupported_version: unsigned_from_sql(row.get(3)?, "count")?,
+            oldest_live_due_at: oldest.map(timestamp_from_sql).transpose()?,
+        };
+        backlogs.insert(wallet, backlog);
+    }
+    Ok(backlogs)
 }
 
 /// Counts `wallet`'s listed signatures, then its fetch tasks per state.
@@ -109,10 +124,29 @@ pub(super) fn count_states(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::database::test_database::assert_queries_prepare;
+    use crate::database::test_database::{assert_queries_prepare, migrated_store};
 
     #[tokio::test]
     async fn prepares_every_query_against_the_schema() {
-        assert_queries_prepare(&[COUNT_LISTED, COUNT_BY_STATE, SELECT_BACKLOG]).await;
+        assert_queries_prepare(&[COUNT_LISTED, COUNT_BY_STATE, SELECT_BACKLOGS]).await;
+    }
+
+    #[tokio::test]
+    async fn reads_the_backlogs_from_the_open_tasks_only() {
+        let (_folder, store) = migrated_store().await;
+        let plan = store
+            .database()
+            .read(|connection| {
+                let mut query =
+                    connection.prepare(&format!("EXPLAIN QUERY PLAN {SELECT_BACKLOGS}"))?;
+                let rows = query.query_map([], |row| row.get::<_, String>(3))?;
+                Ok(rows.collect::<Result<Vec<_>, _>>()?)
+            })
+            .await
+            .unwrap();
+        let uses = |index: &str| plan.iter().any(|step| step.contains(index));
+        assert!(uses("tx_fetch_open"), "{plan:?}");
+        assert!(uses("wallet_signature_by_signature"), "{plan:?}");
+        assert!(!uses("SCAN s"), "{plan:?}");
     }
 }

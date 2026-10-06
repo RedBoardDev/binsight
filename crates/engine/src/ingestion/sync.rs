@@ -1,10 +1,13 @@
 //! The sync monitor: how up to date each wallet is, published when it changes.
 //!
-//! Every 30 seconds the monitor gathers each wallet's facts (its cursor, what keeps its registry
-//! behind, its subscription and checks, the provider's and the budget's refusals), decides its
+//! The monitor gathers each wallet's facts (its cursor, what keeps its registry behind, its
+//! subscription and checks, the provider's and the budget's refusals), decides its
 //! [`SyncState`] (`sync_state`) and publishes the states: the current ones for whoever asks, and
-//! an event for each one that changed. The facts come from memory and one small query per
-//! wallet; nothing is sent to the provider.
+//! an event for each one that changed. It decides again when a worker reports a change (a
+//! listing written, a fetch recorded, the stream's news, a refusal), a few seconds later so a
+//! burst counts once, or when a state could change with time alone. An idle instance therefore
+//! leaves it asleep. The facts come from memory and one query over the fetch tasks not done yet;
+//! nothing is sent to the provider.
 
 mod sync_state;
 
@@ -14,17 +17,22 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use binsight_solana::Address;
-use binsight_store::{TrackedWallet, WalletCursor};
+use binsight_store::{TrackedWallet, WalletBacklog, WalletCursor};
+use jiff::Timestamp;
 use tokio::sync::{broadcast, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
 use super::Ingestion;
+use super::refusal::time_until;
 use crate::events::EngineEvent;
-use sync_state::{Stop, SyncFacts, sync_state};
+use sync_state::{Stop, SyncFacts, next_change, sync_state};
 
-/// How often the states are decided again.
-const SYNC_INTERVAL: Duration = Duration::from_secs(30);
+/// How long a reported change waits for the rest of its burst before the states are decided.
+const SETTLE_DELAY: Duration = Duration::from_secs(10);
+
+/// How long the monitor waits before trying again when it cannot read the facts.
+const STORE_RETRY_DELAY: Duration = Duration::from_secs(30);
 
 /// Where the sync states go: the current ones, and an event per change.
 #[derive(Debug, Clone)]
@@ -38,34 +46,48 @@ pub(crate) struct SyncPublisher {
 /// Decides and publishes the sync states until `shutdown` is cancelled.
 pub(super) async fn run_sync_monitor(ingestion: &Ingestion, shutdown: &CancellationToken) {
     loop {
-        publish_states(ingestion).await;
+        let wait = match publish_states(ingestion).await {
+            Ok(next) => next.map(|at| time_until(ingestion.clock.now(), at)),
+            Err(error) => {
+                error!(%error, "could not read what the wallets wait for");
+                Some(STORE_RETRY_DELAY)
+            }
+        };
         tokio::select! {
             () = shutdown.cancelled() => return,
-            () = tokio::time::sleep(SYNC_INTERVAL) => {}
+            () = ingestion.sync_changed.notified() => {
+                tokio::select! {
+                    () = shutdown.cancelled() => return,
+                    () = tokio::time::sleep(SETTLE_DELAY) => {}
+                }
+            }
+            () = sleep_for(wait) => {}
         }
     }
 }
 
-async fn publish_states(ingestion: &Ingestion) {
-    let wallets = match ingestion.store.wallets().list().await {
-        Ok(wallets) => wallets,
-        Err(error) => {
-            error!(%error, "could not read the tracked wallets for their sync state");
-            return;
-        }
-    };
+/// Sleeps for `wait`, or forever without one.
+async fn sleep_for(wait: Option<Duration>) {
+    match wait {
+        Some(wait) => tokio::time::sleep(wait).await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Decides and publishes every wallet's state; returns when one could next change by itself.
+async fn publish_states(
+    ingestion: &Ingestion,
+) -> Result<Option<Timestamp>, binsight_store::StoreError> {
+    let wallets = ingestion.store.wallets().list().await?;
+    let backlogs = ingestion.store.fetch_queue().backlogs().await?;
+    let now = ingestion.clock.now();
     let mut states = BTreeMap::new();
+    let mut next = None;
     for wallet in &wallets {
-        match decide(ingestion, wallet).await {
-            Some(state) => {
-                states.insert(wallet.address, state);
-            }
-            None => {
-                if let Some(previous) = ingestion.sync.states.borrow().get(&wallet.address) {
-                    states.insert(wallet.address, *previous);
-                }
-            }
-        }
+        let backlog = backlogs.get(&wallet.address).copied().unwrap_or_default();
+        let facts = facts_of(ingestion, wallet, backlog, now);
+        states.insert(wallet.address, sync_state(&facts, now));
+        next = [next, next_change(&facts, now)].into_iter().flatten().min();
     }
     let previous = ingestion.sync.states.send_replace(states.clone());
     for (wallet, state) in states {
@@ -78,33 +100,29 @@ async fn publish_states(ingestion: &Ingestion) {
                 .send(EngineEvent::WalletSyncChanged { wallet, state });
         }
     }
+    Ok(next)
 }
 
-/// `wallet`'s state now, or `None` if its facts could not be read.
-async fn decide(ingestion: &Ingestion, wallet: &TrackedWallet) -> Option<SyncState> {
-    let backlog = match ingestion.store.fetch_queue().backlog(wallet.address).await {
-        Ok(backlog) => backlog,
-        Err(error) => {
-            error!(wallet = %wallet.address, %error, "could not read what a wallet waits for");
-            return None;
-        }
+/// What `wallet`'s state is decided from at `now`.
+fn facts_of(
+    ingestion: &Ingestion,
+    wallet: &TrackedWallet,
+    backlog: WalletBacklog,
+    now: Timestamp,
+) -> SyncFacts {
+    let lag = ingestion.live.lag(wallet.address);
+    let stop = match ingestion.provider_refusal_end(now) {
+        Some(until) => Some(Stop::ProviderRefusal { until }),
+        None if ingestion.rpc.credit_meter().standing().is_refusing_all => Some(Stop::CreditLimit),
+        None => None,
     };
-    let now = ingestion.clock.now();
-    let (unsubscribed_since, is_check_overdue) = ingestion.live.lag(wallet.address, now);
-    let facts = SyncFacts {
+    SyncFacts {
         is_history_listed: matches!(wallet.cursor, WalletCursor::HistoryComplete { .. }),
         backlog,
-        stop: if ingestion.is_provider_refusing(now) {
-            Some(Stop::ProviderRefusal)
-        } else if ingestion.rpc.credit_meter().standing().is_refusing_all {
-            Some(Stop::CreditLimit)
-        } else {
-            None
-        },
-        unsubscribed_since,
-        is_check_overdue,
-    };
-    Some(sync_state(&facts, now))
+        stop,
+        unsubscribed_since: lag.unsubscribed_since,
+        check_late_after: lag.late_after,
+    }
 }
 
 #[cfg(test)]

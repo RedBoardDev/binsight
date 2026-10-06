@@ -39,6 +39,7 @@ pub(in crate::ingestion) async fn run_live_listener(
             record(ingestion, activity, now).await;
         }
         ingestion.live.apply(&event, now);
+        ingestion.sync_changed.notify_one();
     }
 }
 

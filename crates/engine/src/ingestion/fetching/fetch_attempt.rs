@@ -47,6 +47,7 @@ pub(super) async fn fetch_one(ingestion: Ingestion, task: FetchTask) -> Fetched 
             match queue.complete(fetched).await {
                 Ok(()) => {
                     ingestion.new_raw.notify_one();
+                    ingestion.sync_changed.notify_one();
                     debug!(%signature, "transaction fetched");
                     Fetched::Recorded
                 }
@@ -64,7 +65,10 @@ pub(super) async fn fetch_one(ingestion: Ingestion, task: FetchTask) -> Fetched 
             }
             let signature = failure.signature;
             match queue.record_failure(failure).await {
-                Ok(()) => Fetched::Recorded,
+                Ok(()) => {
+                    ingestion.sync_changed.notify_one();
+                    Fetched::Recorded
+                }
                 Err(error) => {
                     error!(%signature, %error, "could not reschedule a transaction");
                     Fetched::NotRecorded

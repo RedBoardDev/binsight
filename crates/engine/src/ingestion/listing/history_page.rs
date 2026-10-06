@@ -62,6 +62,7 @@ async fn write_page(
     };
     let new_signatures = store.signatures().record_listing(listing).await?;
     ingestion.new_tasks.notify_one();
+    ingestion.sync_changed.notify_one();
     debug!(wallet = %wallet.address, listed = page.len(), new_signatures, "history page listed");
     match (step, cursor) {
         (HistoryStep::ConfirmEnd(_), _) => {
