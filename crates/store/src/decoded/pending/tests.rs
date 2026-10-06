@@ -11,6 +11,7 @@ fn scan(version: u32, after: RegistryPosition) -> DecodeScan {
     DecodeScan {
         decoder: "dlmm".to_owned(),
         decoder_version: version,
+        reader_version: 1,
         after,
         limit: 2,
     }
@@ -29,6 +30,7 @@ async fn record(store: &Store, signature: Signature, version: u32, outcome: Deco
             signature,
             decoder: "dlmm".to_owned(),
             decoder_version: version,
+            reader_version: 1,
             execution_outcome: None,
             outcome,
             decoded_at: Timestamp::UNIX_EPOCH,
@@ -39,7 +41,7 @@ async fn record(store: &Store, signature: Signature, version: u32, outcome: Deco
 
 #[tokio::test]
 async fn prepares_the_registry_queries() {
-    assert_queries_prepare(&[SELECT_LAST_POSITION, SELECT_PENDING]).await;
+    assert_queries_prepare(&[SELECT_LAST_POSITION, SELECT_PENDING, COUNT_FAILED]).await;
 }
 
 #[tokio::test]
@@ -153,7 +155,7 @@ async fn searches_the_registry_from_the_position_instead_of_scanning_it() {
         .database()
         .read(|connection| {
             let mut query = connection.prepare(&format!("EXPLAIN QUERY PLAN {SELECT_PENDING}"))?;
-            let rows = query.query_map(params!["dlmm", 1, 10, 20, 500], |row| {
+            let rows = query.query_map(params!["dlmm", 1, 10, 20, 500, 1], |row| {
                 row.get::<_, String>(3)
             })?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -166,4 +168,61 @@ async fn searches_the_registry_from_the_position_instead_of_scanning_it() {
         "{plan:?}"
     );
     assert!(plan.iter().all(|step| !step.contains("SCAN")), "{plan:?}");
+}
+
+#[tokio::test]
+async fn revisits_every_result_of_an_older_reader_and_counts_the_failures() {
+    let (_folder, store) = migrated_store().await;
+    let failed = DecodeOutcome::Failed {
+        error: "unreadable".to_owned(),
+    };
+    for (seed, outcome) in [(1, failed), (2, DecodeOutcome::Decoded)] {
+        let signature = insert(&store, seed).await;
+        record(&store, signature, 2, outcome).await;
+    }
+
+    let newer_reader = DecodeScan {
+        reader_version: 2,
+        limit: 10,
+        ..scan(2, RegistryPosition::START)
+    };
+
+    assert_eq!(
+        store
+            .decoded()
+            .pending(scan(2, RegistryPosition::START))
+            .await
+            .unwrap()
+            .signatures,
+        Vec::new()
+    );
+    assert_eq!(
+        store
+            .decoded()
+            .pending(newer_reader)
+            .await
+            .unwrap()
+            .signatures
+            .len(),
+        2
+    );
+    assert_eq!(store.decoded().failed_count().await.unwrap(), 1);
+}
+
+#[tokio::test]
+async fn counts_the_failures_from_their_index() {
+    let (_folder, store) = migrated_store().await;
+    let plan = store
+        .database()
+        .read(|connection| {
+            let mut query = connection.prepare(&format!("EXPLAIN QUERY PLAN {COUNT_FAILED}"))?;
+            let rows = query.query_map([], |row| row.get::<_, String>(3))?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .unwrap();
+    assert!(
+        plan.iter().any(|step| step.contains("tx_decode_failed")),
+        "{plan:?}"
+    );
 }

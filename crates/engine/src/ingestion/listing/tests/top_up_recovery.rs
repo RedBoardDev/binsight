@@ -28,7 +28,11 @@ fn ingestion(
         rpc,
         clock,
         watch: wallet_watch,
-        sync: SyncPublisher { statuses, events },
+        sync: SyncPublisher {
+            statuses,
+            failed_decodes: watch::channel(None).0,
+            events,
+        },
     });
     for wallet in wallets {
         ingestion

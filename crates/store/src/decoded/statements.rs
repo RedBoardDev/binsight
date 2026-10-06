@@ -12,10 +12,11 @@ use crate::error::StoreError;
 
 pub(super) const UPSERT_DECODE: &str = "
     INSERT INTO tx_decode (signature, decoder, decoder_version, outcome, error, decoded_at,
-                           execution_outcome, execution_error)
-    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                           execution_outcome, execution_error, reader_version)
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
     ON CONFLICT (signature, decoder) DO UPDATE
-    SET decoder_version = excluded.decoder_version, outcome = excluded.outcome,
+    SET decoder_version = excluded.decoder_version, reader_version = excluded.reader_version,
+        outcome = excluded.outcome,
         error = excluded.error, decoded_at = excluded.decoded_at,
         execution_outcome = excluded.execution_outcome,
         execution_error = excluded.execution_error";
@@ -45,7 +46,8 @@ pub(super) fn replace_record(
             error,
             timestamp_to_sql(record.decoded_at),
             execution_outcome,
-            execution_error
+            execution_error,
+            version_to_sql(record.reader_version)
         ],
     )?;
     Ok(())

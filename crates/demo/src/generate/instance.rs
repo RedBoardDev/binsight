@@ -45,6 +45,7 @@ pub(crate) fn instance_status(anchor: Timestamp) -> Result<InstanceStatus, DemoE
         credit_cycle,
         credits_used,
         credits_budget: CREDITS_BUDGET,
+        failed_decodes: 0,
     })
 }
 

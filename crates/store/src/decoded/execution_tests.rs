@@ -11,6 +11,7 @@ fn record(outcome: DecodeOutcome, execution_outcome: Option<TxOutcome>) -> Decod
         signature: sample_record(31).signature,
         decoder: "dlmm".to_owned(),
         decoder_version: 1,
+        reader_version: 1,
         execution_outcome,
         outcome,
         decoded_at: jiff::Timestamp::UNIX_EPOCH,

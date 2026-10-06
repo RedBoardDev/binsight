@@ -37,7 +37,7 @@ async fn reports_healthy_and_backs_up_while_the_server_runs() {
     assert_eq!(health.status.code(), Some(0));
     assert_eq!(backup.status.code(), Some(0), "{backup:?}");
     assert!(
-        stdout(&backup).contains("-schema11.db"),
+        stdout(&backup).contains("-schema12.db"),
         "{}",
         stdout(&backup)
     );
@@ -77,7 +77,7 @@ async fn shows_the_schema_and_signs_everyone_out_once_stopped() {
     .await;
 
     assert_eq!(status.status.code(), Some(0));
-    assert!(stdout(&status).starts_with("Schema version: 11 (this binsight knows up to 11)"));
+    assert!(stdout(&status).starts_with("Schema version: 12 (this binsight knows up to 12)"));
     assert_eq!(rotation.status.code(), Some(0));
     assert!(stdout(&rotation).contains("Every session is signed out"));
 }
@@ -144,6 +144,10 @@ async fn tracks_a_wallet_and_reports_its_import_once_stopped() {
         "{shown}"
     );
     assert!(shown.contains("Credits today"), "{shown}");
+    assert!(
+        shown.contains("Transactions that could not be decoded: 0"),
+        "{shown}"
+    );
     assert_eq!(export.status.code(), Some(64));
 }
 

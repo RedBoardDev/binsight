@@ -4790,6 +4790,7 @@
           "started_at",
           "chain",
           "credits",
+          "failed_decodes",
           "wallets"
         ],
         "properties": {
@@ -4809,6 +4810,12 @@
           "engine": {
             "$ref": "#/components/schemas/EngineStatus",
             "description": "Where the engine is in its lifecycle."
+          },
+          "failed_decodes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many transactions of the registry could not be decoded; their activity is missing\nfrom the figures until a newer binsight reads them.",
+            "minimum": 0
           },
           "started_at": {
             "type": "string",

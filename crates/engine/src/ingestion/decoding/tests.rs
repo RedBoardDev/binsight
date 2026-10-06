@@ -65,6 +65,7 @@ async fn upgrades_old_and_failed_results_offline_and_keeps_current_results_uncha
             signature: raw.signature,
             decoder: DECODER_NAME.to_owned(),
             decoder_version: 1,
+            reader_version: READER_VERSION,
             execution_outcome: None,
             outcome: DecodeOutcome::Failed {
                 error: "old decoder".to_owned(),
@@ -234,4 +235,92 @@ async fn records_a_decoder_panic_as_the_failed_result_of_that_transaction_only()
     assert_eq!(record.decoder_version, DECODER_VERSION);
     assert_eq!(record.execution_outcome, None);
     assert!(matches!(record.outcome, DecodeOutcome::Failed { .. }));
+}
+
+#[tokio::test(start_paused = true)]
+async fn decodes_again_what_an_older_transaction_reader_failed_on() {
+    let setup = temporary_engine().await;
+    let ingestion = Ingestion::on_test_engine(&setup);
+    let raw = fetched("failed-close");
+    setup
+        .store
+        .fetch_queue()
+        .complete(raw.clone())
+        .await
+        .unwrap();
+    let failed_with_an_old_reader = DecodeRecord {
+        signature: raw.signature,
+        decoder: DECODER_NAME.to_owned(),
+        decoder_version: DECODER_VERSION,
+        reader_version: READER_VERSION - 1,
+        execution_outcome: None,
+        outcome: DecodeOutcome::Failed {
+            error: "the reader did not know this shape".to_owned(),
+        },
+        decoded_at: Timestamp::UNIX_EPOCH,
+    };
+    setup
+        .store
+        .decoded()
+        .replace_for_signature(failed_with_an_old_reader)
+        .await
+        .unwrap();
+
+    decode_new(&ingestion, &mut RegistryPosition::default())
+        .await
+        .unwrap();
+
+    let decoded = setup
+        .store
+        .decoded()
+        .get(raw.signature, DECODER_NAME.to_owned())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(decoded.reader_version, READER_VERSION);
+    assert_eq!(decoded.outcome, DecodeOutcome::Decoded);
+    assert_eq!(setup.store.decoded().failed_count().await.unwrap(), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn publishes_how_many_transactions_failed_after_each_scan() {
+    let setup = temporary_engine().await;
+    let ingestion = Ingestion::on_test_engine(&setup);
+    let mut published = ingestion.sync.failed_decodes.subscribe();
+    let valid = fetched("failed-close");
+    let damaged = binsight_store::RawTxRecord {
+        signature: Signature::from_bytes([0; 64]),
+        slot: valid.slot,
+        block_time: valid.block_time,
+        tx_version: valid.tx_version,
+        commitment: valid.commitment,
+        encoding: valid.encoding,
+        compression: binsight_store::PayloadCompression::None,
+        payload: valid.payload.clone(),
+        payload_sha256: [0; 32],
+        fetched_at: TEST_START,
+    };
+    setup
+        .store
+        .raw_tx()
+        .insert_if_absent(damaged)
+        .await
+        .unwrap();
+    let shutdown = CancellationToken::new();
+    let worker = tokio::spawn({
+        let ingestion = ingestion.clone();
+        let shutdown = shutdown.clone();
+        async move { run_decoder(&ingestion, &shutdown).await }
+    });
+
+    let after_startup = *published.wait_for(Option::is_some).await.unwrap();
+    setup.store.fetch_queue().complete(valid).await.unwrap();
+    ingestion.new_raw.notify_one();
+    published.changed().await.unwrap();
+    let after_a_fetch = *published.borrow();
+
+    assert_eq!(after_startup, Some(1));
+    assert_eq!(after_a_fetch, Some(1));
+    shutdown.cancel();
+    worker.await.unwrap();
 }

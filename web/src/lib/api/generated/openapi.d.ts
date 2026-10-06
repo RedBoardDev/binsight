@@ -1554,6 +1554,12 @@ export interface components {
             /** @description Where the engine is in its lifecycle. */
             engine: components["schemas"]["EngineStatus"];
             /**
+             * Format: int64
+             * @description How many transactions of the registry could not be decoded; their activity is missing
+             *     from the figures until a newer binsight reads them.
+             */
+            failed_decodes: number;
+            /**
              * Format: date-time
              * @description When the engine started.
              */

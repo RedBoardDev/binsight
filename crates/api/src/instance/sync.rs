@@ -102,6 +102,9 @@ pub(crate) struct SyncReport {
     pub(crate) valuation_interval_seconds: Option<u64>,
     /// The credits of the billing cycle.
     pub(crate) credits: CreditsSummary,
+    /// How many transactions of the registry could not be decoded; their activity is missing
+    /// from the figures until a newer binsight reads them.
+    pub(crate) failed_decodes: u64,
     /// Each wallet, in the order of the wallet list.
     pub(crate) wallets: Vec<WalletSyncLine>,
 }
@@ -145,6 +148,7 @@ impl From<views::SyncReport> for SyncReport {
                 projected: credits.projected,
                 is_over_budget: credits.is_over_budget,
             },
+            failed_decodes: report.failed_decodes,
             wallets: report
                 .wallets
                 .iter()

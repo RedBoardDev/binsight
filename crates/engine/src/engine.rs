@@ -24,8 +24,8 @@ use tracing::info;
 use crate::credit_usage::{restore_spending, run_credit_usage};
 use crate::error::EngineError;
 use crate::handle::EngineHandle;
-use crate::ingestion::PublishedStatuses;
 use crate::ingestion::{Ingestion, IngestionParts, SyncPublisher, requeue_readable_versions};
+use crate::ingestion::{PublishedFailures, PublishedStatuses};
 use crate::portfolio::EngineState;
 use crate::projections::{REGISTRY, reconcile_projections};
 use events::EngineEvent;
@@ -43,6 +43,7 @@ pub struct Engine {
     status: watch::Sender<EngineStatus>,
     events: broadcast::Sender<EngineEvent>,
     sync_statuses: watch::Sender<PublishedStatuses>,
+    failed_decodes: watch::Sender<PublishedFailures>,
 }
 
 impl std::fmt::Debug for Engine {
@@ -64,12 +65,14 @@ impl Engine {
         let (status, status_receiver) = watch::channel(EngineStatus::Starting);
         let (events, _) = broadcast::channel(EVENT_BUFFER_SIZE);
         let (sync_statuses, sync_receiver) = watch::channel(None);
+        let (failed_decodes, failures_receiver) = watch::channel(None);
         let state = EngineState {
             store: store.clone(),
             rpc: rpc.clone(),
             clock: clock.clone(),
             status: status_receiver,
             sync_statuses: sync_receiver,
+            failed_decodes: failures_receiver,
         };
         let handle = EngineHandle::new(state, events.clone());
         (
@@ -81,6 +84,7 @@ impl Engine {
                 status,
                 events,
                 sync_statuses,
+                failed_decodes,
             },
             handle,
         )
@@ -102,6 +106,7 @@ impl Engine {
             WalletStream::new(self.stream.clone(), self.rpc.clone());
         let sync = SyncPublisher {
             statuses: self.sync_statuses.clone(),
+            failed_decodes: self.failed_decodes.clone(),
             events: self.events.clone(),
         };
         let ingestion = Ingestion::new(IngestionParts {

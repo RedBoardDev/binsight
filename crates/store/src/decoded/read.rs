@@ -9,7 +9,8 @@ use crate::database::codec::{timestamp_from_sql, version_from_sql};
 use crate::error::StoreError;
 
 pub(super) const SELECT_DECODE: &str = "
-    SELECT decoder_version, outcome, error, decoded_at, execution_outcome, execution_error
+    SELECT decoder_version, outcome, error, decoded_at, execution_outcome, execution_error,
+           reader_version
     FROM tx_decode WHERE signature = ?1 AND decoder = ?2";
 
 impl DecodedRepo {
@@ -36,19 +37,21 @@ pub(super) fn read_record(
     decoder: String,
 ) -> Result<Option<DecodeRecord>, StoreError> {
     let key = params![signature.to_string(), decoder];
-    let Some((version, outcome, error, decoded_at, execution_outcome, execution_error)) =
-        connection
-            .query_row(SELECT_DECODE, key, |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                    row.get::<_, i64>(3)?,
+    let Some((version, outcome, error, decoded_at, execution, reader_version)) = connection
+        .query_row(SELECT_DECODE, key, |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, i64>(3)?,
+                (
                     row.get::<_, Option<String>>(4)?,
                     row.get::<_, Option<String>>(5)?,
-                ))
-            })
-            .optional()?
+                ),
+                row.get::<_, i64>(6)?,
+            ))
+        })
+        .optional()?
     else {
         return Ok(None);
     };
@@ -67,7 +70,8 @@ pub(super) fn read_record(
         signature,
         decoder,
         decoder_version: version_from_sql(version)?,
-        execution_outcome: read_execution(execution_outcome, execution_error)?,
+        reader_version: version_from_sql(reader_version)?,
+        execution_outcome: read_execution(execution.0, execution.1)?,
         outcome,
         decoded_at: timestamp_from_sql(decoded_at)?,
     }))

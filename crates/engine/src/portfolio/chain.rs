@@ -29,7 +29,7 @@ use super::views::{
     BillingCycle, ChainTip, InstanceSettings, SyncReport, SyncState, WalletSyncLine, WalletsView,
 };
 use crate::engine::status::EngineStatus;
-use crate::ingestion::PublishedStatuses;
+use crate::ingestion::{PublishedFailures, PublishedStatuses};
 use wallet_lines::{WalletFacts, summary, sync_line, total};
 
 /// What the engine knows, as the API reads it.
@@ -40,6 +40,7 @@ pub(crate) struct ChainPortfolio {
     started_at: Timestamp,
     status: watch::Receiver<EngineStatus>,
     sync_statuses: watch::Receiver<PublishedStatuses>,
+    failed_decodes: watch::Receiver<PublishedFailures>,
 }
 
 /// Where the engine's state lives, for [`ChainPortfolio::new`].
@@ -54,6 +55,8 @@ pub(crate) struct EngineState {
     pub(crate) status: watch::Receiver<EngineStatus>,
     /// Each wallet's progress and sync state, as the sync monitor last decided them.
     pub(crate) sync_statuses: watch::Receiver<PublishedStatuses>,
+    /// How many transactions could not be decoded, as the decoder last counted them.
+    pub(crate) failed_decodes: watch::Receiver<PublishedFailures>,
 }
 
 impl ChainPortfolio {
@@ -66,6 +69,7 @@ impl ChainPortfolio {
             clock: state.clock,
             status: state.status,
             sync_statuses: state.sync_statuses,
+            failed_decodes: state.failed_decodes,
         }
     }
 
@@ -107,8 +111,18 @@ impl ChainPortfolio {
             .collect())
     }
 
-    /// The engine's lifecycle and the credits of the billing cycle.
-    fn instance_status(&self) -> Result<InstanceStatus, ReadError> {
+    /// The engine's lifecycle, the credits of the billing cycle and the decoding failures.
+    async fn instance_status(&self) -> Result<InstanceStatus, ReadError> {
+        let published = *self.failed_decodes.borrow();
+        let failed_decodes = match published {
+            Some(failed) => failed,
+            None => self
+                .store
+                .decoded()
+                .failed_count()
+                .await
+                .map_err(|failure| database_error(&failure))?,
+        };
         let standing = self.rpc.credit_meter().standing();
         let cycle_start = standing
             .cycle_first_day
@@ -126,6 +140,7 @@ impl ChainPortfolio {
             },
             credits_used: standing.spent_cycle.0,
             credits_budget: standing.cycle_credits.0,
+            failed_decodes,
         })
     }
 }
@@ -140,7 +155,7 @@ impl InstanceReads for ChainPortfolio {
                 .into_iter()
                 .map(|(_, line)| line)
                 .collect();
-            let status = self.instance_status()?;
+            let status = self.instance_status().await?;
             report_of(wallets, &status, now)
         })
     }

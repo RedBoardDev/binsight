@@ -30,7 +30,11 @@ fn ingestion(
         rpc,
         clock,
         watch: wallets,
-        sync: SyncPublisher { statuses, events },
+        sync: SyncPublisher {
+            statuses,
+            failed_decodes: watch::channel(None).0,
+            events,
+        },
     })
 }
 

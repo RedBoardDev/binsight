@@ -23,4 +23,6 @@ pub struct InstanceStatus {
     pub credits_used: u64,
     /// The billing cycle's credit budget.
     pub credits_budget: u64,
+    /// How many transactions of the registry could not be decoded.
+    pub failed_decodes: u64,
 }

@@ -7,7 +7,7 @@
 
 use binsight_dlmm::{DECODER_NAME, DECODER_VERSION};
 use binsight_solana::Commitment;
-use binsight_solana::transaction::{TransactionView, TxEncoding, read};
+use binsight_solana::transaction::{READER_VERSION, TransactionView, TxEncoding, read};
 use binsight_store::{DecodeOutcome, DecodeRecord, RawTxRecord};
 use jiff::Timestamp;
 
@@ -49,6 +49,7 @@ pub(super) fn unreadable(
         signature,
         decoder: DECODER_NAME.to_owned(),
         decoder_version: DECODER_VERSION,
+        reader_version: READER_VERSION,
         execution_outcome: None,
         outcome: failed(error),
         decoded_at,

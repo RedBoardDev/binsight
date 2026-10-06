@@ -115,6 +115,9 @@ pub struct SyncReport {
     pub valuation_interval_seconds: Option<u64>,
     /// The credits of the billing cycle.
     pub credits: CreditsSummary,
+    /// How many transactions of the registry could not be decoded; their activity is missing
+    /// from the figures until a newer binsight reads them.
+    pub failed_decodes: u64,
     /// Each wallet, in the order of the wallet list.
     pub wallets: Vec<WalletSyncLine>,
 }

@@ -18,7 +18,9 @@ mod live;
 mod refusal;
 mod sync;
 
-pub(crate) use sync::{PublishedStatuses, SyncPublisher};
+#[cfg(test)]
+pub(crate) use sync::WalletStatus;
+pub(crate) use sync::{PublishedFailures, PublishedStatuses, SyncPublisher};
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -172,7 +174,11 @@ impl Ingestion {
             rpc,
             clock,
             watch,
-            sync: SyncPublisher { statuses, events },
+            sync: SyncPublisher {
+                statuses,
+                failed_decodes: tokio::sync::watch::channel(None).0,
+                events,
+            },
         })
     }
 }

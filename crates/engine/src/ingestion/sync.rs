@@ -50,11 +50,17 @@ pub(crate) struct WalletStatus {
 /// first decision, a few moments after startup.
 pub(crate) type PublishedStatuses = Option<Arc<Vec<WalletStatus>>>;
 
+/// What the decoder publishes: how many transactions of the registry could not be decoded;
+/// `None` until its first scan, a few moments after startup.
+pub(crate) type PublishedFailures = Option<u64>;
+
 /// Where the sync states go: the current ones, and an event per change.
 #[derive(Debug, Clone)]
 pub(crate) struct SyncPublisher {
     /// The current status of every wallet.
     pub(crate) statuses: watch::Sender<PublishedStatuses>,
+    /// How many transactions could not be decoded, as the decoder last counted them.
+    pub(crate) failed_decodes: watch::Sender<PublishedFailures>,
     /// The engine's events.
     pub(crate) events: broadcast::Sender<EngineEvent>,
 }

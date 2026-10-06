@@ -49,6 +49,8 @@ pub struct DecodeRecord {
     pub decoder: String,
     /// The version of the decoder that produced this result (1 or more).
     pub decoder_version: u32,
+    /// The version of the transaction reader the decoder read the payload with.
+    pub reader_version: u32,
     /// Whether the transaction executed successfully, independently of decoder success.
     /// `None` means an older record or an unreadable payload did not establish this fact;
     /// it must never be interpreted as a successful transaction.
@@ -101,6 +103,7 @@ mod tests {
             signature,
             decoder: "dlmm".to_owned(),
             decoder_version: version,
+            reader_version: 1,
             execution_outcome: None,
             outcome,
             decoded_at: Timestamp::from_second(1_790_000_200).unwrap(),

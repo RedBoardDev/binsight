@@ -1,9 +1,10 @@
 //! `binsight admin sync-status`: how far each wallet is imported, and the credits spent.
 //!
 //! For each tracked wallet: where its history listing stands and how its transactions stand in
-//! the fetch queue. Then the credits spent today (UTC, the provider's day), request kind by
-//! request kind, against the daily limit, and the current billing cycle's total against the
-//! plan. It only reads, so it works while the server runs.
+//! the fetch queue. Then how many transactions could not be decoded, and the credits spent today
+//! (UTC, the provider's day), request kind by request kind, against the daily limit, and the
+//! current billing cycle's total against the plan. It only reads, so it works while the server
+//! runs.
 
 use binsight_core::clock::{Clock, utc_day};
 use binsight_engine::SystemClock;
@@ -27,6 +28,8 @@ pub(super) async fn show_sync_status(config: &Config) -> Result<(), Failure> {
             print_line(&line);
         }
     }
+    let failed = store.decoded().failed_count().await?;
+    print_line(&format!("Transactions that could not be decoded: {failed}"));
     let today = utc_day(SystemClock.now());
     let totals = store.credits().totals_between(today, today).await?;
     let budget = config.credit_budget;

@@ -85,6 +85,7 @@ mod tests {
             },
             credits_used: 101,
             credits_budget: 100,
+            failed_decodes: 0,
         };
         let snapshot = Snapshot::new(SnapshotFacts::default()).unwrap();
         let items = watch_items(&snapshot, &status, Scope::All, &[], start).unwrap();

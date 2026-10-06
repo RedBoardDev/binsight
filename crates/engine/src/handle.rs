@@ -160,6 +160,7 @@ mod tests {
             clock: std::sync::Arc::new(binsight_core::clock::FixedClock::new(TEST_START)),
             status: setup.handle.status.clone(),
             sync_statuses: setup.handle.sync_statuses.clone(),
+            failed_decodes: tokio::sync::watch::channel(None).1,
         });
         let handle = super::EngineHandle::without_engine(
             setup.store.clone(),

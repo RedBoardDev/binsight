@@ -23,6 +23,7 @@ expression: response.json()
     }
   },
   "engine": "running",
+  "failed_decodes": 0,
   "started_at": "2026-09-21T14:13:20Z",
   "state": "lagging",
   "valuation_interval_seconds": 10,

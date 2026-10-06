@@ -13,7 +13,7 @@ use binsight_solana::Signature;
 use rusqlite::params;
 
 use super::DecodedRepo;
-use crate::database::codec::parse_from_sql;
+use crate::database::codec::{parse_from_sql, unsigned_from_sql};
 use crate::error::StoreError;
 
 /// A place in the registry's insertion order: everything up to it was looked at.
@@ -30,8 +30,10 @@ impl RegistryPosition {
 pub struct DecodeScan {
     /// The decoder whose results are inspected.
     pub decoder: String,
-    /// The minimum version a result must have to be skipped.
+    /// The minimum decoder version a result must have to be skipped.
     pub decoder_version: u32,
+    /// The minimum transaction reader version a result must have to be skipped.
+    pub reader_version: u32,
     /// Where the previous scan stopped.
     pub after: RegistryPosition,
     /// The maximum number of signatures returned.
@@ -55,13 +57,16 @@ const SELECT_PENDING: &str = "
     LEFT JOIN tx_decode AS decoded
       ON decoded.signature = raw.signature AND decoded.decoder = ?1
     WHERE raw.rowid > ?3 AND raw.rowid <= ?4
-      AND (decoded.decoder_version IS NULL OR decoded.decoder_version < ?2)
+      AND (decoded.decoder_version IS NULL OR decoded.decoder_version < ?2
+           OR decoded.reader_version < ?6)
     ORDER BY raw.rowid LIMIT ?5";
+const COUNT_FAILED: &str = "SELECT count(*) FROM tx_decode WHERE outcome = 'failed'";
 
 impl DecodedRepo {
-    /// Finds, after `scan.after`, the transactions without a result at `scan.decoder_version` or
-    /// a newer version. Failed and not-applicable results at the current version are skipped
-    /// too: decoding is a pure function of the immutable payload, so they would fail again.
+    /// Finds, after `scan.after`, the transactions without a result at `scan.decoder_version`
+    /// and `scan.reader_version` or newer. Failed and not-applicable results at the current
+    /// versions are skipped too: decoding is a pure function of the immutable payload and of
+    /// these two versions, so they would fail again; a new version of either retries them.
     ///
     /// # Errors
     ///
@@ -78,6 +83,7 @@ impl DecodedRepo {
                         scan.after.0,
                         last,
                         i64::from(scan.limit),
+                        i64::from(scan.reader_version),
                     ],
                     |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
                 )?;
@@ -99,6 +105,22 @@ impl DecodedRepo {
                     scanned_to: RegistryPosition(scanned_to),
                     is_truncated,
                 })
+            })
+            .await
+    }
+}
+
+impl DecodedRepo {
+    /// How many transactions a decoder failed to decode, at whatever version.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database cannot be read.
+    pub async fn failed_count(&self) -> Result<u64, StoreError> {
+        self.database
+            .read(|connection| {
+                let count: i64 = connection.query_row(COUNT_FAILED, [], |row| row.get(0))?;
+                unsigned_from_sql(count, "count")
             })
             .await
     }

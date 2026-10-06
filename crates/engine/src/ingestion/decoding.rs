@@ -7,9 +7,14 @@
 //!
 //! One transaction can never stop the others: whatever goes wrong with it (an unreadable
 //! payload, a decoder error, even a panic of the decoder) is recorded as a failed result with its
-//! error, and the decoder moves on. Decoding is a pure function of the immutable payload, so a
-//! failed transaction is not tried again at the same decoder version: the next version retries
-//! it. Only a database failure stops a scan; it is retried after a delay from where it stopped.
+//! error, and the decoder moves on. Decoding is a pure function of the immutable payload, the
+//! transaction reader and the DLMM decoder, and a result records the versions of both: a failed
+//! transaction is not tried again until one of them changes. How many failed is counted after
+//! each scan and published for the sync report (logged too after the startup scan). Only a
+//! database failure stops a scan; it is retried after a delay from where it stopped.
+//!
+//! The results tell which transactions hold DLMM activity the decoder reads and how each one
+//! executed; the producer of the position figures selects its transactions from them.
 
 mod record;
 
@@ -17,6 +22,7 @@ use std::time::Duration;
 
 use binsight_dlmm::{DECODER_NAME, DECODER_VERSION};
 use binsight_solana::Signature;
+use binsight_solana::transaction::READER_VERSION;
 use binsight_store::{DecodeRecord, DecodeScan, RawTxRecord, RegistryPosition, StoreError};
 use jiff::Timestamp;
 use tokio_util::sync::CancellationToken;
@@ -30,6 +36,7 @@ const STORE_RETRY_DELAY: Duration = Duration::from_secs(30);
 /// Decodes the registry until `shutdown` is cancelled.
 pub(super) async fn run_decoder(ingestion: &Ingestion, shutdown: &CancellationToken) {
     let mut position = RegistryPosition::START;
+    let mut is_first_scan = true;
     loop {
         let result = tokio::select! {
             biased;
@@ -44,9 +51,32 @@ pub(super) async fn run_decoder(ingestion: &Ingestion, shutdown: &CancellationTo
             }
             continue;
         }
+        let failed = publish_failures(ingestion).await;
+        if is_first_scan && failed.is_some_and(|failed| failed > 0) {
+            warn!(
+                ?failed,
+                "some transactions could not be decoded; see the sync report"
+            );
+        }
+        is_first_scan = false;
         tokio::select! {
             () = shutdown.cancelled() => return,
             () = ingestion.new_raw.notified() => {},
+        }
+    }
+}
+
+/// Counts the transactions the decoder could not read and publishes the count for the sync
+/// report, so a request never counts them itself. A scan is the only thing that changes it.
+async fn publish_failures(ingestion: &Ingestion) -> Option<u64> {
+    match ingestion.store.decoded().failed_count().await {
+        Ok(failed) => {
+            ingestion.sync.failed_decodes.send_replace(Some(failed));
+            Some(failed)
+        }
+        Err(error) => {
+            error!(%error, "could not count the transactions that failed to decode");
+            None
         }
     }
 }
@@ -64,6 +94,7 @@ async fn decode_new(
             .pending(DecodeScan {
                 decoder: DECODER_NAME.to_owned(),
                 decoder_version: DECODER_VERSION,
+                reader_version: READER_VERSION,
                 after: *position,
                 limit: DECODE_BATCH_SIZE,
             })

@@ -37,6 +37,11 @@ use accounts::LoadedAddresses;
 use balances::TokenBalanceLists;
 use rpc_response::{RpcLoadedAddresses, RpcTransaction, RpcVersion};
 
+/// The version of [`read`]'s output; it starts at 1 and only goes up. A change to what `read`
+/// accepts or returns (a newly readable shape, a corrected field) raises it, so every stored
+/// transaction is read and decoded again, without fetching anything.
+pub const READER_VERSION: u32 = 1;
+
 /// The encoding name of a base64 transaction in the answer.
 const BASE64_ENCODING: &str = "base64";
 

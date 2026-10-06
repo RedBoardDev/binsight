@@ -73,6 +73,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "raw_tx_never_deleted",
         sql: include_str!("../../migrations/0011_raw_tx_never_deleted.sql"),
     },
+    Migration {
+        version: 12,
+        name: "decode_reader_version",
+        sql: include_str!("../../migrations/0012_decode_reader_version.sql"),
+    },
 ];
 
 #[cfg(test)]
@@ -216,6 +221,34 @@ mod tests {
             .query_row("SELECT count(*) FROM raw_tx", [], |row| row.get(0))
             .unwrap();
         assert_eq!(kept, 1);
+    }
+
+    #[test]
+    fn marks_every_existing_decode_result_as_read_by_reader_zero() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        let (before, added) = MIGRATIONS.split_at(11);
+        for migration in before {
+            connection.execute_batch(migration.sql).unwrap();
+        }
+        connection
+            .execute_batch(
+                "INSERT INTO raw_tx VALUES
+                 ('old', 1, NULL, '0', 'finalized', 'base64', 'none', x'00', zeroblob(32), 0);
+                 INSERT INTO tx_decode (signature, decoder, decoder_version, outcome, error,
+                                        decoded_at)
+                 VALUES ('old', 'dlmm', 2, 'failed', 'unreadable', 0);",
+            )
+            .unwrap();
+        connection.execute_batch(added[0].sql).unwrap();
+
+        let kept: (i64, i64, String) = connection
+            .query_row(
+                "SELECT reader_version, decoder_version, outcome FROM tx_decode",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(kept, (0, 2, "failed".to_owned()));
     }
 
     #[test]
