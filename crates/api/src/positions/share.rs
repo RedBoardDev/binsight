@@ -48,13 +48,13 @@ pub(crate) enum ClosedSharePnlKind {
 pub(crate) struct OpenPositionShareCard {
     /// The stable full position identity, including its opening signature.
     pub(crate) id: String,
-    /// Its physical account address.
+    /// Its account address.
     pub(crate) address: String,
     /// Its pool, including the existing token logo references.
     pub(crate) pool: PoolRef,
     /// The owner wallet reference.
     pub(crate) wallet: WalletRef,
-    /// Its proven strategy, or explicit `null` when unknown.
+    /// Its strategy, or `null` when unknown.
     #[schema(required = true)]
     pub(crate) strategy: Option<Strategy>,
     /// Its open PnL, preserving exactness and reasons.
@@ -87,13 +87,13 @@ pub(crate) struct OpenPositionShareCard {
 pub(crate) struct ClosedPositionShareCard {
     /// The stable full position identity, including its opening signature.
     pub(crate) id: String,
-    /// Its physical account address, which may have hosted other lives.
+    /// Its account address, which earlier positions may have used too.
     pub(crate) address: String,
     /// Its pool, including the existing token logo references.
     pub(crate) pool: PoolRef,
     /// The owner wallet reference.
     pub(crate) wallet: WalletRef,
-    /// Its proven strategy, or explicit `null` when unknown.
+    /// Its strategy, or `null` when unknown.
     #[schema(required = true)]
     pub(crate) strategy: Option<Strategy>,
     /// Its final PnL, preserving exactness and reasons.

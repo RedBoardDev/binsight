@@ -1595,7 +1595,7 @@
           },
           "height": {
             "$ref": "#/components/schemas/DecimalString",
-            "description": "Relative depth at each bin’s own price, from `0` to `1` of the largest bar.\nSupported pools use the selected native token; unsupported pools retain descriptive\nphysical Y depth, which never enters a financial figure."
+            "description": "Relative depth at each bin’s own price, from `0` to `1` of the largest bar.\nSupported pools use the selected native token; unsupported pools show the depth of the\npool's Y token, which never enters a financial figure."
           },
           "price": {
             "oneOf": [
@@ -2040,7 +2040,7 @@
           },
           "links": {
             "$ref": "#/components/schemas/PositionLinks",
-            "description": "External pool, physical position-account and displayed base-token destinations."
+            "description": "External links to the pool, the position account and the displayed base token."
           },
           "lp_pnl": {
             "$ref": "#/components/schemas/Figure",
@@ -2090,7 +2090,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/Strategy",
-                "description": "Its proven strategy; `null` for arbitrary weights or mixed strategies."
+                "description": "Its strategy; `null` for arbitrary weights or mixed strategies."
               },
               {
                 "type": "null"
@@ -2131,7 +2131,7 @@
         "properties": {
           "address": {
             "type": "string",
-            "description": "Its physical account address, which may have hosted other lives."
+            "description": "Its account address, which earlier positions may have used too."
           },
           "bins": {
             "oneOf": [
@@ -2206,7 +2206,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/Strategy",
-                "description": "Its proven strategy, or explicit `null` when unknown."
+                "description": "Its strategy, or `null` when unknown."
               },
               {
                 "type": "null"
@@ -2297,12 +2297,12 @@
           },
           "unclassified_count": {
             "type": "integer",
-            "description": "Closed lives whose native PnL sign is not proved yet.",
+            "description": "How many closed positions have an unknown outcome (their PnL sign is still open).",
             "minimum": 0
           },
           "win_rate": {
             "$ref": "#/components/schemas/PercentFigure",
-            "description": "`wins / (wins + losses)`, flat positions left out; estimated with unclassified lives.\nUnavailable without a proved win or loss."
+            "description": "`wins / (wins + losses)`: flat and unknown outcomes left out; estimated while some outcomes\nare unknown. Unavailable without a win or a loss."
           },
           "wins": {
             "type": "integer",
@@ -2437,7 +2437,7 @@
           },
           "unclassified_count": {
             "type": "integer",
-            "description": "Closed lives whose native PnL sign is not proved yet.",
+            "description": "How many closed positions have an unknown outcome (their PnL sign is still open).",
             "minimum": 0
           },
           "win_rate": {
@@ -2534,7 +2534,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/Price",
-                "description": "The lower numeric displayed price; physical bin IDs remain unchanged. Null without a supported quote."
+                "description": "The lower numeric displayed price; the bin ids are the pool's own. Null without a supported quote."
               },
               {
                 "type": "null"
@@ -2550,7 +2550,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/Price",
-                "description": "The upper numeric displayed price; physical bin IDs remain unchanged. Null without a supported quote."
+                "description": "The upper numeric displayed price; the bin ids are the pool's own. Null without a supported quote."
               },
               {
                 "type": "null"
@@ -3141,7 +3141,7 @@
           },
           "links": {
             "$ref": "#/components/schemas/PositionLinks",
-            "description": "External pool, physical position-account and displayed base-token destinations."
+            "description": "External links to the pool, the position account and the displayed base token."
           },
           "lower": {
             "oneOf": [
@@ -3206,7 +3206,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/Strategy",
-                "description": "Its proven strategy; `null` for arbitrary weights or mixed strategies."
+                "description": "Its strategy; `null` for arbitrary weights or mixed strategies."
               },
               {
                 "type": "null"
@@ -3266,7 +3266,7 @@
         "properties": {
           "address": {
             "type": "string",
-            "description": "Its physical account address."
+            "description": "Its account address."
           },
           "bins": {
             "$ref": "#/components/schemas/BinChart",
@@ -3330,7 +3330,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/Strategy",
-                "description": "Its proven strategy, or explicit `null` when unknown."
+                "description": "Its strategy, or `null` when unknown."
               },
               {
                 "type": "null"
@@ -4115,11 +4115,11 @@
           },
           "meteora": {
             "type": "string",
-            "description": "The DLMM pool on Meteora; does not select a position or a historical lifetime."
+            "description": "The DLMM pool on Meteora; does not select a position."
           },
           "solscan": {
             "type": "string",
-            "description": "The physical position account on Solscan, shared by every lifetime of that account."
+            "description": "The position account on Solscan, shared by every position that used that address."
           }
         }
       },
@@ -4571,7 +4571,7 @@
       },
       "RewardMovement": {
         "type": "object",
-        "description": "The raw proof of a reward claim, without assuming the token's decimals or price.",
+        "description": "A reward claim in raw units, without assuming the token's decimals or price.",
         "required": [
           "mint",
           "raw_amount",
@@ -5014,11 +5014,11 @@
         "properties": {
           "jupiter_portfolio": {
             "type": "string",
-            "description": "The physical wallet's Jupiter portfolio."
+            "description": "The wallet's Jupiter portfolio."
           },
           "solscan": {
             "type": "string",
-            "description": "The physical wallet account on Solscan."
+            "description": "The wallet account on Solscan."
           }
         }
       },
@@ -5076,7 +5076,7 @@
           },
           "links": {
             "$ref": "#/components/schemas/WalletLinks",
-            "description": "External destinations for the physical wallet account."
+            "description": "External links for the wallet account."
           }
         }
       },

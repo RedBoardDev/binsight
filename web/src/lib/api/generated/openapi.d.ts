@@ -372,8 +372,8 @@ export interface components {
             bin_id: number;
             /**
              * @description Relative depth at each bin’s own price, from `0` to `1` of the largest bar.
-             *     Supported pools use the selected native token; unsupported pools retain descriptive
-             *     physical Y depth, which never enters a financial figure.
+             *     Supported pools use the selected native token; unsupported pools show the depth of the
+             *     pool's Y token, which never enters a financial figure.
              */
             height: components["schemas"]["DecimalString"];
             price?: components["schemas"]["Price"] | null;
@@ -556,7 +556,7 @@ export interface components {
             invested: components["schemas"]["Figure"];
             /** @description Whether nothing ever moved: an empty shell (its outcome is `flat`). */
             is_shell: boolean;
-            /** @description External pool, physical position-account and displayed base-token destinations. */
+            /** @description External links to the pool, the position account and the displayed base token. */
             links: components["schemas"]["PositionLinks"];
             /** @description Its liquidity PnL: withdrawn + fees + rewards − invested. */
             lp_pnl: components["schemas"]["Figure"];
@@ -586,7 +586,7 @@ export interface components {
         };
         /** @description The data to render a closed position's card; it has no current range or bins. */
         ClosedPositionShareCard: {
-            /** @description Its physical account address, which may have hosted other lives. */
+            /** @description Its account address, which earlier positions may have used too. */
             address: string;
             bins: components["schemas"]["BinChart"] | null;
             /**
@@ -658,11 +658,11 @@ export interface components {
             pnl_pct: components["schemas"]["PercentFigure"];
             /** @description Farming rewards, separately from swap fees. */
             rewards: components["schemas"]["Figure"];
-            /** @description Closed lives whose native PnL sign is not proved yet. */
+            /** @description How many closed positions have an unknown outcome (their PnL sign is still open). */
             unclassified_count: number;
             /**
-             * @description `wins / (wins + losses)`, flat positions left out; estimated with unclassified lives.
-             *     Unavailable without a proved win or loss.
+             * @description `wins / (wins + losses)`: flat and unknown outcomes left out; estimated while some outcomes
+             *     are unknown. Unavailable without a win or a loss.
              */
             win_rate: components["schemas"]["PercentFigure"];
             /** @description How many gained. */
@@ -726,7 +726,7 @@ export interface components {
             losses: number;
             /** @description The sum of their PnL. */
             pnl: components["schemas"]["Figure"];
-            /** @description Closed lives whose native PnL sign is not proved yet. */
+            /** @description How many closed positions have an unknown outcome (their PnL sign is still open). */
             unclassified_count: number;
             /** @description `wins / (wins + losses)`. */
             win_rate: components["schemas"]["PercentFigure"];
@@ -982,7 +982,7 @@ export interface components {
             id: string;
             /** @description What it invested. */
             invested: components["schemas"]["Figure"];
-            /** @description External pool, physical position-account and displayed base-token destinations. */
+            /** @description External links to the pool, the position account and the displayed base token. */
             links: components["schemas"]["PositionLinks"];
             lower?: components["schemas"]["Price"] | null;
             /** @description Always `pool`: an open position is marked at its bins. */
@@ -1020,7 +1020,7 @@ export interface components {
         };
         /** @description The data to render an open position's card; rendering remains a client operation. */
         OpenPositionShareCard: {
-            /** @description Its physical account address. */
+            /** @description Its account address. */
             address: string;
             /** @description Its existing grouped liquidity bins. */
             bins: components["schemas"]["BinChart"];
@@ -1315,9 +1315,9 @@ export interface components {
         PositionLinks: {
             /** @description The displayed base token on GMGN, following the pool's selected quote convention. */
             gmgn: string;
-            /** @description The DLMM pool on Meteora; does not select a position or a historical lifetime. */
+            /** @description The DLMM pool on Meteora; does not select a position. */
             meteora: string;
-            /** @description The physical position account on Solscan, shared by every lifetime of that account. */
+            /** @description The position account on Solscan, shared by every position that used that address. */
             solscan: string;
         };
         /** @description A share card's figures are those of its open or closed position. */
@@ -1457,7 +1457,7 @@ export interface components {
             days: components["schemas"]["ClosedDay"][];
             last_close?: components["schemas"]["ClosedPositionRow"] | null;
         };
-        /** @description The raw proof of a reward claim, without assuming the token's decimals or price. */
+        /** @description A reward claim in raw units, without assuming the token's decimals or price. */
         RewardMovement: {
             /** @description The mint paid by the pool's reward program, in base58. */
             mint: string;
@@ -1633,9 +1633,9 @@ export interface components {
         WalletColor: "wallet_1" | "wallet_2" | "wallet_3" | "wallet_4" | "wallet_5" | "wallet_6" | "wallet_7" | "wallet_8";
         /** @description External destinations shared by every reference to a tracked wallet. */
         WalletLinks: {
-            /** @description The physical wallet's Jupiter portfolio. */
+            /** @description The wallet's Jupiter portfolio. */
             jupiter_portfolio: string;
-            /** @description The physical wallet account on Solscan. */
+            /** @description The wallet account on Solscan. */
             solscan: string;
         };
         /** @description The tracked wallets and their total. */
@@ -1655,7 +1655,7 @@ export interface components {
             color: components["schemas"]["WalletColor"];
             /** @description Its label: never empty, at most 10 characters (the short address when the owner gave none). */
             label: string;
-            /** @description External destinations for the physical wallet account. */
+            /** @description External links for the wallet account. */
             links: components["schemas"]["WalletLinks"];
         };
         /** @description One tracked wallet and its figures. */

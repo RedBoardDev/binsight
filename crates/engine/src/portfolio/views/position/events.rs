@@ -38,7 +38,7 @@ pub struct PositionEventView {
     pub signature: Signature,
     /// What it did.
     pub kind: MovementKind,
-    /// The displayed base token it moved; the source movement remains physical X/Y.
+    /// The displayed base token it moved; the source movement keeps the pool's X/Y.
     pub base: Option<TokenQuantity>,
     /// The displayed quote token it moved; its decimals follow that selected token.
     pub quote: Option<TokenQuantity>,
@@ -98,7 +98,7 @@ impl From<&PositionEventKind> for MovementKind {
     }
 }
 
-/// The proof of a reward claim, independent of whether its metadata or price is known.
+/// A reward claim, whether or not its token's metadata or price is known.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RewardMovement {
     /// The mint paid by the reward program.

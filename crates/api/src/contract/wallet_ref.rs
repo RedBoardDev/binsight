@@ -17,7 +17,7 @@ pub(crate) struct WalletRef {
     pub(crate) label: String,
     /// Its color in charts and legends.
     pub(crate) color: WalletColor,
-    /// External destinations for the physical wallet account.
+    /// External links for the wallet account.
     pub(crate) links: WalletLinks,
 }
 

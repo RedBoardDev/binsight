@@ -71,9 +71,9 @@ pub(crate) struct ClosedPositionRow {
     pub(crate) wallet: WalletRef,
     /// Its pool.
     pub(crate) pool: PoolRef,
-    /// External pool, physical position-account and displayed base-token destinations.
+    /// External links to the pool, the position account and the displayed base token.
     pub(crate) links: PositionLinks,
-    /// Its proven strategy; `null` for arbitrary weights or mixed strategies.
+    /// Its strategy; `null` for arbitrary weights or mixed strategies.
     pub(crate) strategy: Option<Strategy>,
     /// When it opened.
     pub(crate) opened_at: Timestamp,
@@ -120,10 +120,10 @@ pub(crate) struct ClosedTotals {
     pub(crate) losses: usize,
     /// How many ended flat: exactly even, or empty shells.
     pub(crate) flat: usize,
-    /// Closed lives whose native PnL sign is not proved yet.
+    /// How many closed positions have an unknown outcome (their PnL sign is still open).
     pub(crate) unclassified_count: usize,
-    /// `wins / (wins + losses)`, flat positions left out; estimated with unclassified lives.
-    /// Unavailable without a proved win or loss.
+    /// `wins / (wins + losses)`: flat and unknown outcomes left out; estimated while some outcomes
+    /// are unknown. Unavailable without a win or a loss.
     pub(crate) win_rate: PercentFigure,
     /// The sum of their PnL.
     pub(crate) pnl: Figure,

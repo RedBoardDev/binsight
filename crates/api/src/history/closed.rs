@@ -71,7 +71,7 @@ pub(crate) struct DayGroup {
     pub(crate) losses: usize,
     /// How many ended flat: exactly even, or empty shells.
     pub(crate) flat: usize,
-    /// Closed lives whose native PnL sign is not proved yet.
+    /// How many closed positions have an unknown outcome (their PnL sign is still open).
     pub(crate) unclassified_count: usize,
     /// `wins / (wins + losses)`.
     pub(crate) win_rate: PercentFigure,

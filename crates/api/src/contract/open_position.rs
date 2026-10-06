@@ -23,9 +23,9 @@ pub(crate) struct OpenPositionRow {
     pub(crate) wallet: WalletRef,
     /// Its pool.
     pub(crate) pool: PoolRef,
-    /// External pool, physical position-account and displayed base-token destinations.
+    /// External links to the pool, the position account and the displayed base token.
     pub(crate) links: PositionLinks,
-    /// Its proven strategy; `null` for arbitrary weights or mixed strategies.
+    /// Its strategy; `null` for arbitrary weights or mixed strategies.
     pub(crate) strategy: Option<Strategy>,
     /// When it opened (clients compute its age).
     pub(crate) opened_at: Timestamp,
@@ -142,8 +142,8 @@ pub(crate) struct BinBar {
     /// Its quote token, in whole tokens.
     pub(crate) quote: DecimalString,
     /// Relative depth at each bin’s own price, from `0` to `1` of the largest bar.
-    /// Supported pools use the selected native token; unsupported pools retain descriptive
-    /// physical Y depth, which never enters a financial figure.
+    /// Supported pools use the selected native token; unsupported pools show the depth of the
+    /// pool's Y token, which never enters a financial figure.
     pub(crate) height: DecimalString,
 }
 

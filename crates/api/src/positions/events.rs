@@ -72,7 +72,7 @@ pub(crate) struct PositionEvent {
     pub(crate) range: Option<EventRange>,
 }
 
-/// The raw proof of a reward claim, without assuming the token's decimals or price.
+/// A reward claim in raw units, without assuming the token's decimals or price.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub(crate) struct RewardMovement {
     /// The mint paid by the pool's reward program, in base58.
@@ -91,9 +91,9 @@ pub(crate) struct EventRange {
     pub(crate) lower_bin_id: i32,
     /// The highest bin.
     pub(crate) upper_bin_id: i32,
-    /// The lower numeric displayed price; physical bin IDs remain unchanged. Null without a supported quote.
+    /// The lower numeric displayed price; the bin ids are the pool's own. Null without a supported quote.
     pub(crate) lower: Option<Price>,
-    /// The upper numeric displayed price; physical bin IDs remain unchanged. Null without a supported quote.
+    /// The upper numeric displayed price; the bin ids are the pool's own. Null without a supported quote.
     pub(crate) upper: Option<Price>,
 }
 

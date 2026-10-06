@@ -76,7 +76,7 @@ pub struct ClosedTotalsView {
     pub losses: usize,
     /// How many ended flat (exactly even, or empty shells).
     pub flat: usize,
-    /// Closed lives whose native PnL sign is not proved yet.
+    /// How many closed positions have an unknown outcome.
     pub unclassified_count: usize,
     /// `wins / (wins + losses)`.
     pub win_rate: Figure<Percent>,

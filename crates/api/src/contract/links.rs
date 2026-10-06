@@ -1,4 +1,4 @@
-//! Shared external links for physical accounts and the position's displayed base token.
+//! Shared external links for on-chain accounts and the position's displayed base token.
 //!
 //! These pure constructors describe destination routes; they neither contact those services
 //! nor guarantee a page exists, particularly for the synthetic addresses of the demo.
@@ -10,9 +10,9 @@ use utoipa::ToSchema;
 /// External destinations shared by position lists and details.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub(crate) struct PositionLinks {
-    /// The DLMM pool on Meteora; does not select a position or a historical lifetime.
+    /// The DLMM pool on Meteora; does not select a position.
     pub(crate) meteora: String,
-    /// The physical position account on Solscan, shared by every lifetime of that account.
+    /// The position account on Solscan, shared by every position that used that address.
     pub(crate) solscan: String,
     /// The displayed base token on GMGN, following the pool's selected quote convention.
     pub(crate) gmgn: String,
@@ -21,14 +21,14 @@ pub(crate) struct PositionLinks {
 /// External destinations shared by every reference to a tracked wallet.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub(crate) struct WalletLinks {
-    /// The physical wallet's Jupiter portfolio.
+    /// The wallet's Jupiter portfolio.
     pub(crate) jupiter_portfolio: String,
-    /// The physical wallet account on Solscan.
+    /// The wallet account on Solscan.
     pub(crate) solscan: String,
 }
 
 impl PositionLinks {
-    /// Links for the physical position and pool, and the base mint after display orientation.
+    /// Links for the position account and pool, and the displayed base mint.
     pub(crate) fn of(position: Address, pool: Address, displayed_base_mint: Address) -> Self {
         Self {
             meteora: format!("https://app.meteora.ag/dlmm/{pool}"),
@@ -39,7 +39,7 @@ impl PositionLinks {
 }
 
 impl WalletLinks {
-    /// Links for the physical wallet account.
+    /// Links for the wallet account.
     pub(crate) fn of(wallet: Address) -> Self {
         Self {
             jupiter_portfolio: format!("https://jup.ag/portfolio/{wallet}"),
@@ -140,7 +140,7 @@ mod tests {
     }
 
     #[test]
-    fn links_the_displayed_base_and_preserves_the_physical_account_across_lives() {
+    fn links_the_displayed_base_and_the_same_account_for_a_reused_address() {
         let now = Timestamp::from_second(1_790_000_000).unwrap();
         let pools = vec![
             PoolFacts {
