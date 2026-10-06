@@ -179,7 +179,7 @@ fn qualifies_open_history_and_closed_methods_from_the_same_native_sources() {
         [(1, 0, Exactness::Estimated), (0, 1, Exactness::Partial)]
     {
         let mut position = position(&pool);
-        position.unpriced_movements = movements;
+        position.unpriced_movements.deposits = movements;
         position.unpriced_rewards = rewards;
         let open = OpenValuation::of(&position, &pool, &rates()).unwrap();
         assert_eq!(open.native_pnl.exactness(), exactness);

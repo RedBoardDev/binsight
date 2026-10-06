@@ -62,7 +62,7 @@ fn folds_a_whole_life_in_a_sol_pool_into_its_liquidity_pnl() {
     assert_eq!(life.invested, QuoteUnits(2_100_276_886));
     assert_eq!(life.withdrawn, QuoteUnits(2_100_280_970));
     assert_eq!(life.claimed_fees, QuoteUnits(1_086_825 + 1_283_386));
-    assert_eq!(life.unpriced_movements, 0);
+    assert!(life.unpriced_movements.is_none());
     assert_eq!(lp_pnl(&life), Ok(QuoteUnits(2_374_295)));
     let valued = valued(&case, &life);
     assert_eq!(valued.outcome, Outcome::Win);
@@ -160,7 +160,7 @@ fn starts_a_life_at_a_claim_whose_creation_is_missing_and_keeps_what_has_no_pric
     let life = fold.open().next().unwrap();
     assert_eq!(life.id.opened_by, tx.signature);
     assert_eq!(life.flows.claimed_fees, QuoteUnits(625));
-    assert_eq!(life.flows.unpriced_movements, 1);
+    assert_eq!(life.flows.unpriced_movements.fee_claims, 1);
     assert_eq!(life.flows.unpriced_rewards, 1);
     assert_eq!(life.flows.rewards, QuoteUnits(0));
     assert_eq!(fold.diagnostics().missing_creations, 1);

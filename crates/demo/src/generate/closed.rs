@@ -6,6 +6,7 @@
 //! without a bin price, and most SOL-quoted ones carry a FIFO market PnL.
 
 use binsight_core::money::SignedLamports;
+use binsight_ledger::facts::UnpricedMovements;
 use binsight_ledger::facts::{
     ClosedPositionFacts, PnlMethod, PositionId, QuoteAsset, QuoteUnits, SolUsdRates, Strategy,
 };
@@ -251,7 +252,10 @@ fn position(
         } else {
             PnlMethod::Pool
         },
-        unpriced_movements: u32::from(stream.below(400) == 0 && shape == Shape::Ordinary),
+        unpriced_movements: UnpricedMovements {
+            withdrawals: u32::from(stream.below(400) == 0 && shape == Shape::Ordinary),
+            ..UnpricedMovements::default()
+        },
     })
 }
 

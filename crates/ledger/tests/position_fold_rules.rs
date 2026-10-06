@@ -2,7 +2,6 @@
 #[path = "common/fold.rs"]
 mod common;
 
-use binsight_core::exactness::Exactness;
 use binsight_dlmm::activity::MovementKind;
 use binsight_ledger::facts::QuoteUnits;
 use binsight_ledger::report::closed::{Outcome, lp_pnl};
@@ -93,33 +92,6 @@ fn counts_both_halves_of_a_rebalance_in_invested_and_withdrawn() {
     let valued = valued(&closed[0]);
     assert_eq!(valued.outcome, Outcome::Flat);
     assert!(!valued.is_shell);
-}
-
-/// Oracles O-4 and O-5: a claim without a bin of 112,397,677 lamports counts exactly; beside
-/// 896,784,000 unpriced raw tokens it still counts its lamports, and the life is estimated.
-#[test]
-fn counts_a_claim_without_a_bin_on_its_quote_side_and_marks_the_sign_unknown() {
-    let claim = |x| {
-        moves(vec![movement(
-            POSITION,
-            SOL_POOL,
-            MovementKind::FeeClaim,
-            (x, 112_397_677),
-            None,
-        )])
-    };
-    let complete = life(SOL_POOL, vec![claim(0)]);
-    assert_eq!(complete[0].claimed_fees, QuoteUnits(112_397_677));
-    assert_eq!(complete[0].unpriced_movements, 0);
-    assert_eq!(valued(&complete[0]).outcome, Outcome::Win);
-
-    let partial = life(SOL_POOL, vec![claim(896_784_000)]);
-    assert_eq!(partial[0].claimed_fees, QuoteUnits(112_397_677));
-    assert_eq!(partial[0].unpriced_movements, 1);
-    let valued = valued(&partial[0]);
-    assert_eq!(valued.outcome, Outcome::Unknown);
-    assert_eq!(valued.native_pnl.exactness(), Exactness::Estimated);
-    assert_eq!(valued.claimed_fees.exactness(), Exactness::Partial);
 }
 
 /// An open life that invested 5,000 lamports and claimed 30, valued live at 5,100 with 20 of

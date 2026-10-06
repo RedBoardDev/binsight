@@ -4,6 +4,7 @@ use binsight_core::units::{Decimals, Lamports};
 use binsight_engine::portfolio::WalletLabel;
 use binsight_engine::portfolio::views::{SyncState, WalletColor, WalletSync};
 use binsight_engine::portfolio::{SnapshotFacts, TrackedWallet};
+use binsight_ledger::facts::UnpricedMovements;
 use binsight_ledger::facts::*;
 use binsight_ledger::report::figure::Figure;
 use binsight_solana::{Address, Signature};
@@ -91,7 +92,7 @@ fn open(byte: u8, pool: u8, now: Timestamp) -> OpenPositionFacts {
         bins: vec![],
         range_since: None,
         valued_at: now,
-        unpriced_movements: 0,
+        unpriced_movements: UnpricedMovements::default(),
     }
 }
 
@@ -109,7 +110,7 @@ fn closed(byte: u8, pool: u8, method: PnlMethod, now: Timestamp) -> ClosedPositi
         rewards: QuoteUnits(0),
         unpriced_rewards: 0,
         method,
-        unpriced_movements: 0,
+        unpriced_movements: UnpricedMovements::default(),
     }
 }
 

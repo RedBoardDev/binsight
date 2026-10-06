@@ -7,6 +7,7 @@
 )]
 
 use binsight_core::units::{Decimals, RawTokenAmount};
+use binsight_ledger::facts::UnpricedMovements;
 use binsight_ledger::facts::{
     ChainOrder, ClosedPositionFacts, PnlMethod, PositionEventKind, QuoteUnits, Strategy,
     TokenFacts, TokenFlow, TokenKind,
@@ -47,7 +48,7 @@ fn snapshot_facts(events: Vec<PositionEventFact>) -> SnapshotFacts {
             rewards: QuoteUnits(0),
             unpriced_rewards: 0,
             method: PnlMethod::Pool,
-            unpriced_movements: 0,
+            unpriced_movements: UnpricedMovements::default(),
         }],
         events,
         ..SnapshotFacts::default()
@@ -325,7 +326,11 @@ fn values_each_rebalance_half_whole_and_partial_when_its_base_is_unpriced() {
     let mut facts = snapshot_facts(vec![added, removed]);
     facts.closed[0].invested = QuoteUnits(104);
     facts.closed[0].withdrawn = QuoteUnits(100);
-    facts.closed[0].unpriced_movements = 2;
+    facts.closed[0].unpriced_movements = UnpricedMovements {
+        deposits: 1,
+        withdrawals: 1,
+        fee_claims: 0,
+    };
     let snapshot = Snapshot::new(facts).unwrap();
     let items = read_every_movement(&snapshot, 1, Currency::Sol);
     let mut values: Vec<i128> = items

@@ -160,7 +160,7 @@ fn keeps_live_pnl_complete_but_period_gain_estimated_when_past_cost_is_unpriced(
     let mut world = wallet_world(7);
     world.wallet.added_at = jiff::Timestamp::UNIX_EPOCH;
     for position in &mut world.closed {
-        position.unpriced_movements = 1;
+        position.unpriced_movements.deposits = 1;
     }
     let valued = value(&world);
     let wallets = [&valued.history];
@@ -190,7 +190,7 @@ fn does_not_call_a_closed_pnl_or_its_history_a_lower_bound_when_cost_is_unpriced
     position.withdrawn = QuoteUnits(100);
     position.claimed_fees = QuoteUnits(0);
     position.method = PnlMethod::Pool;
-    position.unpriced_movements = 1;
+    position.unpriced_movements.deposits = 1;
     let closed_at = position.closed_at;
     let known = ClosedValuation::of(position, &world.pool, &world.rates).unwrap();
     assert_eq!(known.pnl.value().unwrap().sol, Some(SignedLamports(80)));
@@ -198,11 +198,11 @@ fn does_not_call_a_closed_pnl_or_its_history_a_lower_bound_when_cost_is_unpriced
     assert_eq!(known.pnl.exactness(), Exactness::Estimated);
     assert_eq!(known.invested.exactness(), Exactness::Partial);
     position.invested = QuoteUnits(200);
-    position.unpriced_movements = 0;
+    position.unpriced_movements = binsight_ledger::facts::UnpricedMovements::default();
     let actual = ClosedValuation::of(position, &world.pool, &world.rates).unwrap();
     assert_eq!(actual.pnl.value().unwrap().sol, Some(SignedLamports(-100)));
     position.invested = QuoteUnits(20);
-    position.unpriced_movements = 1;
+    position.unpriced_movements.deposits = 1;
     world.marks = vec![OpenPnlMark {
         wallet: world.wallet.address,
         at: closed_at,
@@ -252,7 +252,11 @@ fn does_not_blur_known_rewards_or_current_balances_with_unpriced_movements() {
     closed.claimed_fees = QuoteUnits(0);
     closed.rewards = QuoteUnits(12);
     closed.method = PnlMethod::Pool;
-    closed.unpriced_movements = 2;
+    closed.unpriced_movements = binsight_ledger::facts::UnpricedMovements {
+        deposits: 1,
+        withdrawals: 1,
+        fee_claims: 0,
+    };
     let valued = ClosedValuation::of(closed, &world.pool, &world.rates).unwrap();
     assert_eq!(valued.invested.exactness(), Exactness::Partial);
     assert_eq!(valued.withdrawn.exactness(), Exactness::Partial);
@@ -263,7 +267,11 @@ fn does_not_blur_known_rewards_or_current_balances_with_unpriced_movements() {
         Some(SignedLamports(12))
     );
     let open = &mut world.open[0];
-    open.unpriced_movements = 2;
+    open.unpriced_movements = binsight_ledger::facts::UnpricedMovements {
+        deposits: 1,
+        withdrawals: 1,
+        fee_claims: 0,
+    };
     open.rewards = QuoteUnits(12);
     let valued = OpenValuation::of(open, &world.pool, &world.rates).unwrap();
     assert_eq!(valued.invested.exactness(), Exactness::Partial);

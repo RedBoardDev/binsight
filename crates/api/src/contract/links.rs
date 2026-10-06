@@ -134,7 +134,7 @@ mod tests {
             rewards: QuoteUnits(0),
             method: PnlMethod::Pool,
             unpriced_rewards: 0,
-            unpriced_movements: 0,
+            unpriced_movements: UnpricedMovements::default(),
         }
     }
 

@@ -7,6 +7,7 @@
 )]
 
 use binsight_core::units::{Decimals, Lamports};
+use binsight_ledger::facts::UnpricedMovements;
 use binsight_ledger::facts::*;
 use binsight_ledger::report::figure::Figure;
 use binsight_ledger::report::valued::{Money, MoneyUnit};
@@ -54,7 +55,7 @@ fn facts() -> SnapshotFacts {
         rewards: QuoteUnits(0),
         unpriced_rewards: 0,
         method,
-        unpriced_movements: 0,
+        unpriced_movements: UnpricedMovements::default(),
     };
     let tracked = TrackedWallet {
         facts: WalletFacts {

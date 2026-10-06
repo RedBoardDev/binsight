@@ -7,6 +7,7 @@
     reason = "tests fail loudly"
 )]
 
+use binsight_ledger::facts::UnpricedMovements;
 use std::collections::BTreeSet;
 
 use binsight_core::units::{Decimals, Lamports};
@@ -88,7 +89,10 @@ fn snapshot_with_facts(count: u32, strategy: Option<Strategy>, unknown: bool) ->
                 rewards: QuoteUnits(0),
                 unpriced_rewards: 0,
                 method: PnlMethod::Pool,
-                unpriced_movements: u32::from(unknown),
+                unpriced_movements: UnpricedMovements {
+                    deposits: u32::from(unknown),
+                    ..UnpricedMovements::default()
+                },
             }
         })
         .collect();

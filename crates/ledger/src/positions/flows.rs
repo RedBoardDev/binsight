@@ -3,7 +3,7 @@
 use binsight_dlmm::activity::MovementKind;
 
 use super::FoldError;
-use crate::facts::{FlowValuation, QuoteUnits};
+use crate::facts::{FlowValuation, QuoteUnits, UnpricedMovements};
 use crate::report::valued::quote::QuotedAmount;
 
 /// The sums of a position's movements so far, valued in its pool's quote token.
@@ -18,8 +18,8 @@ pub struct PositionFlows {
     /// Every reward that could be valued.
     pub rewards: QuoteUnits,
     /// Movements counted on their quote side only, or not at all for a pool without a
-    /// supported quote token.
-    pub unpriced_movements: u32,
+    /// supported quote token, by direction.
+    pub unpriced_movements: UnpricedMovements,
     /// Nonzero rewards left out of [`Self::rewards`] for want of a price.
     pub unpriced_rewards: u32,
 }
@@ -31,17 +31,22 @@ impl PositionFlows {
         kind: MovementKind,
         quoted: Option<QuotedAmount>,
     ) -> Result<(), FoldError> {
+        let unpriced = &mut self.unpriced_movements;
+        let (total, unpriced) = match kind {
+            MovementKind::Deposit | MovementKind::RebalanceDeposit => {
+                (&mut self.invested, &mut unpriced.deposits)
+            }
+            MovementKind::Withdrawal | MovementKind::RebalanceWithdrawal => {
+                (&mut self.withdrawn, &mut unpriced.withdrawals)
+            }
+            MovementKind::FeeClaim => (&mut self.claimed_fees, &mut unpriced.fee_claims),
+        };
         let Some(quoted) = quoted else {
-            return count(&mut self.unpriced_movements);
+            return count(unpriced);
         };
         if quoted.valuation == FlowValuation::QuoteOnly {
-            count(&mut self.unpriced_movements)?;
+            count(unpriced)?;
         }
-        let total = match kind {
-            MovementKind::Deposit | MovementKind::RebalanceDeposit => &mut self.invested,
-            MovementKind::Withdrawal | MovementKind::RebalanceWithdrawal => &mut self.withdrawn,
-            MovementKind::FeeClaim => &mut self.claimed_fees,
-        };
         let amount = i128::try_from(quoted.amount.0).map_err(|_| FoldError::Overflow)?;
         add(total, amount)
     }
@@ -100,7 +105,7 @@ mod tests {
                 withdrawn: QuoteUnits(139),
                 claimed_fees: QuoteUnits(3),
                 rewards: QuoteUnits(2),
-                unpriced_movements: 0,
+                unpriced_movements: UnpricedMovements::default(),
                 unpriced_rewards: 0,
             }
         );
@@ -119,7 +124,14 @@ mod tests {
         flows.add_reward(None).unwrap();
         assert_eq!(flows.claimed_fees, QuoteUnits(112_397_677));
         assert_eq!(flows.invested, QuoteUnits(0));
-        assert_eq!(flows.unpriced_movements, 2);
+        assert_eq!(
+            flows.unpriced_movements,
+            UnpricedMovements {
+                deposits: 1,
+                withdrawals: 0,
+                fee_claims: 1,
+            }
+        );
         assert_eq!(flows.unpriced_rewards, 1);
     }
 

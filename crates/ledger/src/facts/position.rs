@@ -72,6 +72,29 @@ pub enum Strategy {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct QuoteUnits(pub i128);
 
+/// The movements of a position whose value is not fully known, by direction: each was counted on
+/// its quote side only (no bin price), or not at all (a pool without a SOL or dollar quote).
+///
+/// The direction decides what the known figure means: an unpriced withdrawal or fee claim only
+/// leaves value out, so the known PnL is a lower bound; an unpriced deposit leaves a cost out, so
+/// the known PnL may be too high.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct UnpricedMovements {
+    /// Deposits, the re-deposits of rebalances included.
+    pub deposits: u32,
+    /// Withdrawals, the withdrawals of rebalances included.
+    pub withdrawals: u32,
+    /// Fee claims.
+    pub fee_claims: u32,
+}
+
+impl UnpricedMovements {
+    /// Whether every movement was valued.
+    pub fn is_none(self) -> bool {
+        self == Self::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

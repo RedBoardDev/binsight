@@ -110,18 +110,19 @@ impl OpenValuation {
         pool: &PoolFacts,
         rates: &SolUsdRates,
     ) -> Result<Self, AmountError> {
-        let value = |amount: QuoteUnits| value_leaf(amount, position, pool, rates);
-        let mut rewards = value_current(Figure::Complete(position.rewards), pool, rates)?;
-        if position.unpriced_rewards > 0 {
-            rewards = rewards.degraded(
-                Exactness::Partial,
-                Reasons::from([Reason::UnpricedLeg {
-                    position: position.id,
-                }]),
-            );
-        }
-        let mut net_invested = value(native_sum(&[position.invested], &[position.withdrawn])?)?;
-        if position.unpriced_movements > 0 {
+        let reasons = Reasons::from([Reason::UnpricedLeg {
+            position: position.id,
+        }]);
+        let flow = |amount: QuoteUnits, unpriced: u32| -> Result<Figure<Valued>, AmountError> {
+            let figure = value_current(Figure::Complete(amount), pool, rates)?;
+            if unpriced == 0 {
+                return Ok(figure);
+            }
+            Ok(figure.degraded(Exactness::Partial, reasons.clone()))
+        };
+        let unpriced = position.unpriced_movements;
+        let mut net_invested = flow(native_sum(&[position.invested], &[position.withdrawn])?, 0)?;
+        if unpriced.deposits > 0 || unpriced.withdrawals > 0 {
             net_invested = net_invested.degraded(
                 Exactness::Estimated,
                 Reasons::from([Reason::UnpricedLeg {
@@ -131,11 +132,11 @@ impl OpenValuation {
         }
         let pnl = open_pnl(position)?;
         Ok(Self {
-            invested: value(position.invested)?,
-            withdrawn: value(position.withdrawn)?,
+            invested: flow(position.invested, unpriced.deposits)?,
+            withdrawn: flow(position.withdrawn, unpriced.withdrawals)?,
             net_invested,
-            claimed_fees: value(position.claimed_fees)?,
-            rewards,
+            claimed_fees: flow(position.claimed_fees, unpriced.fee_claims)?,
+            rewards: flow(position.rewards, position.unpriced_rewards)?,
             value: value_current(position.value.clone(), pool, rates)?,
             unclaimed_fees: value_current(position.unclaimed_fees.clone(), pool, rates)?,
             fees: value_current(native_fees(position)?, pool, rates)?,
@@ -196,24 +197,6 @@ fn composition(position: &OpenPositionFacts, pool: &PoolFacts) -> Composition {
         (false, true) => Composition::AllQuote,
         _ => Composition::Mixed,
     }
-}
-
-/// One amount of an open position, valued at the spot rate, partial when one of its movements
-/// had no bin price.
-fn value_leaf(
-    amount: QuoteUnits,
-    position: &OpenPositionFacts,
-    pool: &PoolFacts,
-    rates: &SolUsdRates,
-) -> Result<Figure<Valued>, AmountError> {
-    let figure = value_current(Figure::Complete(amount), pool, rates)?;
-    if position.unpriced_movements == 0 {
-        return Ok(figure);
-    }
-    let reason = Reason::UnpricedLeg {
-        position: position.id,
-    };
-    Ok(figure.degraded(Exactness::Partial, Reasons::from([reason])))
 }
 
 fn value_current(

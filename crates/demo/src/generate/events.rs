@@ -116,7 +116,7 @@ pub(crate) fn closed_events(
         events.push(closing, "close", PositionEventKind::Remove(withdrawal));
     }
     events.push(closing, "close", PositionEventKind::Closed);
-    if position.unpriced_movements > 0 {
+    if !position.unpriced_movements.is_none() {
         events.forget_last_price()?;
     }
     Ok(events.list)

@@ -12,6 +12,7 @@
 
 mod marks;
 
+use binsight_ledger::facts::UnpricedMovements;
 use std::collections::BTreeMap;
 
 use binsight_core::money::{SignedLamports, SolUsdRate};
@@ -174,7 +175,7 @@ fn closed_positions(draws: &mut Draws, pool: &PoolFacts, start: i64) -> Vec<Clos
                 rewards: QuoteUnits(0),
                 unpriced_rewards: 0,
                 method,
-                unpriced_movements: 0,
+                unpriced_movements: UnpricedMovements::default(),
             }
         })
         .collect()
@@ -209,7 +210,7 @@ fn open_positions(
         bins: Vec::new(),
         range_since: None,
         valued_at: now,
-        unpriced_movements: 0,
+        unpriced_movements: UnpricedMovements::default(),
     };
     (vec![position], drift + unclaimed)
 }

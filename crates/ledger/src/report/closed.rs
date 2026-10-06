@@ -6,12 +6,16 @@
 //! so a dollar-quoted position that gained dollars is a win even if SOL rose more, and an empty
 //! shell (nothing ever moved) is flat like a position that ended exactly even. When an unpriced
 //! movement or reward hides that sign, the outcome is unknown: the position stays visible with
-//! that outcome instead of a guessed one. A position with an unpriced movement has partial
-//! positive flow subtotals and estimated signed PnL.
+//! that outcome instead of a guessed one (see [`sign`]). A subtotal holding an unpriced movement
+//! is partial.
 
 use binsight_core::error::AmountError;
 use binsight_core::exactness::Exactness;
 use jiff::Timestamp;
+
+mod sign;
+
+pub(crate) use sign::PnlUncertainty;
 
 use super::figure::{Figure, Reason, Reasons};
 use super::valued::{Money, Valued, quote::native_money, value_quote_at};
@@ -76,7 +80,17 @@ impl ClosedValuation {
             PnlMethod::Fifo { market_pnl } => market_pnl,
             PnlMethod::Pool => lp_pnl,
         };
-        let value = |amount: QuoteUnits| value_leaf(amount, position, pool, rates);
+        let reasons = Reasons::from([Reason::UnpricedLeg {
+            position: position.id,
+        }]);
+        let flow = |amount: QuoteUnits, unpriced: u32| -> Result<Figure<Valued>, AmountError> {
+            let figure = value_known(amount, position, pool, rates)?;
+            if unpriced == 0 {
+                return Ok(figure);
+            }
+            Ok(figure.degraded(Exactness::Partial, reasons.clone()))
+        };
+        let unpriced = position.unpriced_movements;
         let signed = |figure: Figure<QuoteUnits>| -> Result<Figure<Valued>, AmountError> {
             let (amount, exactness, reasons) = figure.into_parts();
             let Some(amount) = amount else {
@@ -85,29 +99,20 @@ impl ClosedValuation {
             Ok(value_known(amount, position, pool, rates)?.degraded(exactness, reasons))
         };
         let pnl = native_signed(native_pnl, position);
-        let mut rewards = value_known(position.rewards, position, pool, rates)?;
-        if position.unpriced_rewards > 0 {
-            rewards = rewards.degraded(
-                Exactness::Partial,
-                Reasons::from([Reason::UnpricedLeg {
-                    position: position.id,
-                }]),
-            );
-        }
         let market_pnl = match position.method {
             PnlMethod::Fifo { market_pnl } => Some(signed(native_signed(market_pnl, position))?),
             PnlMethod::Pool => None,
         };
         Ok(Self {
-            invested: value(position.invested)?,
-            withdrawn: value(position.withdrawn)?,
-            claimed_fees: value(position.claimed_fees)?,
-            rewards,
+            invested: flow(position.invested, unpriced.deposits)?,
+            withdrawn: flow(position.withdrawn, unpriced.withdrawals)?,
+            claimed_fees: flow(position.claimed_fees, unpriced.fee_claims)?,
+            rewards: flow(position.rewards, position.unpriced_rewards)?,
             pnl: signed(pnl.clone())?,
             native_pnl: native_money(pnl, pool),
             lp_pnl: signed(native_signed(lp_pnl, position))?,
             market_pnl,
-            outcome: outcome_of(position, native_pnl),
+            outcome: uncertainty(position).outcome(native_pnl),
             held_seconds: held_seconds(position.opened_at, position.closed_at),
             is_shell: is_shell(position),
         })
@@ -156,26 +161,8 @@ fn is_shell(position: &ClosedPositionFacts) -> bool {
     ]
     .iter()
     .all(|amount| amount.0 == 0)
-        && position.unpriced_movements == 0
+        && position.unpriced_movements.is_none()
         && position.unpriced_rewards == 0
-}
-
-/// One amount of a closed position, valued at its closing day's rate, partial when one of its
-/// movements had no bin price.
-fn value_leaf(
-    amount: QuoteUnits,
-    position: &ClosedPositionFacts,
-    pool: &PoolFacts,
-    rates: &SolUsdRates,
-) -> Result<Figure<Valued>, AmountError> {
-    let figure = value_known(amount, position, pool, rates)?;
-    if position.unpriced_movements == 0 {
-        return Ok(figure);
-    }
-    let reason = Reason::UnpricedLeg {
-        position: position.id,
-    };
-    Ok(figure.degraded(Exactness::Partial, Reasons::from([reason])))
 }
 
 fn value_known(
@@ -192,21 +179,14 @@ fn value_known(
     value_quote_at(amount, asset, rates.on(position.closed_at))
 }
 
-/// The outcome of `position`: unknown when an unpriced movement hides the sign, or when an
-/// unpriced reward could still turn a loss or an even result into a gain.
-fn outcome_of(position: &ClosedPositionFacts, native_pnl: QuoteUnits) -> Outcome {
-    if position.unpriced_movements > 0 {
-        return Outcome::Unknown;
-    }
-    if position.unpriced_rewards > 0 && native_pnl.0 <= 0 {
-        return Outcome::Unknown;
-    }
-    Outcome::of(native_pnl)
+/// Which way the PnL of `position` may lie from its known value.
+fn uncertainty(position: &ClosedPositionFacts) -> PnlUncertainty {
+    PnlUncertainty::of(position.unpriced_movements, position.unpriced_rewards)
 }
 
 /// The signed source quality shared by native PnL and its eventual FX conversion.
 fn native_signed(amount: QuoteUnits, position: &ClosedPositionFacts) -> Figure<QuoteUnits> {
-    let exactness = signed_exactness(position.unpriced_movements, position.unpriced_rewards);
+    let exactness = uncertainty(position).exactness();
     if exactness == Exactness::Complete {
         return Figure::Complete(amount);
     }
@@ -217,17 +197,4 @@ fn native_signed(amount: QuoteUnits, position: &ClosedPositionFacts) -> Figure<Q
             position: position.id,
         }]),
     )
-}
-
-/// How far a position's signed PnL can be trusted from its own movements: estimated when an
-/// unpriced movement may hide a cost, a lower bound when only rewards are unpriced (a reward
-/// only adds), and complete otherwise. Open and closed positions share this rule.
-pub(crate) fn signed_exactness(unpriced_movements: u32, unpriced_rewards: u32) -> Exactness {
-    if unpriced_movements > 0 {
-        Exactness::Estimated
-    } else if unpriced_rewards > 0 {
-        Exactness::Partial
-    } else {
-        Exactness::Complete
-    }
 }

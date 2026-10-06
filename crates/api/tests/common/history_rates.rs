@@ -1,5 +1,6 @@
 //! Two immutable snapshots differing only in conversion source or read time zone.
 
+use binsight_ledger::facts::UnpricedMovements;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -120,7 +121,7 @@ fn facts(now: Timestamp) -> SnapshotFacts {
         rewards: QuoteUnits(0),
         method: PnlMethod::Pool,
         unpriced_rewards: 0,
-        unpriced_movements: 0,
+        unpriced_movements: UnpricedMovements::default(),
     })
     .collect();
     SnapshotFacts {

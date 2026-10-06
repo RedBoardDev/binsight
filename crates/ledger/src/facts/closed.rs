@@ -4,7 +4,7 @@
 use binsight_solana::Address;
 use jiff::Timestamp;
 
-use super::position::{PositionId, QuoteUnits, Strategy};
+use super::position::{PositionId, QuoteUnits, Strategy, UnpricedMovements};
 
 /// One closed life of a position, summed from its movements.
 ///
@@ -36,9 +36,8 @@ pub struct ClosedPositionFacts {
     pub unpriced_rewards: u32,
     /// How the PnL of the position is measured.
     pub method: PnlMethod,
-    /// How many movements were valued on their quote side only. Positive flow subtotals are
-    /// partial; signed PnL is estimated because the unknown amount may be a cost.
-    pub unpriced_movements: u32,
+    /// The movements valued on their quote side only, or not at all, by direction.
+    pub unpriced_movements: UnpricedMovements,
 }
 
 /// How the PnL of a closed position is measured.

@@ -91,7 +91,7 @@ proptest! {
     }
 
     #[test]
-    fn an_unpriced_token_amount_always_hides_the_outcome(
+    fn an_unpriced_claim_keeps_a_positive_lower_bound_a_win_and_hides_any_other_sign(
         movements in prop::collection::vec(any_movement(), 0..4),
         (x, y) in (1..1_000_000_000_000_u128, 0..1_000_000_000_000_u128),
     ) {
@@ -102,7 +102,9 @@ proptest! {
             ..movement(POSITION, SOL_POOL, MovementKind::FeeClaim, (0, 0), None)
         });
         let life = life(&movements);
+        let known = lp_pnl(&life).map(|pnl| pnl.0);
+        let expected = if known.is_ok_and(|pnl| pnl > 0) { Outcome::Win } else { Outcome::Unknown };
         let valued = ClosedValuation::of(&life, &sol_pool(), &SolUsdRates::default());
-        prop_assert_eq!(valued.map(|valued| valued.outcome), Ok(Outcome::Unknown));
+        prop_assert_eq!(valued.map(|valued| valued.outcome), Ok(expected));
     }
 }

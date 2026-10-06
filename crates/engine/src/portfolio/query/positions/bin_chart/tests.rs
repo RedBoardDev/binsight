@@ -2,6 +2,7 @@
 
 use binsight_core::ratio::RatioError;
 use binsight_core::units::Decimals;
+use binsight_ledger::facts::UnpricedMovements;
 use binsight_ledger::facts::{PositionId, QuoteUnits, TokenFacts, TokenKind};
 use binsight_ledger::report::ReadRuleError;
 use binsight_ledger::report::figure::Figure;
@@ -55,7 +56,7 @@ fn position(bins: Vec<BinLiquidity>) -> OpenPositionFacts {
         bins,
         range_since: None,
         valued_at: Timestamp::UNIX_EPOCH,
-        unpriced_movements: 0,
+        unpriced_movements: UnpricedMovements::default(),
     }
 }
 

@@ -4,7 +4,7 @@ use binsight_core::units::RawTokenAmount;
 use binsight_solana::Address;
 use jiff::Timestamp;
 
-use super::position::{PositionId, QuoteUnits, Strategy};
+use super::position::{PositionId, QuoteUnits, Strategy, UnpricedMovements};
 use crate::report::figure::Figure;
 
 /// An open position, valued at its pool's active bin.
@@ -51,8 +51,8 @@ pub struct OpenPositionFacts {
     pub range_since: Option<Timestamp>,
     /// When the value and the fees were read.
     pub valued_at: Timestamp,
-    /// How many movements had no bin price and were valued on their quote side only.
-    pub unpriced_movements: u32,
+    /// The movements valued on their quote side only, or not at all, by direction.
+    pub unpriced_movements: UnpricedMovements,
 }
 
 /// The liquidity a position holds in one bin.

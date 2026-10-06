@@ -21,7 +21,7 @@ fn leaves_every_movement_of_a_pool_without_a_sol_or_dollar_quote_unpriced() {
         )])],
     );
     assert_eq!(closed[0].invested, QuoteUnits(0));
-    assert_eq!(closed[0].unpriced_movements, 1);
+    assert_eq!(closed[0].unpriced_movements.deposits, 1);
     let valued = valued(&closed[0]);
     assert_eq!(valued.outcome, Outcome::Unknown);
     assert_eq!(valued.native_pnl.exactness(), Exactness::Unavailable);
