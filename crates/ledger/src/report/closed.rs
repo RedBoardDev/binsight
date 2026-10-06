@@ -153,7 +153,8 @@ pub fn held_seconds(opened_at: Timestamp, closed_at: Timestamp) -> i64 {
     closed_at.duration_since(opened_at).as_secs()
 }
 
-/// Whether a position never moved any liquidity.
+/// Whether a position never moved any token: no figure, no unpriced or dust movement, and a
+/// whole history.
 fn is_shell(position: &ClosedPositionFacts) -> bool {
     [
         position.invested,
@@ -166,6 +167,7 @@ fn is_shell(position: &ClosedPositionFacts) -> bool {
         && position.unpriced_movements.is_none()
         && position.unpriced_rewards == 0
         && position.history == PositionHistory::Whole
+        && position.dust_movements == 0
 }
 
 fn value_known(

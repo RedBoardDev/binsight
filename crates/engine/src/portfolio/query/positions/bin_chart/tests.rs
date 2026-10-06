@@ -58,6 +58,7 @@ fn position(bins: Vec<BinLiquidity>) -> OpenPositionFacts {
         range_since: None,
         valued_at: Timestamp::UNIX_EPOCH,
         history: PositionHistory::Whole,
+        dust_movements: 0,
         unpriced_movements: UnpricedMovements::default(),
     }
 }

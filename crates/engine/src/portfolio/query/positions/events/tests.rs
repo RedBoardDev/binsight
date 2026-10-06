@@ -50,6 +50,7 @@ fn snapshot_facts(events: Vec<PositionEventFact>) -> SnapshotFacts {
             unpriced_rewards: 0,
             method: PnlMethod::Pool,
             history: PositionHistory::Whole,
+            dust_movements: 0,
             unpriced_movements: UnpricedMovements::default(),
         }],
         events,

@@ -135,6 +135,7 @@ mod tests {
             method: PnlMethod::Pool,
             unpriced_rewards: 0,
             history: PositionHistory::Whole,
+            dust_movements: 0,
             unpriced_movements: UnpricedMovements::default(),
         }
     }

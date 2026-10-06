@@ -151,6 +151,7 @@ pub(crate) fn open_position(
         range_since: since,
         valued_at: timeline.anchor,
         history: PositionHistory::Whole,
+        dust_movements: 0,
         unpriced_movements: UnpricedMovements::default(),
     })
 }

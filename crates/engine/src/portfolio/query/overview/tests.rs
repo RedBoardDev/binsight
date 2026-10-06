@@ -55,6 +55,7 @@ fn position(index: u8, presence: Option<bool>, fees: Figure<QuoteUnits>) -> Open
         range_since: None,
         valued_at: Timestamp::UNIX_EPOCH,
         history: PositionHistory::Whole,
+        dust_movements: 0,
         unpriced_movements: UnpricedMovements::default(),
     }
 }

@@ -22,6 +22,8 @@ pub struct PositionFlows {
     pub unpriced_movements: UnpricedMovements,
     /// Nonzero rewards left out of [`Self::rewards`] for want of a price.
     pub unpriced_rewards: u32,
+    /// Movements and rewards that moved tokens but are worth less than one raw quote unit.
+    pub dust_movements: u32,
 }
 
 impl PositionFlows {
@@ -46,6 +48,8 @@ impl PositionFlows {
         };
         if quoted.valuation == FlowValuation::QuoteOnly {
             count(unpriced)?;
+        } else if quoted.amount.0 == 0 {
+            count(&mut self.dust_movements)?;
         }
         let amount = i128::try_from(quoted.amount.0).map_err(|_| FoldError::Overflow)?;
         add(total, amount)
@@ -54,6 +58,7 @@ impl PositionFlows {
     /// Adds a nonzero reward, valued at `value` when its price is known.
     pub(super) fn add_reward(&mut self, value: Option<QuoteUnits>) -> Result<(), FoldError> {
         match value {
+            Some(QuoteUnits(0)) => count(&mut self.dust_movements),
             Some(value) => add(&mut self.rewards, value.0),
             None => count(&mut self.unpriced_rewards),
         }
@@ -107,6 +112,7 @@ mod tests {
                 rewards: QuoteUnits(2),
                 unpriced_movements: UnpricedMovements::default(),
                 unpriced_rewards: 0,
+                dust_movements: 0,
             }
         );
     }

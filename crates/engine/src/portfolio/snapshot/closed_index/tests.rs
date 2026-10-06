@@ -91,6 +91,7 @@ fn snapshot_with_facts(count: u32, strategy: Option<Strategy>, unknown: bool) ->
                 unpriced_rewards: 0,
                 method: PnlMethod::Pool,
                 history: PositionHistory::Whole,
+                dust_movements: 0,
                 unpriced_movements: UnpricedMovements {
                     deposits: u32::from(unknown),
                     ..UnpricedMovements::default()

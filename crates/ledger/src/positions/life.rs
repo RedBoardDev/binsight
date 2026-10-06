@@ -84,6 +84,7 @@ impl OpenLife {
             unpriced_rewards: flows.unpriced_rewards,
             method: PnlMethod::Pool,
             history: self.history,
+            dust_movements: flows.dust_movements,
             unpriced_movements: flows.unpriced_movements,
         }
     }
@@ -112,6 +113,7 @@ impl OpenLife {
             range_since: live.range_since,
             valued_at: live.valued_at,
             history: self.history,
+            dust_movements: flows.dust_movements,
             unpriced_movements: flows.unpriced_movements,
         }
     }

@@ -254,6 +254,7 @@ fn position(
             PnlMethod::Pool
         },
         history: PositionHistory::Whole,
+        dust_movements: 0,
         unpriced_movements: UnpricedMovements {
             withdrawals: u32::from(stream.below(400) == 0 && shape == Shape::Ordinary),
             ..UnpricedMovements::default()

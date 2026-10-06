@@ -55,6 +55,9 @@ pub struct OpenPositionFacts {
     pub unpriced_movements: UnpricedMovements,
     /// Whether every transaction of its life was counted.
     pub history: PositionHistory,
+    /// Movements or rewards that moved tokens but are worth less than one raw unit of the
+    /// quote token: the position is not an empty shell even if every figure is zero.
+    pub dust_movements: u32,
 }
 
 /// The liquidity a position holds in one bin.

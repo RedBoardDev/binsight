@@ -139,3 +139,28 @@ fn turns_an_open_life_and_its_live_valuation_into_open_facts() {
     assert_eq!(facts.claimed_fees, QuoteUnits(30));
     assert_eq!(open_pnl(&facts), Ok(Figure::Complete(QuoteUnits(150))));
 }
+
+/// Three raw tokens deposited and withdrawn at bin −1,000, where one token is worth far less than
+/// a lamport: every figure is zero, yet tokens moved, so the life is flat but not an empty shell.
+#[test]
+fn never_calls_a_life_that_moved_dust_an_empty_shell() {
+    let dust = |kind| {
+        moves(vec![movement(
+            POSITION,
+            SOL_POOL,
+            kind,
+            (3, 0),
+            Some(-1_000),
+        )])
+    };
+    let closed = life(
+        SOL_POOL,
+        vec![dust(MovementKind::Deposit), dust(MovementKind::Withdrawal)],
+    );
+    assert_eq!(closed[0].invested, QuoteUnits(0));
+    assert_eq!(closed[0].withdrawn, QuoteUnits(0));
+    assert_eq!(closed[0].dust_movements, 2);
+    let valued = valued(&closed[0]);
+    assert_eq!(valued.outcome, Outcome::Flat);
+    assert!(!valued.is_shell);
+}

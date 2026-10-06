@@ -59,6 +59,7 @@ pub(super) fn position(pool: &PoolFacts) -> OpenPositionFacts {
         range_since: None,
         valued_at: at,
         history: PositionHistory::Whole,
+        dust_movements: 0,
         unpriced_movements: UnpricedMovements::default(),
     }
 }
@@ -79,6 +80,7 @@ pub(super) fn closed(position: &OpenPositionFacts) -> crate::facts::ClosedPositi
         unpriced_rewards: position.unpriced_rewards,
         method: PnlMethod::Pool,
         history: position.history,
+        dust_movements: position.dust_movements,
         unpriced_movements: position.unpriced_movements,
     }
 }

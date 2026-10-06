@@ -177,6 +177,7 @@ fn closed_positions(draws: &mut Draws, pool: &PoolFacts, start: i64) -> Vec<Clos
                 unpriced_rewards: 0,
                 method,
                 history: PositionHistory::Whole,
+                dust_movements: 0,
                 unpriced_movements: UnpricedMovements::default(),
             }
         })
@@ -213,6 +214,7 @@ fn open_positions(
         range_since: None,
         valued_at: now,
         history: PositionHistory::Whole,
+        dust_movements: 0,
         unpriced_movements: UnpricedMovements::default(),
     };
     (vec![position], drift + unclaimed)
