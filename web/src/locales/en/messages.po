@@ -204,7 +204,7 @@ msgstr "Daily"
 msgid "Dark theme"
 msgstr "Dark theme"
 
-#. placeholder {0}: formatTime(freshness.as_of)
+#. placeholder {0}: formatTime(dataTimestamp(freshness))
 #. placeholder {0}: formatTime(overview.data.freshness.as_of)
 #: src/applications/Overview/Ui/OverviewPage.tsx
 #: src/applications/Overview/Ui/OverviewPage/FreshnessNote.tsx

@@ -175,6 +175,21 @@ describe('OverviewPage', () => {
     expect(glyph?.closest('[data-mark-position]')).toHaveAttribute('data-mark-position', 'hanging');
   });
 
+  it('dates lagging figures from the data, to the minute', async () => {
+    const fixture = overviewFixture();
+    fixture.freshness = { as_of: '2026-10-06T14:30:00Z', state: 'lagging', lag_seconds: 180 };
+    stubApi({
+      'GET /api/v1/auth/session': signedInSession,
+      'GET /api/v1/stats/series': () => jsonResponse(200, statsSeriesFixture()),
+      'GET /api/v1/overview': () => jsonResponse(200, fixture),
+    });
+    onDesktop();
+    renderAppAt('/');
+    expect(await screen.findByText('Data from 2:27 PM')).toBeInTheDocument();
+    // The dimming is checked where opacity is computed: e2e/visual/overview.visual.ts.
+    expect(screen.getByText('100.123')).toBeInTheDocument();
+  });
+
   it('reserves the summary layout while the first overview is pending', async () => {
     let finish: ((response: Response) => void) | undefined;
     stubApi({

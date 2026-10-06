@@ -1,4 +1,5 @@
 import type { Overview } from '@app/applications/Overview/Api/getOverview';
+import { isCatchingUp } from '@app/applications/Overview/Domain/dataFreshness';
 import {
   gainImports,
   hasNoOpenPositions,
@@ -19,9 +20,12 @@ export const KeyFigureStrip = ({ overview }: KeyFigureStripProps) => {
   const { t } = useLingui();
   const { net_worth: netWorth, open, gain, sync } = overview;
   const imports = gainImports(gain.value, sync.importing);
+  // While a wallet catches up, the figures are dimmed (not their captions: see KeyFigureList).
+  const tone = isCatchingUp(overview.freshness) ? 'stale' : 'current';
   return (
     <div className="mt-5 flex gap-3 border-border border-t pt-4">
       <MiniFigure
+        tone={tone}
         label={<span className="caps-label">{t`Net worth`}</span>}
         figure={
           <FigureAmount figure={netWorth.total} placement="cell-value" signing="negative-only" />
@@ -46,6 +50,7 @@ export const KeyFigureStrip = ({ overview }: KeyFigureStripProps) => {
         }
       />
       <MiniFigure
+        tone={tone}
         label={<span className="caps-label">{t`Active PnL`}</span>}
         figure={<FigureAmount figure={open.pnl} placement="key" signing="always" />}
         caption={
@@ -57,6 +62,7 @@ export const KeyFigureStrip = ({ overview }: KeyFigureStripProps) => {
         }
       />
       <MiniFigure
+        tone={tone}
         label={
           <>
             <span className="caps-label">{t`Gain`}</span>

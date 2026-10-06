@@ -1,4 +1,5 @@
 import type { Overview } from '@app/applications/Overview/Api/getOverview';
+import { dataTimestamp, isCatchingUp } from '@app/applications/Overview/Domain/dataFreshness';
 import { useDateFormatters } from '@app/applications/Shared/Time/Ui/useDateFormatters';
 import { useLingui } from '@lingui/react/macro';
 
@@ -11,8 +12,8 @@ interface FreshnessNoteProps {
 export const FreshnessNote = ({ freshness, timeZone }: FreshnessNoteProps) => {
   const { t } = useLingui();
   const { formatTime } = useDateFormatters(timeZone);
-  if (freshness.state !== 'lagging') return null;
+  if (!isCatchingUp(freshness)) return null;
   return (
-    <span className="text-small text-faint">{t`Data from ${formatTime(freshness.as_of)}`}</span>
+    <span className="text-faint text-small">{t`Data from ${formatTime(dataTimestamp(freshness))}`}</span>
   );
 };

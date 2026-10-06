@@ -95,7 +95,7 @@ test('keeps unknown import progress unavailable and dates stale readings in the 
   await page.route('**/api/v1/overview?*', (route) => route.fulfill({ json: fixture }));
   await page.goto('/');
   await expect(page.getByText('Cold is importing history', { exact: true })).toBeVisible();
-  await expect(page.getByText('Data from 12:30 AM', { exact: true })).toBeVisible();
+  await expect(page.getByText('Data from 12:29 AM', { exact: true })).toBeVisible();
   await expect(page.getByText('Nothing closed yet today', { exact: true })).toBeHidden();
   await expect(page.getByText('0.000', { exact: true })).toBeHidden();
   await expect(page.getByText('+1.336', { exact: true })).toBeVisible();
@@ -175,4 +175,35 @@ test('keeps USD figures and an explicit stale date after a failed refresh, then 
   await expect(page.getByRole('alert')).toBeHidden();
   await expect(page.getByText('Data from 12:00 PM', { exact: true })).toBeHidden();
   await expect.poll(() => overviewReads).toBeGreaterThan(readsBeforeRetry);
+});
+
+test('colours a glyph like its figure and dims figures as old as a lag in the dark theme only', async ({
+  page,
+}, testInfo) => {
+  const fixture = overviewFixture();
+  fixture.freshness = { state: 'lagging', as_of: '2026-10-06T12:00:00Z', lag_seconds: 180 };
+  fixture.open.pnl = {
+    exactness: 'estimated',
+    value: { amount: '1.336', unit: 'sol' },
+    reasons: [{ code: 'provisional_rate', day: '2026-10-06' }],
+  };
+  await page.route('**/api/v1/overview?*', (route) => route.fulfill({ json: fixture }));
+  await page.goto('/');
+  const figure = page.getByText('+1.336', { exact: true });
+  await expect(figure).toBeVisible();
+  // A string, not a function: this file is typed for Node, which has no DOM. The opacity is the
+  // one a reader sees, the product of the figure's own and its ancestors'.
+  const seen = await page.evaluate<{ figure: string; glyph: string; opacity: number }>(`(() => {
+    const figure = [...document.querySelectorAll('span')].find(
+      (element) => element.children.length === 0 && element.textContent === '+1.336');
+    const glyph = [...document.querySelectorAll('button[aria-label="Why an estimate?"]')].find(
+      (button) => button.textContent.includes('≈'));
+    let opacity = 1;
+    for (let node = figure; node !== null; node = node.parentElement)
+      opacity *= Number(getComputedStyle(node).opacity);
+    return { figure: getComputedStyle(figure).color, glyph: getComputedStyle(glyph).color, opacity };
+  })()`);
+  expect(seen.glyph).toBe(seen.figure);
+  expect(seen.opacity).toBeCloseTo(testInfo.project.name.endsWith('dark') ? 0.6 : 1, 2);
+  await expectNoA11yViolations(page);
 });

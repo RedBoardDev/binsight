@@ -1,4 +1,5 @@
 import type { Overview } from '@app/applications/Overview/Api/getOverview';
+import { isCatchingUp } from '@app/applications/Overview/Domain/dataFreshness';
 import {
   gainImports,
   hasNoOpenPositions,
@@ -9,6 +10,13 @@ import { FigureAmount } from '@app/applications/Shared/Figure/Ui/FigureAmount';
 import { PercentValue } from '@app/applications/Shared/Figure/Ui/PercentValue';
 import { PERIOD_LABELS, type Period } from '@app/applications/Shared/Scope/Domain/period';
 import { useLingui } from '@lingui/react/macro';
+
+// While a wallet catches up, the live figures are dimmed: they are true, but as old as the lag.
+// Only the figures themselves: their dimmer captions would fall under the contrast floor.
+const FIGURE_CLASSES = {
+  current: 'text-stat',
+  stale: 'text-stat opacity-(--stale-figure-opacity)',
+} as const;
 
 interface KeyFigureListProps {
   readonly overview: Overview;
@@ -21,6 +29,7 @@ export const KeyFigureList = ({ overview, period }: KeyFigureListProps) => {
   const { t, i18n } = useLingui();
   const { net_worth: netWorth, open, gain, sync } = overview;
   const imports = gainImports(gain.value, sync.importing);
+  const figureClass = FIGURE_CLASSES[isCatchingUp(overview.freshness) ? 'stale' : 'current'];
   return (
     // The percent gutter is 64 px, or the width of the longest percent: every figure still ends
     // on the same edge.
@@ -28,7 +37,7 @@ export const KeyFigureList = ({ overview, period }: KeyFigureListProps) => {
       <KeyFigureRow
         label={t`Net worth`}
         figure={
-          <span className="text-stat">
+          <span className={figureClass}>
             <FigureAmount figure={netWorth.total} placement="key" signing="negative-only" />
           </span>
         }
@@ -61,7 +70,7 @@ export const KeyFigureList = ({ overview, period }: KeyFigureListProps) => {
       <KeyFigureRow
         label={t`Active PnL`}
         figure={
-          <span className="text-stat">
+          <span className={figureClass}>
             <FigureAmount figure={open.pnl} placement="key" signing="always" />
           </span>
         }
@@ -73,7 +82,7 @@ export const KeyFigureList = ({ overview, period }: KeyFigureListProps) => {
       <KeyFigureRow
         label={t`Gain · ${i18n._(PERIOD_LABELS[period])}`}
         figure={
-          <span className="text-stat">
+          <span className={figureClass}>
             <FigureAmount figure={gain.value} placement="key" signing="always" />
           </span>
         }
