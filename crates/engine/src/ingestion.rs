@@ -149,6 +149,35 @@ impl Ingestion {
     }
 }
 
+#[cfg(test)]
+impl Ingestion {
+    /// Ingestion on the database and scripted provider of `setup`, at the test start, with a
+    /// stream that confirms every subscription; nothing runs until a test drives it.
+    pub(crate) fn on_test_engine(setup: &crate::test_support::TemporaryEngine) -> Self {
+        let clock = Arc::new(binsight_core::clock::FixedClock::new(
+            crate::test_support::TEST_START,
+        ));
+        let rpc = binsight_chain::test_support::scripted_client(
+            setup.transport.clone(),
+            clock.clone(),
+            None,
+        );
+        let (_, watch, _) = binsight_chain::WalletStream::new(
+            binsight_chain::test_support::ScriptedConnector::new(),
+            rpc.clone(),
+        );
+        let (states, _) = tokio::sync::watch::channel(std::collections::BTreeMap::new());
+        let (events, _) = tokio::sync::broadcast::channel(16);
+        Self::new(IngestionParts {
+            store: setup.store.clone(),
+            rpc,
+            clock,
+            watch,
+            sync: SyncPublisher { states, events },
+        })
+    }
+}
+
 /// Puts back in the fetch queue, due at `now`, the transactions parked because they were newer
 /// than an older binsight could read, when this one reads them.
 pub(crate) async fn requeue_readable_versions(

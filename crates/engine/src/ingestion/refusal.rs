@@ -50,7 +50,8 @@ pub(super) fn refusal_of(error: &RpcError, now: Timestamp) -> Option<Refusal> {
 }
 
 /// Logs a pause: a warning for a budget limit, which lifts by itself; an error otherwise, which
-/// the sync state reports until the pause ends.
+/// the sync state reports until the pause ends. Either way the sync states are decided again,
+/// since a pause changes what keeps the wallets behind.
 pub(super) fn report_pause(
     ingestion: &Ingestion,
     worker: &'static str,
@@ -59,6 +60,7 @@ pub(super) fn report_pause(
 ) {
     if matches!(reason, RpcError::Budget(_)) {
         warn!(worker, %reason, %until, "rpc work paused");
+        ingestion.sync_changed.notify_one();
     } else {
         error!(worker, %reason, %until, "the rpc provider refuses requests; rpc work paused");
         ingestion.provider_refused(until);
@@ -118,6 +120,21 @@ mod tests {
 
     fn later(secs: i64) -> Timestamp {
         now().checked_add(SignedDuration::from_secs(secs)).unwrap()
+    }
+
+    #[tokio::test]
+    async fn decides_the_sync_states_again_when_the_credit_limit_pauses_work() {
+        let setup = crate::test_support::temporary_engine().await;
+        let ingestion = Ingestion::on_test_engine(&setup);
+        let limit = RpcError::Budget(BudgetRefusal::DailyHardLimitReached {
+            limit: Credits(5_000),
+            resets_at: later(3_600),
+        });
+
+        report_pause(&ingestion, "fetch", &limit, later(3_600));
+
+        let woken = tokio::time::timeout(Duration::from_secs(1), ingestion.sync_changed.notified());
+        assert!(woken.await.is_ok());
     }
 
     #[test]

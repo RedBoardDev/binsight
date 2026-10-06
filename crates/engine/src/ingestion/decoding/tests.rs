@@ -1,20 +1,13 @@
 //! Startup replay, wake-ups after a fetch and isolated failures, without spending RPC credits.
 
 use super::*;
-use crate::ingestion::{IngestionParts, SyncPublisher};
 use crate::test_support::{TEST_START, temporary_engine};
-use binsight_chain::WalletStream;
-use binsight_chain::test_support::{ScriptedConnector, scripted_client};
-use binsight_core::clock::FixedClock;
 use binsight_solana::{
     Commitment,
     transaction::{TxEncoding, read},
 };
 use binsight_store::{DecodeOutcome, DecodeRecord, FetchedTx, RawTxRecord, Store};
 use jiff::Timestamp;
-use std::collections::BTreeMap;
-use std::sync::Arc;
-use tokio::sync::{broadcast, watch};
 
 fn fetched(name: &str) -> FetchedTx {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -33,21 +26,6 @@ fn fetched(name: &str) -> FetchedTx {
         payload,
         fetched_at: TEST_START,
     }
-}
-
-fn ingestion_on(setup: &crate::test_support::TemporaryEngine) -> Ingestion {
-    let clock = Arc::new(FixedClock::new(TEST_START));
-    let rpc = scripted_client(setup.transport.clone(), clock.clone(), None);
-    let (_, watch_wallets, _) = WalletStream::new(ScriptedConnector::new(), rpc.clone());
-    let (states, _) = watch::channel(BTreeMap::new());
-    let (events, _) = broadcast::channel(16);
-    Ingestion::new(IngestionParts {
-        store: setup.store.clone(),
-        rpc,
-        clock,
-        watch: watch_wallets,
-        sync: SyncPublisher { states, events },
-    })
 }
 
 async fn wait_for_decode(store: &Store, signature: Signature) -> DecodeRecord {
@@ -72,7 +50,7 @@ async fn wait_for_decode(store: &Store, signature: Signature) -> DecodeRecord {
 #[tokio::test(start_paused = true)]
 async fn upgrades_old_and_failed_results_offline_and_keeps_current_results_unchanged() {
     let setup = temporary_engine().await;
-    let ingestion = ingestion_on(&setup);
+    let ingestion = Ingestion::on_test_engine(&setup);
     let raw = fetched("failed-close");
     setup
         .store
@@ -125,7 +103,7 @@ async fn upgrades_old_and_failed_results_offline_and_keeps_current_results_uncha
 #[tokio::test(start_paused = true)]
 async fn decodes_a_transaction_fetched_later_when_woken_without_polling_or_refetching() {
     let setup = temporary_engine().await;
-    let ingestion = ingestion_on(&setup);
+    let ingestion = Ingestion::on_test_engine(&setup);
     let [first, later] = [fetched("legacy-sol-transfer"), fetched("failed-close")];
     setup
         .store
@@ -183,7 +161,7 @@ async fn startup_replay_survives_a_restart_without_refetching_or_replacing_curre
 #[tokio::test(start_paused = true)]
 async fn records_a_damaged_payload_as_unknown_execution_and_continues_the_registry_scan() {
     let setup = temporary_engine().await;
-    let ingestion = ingestion_on(&setup);
+    let ingestion = Ingestion::on_test_engine(&setup);
     let valid = fetched("failed-close");
     let damaged = binsight_store::RawTxRecord {
         signature: Signature::from_bytes([0; 64]),
