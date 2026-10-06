@@ -1,8 +1,9 @@
 //! Listing one page of signatures, and why a listing step did not complete.
 //!
-//! Every listing (a history page, a top-up page) asks the chain client for one page and sorts its
-//! failures the same way: a class the budget defers, a refusal that pauses every request, an
-//! error of this request, or a database failure while writing what was listed. This module lists,
+//! Every listing (a history page, a top-up page, a repair page) asks the chain client for one
+//! page and sorts its failures the same way: a class the budget defers, a refusal that pauses
+//! every request, an error of this request, a database failure while writing what was listed,
+//! or a listing that ended before a point it should have reached. This module lists,
 //! turns a page into the signatures to write, and names the failures; what a page means for the
 //! cursor belongs to the listing that asked.
 
@@ -36,6 +37,10 @@ pub(super) enum PageError {
     /// The page could not be written, or what it builds on could not be read.
     #[error(transparent)]
     Store(#[from] StoreError),
+    /// A listing of the whole history ended above signatures the wallet already lists: the node
+    /// did not return its oldest transactions.
+    #[error("the listing ended above the oldest signatures the wallet already lists")]
+    StoppedEarly,
 }
 
 /// Lists the page `request` asks for, as `context` says.

@@ -3,7 +3,8 @@
 //! Before anything, the tracked wallets are watched by the stream, and at startup the worker
 //! waits for their subscriptions (a short grace at most): listing first and subscribing after
 //! would leave a gap neither sees. Then checks go first (`live`), then history pages
-//! (`history_schedule`), each only if the credit budget lets its class go. A listing that fails
+//! (`history_schedule`), then repairs (`repairs`), each only if the credit budget lets its class
+//! go. A listing that fails
 //! holds its wallet back with a growing delay while the others go on; a class the budget defers
 //! waits until its deferral ends; a refusal that concerns every request pauses the worker.
 
@@ -20,6 +21,8 @@ use tracing::{debug, error, warn};
 use super::history_page::list_and_write;
 use super::history_schedule::{ListingSchedule, NextListing};
 use super::page_listing::PageError;
+use super::repair_pass::REPAIR_CLASS;
+use super::repairs::{RepairDue, Repairs};
 use super::top_up::TopUp;
 use crate::ingestion::live::{CheckReason, NextCheck};
 use crate::ingestion::refusal::{ClassDeferrals, report_pause, time_until};
@@ -47,6 +50,7 @@ pub(super) struct ListingWorker {
     deferrals: ClassDeferrals,
     top_ups: BTreeMap<Address, TopUp>,
     pending_pages: VecDeque<Address>,
+    repairs: Repairs,
     paused_until: Option<Timestamp>,
 }
 
@@ -117,7 +121,26 @@ impl ListingWorker {
                 NextListing::Nothing => {}
             }
         }
+        if least_urgent.is_some_and(|least_urgent| REPAIR_CLASS <= least_urgent) {
+            match self.repairs.due(ingestion, &wallets, now).await {
+                RepairDue::Now => return self.advance_repair(ingestion).await,
+                RepairDue::At(at) => wake_at = Some(earliest(wake_at, at)),
+                RepairDue::Never => {}
+            }
+        }
         Progress::Wait(wake_at.map(|at| time_until(now, at)))
+    }
+
+    /// Lists and writes the next page of the running repair.
+    async fn advance_repair(&mut self, ingestion: &Ingestion) -> Progress {
+        let Err((wallet, error)) = self.repairs.advance(ingestion).await else {
+            return Progress::Continue;
+        };
+        let repairs = &mut self.repairs;
+        let failure = setback_failure(ingestion, wallet, error, |now| {
+            repairs.hold_back(wallet, now)
+        });
+        self.apply(ingestion, REPAIR_CLASS, &failure)
     }
 
     /// Lists `wallet` again from its newest signature, for `reason`.
@@ -234,7 +257,7 @@ fn setback_failure(
             report_pause(ingestion, "listing", &reason, until);
             Setback::Pause(until)
         }
-        error @ (PageError::Rpc(_) | PageError::Store(_)) => {
+        error @ (PageError::Rpc(_) | PageError::Store(_) | PageError::StoppedEarly) => {
             let (failures, retry_at) = retry(ingestion.clock.now());
             if failures >= FAILURES_BEFORE_ALERT {
                 error!(%wallet, %error, failures, %retry_at, "a listing keeps failing");

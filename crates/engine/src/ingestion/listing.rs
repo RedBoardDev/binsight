@@ -3,8 +3,10 @@
 //!
 //! One worker does every listing, so a wallet's cursor has a single writer. Each step runs the
 //! most urgent listing due (`listing_step`): a check or a top-up from the newest signature
-//! (`top_up`), else the next page of a history (`history_page`). Between steps it sleeps until
-//! the next listing falls due, or until the live stream changes something.
+//! (`top_up`), else the next page of a history (`history_page`), else the next page of a repair,
+//! which lists a complete history again down to the last verified point and fills the gaps it
+//! finds (`repair_pass`, on the `repair_schedule`). Between steps it sleeps until the next
+//! listing falls due, or until the live stream changes something.
 
 mod history_cursor;
 mod history_end;
@@ -12,6 +14,10 @@ mod history_page;
 mod history_schedule;
 mod listing_step;
 mod page_listing;
+mod repair_pass;
+mod repair_rules;
+mod repair_schedule;
+mod repairs;
 mod top_up;
 mod top_up_rules;
 
@@ -221,7 +227,9 @@ mod tests {
         let before_midnight = Duration::from_mins(9 * 60 + 46);
         tokio::time::sleep(before_midnight).await;
         let calls_before_midnight = engine.transport.calls().len();
-        for _listing_and_its_confirmation in 0..2 {
+        // The wallet was added almost ten hours ago: its first repair is due once its history
+        // is listed.
+        for _listing_its_confirmation_and_the_repair in 0..3 {
             let listing = engine.transport.expect("getSignaturesForAddress");
             listing.respond(signature_page(0, 1));
         }

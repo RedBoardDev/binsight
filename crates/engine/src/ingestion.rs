@@ -1,9 +1,11 @@
 //! Ingestion: every tracked wallet's transactions, from its first to the one it just made, each
 //! fetched once into the raw registry.
 //!
-//! Ingestion, decoding and sync reporting run side by side. The listing worker lists each wallet's signatures (its whole
-//! history page by page, then again from its newest on a schedule) and writes every page with its
-//! fetch tasks and the cursor move in one transaction. The live listener turns what the stream
+//! Ingestion, decoding and sync reporting run side by side. The listing worker lists each
+//! wallet's signatures (its whole history page by page, then again from its newest on a
+//! schedule) and writes every page with its fetch tasks and the cursor move in one transaction;
+//! every six hours it also repairs each listing, listing it again down to the last verified point
+//! and filling the gaps it finds. The live listener turns what the stream
 //! reports into fetches and into checks for the listing worker. The fetch worker reads the queue
 //! of tasks the database holds and fetches what is due. The database is the only source of truth:
 //! the in-memory wake-ups only save a wait. Every worker stops as soon as shutdown is requested;
