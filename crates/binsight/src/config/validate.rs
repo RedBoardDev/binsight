@@ -12,6 +12,7 @@ use std::path::PathBuf;
 
 use binsight_api::auth::{ClientIpHeader, OwnerPassword, PublicUrl};
 use binsight_chain::HeliusApiKey;
+use jiff::Timestamp;
 
 use super::credit_budget::CreditBudget;
 use super::data_source::{DataSourceConfig, parse_switch};
@@ -184,10 +185,17 @@ impl<'sources> SettingReader<'sources> {
         parse(default).ok()
     }
 
-    /// Demo mode, or chain mode with its required Helius key.
+    /// Demo mode (with its clock, frozen or not), or chain mode with its required Helius key. A
+    /// frozen clock is refused outside demo mode: a real instance always reads the wall clock.
     fn data_source(&mut self) -> Option<DataSourceConfig> {
         if self.with_default(Setting::Demo, "false", parse_switch)? {
-            return Some(DataSourceConfig::Demo);
+            let frozen_at = self.optional(Setting::DemoNow, str::parse::<Timestamp>);
+            return Some(DataSourceConfig::Demo { frozen_at });
+        }
+        if self.find(Setting::DemoNow).is_some() {
+            let message = "only a demo can freeze its clock; set BINSIGHT_DEMO=true or remove it";
+            self.problems
+                .push(ConfigProblem::new(Setting::DemoNow, message));
         }
         let helius_api_key = self.required(Setting::HeliusApiKey, HeliusApiKey::parse)?;
         Some(DataSourceConfig::Chain { helius_api_key })
@@ -199,7 +207,7 @@ impl<'sources> SettingReader<'sources> {
     fn data_dir(&mut self, data_source: Option<&DataSourceConfig>) -> Option<PathBuf> {
         let folder = self.configured_or_default_data_dir()?;
         Some(match data_source {
-            Some(DataSourceConfig::Demo) => folder.join(DEMO_FOLDER),
+            Some(DataSourceConfig::Demo { .. }) => folder.join(DEMO_FOLDER),
             _ => folder,
         })
     }
@@ -254,7 +262,7 @@ fn warnings(sources: &ConfigSources, data_source: &DataSourceConfig) -> Vec<Conf
     let key_is_set = SettingReader::new(sources)
         .find(Setting::HeliusApiKey)
         .is_some();
-    if matches!(data_source, DataSourceConfig::Demo) && key_is_set {
+    if matches!(data_source, DataSourceConfig::Demo { .. }) && key_is_set {
         found.push(ConfigWarning::IgnoredInDemo {
             setting: Setting::HeliusApiKey,
         });

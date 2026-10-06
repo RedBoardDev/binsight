@@ -17,7 +17,7 @@ use std::time::Duration;
 use binsight_api::auth::AuthSettings;
 use binsight_api::{AppState, AppStateParts, router};
 use binsight_core::clock::Clock;
-use binsight_engine::{Engine, SystemClock};
+use binsight_engine::Engine;
 use binsight_store::{BackupOptions, Store, UpgradeOptions};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
@@ -67,7 +67,7 @@ async fn serve(config: Config) -> Result<(), Failure> {
     tokio::spawn(StopSignals::listen().cancel_on_signal(shutdown.clone()));
     sources::refuse_tracked_demo_folder(&config).await?;
     let data_dir = LockedDataDir::open(&config.data_dir)?;
-    let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+    let clock = config.data_source.clock();
     let store = open_store(&data_dir, clock.as_ref()).await?;
     let session_secret = ensure_instance_secrets(&store).await?;
     let listener = listen(config.bind).await?;

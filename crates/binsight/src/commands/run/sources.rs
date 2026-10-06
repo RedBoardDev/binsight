@@ -36,7 +36,7 @@ pub(super) fn engine(
             let (engine, handle) = Engine::new(store.clone(), rpc, stream, Arc::clone(clock));
             Ok((Some(engine), handle))
         }
-        DataSourceConfig::Demo => {
+        DataSourceConfig::Demo { .. } => {
             warn!("demo mode: serving generated figures; nothing is tracked or sent");
             let spec = WorldSpec::new(clock.now(), TimeZone::UTC);
             let portfolio =
@@ -87,7 +87,7 @@ fn stream_connector(key: &HeliusApiKey) -> Result<Arc<dyn WsConnector>, Failure>
 /// In demo mode, refuses a data folder that tracks wallets: demo figures must never sit next to
 /// real ones. The database is only read, before anything opens it for writing.
 pub(super) async fn refuse_tracked_demo_folder(config: &Config) -> Result<(), Failure> {
-    if !matches!(config.data_source, DataSourceConfig::Demo) {
+    if !matches!(config.data_source, DataSourceConfig::Demo { .. }) {
         return Ok(());
     }
     let database = database_path(&config.data_dir);

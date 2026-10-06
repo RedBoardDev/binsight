@@ -26,11 +26,19 @@ fn displayed_value(config: &Config, setting: Setting) -> String {
         Setting::Password => "(set)".to_owned(),
         Setting::Demo => match config.data_source {
             DataSourceConfig::Chain { .. } => "false".to_owned(),
-            DataSourceConfig::Demo => "true".to_owned(),
+            DataSourceConfig::Demo { .. } => "true".to_owned(),
+        },
+        Setting::DemoNow => match config.data_source {
+            DataSourceConfig::Demo {
+                frozen_at: Some(instant),
+            } => instant.to_string(),
+            DataSourceConfig::Demo { frozen_at: None } | DataSourceConfig::Chain { .. } => {
+                "(not set)".to_owned()
+            }
         },
         Setting::HeliusApiKey => match config.data_source {
             DataSourceConfig::Chain { .. } => "(set)".to_owned(),
-            DataSourceConfig::Demo => "(not used in demo mode)".to_owned(),
+            DataSourceConfig::Demo { .. } => "(not used in demo mode)".to_owned(),
         },
         Setting::HeliusPlan => config.credit_budget.plan.to_string(),
         Setting::MonthlyCredits => config.credit_budget.monthly_credits.0.to_string(),
@@ -86,6 +94,7 @@ mod tests {
             lines,
             "BINSIGHT_PASSWORD=(set) (from the environment)\n\
              BINSIGHT_DEMO=false (from the default)\n\
+             BINSIGHT_DEMO_NOW=(not set)\n\
              BINSIGHT_HELIUS_API_KEY=(set) (from the environment)\n\
              BINSIGHT_HELIUS_PLAN=free (from the default)\n\
              BINSIGHT_MONTHLY_CREDITS=1000000 (from the default)\n\

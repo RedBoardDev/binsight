@@ -14,6 +14,8 @@ pub enum Setting {
     Password,
     /// `BINSIGHT_DEMO`: serve the generated demo world instead of the chain.
     Demo,
+    /// `BINSIGHT_DEMO_NOW`: the instant a demo's clock is frozen at (demo mode only).
+    DemoNow,
     /// `BINSIGHT_HELIUS_API_KEY`: the Helius API key.
     HeliusApiKey,
     /// `BINSIGHT_HELIUS_PLAN`: the Helius plan the key belongs to.
@@ -42,9 +44,10 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting, in the order they are reported.
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::Password,
         Self::Demo,
+        Self::DemoNow,
         Self::HeliusApiKey,
         Self::HeliusPlan,
         Self::MonthlyCredits,
@@ -64,6 +67,7 @@ impl Setting {
         match self {
             Self::Password => "BINSIGHT_PASSWORD",
             Self::Demo => "BINSIGHT_DEMO",
+            Self::DemoNow => "BINSIGHT_DEMO_NOW",
             Self::HeliusApiKey => "BINSIGHT_HELIUS_API_KEY",
             Self::HeliusPlan => "BINSIGHT_HELIUS_PLAN",
             Self::MonthlyCredits => "BINSIGHT_MONTHLY_CREDITS",

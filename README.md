@@ -82,6 +82,7 @@ wins over the file). Invalid settings are all reported at once and the server do
 | `BINSIGHT_LOG_FORMAT` | no | `pretty` | `pretty` or `json`. |
 | `BINSIGHT_CONFIG_FILE` | no | `$XDG_CONFIG_HOME/binsight/binsight.env`, else `~/.config/binsight/binsight.env` | The configuration file (also `--config-file`). A missing file at the default path is fine. |
 | `BINSIGHT_DEMO` | no | `false` | `true` serves a generated demo world instead of your wallets: no Helius key is needed and nothing is sent. Demo mode keeps its data in the `demo` subfolder of the data folder (`/data/demo` in the image), never touches the real database, and refuses that subfolder if it tracks wallets. |
+| `BINSIGHT_DEMO_NOW` | no | — | Demo mode only: an RFC 3339 instant the demo's clock is frozen at, so every start serves the same world and the same "now" (for screenshots compared with a reference). A frozen demo never forgets failed sign-ins: once throttled, it stays throttled until it restarts. |
 
 A WebSocket opening needs at least three available credits: one for opening and two for the first
 started data unit. That data headroom also holds back concurrent RPC calls until the first data

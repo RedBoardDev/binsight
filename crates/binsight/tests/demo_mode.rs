@@ -1,4 +1,5 @@
-//! Demo mode in the configuration: no Helius key needed, and a key that is set is ignored.
+//! Demo mode in the configuration: no Helius key needed, a key that is set is ignored, and the
+//! clock may be frozen for reproducible screenshots (in demo mode only).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, reason = "tests fail loudly")]
 
@@ -29,7 +30,7 @@ fn starts_in_demo_mode_without_a_helius_key() {
 
     assert!(matches!(
         loaded.config.data_source,
-        binsight::config::DataSourceConfig::Demo
+        binsight::config::DataSourceConfig::Demo { frozen_at: None }
     ));
     assert_eq!(loaded.warnings, Vec::new());
 }
@@ -99,4 +100,53 @@ fn keeps_the_demo_in_the_demo_subfolder_of_the_data_folder() {
         std::path::Path::new("/home/owner/.local/share/binsight")
     );
     assert_eq!(pinned.config.data_dir, std::path::Path::new("/data/demo"));
+}
+
+#[test]
+fn freezes_the_demo_clock_at_the_given_instant() {
+    let loaded = validate(&environment(&[
+        ("HOME", "/home/owner"),
+        ("BINSIGHT_PASSWORD", PASSWORD),
+        ("BINSIGHT_DEMO", "true"),
+        ("BINSIGHT_DEMO_NOW", "2026-10-06T14:30:00Z"),
+    ]))
+    .unwrap();
+
+    let binsight::config::DataSourceConfig::Demo { frozen_at } = loaded.config.data_source else {
+        panic!("expected demo mode");
+    };
+    assert_eq!(frozen_at, Some("2026-10-06T14:30:00Z".parse().unwrap()));
+}
+
+#[test]
+fn refuses_a_frozen_clock_outside_demo_mode() {
+    let error = validate(&environment(&[
+        ("HOME", "/home/owner"),
+        ("BINSIGHT_PASSWORD", PASSWORD),
+        ("BINSIGHT_HELIUS_API_KEY", KEY),
+        ("BINSIGHT_DEMO_NOW", "2026-10-06T14:30:00Z"),
+    ]))
+    .unwrap_err();
+
+    insta::assert_snapshot!(error.to_string(), @r"
+    the configuration is invalid:
+      - BINSIGHT_DEMO_NOW: only a demo can freeze its clock; set BINSIGHT_DEMO=true or remove it
+    ");
+}
+
+#[test]
+fn refuses_a_demo_instant_that_is_not_rfc_3339() {
+    let error = validate(&environment(&[
+        ("HOME", "/home/owner"),
+        ("BINSIGHT_PASSWORD", PASSWORD),
+        ("BINSIGHT_DEMO", "true"),
+        ("BINSIGHT_DEMO_NOW", "yesterday"),
+    ]))
+    .unwrap_err();
+
+    assert_eq!(error.problems.len(), 1);
+    assert_eq!(
+        error.problems[0].setting,
+        binsight::config::Setting::DemoNow
+    );
 }

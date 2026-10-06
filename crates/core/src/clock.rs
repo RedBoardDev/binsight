@@ -1,8 +1,9 @@
 //! An injectable source of the current time, and the UTC calendar day of an instant.
 //!
 //! Code that needs "now" receives a [`Clock`] instead of reading the system time, so tests can
-//! fix and move time precisely. This module defines the trait and a manual clock for tests; the
-//! real wall clock is implemented once, in the engine, and is the only place allowed to read it.
+//! fix and move time precisely. This module defines the trait and a manual clock (for tests, and
+//! for a demo frozen in time); the real wall clock is implemented once, in the engine, and is the
+//! only place allowed to read it.
 //! Days are UTC days, the ones the RPC provider counts its credits in.
 
 use std::sync::{Mutex, PoisonError};
@@ -30,7 +31,7 @@ pub trait Clock: Send + Sync {
     fn now(&self) -> Timestamp;
 }
 
-/// A clock that only moves when told to, for tests.
+/// A clock that only moves when told to: for tests, and for a demo frozen in time.
 #[derive(Debug)]
 pub struct FixedClock {
     current: Mutex<Timestamp>,

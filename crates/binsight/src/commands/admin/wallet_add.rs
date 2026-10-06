@@ -18,7 +18,7 @@ use crate::output::print_line;
 
 /// Tracks `address`, unless it already is.
 pub(super) async fn add_wallet(config: &Config, address: Address) -> Result<(), Failure> {
-    if matches!(config.data_source, DataSourceConfig::Demo) {
+    if matches!(config.data_source, DataSourceConfig::Demo { .. }) {
         return Err(Failure::WalletInDemo);
     }
     let data_dir = LockedDataDir::open(&config.data_dir)?;
