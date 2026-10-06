@@ -79,18 +79,14 @@ libraries). Set `E2E_BASE_URL` to test a server that is already running.
 ## Visual review
 
 `just web-visual` takes screenshots of the shell (Overview, Settings, the account menu or the phone's
-More sheet, the shrunk tab bar) and of the design reference page `/design`, on a desktop (1440 × 900)
-and a phone (390 × 844), in the dark and the light theme, into `test-results/visual/`. It runs the Vite
-dev server against a stub API (`e2e/visual/stubApiServer.ts`), so it needs no binary, and checks each
-screen with axe. CI uploads the shots as the `visual-review` artifact.
+More sheet, the shrunk tab bar) and of the test harness `test/harness/` (the shared charts no screen shows
+yet, on fixed samples), on a desktop (1440 × 900) and a phone (390 × 844), in the dark and the light theme,
+into `test-results/visual/`. It runs the Vite dev server against a stub API (`e2e/visual/stubApiServer.ts`),
+so it needs no binary, and checks each screen with axe. CI uploads the shots as the `visual-review`
+artifact. The harness is served by the dev server only: the production build never includes it.
 
 The shots are for review, not pixel baselines, while the screens are being built: a baseline of a
-screen that changes every day only tests that it changed. Committed references, compared at 0.2 %
-against the binary in demo mode with a frozen clock, replace them once the real screens exist; the
-design reference goes with them.
-
-`/design`, the design system on one page, is a temporary development tool: a production build leaves
-it out and answers "not found" at its address.
+screen that changes every day only tests that it changed.
 
 ## Translations
 
