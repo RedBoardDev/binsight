@@ -101,7 +101,6 @@ impl PositionFold {
             owned: &owned,
             tx,
             activity,
-            entries: &entries,
             pools,
         };
         let closed = self.apply(sources, place)?;

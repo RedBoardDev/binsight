@@ -8,9 +8,8 @@ use binsight_solana::transaction::{InstructionPosition, TransactionView};
 use jiff::Timestamp;
 
 use super::PositionFold;
-use crate::book::LedgerEntry;
 use crate::facts::{ClosedPositionFacts, PoolFacts, PositionId};
-use crate::positions::valuation::{BookedMovement, value_movement, value_reward};
+use crate::positions::valuation::{value_movement, value_reward};
 use crate::positions::{FoldError, OpenLife};
 
 /// What one transaction brings to the fold.
@@ -22,8 +21,6 @@ pub(super) struct Sources<'a> {
     pub(super) tx: &'a TransactionView,
     /// Its DLMM activity.
     pub(super) activity: &'a TxActivity,
-    /// Its booked entries.
-    pub(super) entries: &'a [LedgerEntry],
     /// The facts of the pools its movements may name.
     pub(super) pools: &'a BTreeMap<Address, PoolFacts>,
 }
@@ -47,7 +44,7 @@ pub(super) struct Step<'a> {
 #[derive(Clone, Copy)]
 enum Action<'a> {
     Lifecycle(&'a LifecycleFact),
-    Movement(usize, &'a PositionMovement),
+    Movement(&'a PositionMovement),
     Reward(&'a RewardClaim),
 }
 
@@ -56,7 +53,7 @@ impl Action<'_> {
     fn order(self) -> (InstructionPosition, u8) {
         match self {
             Self::Lifecycle(LifecycleFact::Created { at, .. }) => (*at, 0),
-            Self::Movement(_, movement) => (movement.at, 1),
+            Self::Movement(movement) => (movement.at, 1),
             Self::Reward(reward) => (reward.at, 1),
             Self::Lifecycle(LifecycleFact::Closed { at, .. }) => (*at, 2),
         }
@@ -84,20 +81,14 @@ impl<'a> Step<'a> {
             .lifecycle
             .iter()
             .map(Action::Lifecycle)
-            .chain(
-                activity
-                    .movements
-                    .iter()
-                    .enumerate()
-                    .map(|(index, movement)| Action::Movement(index, movement)),
-            )
+            .chain(activity.movements.iter().map(Action::Movement))
             .chain(activity.reward_claims.iter().map(Action::Reward))
             .collect();
         actions.sort_by_key(|action| action.order());
         for action in actions {
             match action {
                 Action::Lifecycle(fact) => self.apply_lifecycle(*fact)?,
-                Action::Movement(index, movement) => self.apply_movement(index, movement)?,
+                Action::Movement(movement) => self.apply_movement(movement)?,
                 Action::Reward(reward) => self.apply_reward(reward)?,
             }
         }
@@ -152,23 +143,13 @@ impl<'a> Step<'a> {
         Ok(())
     }
 
-    fn apply_movement(
-        &mut self,
-        index: usize,
-        movement: &PositionMovement,
-    ) -> Result<(), FoldError> {
+    fn apply_movement(&mut self, movement: &PositionMovement) -> Result<(), FoldError> {
         if !self.sources.owned.contains(&movement.position)
             || (movement.x.0 == 0 && movement.y.0 == 0)
         {
             return Ok(());
         }
-        let pool = self.pool(movement.pool)?;
-        let booked = BookedMovement {
-            index,
-            movement,
-            entries: self.sources.entries,
-        };
-        let quoted = value_movement(booked, pool)?;
+        let quoted = value_movement(movement, self.pool(movement.pool)?)?;
         self.life(movement.position, movement.pool)?
             .flows
             .add_movement(movement.kind, quoted)

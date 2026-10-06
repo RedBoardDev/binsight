@@ -5,7 +5,8 @@
 
 /// The positions definition: each position valued in its pool quote (SOL, then USDC, then USDT)
 /// with independent source figures. Version 2 restored SOL as the first quote; version 3
-/// counts the re-deposits of rebalances in what a position invested.
+/// counts the re-deposits of rebalances in what a position invested; version 4 counts a
+/// deposit's withheld Token-2022 transfer fee in it too.
 ///
 /// Change this version when the economic definition or calculated position values change.
-pub const POSITIONS: u32 = 3;
+pub const POSITIONS: u32 = 4;

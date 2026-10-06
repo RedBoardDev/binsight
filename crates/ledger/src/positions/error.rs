@@ -57,14 +57,6 @@ pub enum FoldError {
         /// The position.
         position: Address,
     },
-    /// A deposit has no booked leg in one of its pool's tokens.
-    #[error("the deposit into {position} has no booked leg in {mint}")]
-    MissingDepositLeg {
-        /// The position.
-        position: Address,
-        /// The token of the missing leg.
-        mint: Address,
-    },
     /// A movement's bin has no valid price.
     #[error(transparent)]
     Price(#[from] BinMathError),

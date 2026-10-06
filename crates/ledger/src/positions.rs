@@ -13,9 +13,9 @@
 //!    life) is the wallet's when its movement moved the wallet's own tokens; its life starts at
 //!    that transaction, with only the movements seen.
 //! 3. Every movement is valued in its own pool's quote token (SOL, then USDC, then USDT) at the
-//!    active bin of its own transaction, in exact integers. A deposit counts what reached the
-//!    position (its booked amount, net of a Token-2022 transfer fee); a withdrawal or a claim
-//!    counts what was paid.
+//!    active bin of its own transaction, in exact integers, with the amounts its event reports:
+//!    a deposit counts what the wallet paid, a Token-2022 transfer fee withheld on the way in
+//!    included; a withdrawal or a claim counts what the pool paid.
 //! 4. The two halves of a rebalance count like any withdrawal and deposit.
 //! 5. A movement without a bin counts its quote side only and is unpriced, and so is every
 //!    movement in a pool without a supported quote token.

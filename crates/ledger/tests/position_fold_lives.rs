@@ -70,14 +70,15 @@ fn folds_a_whole_life_in_a_sol_pool_into_its_liquidity_pnl() {
     assert!(!valued.is_shell);
 }
 
-/// A deposit of 19,999,999,999 raw tokens whose Token-2022 fee withholds 200,000,000: the
-/// position holds 19,799,999,999, worth 6,181,081,324 lamports at bin −117. A rebalance then
+/// A deposit of 19,999,999,999 raw tokens, worth 6,243,516,489 lamports at bin −117, whose
+/// Token-2022 fee withholds 200,000,000: the fee counts in what the position invested, and stays
+/// a transfer-fee entry of the book too. A rebalance then
 /// withdraws 19,799,999,996 tokens (6,181,081,323) in one transaction and re-deposits
 /// 9,609,765,636 tokens (2,999,936,510) and 3,107,167,893 lamports in the next one. Fees of
 /// 90,778,216 + 66,349,715 (bin −121) and 11,906,651 + 79,582,057 (bin −105) are claimed, and
 /// 6,152,189,699 lamports withdrawn at the close.
 #[test]
-fn counts_rebalance_halves_whole_and_deposits_net_of_their_transfer_fee() {
+fn counts_rebalance_halves_whole_and_a_deposit_with_its_withheld_transfer_fee() {
     let case = case("position-life-rebalanced");
     let (_, folded) = fold(&case, case.perspective);
     let first = folded.first().map(|step| step.entries.as_slice());
@@ -89,14 +90,14 @@ fn counts_rebalance_halves_whole_and_deposits_net_of_their_transfer_fee() {
     let life = closed_life(&case);
     assert_eq!(
         life.invested,
-        QuoteUnits(6_181_081_324 + 2_999_936_510 + 3_107_167_893)
+        QuoteUnits(6_243_516_489 + 2_999_936_510 + 3_107_167_893)
     );
     assert_eq!(life.withdrawn, QuoteUnits(6_181_081_323 + 6_152_189_699));
     assert_eq!(
         life.claimed_fees,
         QuoteUnits(90_778_216 + 66_349_715 + 11_906_651 + 79_582_057)
     );
-    assert_eq!(lp_pnl(&life), Ok(QuoteUnits(293_701_934)));
+    assert_eq!(lp_pnl(&life), Ok(QuoteUnits(231_266_769)));
     assert_eq!(valued(&case, &life).outcome, Outcome::Win);
 }
 
