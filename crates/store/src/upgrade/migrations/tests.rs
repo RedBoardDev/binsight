@@ -1,0 +1,203 @@
+//! The migration list matches the folder, and the older migrations keep the rows they find.
+
+use std::path::Path;
+
+use super::*;
+
+/// The migration files on disk, as `(file name, content)`, sorted by name.
+fn migration_files() -> Vec<(String, String)> {
+    let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    let Ok(entries) = std::fs::read_dir(&folder) else {
+        return Vec::new();
+    };
+    let mut files: Vec<(String, String)> = entries
+        .map(|entry| entry.unwrap().path())
+        .map(|path| {
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            (name, std::fs::read_to_string(&path).unwrap())
+        })
+        .collect();
+    files.sort();
+    files
+}
+
+#[test]
+fn lists_exactly_the_files_of_the_migrations_folder() {
+    let listed: Vec<(String, String)> = MIGRATIONS
+        .iter()
+        .map(|migration| {
+            let file = format!("{:04}_{}.sql", migration.version, migration.name);
+            (file, migration.sql.to_owned())
+        })
+        .collect();
+
+    assert_eq!(listed, migration_files());
+}
+
+#[test]
+fn numbers_the_migrations_from_one_without_gaps() {
+    for (position, migration) in MIGRATIONS.iter().enumerate() {
+        assert_eq!(usize::try_from(migration.version).unwrap(), position + 1);
+    }
+}
+
+#[test]
+fn names_the_migrations_in_snake_case() {
+    for migration in MIGRATIONS {
+        assert_ne!(migration.name, "");
+        assert!(
+            migration
+                .name
+                .chars()
+                .all(|character| character.is_ascii_lowercase()
+                    || character.is_ascii_digit()
+                    || character == '_'),
+            "{} is not snake_case",
+            migration.name
+        );
+    }
+}
+
+#[test]
+fn preserves_legacy_decode_records_without_inventing_execution_success() {
+    let connection = rusqlite::Connection::open_in_memory().unwrap();
+    let (before, added) = MIGRATIONS.split_at(5);
+    for migration in before {
+        connection.execute_batch(migration.sql).unwrap();
+    }
+    connection
+        .execute_batch(
+            "INSERT INTO raw_tx VALUES
+         ('legacy', 1, NULL, '0', 'finalized', 'base64', 'none',
+          x'00', zeroblob(32), 0);
+         INSERT INTO tx_decode VALUES ('legacy', 'dlmm', 1, 'decoded', NULL, 0);
+         INSERT INTO decoded_event VALUES
+         ('legacy', 'dlmm', 0, 1, 'dlmm.add_liquidity', '{\"amount\":\"1\"}');",
+        )
+        .unwrap();
+    connection.execute_batch(added[0].sql).unwrap();
+    let kept: (String, Option<String>, Option<String>) = connection
+        .query_row(
+            "SELECT outcome, execution_outcome, execution_error FROM tx_decode",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(kept, ("decoded".to_owned(), None, None));
+    let payload: String = connection
+        .query_row("SELECT payload FROM decoded_event", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(payload, "{\"amount\":\"1\"}");
+}
+
+#[test]
+fn starts_each_wallet_listed_count_from_its_listed_signatures() {
+    let connection = rusqlite::Connection::open_in_memory().unwrap();
+    let (before, added) = MIGRATIONS.split_at(9);
+    for migration in before {
+        connection.execute_batch(migration.sql).unwrap();
+    }
+    connection
+        .execute_batch(
+            "INSERT INTO wallet VALUES ('a', 0), ('b', 0);
+             INSERT INTO wallet_cursor (wallet, history_state) VALUES
+                 ('a', 'not_started'), ('b', 'not_started');
+             INSERT INTO wallet_signature VALUES
+                 ('a', 's1', 1, NULL, 0, 0), ('a', 's2', 2, NULL, 0, 0);",
+        )
+        .unwrap();
+    connection.execute_batch(added[0].sql).unwrap();
+    let counts: Vec<(String, i64)> = connection
+        .prepare("SELECT wallet, listed_count FROM wallet_cursor ORDER BY wallet")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(counts, [("a".to_owned(), 2), ("b".to_owned(), 0)]);
+}
+
+#[test]
+fn refuses_to_delete_a_raw_transaction_already_stored() {
+    let connection = rusqlite::Connection::open_in_memory().unwrap();
+    let (before, added) = MIGRATIONS.split_at(10);
+    for migration in before {
+        connection.execute_batch(migration.sql).unwrap();
+    }
+    connection
+        .execute_batch(
+            "INSERT INTO raw_tx VALUES
+             ('kept', 1, NULL, '0', 'finalized', 'base64', 'none', x'00', zeroblob(32), 0);",
+        )
+        .unwrap();
+    connection.execute_batch(added[0].sql).unwrap();
+
+    let deleted = connection.execute("DELETE FROM raw_tx", []);
+
+    assert!(deleted.is_err());
+    let kept: i64 = connection
+        .query_row("SELECT count(*) FROM raw_tx", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(kept, 1);
+}
+
+#[test]
+fn marks_every_existing_decode_result_as_read_by_reader_zero() {
+    let connection = rusqlite::Connection::open_in_memory().unwrap();
+    let (before, added) = MIGRATIONS.split_at(11);
+    for migration in before {
+        connection.execute_batch(migration.sql).unwrap();
+    }
+    connection
+        .execute_batch(
+            "INSERT INTO raw_tx VALUES
+             ('old', 1, NULL, '0', 'finalized', 'base64', 'none', x'00', zeroblob(32), 0);
+             INSERT INTO tx_decode (signature, decoder, decoder_version, outcome, error,
+                                    decoded_at)
+             VALUES ('old', 'dlmm', 2, 'failed', 'unreadable', 0);",
+        )
+        .unwrap();
+    connection.execute_batch(added[0].sql).unwrap();
+
+    let kept: (i64, i64, String) = connection
+        .query_row(
+            "SELECT reader_version, decoder_version, outcome FROM tx_decode",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(kept, (0, 2, "failed".to_owned()));
+}
+
+#[test]
+fn keeps_the_credits_spent_when_their_purposes_widen() {
+    let folder = tempfile::tempdir().unwrap();
+    let mut connection = rusqlite::Connection::open(folder.path().join("binsight.db")).unwrap();
+    let (before, widening) = MIGRATIONS.split_at(3);
+    for migration in before {
+        connection.execute_batch(migration.sql).unwrap();
+    }
+    connection
+        .execute(
+            "INSERT INTO credit_daily VALUES
+             ('2026-09-21', 'getTransaction', 'history', 'transaction_fetch', '', 'ok', 7, 7)",
+            [],
+        )
+        .unwrap();
+
+    let transaction = connection.transaction().unwrap();
+    transaction.execute_batch(widening[0].sql).unwrap();
+    transaction.commit().unwrap();
+
+    let kept: i64 = connection
+        .query_row("SELECT credits FROM credit_daily", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(kept, 7);
+    connection
+        .execute(
+            "INSERT INTO credit_daily VALUES
+             ('2026-09-21', 'ws_open', 'realtime', 'live_stream', '', 'ok', 1, 1)",
+            [],
+        )
+        .unwrap();
+}
