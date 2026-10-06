@@ -47,46 +47,48 @@ pub(super) async fn run_fetcher(ingestion: &Ingestion, shutdown: &CancellationTo
             && let Err(error) = fill_slots(ingestion, allowed, &mut active, &mut running).await
         {
             error!(%error, "could not read the fetch queue");
-            pause_until = now.checked_add(jiff::SignedDuration::from_secs(30)).ok();
+            pause_until = after_store_failure(now);
         }
-        let wait = match pause_until {
-            Some(until) => time_until(now, until),
-            None => {
-                idle_wait(
-                    ingestion,
-                    &deferrals,
-                    fetch_schedule::allowed_class(least_urgent, &active),
-                    &active,
-                )
-                .await
-            }
+        let wait = if let Some(until) = pause_until {
+            time_until(now, until)
+        } else {
+            let allowed = fetch_schedule::allowed_class(least_urgent, &active);
+            idle_wait(ingestion, &deferrals, allowed, &active).await
         };
         tokio::select! {
             () = shutdown.cancelled() => { running.shutdown().await; return; }
             result = running.join_next(), if !running.is_empty() => {
-                match result {
-                    Some(Ok((signature, outcome))) => {
+                let Some(result) = result else { continue };
+                let finished = match result {
+                    Ok((signature, outcome)) => {
                         active.remove(&signature);
-                        match outcome {
-                            Fetched::Recorded => {}
-                            Fetched::Deferred { class, until } => deferrals.defer(class, until),
-                            Fetched::PausedUntil(until) => pause_until = Some(until),
-                            Fetched::NotRecorded => pause_until = ingestion.clock.now().checked_add(jiff::SignedDuration::from_secs(30)).ok(),
-                        }
+                        outcome
                     }
-                    Some(Err(error)) => {
+                    Err(error) => {
                         error!(%error, "a fetch task stopped before finishing");
                         running.shutdown().await;
                         active.clear();
-                        pause_until = ingestion.clock.now().checked_add(jiff::SignedDuration::from_secs(30)).ok();
+                        Fetched::NotRecorded
                     }
-                    None => {}
+                };
+                match finished {
+                    Fetched::Recorded => {}
+                    Fetched::Deferred { class, until } => deferrals.defer(class, until),
+                    Fetched::PausedUntil(until) => pause_until = Some(until),
+                    Fetched::NotRecorded => {
+                        pause_until = after_store_failure(ingestion.clock.now());
+                    }
                 }
             }
             () = ingestion.new_tasks.notified(), if pause_until.is_none() => {}
             () = tokio::time::sleep(wait) => {}
         }
     }
+}
+
+/// When fetching resumes after the database failed at `now`: no billable fetch is sent before.
+fn after_store_failure(now: Timestamp) -> Option<Timestamp> {
+    now.checked_add(STORE_RETRY_DELAY).ok()
 }
 
 async fn idle_wait(
