@@ -118,8 +118,8 @@ fn closed(byte: u8, pool: u8, method: PnlMethod, now: Timestamp) -> ClosedPositi
 pub(super) fn facts(now: Timestamp) -> SnapshotFacts {
     SnapshotFacts {
         pools: vec![
-            pool(3, (TokenKind::Usdc, TokenKind::Sol)),
-            pool(4, (TokenKind::Sol, TokenKind::Usdc)),
+            pool(3, (TokenKind::Usdc, TokenKind::Other)),
+            pool(4, (TokenKind::Other, TokenKind::Usdc)),
             pool(5, (TokenKind::Other, TokenKind::Other)),
             pool(6, (TokenKind::Other, TokenKind::Sol)),
         ],

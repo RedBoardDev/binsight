@@ -19,18 +19,18 @@ use crate::portfolio::snapshot::SnapshotFacts;
 
 fn snapshot_facts(events: Vec<PositionEventFact>) -> SnapshotFacts {
     let id = events[0].position;
-    let token = |byte| TokenFacts {
+    let token = |byte, kind| TokenFacts {
         mint: Address::from_bytes([byte; 32]),
         symbol: None,
         name: None,
         decimals: Decimals(9),
-        kind: TokenKind::Sol,
+        kind,
     };
     let pool = PoolFacts {
         address: Address::from_bytes([3; 32]),
         bin_step: 80,
-        base: token(4),
-        quote: token(5),
+        base: token(4, TokenKind::Other),
+        quote: token(5, TokenKind::Sol),
     };
     SnapshotFacts {
         pools: vec![pool.clone()],
@@ -398,6 +398,7 @@ fn maps_selected_x_event_quantities_and_prices_once_without_changing_paged_total
     let mut facts = snapshot_facts(vec![created, first, second]);
     facts.pools[0].base.kind = TokenKind::Usdc;
     facts.pools[0].base.decimals = Decimals(6);
+    facts.pools[0].quote.kind = TokenKind::Other;
     facts.closed[0].invested = QuoteUnits(1_020_000_000);
     facts.rates.daily.insert(
         jiff::civil::date(1970, 1, 1),

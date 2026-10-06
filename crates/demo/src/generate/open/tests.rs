@@ -17,10 +17,11 @@ fn pool(selected_x: bool) -> PoolFacts {
         token(1, TokenKind::Sol, Decimals::SOL),
         token(2, TokenKind::Usdc, Decimals(6)),
     );
+    // SOL is the selected quote, so it sits on the physical side under test.
     let (base, quote) = if selected_x {
-        (stable, sol)
-    } else {
         (sol, stable)
+    } else {
+        (stable, sol)
     };
     PoolFacts {
         address: Address::from_bytes([3; 32]),

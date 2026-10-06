@@ -33,7 +33,7 @@ pub enum QuoteAsset {
 }
 
 impl PoolFacts {
-    /// Selects USDC, then USDT, then SOL, on either physical side.
+    /// Selects SOL, then USDC, then USDT, on either physical side.
     ///
     /// Token kinds and decimals must already come from verified mint facts. Physical X/Y
     /// tokens and bin IDs remain unchanged; consumers apply this same display convention.

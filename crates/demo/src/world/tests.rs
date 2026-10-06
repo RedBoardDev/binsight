@@ -90,13 +90,15 @@ fn generates_the_planned_world() {
             .count(),
         1
     );
-    let stable = open.iter().filter(|row| {
+    // One open position sits in a dollar-quoted pool (JUP/USDC); every other one, SOL/USDC
+    // included, is valued in SOL.
+    let usdc = open.iter().filter(|row| {
         snapshot
             .pool(row.facts.pool)
             .and_then(binsight_ledger::facts::PoolFacts::quote_asset)
             == Some(QuoteAsset::Usdc)
     });
-    assert_eq!(stable.count(), 1);
+    assert_eq!(usdc.count(), 1);
 }
 
 #[test]

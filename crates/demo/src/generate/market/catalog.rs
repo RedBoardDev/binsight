@@ -1,6 +1,6 @@
 //! The tokens and pools of the demo world, with the price each pool starts around.
 //!
-//! Six busy pools carry most of the activity; a long tail of thirty small pools on invented
+//! Eight busy pools carry most of the activity; a long tail of thirty small pools on invented
 //! tokens shows how the history filters behave with many pools, two of them on the same pair with
 //! different bin steps. One token has no metadata at all. Every mint and pool address is fake.
 
@@ -73,8 +73,9 @@ const BUSY_TOKENS: [TokenSpec; 7] = [
 type BusyPool = (&'static str, &'static str, &'static str, u16, (u128, u128));
 
 /// The busy pools.
-const BUSY_POOLS: [BusyPool; 7] = [
+const BUSY_POOLS: [BusyPool; 8] = [
     ("SOL/USDC", "SOL", "USDC", 10, (145, 1)),
+    ("JUP/USDC", "JUP", "USDC", 20, (58, 100)),
     ("JUP/SOL", "JUP", "SOL", 20, (4, 1_000)),
     ("JTO/SOL", "JTO", "SOL", 50, (15, 1_000)),
     ("WIF/SOL", "WIF", "SOL", 80, (8, 1_000)),

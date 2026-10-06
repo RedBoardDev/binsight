@@ -198,10 +198,10 @@ pub(crate) const WALLETS: [WalletProfile; 3] = [
         loses_first_today: false,
         shell_every: None,
         recreates_an_address: false,
-        pools: &[("SOL/USDC", 70), ("JUP/SOL", 30)],
+        pools: &[("SOL/USDC", 50), ("JUP/USDC", 20), ("JUP/SOL", 30)],
         long_tail_share: 0,
         open: &[OpenSpec {
-            pool: "SOL/USDC",
+            pool: "JUP/USDC",
             placement: Placement::Below,
         }],
         first_deposit_sol: 120,

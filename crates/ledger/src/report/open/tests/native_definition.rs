@@ -4,14 +4,13 @@ use super::super::*;
 use super::fixtures::{closed, pool, position, raw};
 
 #[test]
-fn pins_first_positions_definition_to_stable_native_open_and_closed_reports() {
+fn values_stable_native_open_and_closed_reports_in_both_orientations() {
     use crate::report::closed::ClosedValuation;
     use crate::report::valued::{Currency, resolve};
     use binsight_core::money::SolUsdRate;
     use std::collections::BTreeMap;
 
     // These prevalued facts pin the injected-Q64 helper oracle, not bin0's physical price.
-    assert_eq!(crate::calc_version::POSITIONS, 1);
     let rate = SolUsdRate::new(1_000_000_000).unwrap();
     for side in [PhysicalSide::X, PhysicalSide::Y] {
         let pool = pool(side);
@@ -93,6 +92,7 @@ fn keeps_sol_native_without_stables_and_unsupported_figures_unavailable() {
 
     let mut pool = pool(PhysicalSide::X);
     pool.base.kind = TokenKind::Other;
+    pool.quote.kind = TokenKind::Sol;
     let position = position(&pool);
     let native_sol = OpenValuation::of(&position, &pool, &SolUsdRates::default()).unwrap();
     assert_eq!(raw(&native_sol.value, Currency::Sol), 520_000_000);

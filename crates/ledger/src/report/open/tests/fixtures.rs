@@ -1,4 +1,5 @@
-//! Synthetic physical pool facts and explicitly prevalued position fixtures.
+//! Synthetic physical pool facts and explicitly prevalued position fixtures: a USDC-quoted pool
+//! whose other token is not SOL, so USDC is the quote on either physical side.
 
 use super::super::*;
 
@@ -11,12 +12,12 @@ pub(super) fn pool(side: PhysicalSide) -> PoolFacts {
         mint: Address::from_bytes([byte; 32]),
         symbol: None,
         name: None,
-        decimals: Decimals(if kind == TokenKind::Sol { 9 } else { 6 }),
+        decimals: Decimals(if kind == TokenKind::Other { 9 } else { 6 }),
         kind,
     };
     let (base, quote) = match side {
-        PhysicalSide::X => (token(TokenKind::Usdc, 1), token(TokenKind::Sol, 2)),
-        PhysicalSide::Y => (token(TokenKind::Sol, 2), token(TokenKind::Usdc, 1)),
+        PhysicalSide::X => (token(TokenKind::Usdc, 1), token(TokenKind::Other, 2)),
+        PhysicalSide::Y => (token(TokenKind::Other, 2), token(TokenKind::Usdc, 1)),
     };
     PoolFacts {
         address: Address::from_bytes([3; 32]),

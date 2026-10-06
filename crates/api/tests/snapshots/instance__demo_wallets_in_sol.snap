@@ -10,7 +10,7 @@ expression: in_sol.json()
       "net_worth": {
         "exactness": "complete",
         "value": {
-          "amount": "142.567784931",
+          "amount": "142.792150576",
           "unit": "sol"
         }
       },
@@ -19,7 +19,7 @@ expression: in_sol.json()
       "real_pnl": {
         "exactness": "complete",
         "value": {
-          "amount": "34.567784931",
+          "amount": "33.792150576",
           "unit": "sol"
         }
       },
@@ -32,11 +32,11 @@ expression: in_sol.json()
             "wallet": "H8dBDBULv1kPgqs3Pfc8gvkS3aqcqNmRCPkXhSZXQe4X"
           }
         ],
-        "value": "37.445962"
+        "value": "37.554513"
       },
       "sync": {
         "import": null,
-        "indexed_tx": 4291,
+        "indexed_tx": 4290,
         "lag_seconds": null,
         "last_tx_at": "2026-09-21T12:36:00Z",
         "state": "live"
@@ -93,7 +93,7 @@ expression: in_sol.json()
             "wallet": "H8dBDBULv1kPgqs3Pfc8gvkS3aqcqNmRCPkXhSZXQe4X"
           }
         ],
-        "value": "31.263574"
+        "value": "31.304937"
       },
       "sync": {
         "import": null,
@@ -118,7 +118,7 @@ expression: in_sol.json()
       "net_worth": {
         "exactness": "complete",
         "value": {
-          "amount": "119.131994264",
+          "amount": "118.404571503",
           "unit": "sol"
         }
       },
@@ -127,7 +127,7 @@ expression: in_sol.json()
       "real_pnl": {
         "exactness": "complete",
         "value": {
-          "amount": "-0.868005736",
+          "amount": "-1.595428497",
           "unit": "sol"
         }
       },
@@ -140,7 +140,7 @@ expression: in_sol.json()
             "wallet": "H8dBDBULv1kPgqs3Pfc8gvkS3aqcqNmRCPkXhSZXQe4X"
           }
         ],
-        "value": "31.290464"
+        "value": "31.14055"
       },
       "sync": {
         "import": null,
@@ -173,7 +173,7 @@ expression: in_sol.json()
         }
       ],
       "value": {
-        "amount": "380.729394822",
+        "amount": "380.226337706",
         "unit": "sol"
       }
     },
@@ -189,7 +189,7 @@ expression: in_sol.json()
         }
       ],
       "value": {
-        "amount": "52.729394822",
+        "amount": "51.226337706",
         "unit": "sol"
       }
     }

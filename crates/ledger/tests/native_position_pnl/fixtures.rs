@@ -119,7 +119,7 @@ pub(super) fn quote_oracles() -> [QuoteOracle; 4] {
     assert_eq!(bin_zero, Q64x64::ONE);
     [
         (
-            TokenKind::Sol,
+            TokenKind::Other,
             TokenKind::Usdc,
             Q64x64::ONE.0 / 2,
             520_000_000,
@@ -128,14 +128,14 @@ pub(super) fn quote_oracles() -> [QuoteOracle; 4] {
         ),
         (
             TokenKind::Usdc,
-            TokenKind::Sol,
+            TokenKind::Other,
             Q64x64::ONE.0 * 2,
             520_000_000,
             1_000_000_000,
             520_000_000,
         ),
         (
-            TokenKind::Sol,
+            TokenKind::Other,
             TokenKind::Usdc,
             bin_zero.0,
             1_020_000_000,
@@ -144,7 +144,7 @@ pub(super) fn quote_oracles() -> [QuoteOracle; 4] {
         ),
         (
             TokenKind::Usdc,
-            TokenKind::Sol,
+            TokenKind::Other,
             bin_zero.0,
             1_020_000_000,
             2_000_000_000,
@@ -154,12 +154,12 @@ pub(super) fn quote_oracles() -> [QuoteOracle; 4] {
     .map(
         |(x, y, raw_price, native, usd_micros_per_sol, sol_lamports)| QuoteOracle {
             physical: (x, y),
-            x: RawTokenAmount(if x == TokenKind::Sol {
+            x: RawTokenAmount(if x == TokenKind::Other {
                 1_000_000_000
             } else {
                 20_000_000
             }),
-            y: RawTokenAmount(if y == TokenKind::Sol {
+            y: RawTokenAmount(if y == TokenKind::Other {
                 1_000_000_000
             } else {
                 20_000_000

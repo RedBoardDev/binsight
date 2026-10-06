@@ -8,6 +8,7 @@ use binsight_ledger::facts::{
     FlowValuation, PhysicalSide, PoolFacts, QuoteAsset, QuoteConvention, QuoteUnits, TokenFacts,
     TokenKind,
 };
+use binsight_ledger::report::closed::Outcome;
 use binsight_ledger::report::valued::quote::QuoteMathError;
 use binsight_ledger::report::valued::{Currency, resolve, value_quote};
 use binsight_solana::Address;
@@ -43,7 +44,7 @@ fn convention(side: PhysicalSide) -> QuoteConvention {
 }
 
 #[test]
-fn prioritizes_usdc_then_usdt_then_sol_on_either_physical_side() {
+fn prioritizes_sol_then_usdc_then_usdt_on_either_physical_side() {
     use PhysicalSide::{X, Y};
     use TokenKind::{Other, Sol, Usdc, Usdt};
     let cases = [
@@ -53,14 +54,14 @@ fn prioritizes_usdc_then_usdt_then_sol_on_either_physical_side() {
         (Other, Usdt, Some((QuoteAsset::Usdt, Y))),
         (Sol, Other, Some((QuoteAsset::Sol, X))),
         (Sol, Sol, Some((QuoteAsset::Sol, Y))),
-        (Sol, Usdc, Some((QuoteAsset::Usdc, Y))),
-        (Sol, Usdt, Some((QuoteAsset::Usdt, Y))),
+        (Sol, Usdc, Some((QuoteAsset::Sol, X))),
+        (Sol, Usdt, Some((QuoteAsset::Sol, X))),
         (Usdc, Other, Some((QuoteAsset::Usdc, X))),
-        (Usdc, Sol, Some((QuoteAsset::Usdc, X))),
+        (Usdc, Sol, Some((QuoteAsset::Sol, Y))),
         (Usdc, Usdc, Some((QuoteAsset::Usdc, Y))),
         (Usdc, Usdt, Some((QuoteAsset::Usdc, X))),
         (Usdt, Other, Some((QuoteAsset::Usdt, X))),
-        (Usdt, Sol, Some((QuoteAsset::Usdt, X))),
+        (Usdt, Sol, Some((QuoteAsset::Sol, Y))),
         (Usdt, Usdc, Some((QuoteAsset::Usdc, Y))),
         (Usdt, Usdt, Some((QuoteAsset::Usdt, Y))),
     ];
@@ -90,12 +91,14 @@ fn selects_display_tokens_without_swapping_physical_pool_tokens() {
 #[test]
 fn values_prices_and_reports_with_the_same_selected_asset() {
     let pool = pool(TokenKind::Usdc, TokenKind::Sol);
-    assert_eq!(pool.quote_asset(), Some(QuoteAsset::Usdc));
-    assert_eq!(pool.quote_convention().unwrap().asset(), QuoteAsset::Usdc);
+    assert_eq!(pool.quote_asset(), Some(QuoteAsset::Sol));
+    assert_eq!(pool.quote_convention().unwrap().asset(), QuoteAsset::Sol);
 }
 
+/// A SOL/USDC pool at 500 USDC per SOL, in both physical orientations: 1 SOL and 20 USDC are
+/// worth 1 + 20 / 500 = 1.04 SOL, and a USDC is worth 0.002 SOL.
 #[test]
-fn retains_native_dollars_independently_of_fx_for_both_physical_orientations() {
+fn values_a_sol_usdc_position_in_sol_for_both_physical_orientations() {
     use TokenKind::{Sol, Usdc};
     let rate = SolUsdRate::new(1_000_000_000).unwrap();
     for (x_kind, y_kind, x, y, raw) in [
@@ -109,37 +112,51 @@ fn retains_native_dollars_independently_of_fx_for_both_physical_orientations() {
         let quoted = selected
             .value_raw(RawTokenAmount(x), RawTokenAmount(y), Some(Q64x64(raw)))
             .unwrap();
-        assert_eq!(quoted.amount, RawTokenAmount(520_000_000));
+        assert_eq!(selected.asset(), QuoteAsset::Sol);
+        assert_eq!(quoted.amount, RawTokenAmount(1_040_000_000));
         assert_eq!(quoted.valuation, FlowValuation::Complete);
-        assert_eq!(selected.asset(), QuoteAsset::Usdc);
         assert_eq!(
             selected.unit_price(Q64x64(raw), physical.base.decimals, physical.quote.decimals),
-            Ok(Price(500_000_000_000_000_000_000))
+            Ok(Price(2_000_000_000_000_000))
         );
         let amount = QuoteUnits(i128::try_from(quoted.amount.0).unwrap());
         let native = value_quote(amount, selected.asset(), None).unwrap();
-        let converted = value_quote(amount, selected.asset(), Some(rate)).unwrap();
-        assert_eq!(native.value().unwrap().usd, Some(UsdMicros(520_000_000)));
-        assert_eq!(native.value().unwrap().sol, None);
         assert_eq!(
-            resolve(&native, Currency::Usd).exactness(),
-            Exactness::Complete
+            native.value().unwrap().sol,
+            Some(SignedLamports(1_040_000_000))
         );
         assert_eq!(
             resolve(&native, Currency::Sol).exactness(),
-            Exactness::Unavailable
+            Exactness::Complete
         );
-        assert_eq!(converted.value().unwrap().usd, native.value().unwrap().usd);
+        let converted = value_quote(amount, selected.asset(), Some(rate)).unwrap();
         assert_eq!(
-            converted.value().unwrap().sol,
-            Some(SignedLamports(520_000_000))
+            converted.value().unwrap().usd,
+            Some(UsdMicros(1_040_000_000))
         );
     }
-    // The former SOL-first definition would turn 1.04 SOL into 1040 USD at this rate.
-    assert_eq!(
-        rate.to_usd(SignedLamports(1_040_000_000)),
-        Ok(UsdMicros(1_040_000_000))
-    );
+}
+
+/// 1 SOL deposited single-sided at 100 USDC per SOL and withdrawn at 110: the position gained
+/// dollars but not SOL, so it is flat in its SOL quote.
+#[test]
+fn values_a_single_sided_sol_round_trip_in_a_sol_usdc_pool_as_flat() {
+    let mut physical = pool(TokenKind::Sol, TokenKind::Usdc);
+    physical.quote.decimals = Decimals(6);
+    let selected = physical.quote_convention().unwrap();
+    let at_price = |usdc_per_sol: u128| Some(Q64x64(Q64x64::ONE.0 * usdc_per_sol / 1_000));
+    let one_sol = RawTokenAmount(1_000_000_000);
+    let deposited = selected
+        .value_raw(one_sol, RawTokenAmount(0), at_price(100))
+        .unwrap();
+    let withdrawn = selected
+        .value_raw(one_sol, RawTokenAmount(0), at_price(110))
+        .unwrap();
+    assert_eq!(deposited.amount, one_sol);
+    assert_eq!(withdrawn.amount, one_sol);
+    let pnl =
+        i128::try_from(withdrawn.amount.0).unwrap() - i128::try_from(deposited.amount.0).unwrap();
+    assert_eq!(Outcome::of(QuoteUnits(pnl)), Outcome::Flat);
 }
 
 #[test]

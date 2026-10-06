@@ -68,8 +68,10 @@ fn bin(bin_id: i32, base: u128, quote: u128) -> BinLiquidity {
     }
 }
 
+/// At bin 0 (a raw price of 1), 1 SOL and 20 USDC are worth 1.02 SOL in either orientation,
+/// and the chart shows USDC as the base and SOL as the quote.
 #[test]
-fn values_real_bin_zero_depth_in_stable_native_units_with_both_physical_orientations() {
+fn values_real_bin_zero_depth_in_sol_with_both_physical_orientations() {
     for (x_kind, y_kind, x, y) in [
         (TokenKind::Sol, TokenKind::Usdc, 1_000_000_000, 20_000_000),
         (TokenKind::Usdc, TokenKind::Sol, 20_000_000, 1_000_000_000),
@@ -87,8 +89,8 @@ fn values_real_bin_zero_depth_in_stable_native_units_with_both_physical_orientat
             RawTokenAmount(1_020_000_000)
         );
         let chart = bin_chart(&position, &pool).unwrap();
-        assert_eq!(chart.bars[0].base, RawTokenAmount(1_000_000_000));
-        assert_eq!(chart.bars[0].quote, RawTokenAmount(20_000_000));
+        assert_eq!(chart.bars[0].base, RawTokenAmount(20_000_000));
+        assert_eq!(chart.bars[0].quote, RawTokenAmount(1_000_000_000));
         assert_eq!(chart.bars[0].bin_id, 0);
         assert_eq!(chart.bars[0].height, Ratio(1_000_000));
         assert_eq!(position.bins, original);

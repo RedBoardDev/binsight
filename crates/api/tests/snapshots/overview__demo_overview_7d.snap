@@ -35,10 +35,14 @@ expression: response.json()
         },
         {
           "code": "unpriced_leg",
+          "position": "EsoAfamTC2U75ULPvH7jeHUdbzy1etb6YdG8qZux6U3L-62GoKgGn8fhkNvQ1pW3uR1EcWCzq22PDLbtYQ6bud644VY4XGaEUtuDg3u7xosYgBPn4CrHeP8zPJLNRzpGfLER"
+        },
+        {
+          "code": "unpriced_leg",
           "position": "HeMMtZQ9SPqM4fCPm1RMuBDuiBzG6Gw1p56jKcTVvW6m-3kdsBepNUuGCGYNahiuoTDNe4Ew1LDLQq3t6hkPkQq3ku4ZW3eArCcotFUY8Bg743TaA9sivf56nabNcoBXodcnr"
         }
       ],
-      "value": "0.086801"
+      "value": "0.049814"
     },
     "value": {
       "exactness": "estimated",
@@ -66,11 +70,15 @@ expression: response.json()
         },
         {
           "code": "unpriced_leg",
+          "position": "EsoAfamTC2U75ULPvH7jeHUdbzy1etb6YdG8qZux6U3L-62GoKgGn8fhkNvQ1pW3uR1EcWCzq22PDLbtYQ6bud644VY4XGaEUtuDg3u7xosYgBPn4CrHeP8zPJLNRzpGfLER"
+        },
+        {
+          "code": "unpriced_leg",
           "position": "HeMMtZQ9SPqM4fCPm1RMuBDuiBzG6Gw1p56jKcTVvW6m-3kdsBepNUuGCGYNahiuoTDNe4Ew1LDLQq3t6hkPkQq3ku4ZW3eArCcotFUY8Bg743TaA9sivf56nabNcoBXodcnr"
         }
       ],
       "value": {
-        "amount": "0.330189784",
+        "amount": "0.189310337",
         "unit": "sol"
       }
     },
@@ -93,14 +101,14 @@ expression: response.json()
         }
       ],
       "value": {
-        "amount": "339.821384597",
+        "amount": "339.31832752",
         "unit": "sol"
       }
     },
     "lp": {
       "exactness": "complete",
       "value": {
-        "amount": "40.024047661",
+        "amount": "40.024047622",
         "unit": "sol"
       }
     },
@@ -121,7 +129,7 @@ expression: response.json()
         }
       ],
       "value": {
-        "amount": "380.729394822",
+        "amount": "380.226337706",
         "unit": "sol"
       }
     },
@@ -162,7 +170,7 @@ expression: response.json()
     "pnl": {
       "exactness": "complete",
       "value": {
-        "amount": "-0.184273697",
+        "amount": "-0.184273736",
         "unit": "sol"
       }
     },
@@ -199,56 +207,32 @@ expression: response.json()
       "average_held_seconds": 194926,
       "count": 8,
       "fees": {
-        "exactness": "estimated",
-        "reasons": [
-          {
-            "code": "provisional_rate",
-            "day": "2026-09-21"
-          }
-        ],
+        "exactness": "complete",
         "value": {
-          "amount": "0.34041795",
+          "amount": "0.340417957",
           "unit": "sol"
         }
       },
       "flat": 1,
       "invested": {
-        "exactness": "estimated",
-        "reasons": [
-          {
-            "code": "provisional_rate",
-            "day": "2026-09-21"
-          }
-        ],
+        "exactness": "complete",
         "value": {
-          "amount": "32.331255594",
+          "amount": "32.331255595",
           "unit": "sol"
         }
       },
       "losses": 3,
       "median_held_seconds": 192729,
       "pnl": {
-        "exactness": "estimated",
-        "reasons": [
-          {
-            "code": "provisional_rate",
-            "day": "2026-09-21"
-          }
-        ],
+        "exactness": "complete",
         "value": {
-          "amount": "0.2907573",
+          "amount": "0.226361377",
           "unit": "sol"
         }
       },
       "pnl_pct": {
-        "exactness": "estimated",
-        "reasons": [
-          {
-            "code": "provisional_rate",
-            "day": "2026-09-21"
-          }
-        ],
-        "value": "0.899307"
+        "exactness": "complete",
+        "value": "0.700132"
       },
       "rewards": {
         "exactness": "complete",
@@ -264,15 +248,9 @@ expression: response.json()
       },
       "wins": 4,
       "withdrawn": {
-        "exactness": "estimated",
-        "reasons": [
-          {
-            "code": "provisional_rate",
-            "day": "2026-09-21"
-          }
-        ],
+        "exactness": "complete",
         "value": {
-          "amount": "32.303262117",
+          "amount": "32.303262116",
           "unit": "sol"
         }
       }
@@ -329,17 +307,18 @@ expression: response.json()
     {
       "kind": "out_of_range",
       "pool": {
-        "address": "EyiR4YaN6iJhA3TyWUdskQ8Couam5mDsCvNAuiG3HG5a",
+        "address": "27QAiFPsZNyqS3qJZZxf3fPnwicP8cAuSvrSNAvSE9YR",
         "base": {
-          "decimals": 9,
+          "decimals": 6,
           "logo": {
-            "kind": "sol"
+            "kind": "image",
+            "url": "/api/v1/tokens/6Cy4bsfHWSz97CTcZrrShVQKySUEpkxQKQqJQjmard4p/logo?v=cb515cbbb146"
           },
-          "mint": "3fpJjugexTVxzpW6USwSaGAp3e7omJfR1EzUTihSjkJn",
-          "name": "Solana",
-          "symbol": "SOL"
+          "mint": "6Cy4bsfHWSz97CTcZrrShVQKySUEpkxQKQqJQjmard4p",
+          "name": "Jupiter",
+          "symbol": "JUP"
         },
-        "bin_step": 10,
+        "bin_step": 20,
         "quote": {
           "decimals": 6,
           "logo": {

@@ -23,8 +23,10 @@ fn pool(x: TokenKind, y: TokenKind) -> PoolFacts {
     }
 }
 
+/// At bin 0 a raw price of 1 is 1,000 USDC per SOL in both orientations, shown in SOL: a USDC
+/// is worth 0.001 SOL.
 #[test]
-fn prices_the_same_stable_native_pair_from_both_real_bin_zero_orientations() {
+fn prices_the_same_sol_usdc_pair_in_sol_from_both_real_bin_zero_orientations() {
     for (x, y) in [
         (TokenKind::Sol, TokenKind::Usdc),
         (TokenKind::Usdc, TokenKind::Sol),
@@ -37,14 +39,14 @@ fn prices_the_same_stable_native_pair_from_both_real_bin_zero_orientations() {
         })
         .unwrap();
         let displayed = pool_ref(&snapshot, pool.address).unwrap();
-        assert_eq!(displayed.base.decimals, Decimals::SOL);
-        assert_eq!(displayed.quote.decimals, Decimals(6));
-        assert_eq!(displayed.quote_asset, Some(QuoteAsset::Usdc));
+        assert_eq!(displayed.base.decimals, Decimals(6));
+        assert_eq!(displayed.quote.decimals, Decimals::SOL);
+        assert_eq!(displayed.quote_asset, Some(QuoteAsset::Sol));
         assert_eq!(
             bin_price(&pool, 0),
             Some(PriceView {
-                value: Price(1_000_000_000_000_000_000_000),
-                quote: QuoteAsset::Usdc,
+                value: Price(1_000_000_000_000_000),
+                quote: QuoteAsset::Sol,
             })
         );
         assert_eq!(pool, original);
@@ -53,14 +55,14 @@ fn prices_the_same_stable_native_pair_from_both_real_bin_zero_orientations() {
 
 #[test]
 fn reverses_display_quantities_and_numeric_bounds_without_reversing_physical_ids() {
-    let pool = pool(TokenKind::Usdc, TokenKind::Sol);
+    let pool = pool(TokenKind::Sol, TokenKind::Usdc);
     assert_eq!(
         display_amounts(
             &pool,
-            RawTokenAmount(20_000_000),
-            RawTokenAmount(1_000_000_000)
+            RawTokenAmount(1_000_000_000),
+            RawTokenAmount(20_000_000)
         ),
-        (RawTokenAmount(1_000_000_000), RawTokenAmount(20_000_000))
+        (RawTokenAmount(20_000_000), RawTokenAmount(1_000_000_000))
     );
     let (lower, upper) = range_prices(&pool, -1, 1);
     assert!(lower.unwrap().value < upper.unwrap().value);

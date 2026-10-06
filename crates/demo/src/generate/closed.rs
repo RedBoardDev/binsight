@@ -210,7 +210,9 @@ fn position(
     };
     let fees = share(invested, stream.between(FEES_BPS.0, FEES_BPS.1))?;
     let lp_pnl = share(invested, pnl_bps)?;
-    let is_fifo = asset == QuoteAsset::Sol && pnl_bps != 0 && stream.chance(70);
+    // Drawn for every position, so the random stream does not depend on the pool's quote.
+    let draws_fifo = stream.chance(70);
+    let is_fifo = asset == QuoteAsset::Sol && pnl_bps != 0 && draws_fifo;
     let market_pnl = lp_pnl.saturating_add(share(
         invested,
         stream.between(FIFO_ADJUSTMENT_BPS.0, FIFO_ADJUSTMENT_BPS.1),

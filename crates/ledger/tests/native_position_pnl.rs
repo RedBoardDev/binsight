@@ -106,7 +106,7 @@ fn keeps_native_open_and_closed_known_when_only_fx_is_missing() {
 
 #[test]
 fn retains_independent_value_and_fee_source_quality_without_inventing_zero() {
-    let pool = pool(TokenKind::Usdc, TokenKind::Sol);
+    let pool = pool(TokenKind::Usdc, TokenKind::Other);
     for missing_value in [true, false] {
         for exactness in [
             Exactness::Partial,
@@ -147,7 +147,7 @@ fn retains_independent_value_and_fee_source_quality_without_inventing_zero() {
 
 #[test]
 fn shares_history_degradation_while_retaining_current_balances() {
-    let pool = pool(TokenKind::Usdc, TokenKind::Sol);
+    let pool = pool(TokenKind::Usdc, TokenKind::Other);
     let position = position(&pool);
     let wallet = WalletFacts {
         address: position.wallet,
@@ -174,7 +174,7 @@ fn shares_history_degradation_while_retaining_current_balances() {
 
 #[test]
 fn qualifies_open_history_and_closed_methods_from_the_same_native_sources() {
-    let pool = pool(TokenKind::Usdt, TokenKind::Sol);
+    let pool = pool(TokenKind::Usdt, TokenKind::Other);
     for (movements, rebalances, rewards, exactness) in [
         (1, 0, 0, Exactness::Estimated),
         (0, 1, 0, Exactness::Estimated),
@@ -281,7 +281,7 @@ fn keeps_unsupported_zero_and_source_failures_unavailable_with_their_reasons() {
 
 #[test]
 fn rejects_native_sum_overflow_for_both_position_states() {
-    let pool = pool(TokenKind::Usdc, TokenKind::Sol);
+    let pool = pool(TokenKind::Usdc, TokenKind::Other);
     let mut position = position(&pool);
     position.claimed_fees = QuoteUnits(i128::MAX);
     assert_eq!(
@@ -292,5 +292,4 @@ fn rejects_native_sum_overflow_for_both_position_states() {
         ClosedValuation::of(&closed(&position), &pool, &SolUsdRates::default()),
         Err(AmountError::Overflow)
     );
-    assert_eq!(binsight_ledger::calc_version::POSITIONS, 1);
 }

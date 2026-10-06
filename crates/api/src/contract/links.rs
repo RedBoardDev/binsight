@@ -217,7 +217,7 @@ mod tests {
         );
         assert_eq!(
             selected[0].links.gmgn,
-            format!("https://gmgn.ai/sol/token/{}", Address::from_bytes([2; 32]))
+            format!("https://gmgn.ai/sol/token/{}", Address::from_bytes([1; 32]))
         );
         let unsupported = rows
             .iter()
